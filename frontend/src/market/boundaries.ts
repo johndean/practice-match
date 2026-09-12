@@ -24,7 +24,7 @@
  * **That makes the route's PRESENCE the operational precondition: this adapter must not reach an
  * environment before Task 9's endpoint does.**
  */
-import { PAD, bboxOf, current, subscribe } from '../map/viewport';
+import { PAD, bboxOf, settled, subscribe } from '../map/viewport';
 
 const LIST_URL = '/api/markets';
 
@@ -58,7 +58,10 @@ export interface MarketAdapter {
    *  metro envelope, which is the pre-map boot and what the reference would get if it had an
    *  adapter at all. */
   boundaries(marketName: string, bbox?: string | null): Promise<Record<string, BoundaryCollection>>;
-  /** The ground the map is looking at, as the route's `bbox`, or `null` before a map exists. */
+  /** The ground the map has SETTLED on, as the route's `bbox`, or `null` before a map exists.
+   *  The settled view and not the live one (fix round 1): this value is both the box a request
+   *  carries and the token `logic.js` checks an arriving answer against, and a token that moved
+   *  with the wheel discarded answers for views the member was already back on. */
   viewport(): string | null;
   /** Fires once per SETTLED view (`src/map/viewport.ts`'s debounce); returns its unsubscribe. */
   onViewport(cb: () => void): () => void;
@@ -116,16 +119,17 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
   };
   return {
     viewport() {
-      const v = current();
+      const v = settled();
       return v === null ? null : bboxOf(v, PAD);
     },
     onViewport: subscribe,
     async boundaries(marketName: string, bbox: string | null = null) {
-      // Read BEFORE the catalogue is awaited: `bbox` is the box `logic.js` took from `viewport()`
-      // one statement ago, and the first call of the page has a `/api/markets` round trip in front
-      // of it. Read after that, the retry's bare box could describe a different view from the
-      // padded box that was sent.
-      const v = current();
+      // The SETTLED view, read BEFORE the catalogue is awaited: `bbox` is the box `logic.js` took
+      // from `viewport()` one statement ago, and the first call of the page has a `/api/markets`
+      // round trip in front of it. One view, two boxes — the padded one that goes out and the bare
+      // one the retry falls back to — so the retry can never ask for ground the member is not
+      // being answered for.
+      const v = settled();
       const rows = await catalogue();
       const metro = rows.find((m) => m.name === marketName);
       if (!metro) throw new Error(`no CBSA for market ${marketName}`);

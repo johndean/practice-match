@@ -226,3 +226,80 @@ describe('the market adapter (spec §8.3)', () => {
     } finally { globalThis.fetch = saved; }
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Fix round 1, finding 1 — the adapter answers for the SETTLED view.
+//
+// `logic.js`'s guard is right and is untouched: it compares the token it was handed at issue
+// against the token the adapter reports at arrival. It was being handed the LIVE view, which moves
+// the instant a wheel notch does, so an answer could be discarded for a view the member was
+// already back on — and the module's own "already asked" suppression then made sure nothing ever
+// re-requested it. One view, one token, and both boxes of the retry cut from it.
+// ---------------------------------------------------------------------------------------------
+describe('the settled view is what the adapter answers for (fix round 1)', () => {
+  const box1 = { w: -74.3, s: 40.1, e: -72.9, n: 40.9, zoom: 10 };
+  const box2 = { ...box1, zoom: 11 };
+
+  it("a zoom away and straight back inside the debounce keeps the answer that was in flight", async () => {
+    vi.useFakeTimers();
+    const f = ok();
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    const asked = vi.fn();
+    adapter.onViewport(asked);
+
+    seeViewport(box1);                               // 1. box1 settles; logic.js would ask now
+    expect(asked).toHaveBeenCalledTimes(1);
+    const at = adapter.viewport();                   //    the token the request carries
+    const inFlight = adapter.boundaries('New York, NY', at);
+
+    publish(box2);                                   // 2. one notch away, timer pending
+    // 3. the answer lands HERE. `mine()` compares the adapter's CURRENT answer against `at`.
+    expect(adapter.viewport(), 'the in-flight answer would be discarded for a view still on screen').toBe(at);
+    await inFlight;
+
+    publish(box1);                                   // 4. straight back, inside the window
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    // 5. …and nothing was re-asked, because nothing needed to be: box1 was never abandoned.
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(adapter.viewport()).toBe(at);
+    expect(bboxesAsked(f)).toEqual([at]);
+  });
+
+  // NOT a duplicate of `logic.test.ts`'s "DISCARDS an answer for a box the member has already
+  // panned off": that one drives a stub adapter and pins `logic.js`'s guard. This pins the TOKEN
+  // the real adapter reports, which is the half that was wrong.
+  it('a real pan still discards the answer for the box the member left', () => {
+    vi.useFakeTimers();
+    const adapter = makeMarketAdapter(ok() as unknown as typeof fetch);
+    seeViewport(box1);
+    const at = adapter.viewport();
+    seeViewport(box2);                               // a pan that SETTLES is a real move
+    expect(adapter.viewport()).not.toBe(at);
+  });
+
+  it('the unpadded retry is cut from the settled view, not the live one', async () => {
+    vi.useFakeTimers();
+    let padded: string | null = null;
+    const f = fakeFetch((url) => {
+      if (!url.includes('/boundaries')) return { body: MARKETS };
+      const bbox = new URL(url, 'http://x').searchParams.get('bbox');
+      return bbox === padded ? refusal('AREA_TOO_LARGE') : { body: collection('income') };
+    });
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    seeViewport(box1);
+    padded = adapter.viewport();
+    publish(box2);                                   // the live view moves; the settled one has not
+    await expect(adapter.boundaries('New York, NY', padded)).resolves.toHaveProperty('income');
+    expect(bboxesAsked(f), 'the retry asked for ground the member is not being answered for')
+      .toEqual([padded, bboxOf(box1, 0)]);
+  });
+
+  it('a torn-down map leaves NO box: viewport() is null the moment publish(null) lands', () => {
+    vi.useFakeTimers();
+    const adapter = makeMarketAdapter(ok() as unknown as typeof fetch);
+    seeViewport(box1);
+    expect(adapter.viewport()).not.toBeNull();
+    publish(null);
+    expect(adapter.viewport()).toBeNull();
+  });
+});

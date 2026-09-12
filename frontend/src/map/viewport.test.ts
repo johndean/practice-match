@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEBOUNCE_MS, PAD, bboxOf, current, grid, publish, reset, subscribe } from './viewport';
+import { DEBOUNCE_MS, PAD, bboxOf, current, grid, publish, reset, settled, subscribe } from './viewport';
 
 /** The Browse map at 1440 x 940 (playwright.config's VIEWPORT): ~1020 x 740 CSS px of map beside
  *  the results rail, which at zoom 10 is 1.401 deg of longitude and, at New York's latitude,
@@ -171,5 +171,74 @@ describe('publish / subscribe — one notification per settled view', () => {
     expect(() => vi.advanceTimersByTime(DEBOUNCE_MS)).not.toThrow();
     expect(boom).toHaveBeenCalledTimes(1);
     expect(after).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// THE SETTLED VIEW (fix round 1, finding 1 — reproduced by the reviewer).
+//
+// `publish()` advanced `settled` when a request was ISSUED while the adapter's own `viewport()`
+// answered from the LIVE view, so one box could be both "already asked — suppressed" and "stale —
+// discarded": zoom one step away, let the in-flight answer land (discarded against the live box),
+// zoom straight back inside 250 ms (suppressed, because the key is where `settled` already is) and
+// the map keeps a view nothing is drawn for and nothing will re-request. Overshoot-and-correct is
+// a common gesture and a warm cache makes the window easy to hit.
+//
+// The fix is one sentence: the module keeps the settled VIEW, and that — not the live one — is
+// what the adapter answers for.
+// ---------------------------------------------------------------------------------------------
+describe('settled() — the view the adapter answers for', () => {
+  const box1 = { w: -74.3, s: 40.1, e: -72.9, n: 40.9, zoom: 10 };
+  const box2 = { ...box1, zoom: 11 };
+
+  it('is null until a view has actually settled, however much has been published', () => {
+    vi.useFakeTimers();
+    publish(box1);
+    expect(settled(), 'a view mid-debounce is not settled').toBeNull();
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(settled()).toEqual(box1);
+  });
+
+  it('does NOT move while a later view is still inside the debounce', () => {
+    vi.useFakeTimers();
+    publish(box1);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    publish(box2);
+    expect(current(), 'the live view is the debounce input and moves at once').toEqual(box2);
+    expect(settled(), 'the settled view moved before the debounce fired').toEqual(box1);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(settled()).toEqual(box2);
+  });
+
+  it('a zoom away and straight back inside the debounce leaves the FIRST view settled', () => {
+    vi.useFakeTimers();
+    publish(box1);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish(box2);                       // away
+    publish(box1);                       // …and straight back, inside the window
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb, 'the round trip re-asked for ground already asked for').not.toHaveBeenCalled();
+    expect(settled(), 'the view on screen is not the view the adapter answers for').toEqual(box1);
+  });
+
+  it('publish(null) clears the settled view AT ONCE, not after the debounce', () => {
+    vi.useFakeTimers();
+    publish(box1);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    publish(null);
+    expect(settled(), 'a torn-down map left a box behind for the debounce window').toBeNull();
+    expect(current()).toBeNull();
+  });
+
+  it('publish(null) clears a pending timer, so a view mid-debounce cannot settle after the map has gone', () => {
+    vi.useFakeTimers();
+    publish(box1);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    publish(box2);                       // pending
+    publish(null);
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(settled()).toBeNull();
   });
 });

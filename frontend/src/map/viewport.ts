@@ -3,8 +3,14 @@
  *
  * `GET /api/markets/{cbsa}/boundaries` has accepted a `bbox` since Task 9 and the adapter never
  * sent one, so it always asked for the whole metro envelope. This module is the channel that
- * closes that: `MarketMapView` publishes what the map is looking at, `src/market/boundaries.ts`
- * reads it and asks for exactly that ground.
+ * closes that: `MarketMapView` publishes what the map is looking at, and `src/market/boundaries.ts`
+ * asks for exactly that ground.
+ *
+ * TWO views, and the distinction is load-bearing (fix round 1). `current()` is the LIVE view — it
+ * moves with the wheel and is the debounce's input, nothing more. `settled()` is the view that
+ * stayed still long enough to be asked about, and it is the ONLY one the adapter answers from:
+ * both the box a request carries and the token `logic.js` checks an arriving answer against come
+ * from it, so the two can never describe different ground.
  *
  * The numbers below were first measured against `MAX_FEATURES = 4000`, which was sized for the
  * ZCTA era; the caps were re-measured for Census tracts on 2026-09-12 (`app/api/market.py`) and
@@ -95,33 +101,63 @@ export function bboxOf(v: Viewport, pad: number): string {
   return [out6(w, false), out6(s, false), out6(e, true), out6(n, true)].join(',');
 }
 
-let viewport: Viewport | null = null;
-let settled: string | null = null;
+let live: Viewport | null = null;
+let settledView: Viewport | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
 
 const key = (v: Viewport | null) => (v === null ? null : bboxOf(v, PAD));
 
-/** What the map is looking at right now, or `null` before one is mounted and after it is gone. */
+/** The LIVE view — what the map is looking at this instant. It is the debounce's INPUT and
+ *  nothing else reads it to decide what to ask the API for: see `settled()`. */
 export function current(): Viewport | null {
-  return viewport;
+  return live;
+}
+
+/**
+ * The view the adapter answers for: the last one that stayed still long enough to be asked about.
+ *
+ * Fix round 1, finding 1 (reproduced by the reviewer). `settled` used to be a KEY, advanced when a
+ * request was issued, while the adapter's `viewport()` answered from the LIVE view. One box could
+ * then be both "already asked — suppressed here" and "stale — discarded by `logic.js`'s guard":
+ * zoom one step away, let the in-flight answer land (discarded against the live box), zoom straight
+ * back inside 250 ms (suppressed, because the key is where this module already is) and the member
+ * keeps a view nothing is drawn for and nothing will ever re-request. Keeping the settled VIEW and
+ * answering from it closes that without touching the guard, which was right all along — it was
+ * handed the wrong token.
+ */
+export function settled(): Viewport | null {
+  return settledView;
 }
 
 /** `MarketMapView` calls this at mount, on every `moveend`/`zoomend`, and with `null` on unmount. */
 export function publish(v: Viewport | null): void {
-  viewport = v;
+  live = v;
   if (timer !== null) { clearTimeout(timer); timer = null; }
+  // A torn-down map leaves NO box behind, and leaves none AT ONCE: waiting out the debounce would
+  // let the adapter answer for a view that no longer exists. The notification still waits, so a
+  // remount inside the window costs no request.
+  if (v === null) {
+    if (settledView === null) return;
+    settledView = null;
+    timer = setTimeout(() => { timer = null; notify(); }, DEBOUNCE_MS);
+    return;
+  }
   // Nothing to say when the SNAPPED box is where it already was: `invalidateSize()`, a selection
   // that pans the map inside the current cell, and the float jitter of any `moveend` at all all
   // land here, and none of them is a new question for the API.
-  if (key(v) === settled) return;
+  if (key(v) === key(settledView)) return;
   timer = setTimeout(() => {
     timer = null;
-    settled = key(viewport);
-    // One listener's failure is not the others' — `logic.js`'s own handler already swallows its
-    // rejection, and this loop must not depend on that staying true.
-    for (const cb of [...listeners]) { try { cb(); } catch { /* a subscriber's own problem */ } }
+    settledView = live;
+    notify();
   }, DEBOUNCE_MS);
+}
+
+/** One listener's failure is not the others' — `logic.js`'s own handler already swallows its
+ *  rejection, and this loop must not depend on that staying true. */
+function notify(): void {
+  for (const cb of [...listeners]) { try { cb(); } catch { /* a subscriber's own problem */ } }
 }
 
 export function subscribe(cb: () => void): () => void {
@@ -131,8 +167,8 @@ export function subscribe(cb: () => void): () => void {
 
 /** Tests only: a module-level singleton with no way back to its initial state is untestable. */
 export function reset(): void {
-  viewport = null;
-  settled = null;
+  live = null;
+  settledView = null;
   if (timer !== null) { clearTimeout(timer); timer = null; }
   listeners.clear();
 }
