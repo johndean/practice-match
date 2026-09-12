@@ -597,9 +597,11 @@ listing whose seller has not disclosed its location). Before this, `listing.geom
 `scripts/seed_listings.py` alone.
 
 **The twenty-nine demo hospitals are unaffected and still take the operator path.**
-`scripts/census_load.py geocode` resolves every listing that has no `practice_location` row, and
-`--force` re-resolves one that has; `DEPLOY.md` carries the runbook. Nothing above changes that
-command or the rows it has already written.
+`scripts/census_load.py geocode` resolves every listing that has no `practice_location` row;
+`--force` re-resolves one that has, and `--listing <id>` re-resolves the listing it names whether
+or not it already has a location — **both** are doors to a re-resolve, and a re-resolve of a seed
+replaces its curated pin with the Census geocoder's own match. `DEPLOY.md` carries the runbook.
+Nothing above changes that command or the rows it has already written.
 
 **What precision a seller's address can reach, and why it is now on every listing payload.** The
 approved wizard's step 2 collects a city and a ZIP and nothing else — **the wizard collects a city

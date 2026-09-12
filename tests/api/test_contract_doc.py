@@ -288,6 +288,8 @@ def test_contract_doc_states_when_a_listing_gets_its_geography() -> None:
     assert "a changed `city` or `zip`" in flat
     # The operator path the demo rows still take -- unchanged by this, and not the product's.
     assert "`scripts/census_load.py geocode`" in flat
+    # Review minor 3: BOTH doors to a re-resolve are named, not just `--force`.
+    assert "`--force` re-resolves one that has, and `--listing <id>`" in flat
     # The precision a wizard-built address can reach, stated rather than implied.
     assert "`geo_precision`" in flat
     assert "the wizard collects a city and a ZIP and no street" in flat

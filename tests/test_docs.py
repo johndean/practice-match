@@ -2511,3 +2511,9 @@ def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
     assert "resolves at `zcta` — a ZIP-code centroid" in flat
     assert "served its Census place rather than the ring" in flat
     assert "all twenty-nine demo hospitals carry a street and resolve at `rooftop`" in flat
+    # Review minor 3: `--force` is not the only door to a re-resolve, and the page said it was.
+    # `--listing <id>` resolves the named listing whether or not it already has a location.
+    assert "`--listing <id>` re-resolves the listing it names" in flat
+    # Review minor 5: what to DO when a listing is still pinless, named as a command.
+    assert "still has no pin after ten minutes" in flat
+    assert "re-run `census_load.py geocode`" in flat

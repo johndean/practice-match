@@ -520,8 +520,13 @@ own `republish` — enqueues `census.geocode_listing` by name, after the transac
 the listing has no `practice_location` row. That enqueue is **deduped on the listing id for 600
 seconds**, because the row it checks for is written by the worker: without the dedupe, every
 publish inside the window between the enqueue and that write queued the same listing again. So a
-second publish a minute after the first enqueues nothing, and that is correct, not a fault. The one
-thing that re-arms it early is an address edit: when a seller **changes the city or the ZIP** at
+second publish a minute after the first enqueues nothing. Read that two ways, not one: usually it
+means the first enqueue is still in flight and there is nothing to do, but if the listing **still
+has no pin after ten minutes** the first task failed and the dedupe is now the only reason a
+re-publish does not retry — **re-run `census_load.py geocode`** (the plain form, with no flags: it
+selects exactly the listings that have no `practice_location` row, so it retries the failures and
+touches nothing else), and read the worker log for the reason it failed the first time. The one
+thing that re-arms the trigger early is an address edit: when a seller **changes the city or the ZIP** at
 step 2 of the wizard, the listing's `practice_location` row is deleted in the same transaction and
 the dedupe key is dropped, so the very next publish resolves the new address. Everything else
 about the listing — a new price, a new photograph, a disclosure switch — leaves the geography
@@ -543,8 +548,11 @@ which every market figure is computed against, and `listing.geom`, which is the 
 disclosed its location). `scripts/seed_listings.py` still writes the seeds' own points on every
 import, and re-asserts them on the UPDATE half, so a re-seed restores a curated pin; the two
 writers write the same column in the same SRID. Nothing above changes the demo hospitals: they
-already carry a `practice_location` row, so `census_load.py geocode` skips them and only `--force`
-would re-resolve them.
+already carry a `practice_location` row, so the plain `census_load.py geocode` skips them. TWO
+flags re-resolve a row that already has a location, and both will replace a curated seed pin with
+the Census geocoder's own match: `--force` does it to every listing, and `--listing <id>`
+re-resolves the listing it names whether or not it already has one. Neither is needed to pick up
+anything in this release.
 
 The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
 `activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
