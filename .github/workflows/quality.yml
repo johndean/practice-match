@@ -61,7 +61,15 @@ jobs:
       - run: poetry run ruff check app tests scripts
       - run: poetry run mypy app --strict
       - run: poetry run mypy scripts/migrate.py scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict
-      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-report=xml --cov-fail-under=100
+      # Task CI-TIMING: `tests/test_timing_marker.py` marks four tests `@pytest.mark.timing` — a
+      # constant-time auth trio and one p95 gate — that measured a loaded developer machine rather
+      # than the code when scheduled beside CPU-heavy neighbours (Argon2id hashing, media
+      # encoding, Census geometry) in one run. Neither budget is widened; only WHEN they run
+      # moves: everything else first, then the timing group alone, serially and last
+      # (`-p no:randomly`), with its coverage appended onto the first step's so the combined
+      # report is still the one `--cov-fail-under=100` reads.
+      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"
+      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100
       - run: bash tests/scripts/test_start_sh.sh
       - run: bash tests/scripts/test_verify_image_sh.sh
       - run: bash tests/scripts/test_deploy_guard.sh

@@ -308,11 +308,16 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
             cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
 
 
+@pytest.mark.timing
 async def test_cold_principal_cache_me_p95_within_budget(signed_in, db_ready):
     """The review's ⚠️: every other probe ran with a WARM principal cache. On a miss
     `deps._session_principal` falls through to Postgres and opens a connection of its own, on top of
     the one `/api/me` opens — so this is the two-connection path, and the one that says whether the
-    pool actually removed the cost."""
+    pool actually removed the cost.
+
+    Task CI-TIMING: `@pytest.mark.timing` — this one flaked under a loaded machine (John,
+    2026-09-11) even though `gate_p95` already re-measures once; a persistently busy box, not a
+    one-off stall, makes the SECOND measurement slow too. Scheduled to run serially, last."""
     from app.auth import sessions as S
     from app.cache import sync_redis
 

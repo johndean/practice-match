@@ -56,7 +56,7 @@ The V3 file is the approved design **plus the local amendments listed in `docs/d
 ## Common operations
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100   # backend gate, exactly as CI runs it (tests/e2e is the Playwright api under test, A-SL29)
+docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing" && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100   # backend gate, exactly as CI runs it — timing-budget tests (tests/test_timing_marker.py) run serially, last, coverage appended (Task CI-TIMING)
 cd frontend && npm run typecheck && npm run build && npm test                  # frontend gates — BUILD FIRST: vue-only and bundle-budget read dist/_app
 docker compose -f docker-compose.dev.yml up -d && cd frontend && npm run test:visual:baselines && npm run test:e2e   # oracles from V3, then visual + DOM + smoke (the app project starts the API against the compose Postgres/Redis)
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate

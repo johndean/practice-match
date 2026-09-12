@@ -58,6 +58,15 @@ types-shapely = "^2.1.0.20260728"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Task CI-TIMING: `timing` marks a test that asserts a real wall-clock budget against a live
+# Postgres/Redis and a real ASGI app (a constant-time delta or a p95 gate) — the class of test that
+# measures the MACHINE under load, not the code. Registered so `-W error` (the gate's own flag)
+# turns an unregistered-marker warning into a build failure rather than a silent typo. The gate
+# runs these serially and LAST, in a second step (`-m timing -p no:randomly`, coverage appended
+# onto the first step's — see CLAUDE.md's Common operations and .github/workflows/quality.yml).
+markers = [
+    "timing: asserts a real wall-clock time budget; run serially, last, isolated from CPU-heavy neighbours",
+]
 
 [tool.coverage.run]
 branch = true
