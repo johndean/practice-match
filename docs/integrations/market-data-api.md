@@ -529,11 +529,21 @@ rather than a rarity.
 So the area group is **served the `place` band** — the listing's own Census place — whenever
 `geo_precision` is anything but `"rooftop"`. That is the path the design already renders: **no
 `community_label`**, the design's own sub-lines, `growth_scope` and `income_note` exactly as they
-behave for a place band today. **No new string is introduced anywhere**, and a true city figure at
-the precision we actually hold is served in place of a ring described as the practice. A rooftop
-listing is unchanged, and **a listing with no `practice_location` row is unaffected** — the rule
-has to KNOW the point is approximate, and "never geocoded" says nothing about where it is. All
-twenty-nine QA demo hospitals carry a street and resolve at rooftop, so none of them moves.
+behave for a place band today. **No new string is introduced anywhere.** A rooftop listing is
+unchanged, and **a listing with no `practice_location` row is unaffected** — the rule has to KNOW
+the point is approximate, and "never geocoded" says nothing about where it is. All twenty-nine QA
+demo hospitals carry a street and resolve at rooftop, so none of them moves.
+
+**What "its place" means, exactly, and when there is not one.** The §11 ladder fills every
+geography the point it resolved can be joined to, so a ZCTA-precision listing carries the place its
+ZIP centroid lies inside. So the rule reads: such a listing is served **its city where the ZIP
+centroid lies in one; otherwise `place_geoid` is `null`, the county carries growth and payroll and
+the area figures are unavailable** — `pop`, `hh`, `income` and `vets` are all `null` and the
+frontend reaches the design's own "Community data unavailable" card, exactly as it does for a
+listing with no figures at all. That is the unincorporated case (D-C32's Orlando condition, one
+rung lower), and it is a real state, not a defect: the alternative is reaching for a place whose
+boundary does not contain the practice, which is the class of false statement this whole rule
+exists to remove.
 
 **The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
 buffer from the practice point (spec §8: "straight-line buffers of 8 km (≈10 min) and 16 km

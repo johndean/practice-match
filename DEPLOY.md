@@ -536,11 +536,16 @@ alone, because the practice has not moved.
 a city and a ZIP and no street, so the Census geocoder cannot match an address and the fallback
 ladder resolves at `zcta` — a ZIP-code centroid, which in a large ZIP is miles from the practice.
 A listing like that is served its Census place rather than the ring for its Community Context
-figures (the controller's ruling, GEO-WIRE fix round 1), so its card shows a true city figure and
-no "Within about 5 miles of the practice" heading. By contrast all twenty-nine demo hospitals carry
-a street and resolve at `rooftop`, so their cards keep the catchment ring they have today and
-nothing about them changes. `SELECT geo_precision, count(*) FROM practice_location GROUP BY 1;` is
-how to see which listings on an environment are in which case.
+figures (the controller's ruling, GEO-WIRE fix round 1), so its card shows a city figure and no
+"Within about 5 miles of the practice" heading — **its city where the ZIP centroid lies in one;
+otherwise the county carries growth and payroll and the area figures are unavailable** and the card
+reads "Community data unavailable". That second case is unincorporated territory, and it is
+correct rather than broken: `SELECT l.slug, pl.geo_precision, pl.place_geoid FROM listing l JOIN
+practice_location pl ON pl.listing_id = l.id WHERE pl.place_geoid IS NULL;` is the list of listings
+in it. By contrast all twenty-nine demo hospitals carry a street and resolve at `rooftop`, so their
+cards keep the catchment ring they have today and nothing about them changes.
+`SELECT geo_precision, count(*) FROM practice_location GROUP BY 1;` is how to see which listings on
+an environment are in which case.
 
 The geocode writes **both** point columns from one resolved coordinate: `practice_location.point`,
 which every market figure is computed against, and `listing.geom`, which is the pin

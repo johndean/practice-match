@@ -540,7 +540,14 @@ def test_a_territory_skips_the_place_rung_because_states_py_deliberately_exclude
     Discriminating in the way A-C18 ruling 4 asked for, and for the same reason it gave: a null
     `state_fips` makes `state_fips = %s` fail identically with the guard deleted (SQL `NULL = NULL`
     is never true), so asserting only `GeocodeFailed` could not tell a real guard from no guard.
-    The recording connection proves the place query's own SQL text never executes."""
+    The recording connection proves the place query's own SQL text never executes.
+
+    The needle is the place rung's NAME PREFIX predicate, not `summary_level = '160'` (fix round
+    2). Rung 1 now joins level 160 itself — every rung fills every geography its own point can be
+    joined to — so a bare "160" needle would be satisfied by rung 1's own text and this assertion
+    would pass whether or not the guard existed, which is precisely the failure mode A-C18 ruling
+    4 wrote this test to avoid. `lower(p.name) LIKE lower(%s)` occurs in the place rung and
+    nowhere else."""
     _seed_geo(conn)
     for territory in ("PR", "VI", "GU"):
         lid = make_listing(conn, zip="00000", city="Cedar Park", state=territory)
@@ -548,7 +555,7 @@ def test_a_territory_skips_the_place_rung_because_states_py_deliberately_exclude
         with pytest.raises(geocode.GeocodeFailed):
             geocode.resolve(rec, _geocoder(NOMATCH), lid)
         assert geocode.STATE_FIPS.get(territory) is None, f"{territory} must not be in the state table"
-        assert not any("summary_level = '160'" in q for q in rec.executed), territory
+        assert not any("lower(p.name) LIKE lower(%s)" in q for q in rec.executed), territory
         assert any("summary_level = '860'" in q for q in rec.executed), territory  # the zcta rung DID run
 
 
@@ -697,3 +704,103 @@ def test_two_sub_rooftop_resolves_leave_one_open_review_row(conn):
         cur.execute("UPDATE geocode_review SET resolved_at = now() WHERE listing_id = %s", (lid,))
     geocode.resolve(conn, _geocoder(NOMATCH), lid)
     assert _open_reviews(conn, lid) == 1, "once staff have closed it, the condition can be raised again"
+
+
+# ---- fix round 2: every rung fills every geography its own point can be joined to --------------
+
+
+def test_the_zcta_rung_resolves_the_place_and_cbsa_its_centroid_lies_in(conn):
+    """Fix round 2, Important 1. Rung 1 returned the ZCTA, the tract covering its centroid and
+    that tract's parent county, and NOTHING else — no `place_geoid`, no `cbsa_geoid` — while rung 2
+    (which sets a place) only runs when rung 1 has already FAILED.
+
+    That is the rung a real seller's listing lands on: the wizard collects a city and a ZIP and no
+    street, so the geocoder cannot match an address. Two things followed from the gap, both of
+    which the rest of this programme had already been built to deliver:
+
+    * `materialize._band_inputs("place")` returns `None` without `ctx.place`, so the listing had
+      ZERO `place`-band rows — and the controller's fix-round-1 ruling, which serves exactly these
+      listings their PLACE band, then had nothing to serve and produced four blank tiles. The
+      ruling was right; the ladder was not making it true.
+    * `GET /api/markets` requires `practice_location.cbsa_geoid`, so the listing's metro never
+      joined the map's catalogue — one of the three things wiring the geocode exists to deliver.
+
+    The point the rung holds is the ZCTA centroid, and every one of those geographies is a
+    containment join away from it — the same `ST_Contains(..., z.centroid)` the rung already runs
+    twice, for the tract and the county."""
+    _seed_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES"
+            " ('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))',4269)))"
+        )
+    lid = make_listing(conn, zip="78613")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "zcta"
+    assert loc.place_geoid == "4813552", "the ZCTA centroid lies inside Cedar Park city"
+    assert loc.cbsa_geoid == "12420"
+    with conn.cursor() as cur:
+        cur.execute("SELECT place_geoid, cbsa_geoid FROM practice_location WHERE listing_id=%s", (lid,))
+        assert cur.fetchone() == ("4813552", "12420")
+
+
+def test_a_zcta_centroid_in_no_place_leaves_the_place_geoid_null(conn):
+    """Unincorporated. A ZCTA centroid that lies inside no place at all resolves with
+    `place_geoid` NULL — honestly, rather than by reaching for a place whose boundary does not
+    contain the point. `materialize`'s own county fallback then carries growth and payroll, and
+    the area group is genuinely unavailable; the contract document says so.
+
+    This is the Orlando specialist centre's condition (D-C32) arriving one rung lower."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES"
+            " ('48491020355','140','2023','Census Tract 203.55','48','491','48491',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),"
+            " ('78613','860','2023','ZCTA5 78613',NULL,NULL,NULL,"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),"
+            # A real place, far away — so the join runs and correctly matches nothing.
+            " ('4813552','160','2023','Cedar Park city','48',NULL,'48',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-96.0 30.5,-95.9 30.5,-95.9 30.6,-96.0 30.6,-96.0 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-95.95,30.55),4269))"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                    " VALUES ('tiger_cb','2023',now(),'test')")
+    lid = make_listing(conn, zip="78613")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "zcta"
+    assert loc.place_geoid is None
+    assert loc.tract_geoid == "48491020355"
+
+
+def test_the_place_rung_resolves_the_county_and_cbsa_its_own_centroid_lies_in(conn):
+    """The same rule applied to rung 2 (fix round 2). Its point is the PLACE centroid rather than
+    the ZIP's, but it is still a point, and a county and a CBSA are still one containment join
+    away from it — so the rung that used to return a place and nothing else now returns all three.
+
+    Why it matters where rung 1's mattered: without a county, `materialize._Ctx` has no CBP row,
+    so the payroll figure and the county growth fallback both vanish; without a CBSA the listing's
+    metro never reaches `GET /api/markets`. Neither is a property of WHICH rung answered."""
+    _seed_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom) VALUES"
+            " ('48491','050','2023','Williamson County','48',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-99 30,-97 30,-97 31,-99 31,-99 30))',4269))),"
+            " ('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area',NULL,"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-99 30,-97 30,-97 31,-99 31,-99 30))',4269)))"
+        )
+    # An unknown ZIP, so rung 1 cannot answer and rung 2 does.
+    lid = make_listing(conn, zip="00000", city="Cedar Park", state="TX")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "place" and loc.place_geoid == "4813552"
+    assert loc.county_geoid == "48491"
+    assert loc.cbsa_geoid == "12420"

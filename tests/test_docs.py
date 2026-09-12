@@ -2510,6 +2510,9 @@ def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
     # hospitals are not affected by it — the operator needs both to read a QA card correctly.
     assert "resolves at `zcta` — a ZIP-code centroid" in flat
     assert "served its Census place rather than the ring" in flat
+    # Fix round 2: and the honest other half, so an operator reading a blank card on QA knows
+    # which of the two conditions they are looking at.
+    assert "where the ZIP centroid lies in one" in flat
     assert "all twenty-nine demo hospitals carry a street and resolve at `rooftop`" in flat
     # Review minor 3: `--force` is not the only door to a re-resolve, and the page said it was.
     # `--listing <id>` resolves the named listing whether or not it already has a location.

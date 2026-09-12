@@ -315,3 +315,8 @@ def test_contract_doc_states_that_a_non_rooftop_point_is_served_its_place_band()
     assert "a ZIP-code centroid" in flat
     # A listing that has never been geocoded is NOT swept up by it.
     assert "a listing with no `practice_location` row is unaffected" in flat
+    # Fix round 2: the unincorporated case, which the first telling of this rule glossed as "a
+    # true city figure" for every non-rooftop listing. A ZIP centroid inside no place has no city
+    # band to be served, and the document has to say which of the two a reader is looking at.
+    assert "where the ZIP centroid lies in one" in flat
+    assert "the county carries growth and payroll and the area figures are unavailable" in flat
