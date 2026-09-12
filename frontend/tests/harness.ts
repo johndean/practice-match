@@ -246,7 +246,13 @@ export async function prepare(page: Page): Promise<void> {
         }
         return route.fulfill({
           status: 200, contentType: 'application/geo+json',
-          body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income')
+          // The BOX as well as the layer: the route is bbox-scoped and metro-agnostic, so a
+          // member who pans off the selected metro still gets polygons under the view, and a stub
+          // that answered the same Austin geometry whatever it was asked could not tell that
+          // continuity from a blank map. `designBoundariesBody` translates the design's own
+          // polygons only when they are NOT already under the box, which is never the case for
+          // any approved state, so no capture moves.
+          body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income', bbox)
         });
       }
     );
@@ -1452,18 +1458,13 @@ export function consumeExpectedApiFailure(page: Page, message: string): boolean 
   return true;
 }
 
-/** Drops any allowance that was never spent, for the ONE case whose refusal count is not
- *  deterministic: the metro-switch cost case races a settled view against a refusal, and which
- *  side wins decides whether the map asks twice or three times. `assertExpectedApiFailuresObserved`
- *  is the right default everywhere else — an allowance nobody used usually means the state stopped
- *  provoking the failure it exists for — so this is deliberately separate, named for what it gives
- *  up, and used once.
- *
- *  It still spends what DID arrive: an unarmed 4xx is a thrown console error either way, so this
- *  loosens the count and never the rule. */
-export function forgetExpectedApiFailures(page: Page): void {
-  armedApiFailures.delete(page);
-}
+// `forgetExpectedApiFailures` stood here until A32 (2026-09-12) and is DELETED with its one
+// caller. It dropped allowances nobody spent, for the single case whose refusal count was not
+// deterministic — the metro-switch cost case, which raced a settled view against a refusal and
+// could not say whether the map would ask twice or three times. A32 removes the doomed round that
+// made it a race, so the two cases that replace it arm an exact twelve and spend all twelve, and
+// `assertExpectedApiFailuresObserved` — the right default, since an allowance nobody used usually
+// means the state stopped provoking the failure it exists for — is the only rule left.
 
 /** Throws unless every armed allowance was actually used. */
 export function assertExpectedApiFailuresObserved(page: Page): void {

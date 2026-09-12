@@ -56,9 +56,64 @@ const ATTRIBUTION = {
 const UNIT = { income: 'usd', econ: 'usd', growth: 'pct', households: 'count', pets: 'count', competition: 'count' };
 const SOURCE = { income: 'acs5', growth: 'acs5', econ: 'cbp', households: 'acs5', pets: 'acs5', competition: 'zbp' };
 
+/**
+ * The ground a set of features covers: `[minLng, minLat, maxLng, maxLat]`, or `null` for a
+ * collection with no coordinates at all (the design carries no ZCTAs, so `competition` is empty).
+ */
+function extentOf(features) {
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  const walk = (c) => {
+    if (typeof c[0] === 'number') { w = Math.min(w, c[0]); e = Math.max(e, c[0]); s = Math.min(s, c[1]); n = Math.max(n, c[1]); return; }
+    c.forEach(walk);
+  };
+  features.forEach((f) => { if (f.geometry && f.geometry.coordinates) walk(f.geometry.coordinates); });
+  return Number.isFinite(w) ? [w, s, e, n] : null;
+}
+
+function shift(geometry, dx, dy) {
+  const walk = (c) => (typeof c[0] === 'number' ? [c[0] + dx, c[1] + dy] : c.map(walk));
+  return { ...geometry, coordinates: walk(geometry.coordinates) };
+}
+
+/**
+ * The design's own polygons, carried to the ground the request ASKED about when they are not
+ * already under it.
+ *
+ * `GET /api/markets/{cbsa}/boundaries` is bbox-scoped and METRO-AGNOSTIC — `_BOUNDARY_SQL`
+ * filters on summary level, vintage and `ST_Intersects(geom, bbox)` and never on the CBSA, so the
+ * path segment picks the whole-metro fallback box, the cache key and the 404 and nothing else. A
+ * member who pans clean off the selected metro therefore keeps getting real polygons, which is
+ * the continuity `smoke.spec.ts` asserts and the reason ADAPT-STALE-2's client-side "is this box
+ * inside the metro?" guard was withdrawn. A stub that answered the same Austin geometry whatever
+ * it was asked could not tell that behaviour from a blank map.
+ *
+ * TRANSLATED, never invented: it is the design's own `areaSet` geometry, moved so its centre sits
+ * at the centre of the box. And only when it has to be — where the design's polygons already
+ * INTERSECT the requested box the collection is returned untouched, which is every box any
+ * approved state ever looks at (they are all over Austin, which is where the fixture is), so no
+ * capture moves. A request with no bbox is the whole metro and is never translated.
+ */
+function underBox(features, bbox) {
+  if (!bbox || !features.length) return features;
+  const box = String(bbox).split(',').map(Number);
+  if (box.length !== 4 || !box.every(Number.isFinite)) return features;
+  const at = extentOf(features);
+  if (at === null) return features;
+  const [w, s, e, n] = box;
+  if (!(w > at[2] || e < at[0] || s > at[3] || n < at[1])) return features;   // already under the box
+  const dx = (w + e) / 2 - (at[0] + at[2]) / 2;
+  const dy = (s + n) / 2 - (at[1] + at[3]) / 2;
+  return features.map((f) => ({ ...f, geometry: f.geometry ? shift(f.geometry, dx, dy) : f.geometry }));
+}
+
 /** That collection in the endpoint's own shape. `state`, the two vintages and the attribution are
- *  the values the real endpoint sends for a cleared layer; the FEATURES are the design's. */
-export function designBoundariesBody(layer) {
+ *  the values the real endpoint sends for a cleared layer; the FEATURES are the design's, under
+ *  the ground `bbox` named (see `underBox`).
+ *
+ *  @param {string} layer
+ *  @param {string | null} bbox the request's own `bbox` parameter, or `null` for the whole metro
+ */
+export function designBoundariesBody(layer, bbox = null) {
   const key = LEVEL[layer] ? layer : 'income';
   const set = designAreaSet(key);
   return JSON.stringify({
@@ -74,7 +129,7 @@ export function designBoundariesBody(layer) {
     // which is what every metro-zoom viewport measured gets; the route only coarsens when the
     // composed body would otherwise exceed MAX_BODY_BYTES and be refused.
     simplified_deg: 0,
-    features: set.features
+    features: underBox(set.features, bbox)
   });
 }
 

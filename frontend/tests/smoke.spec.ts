@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, expectApiStatus, forgetExpectedApiFailures, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
@@ -1245,10 +1245,20 @@ test.describe('A24 — the boundary route is absent, and the map degrades rather
 test.describe('A24.21–A24.23 — the boundary request carries the map own viewport', () => {
   const bboxesOf = (urls: string[]) => [...new Set(urls.map((u) => new URL(u).searchParams.get('bbox')))];
 
-  async function browseRecording(page: Page): Promise<string[]> {
+  /** `arm` is how many `422` console lines the FIRST settled view is expected to produce — six,
+   *  one per layer, on a viewport wide enough that the boot box is past the route's span cap.
+   *  They have to be armed BEFORE the view that provokes them and AFTER the page has an origin
+   *  (`expectApiStatus` reads `page.url()` to tell the app from the reference), which is why the
+   *  signed-out gate is visited first: it carries no map, so it provokes nothing, and it is the
+   *  only moment in this sequence where both are true. */
+  async function browseRecording(page: Page, arm = 0): Promise<string[]> {
     const urls: string[] = [];
     page.on('request', (r) => { if (/\/api\/markets\/[^/]+\/boundaries/.test(r.url())) urls.push(r.url()); });
     await prepare(page);
+    if (arm > 0) {
+      await page.goto('/browse');
+      for (let i = 0; i < arm; i++) expectApiStatus(page, 422);
+    }
     await signInAs(page, 'design', '/browse');
     await waitMap(page);
     await page.waitForTimeout(900);          // the module's 250 ms settle, with room to spare
@@ -1278,65 +1288,194 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     expect(e - w).toBeLessThanOrEqual(span * 1.6 + 2 * cell);
   });
 
-  // Fix round 2, A. Measured on QA (2026-09-12): a metro switch on a 1,912 px map pulled the WHOLE
-  // New York metro TWICE, about 3.9 MB gzipped each time across six layers, because the adapter
-  // fell back to the whole metro for a box the member had already left and `logic.js` then
-  // discarded the answer.
-  //
-  // WHAT THIS CASE IS, EXACTLY — it is a COST assertion and not the guard's gate, and the
-  // difference was measured rather than assumed. Cutting the guard out of `boundaries.ts` leaves
-  // this case GREEN: in this harness the two rounds of requests after a switch each carry the box
-  // that is settled at the moment they are refused, so the guard never fires and the sequence is
-  // identical with and without it. The guard's own gate is the three unit cases in
-  // `src/market/boundaries.test.ts`, each of which was red before the fix and names the request it
-  // stops. What this case does hold is the number a member pays: after a metro switch at a
-  // viewport past the span cap, the new metro is pulled whole ONCE PER LAYER — which is the
-  // fallback working — and a change that made it twice, for any reason, fails here.
-  //
-  // It also needs `prepare`'s stub to refuse the way the route does (`harness.ts`'s
-  // `MAX_BBOX_DEG`): before that the stub answered 200 to every box, the fallback was unreachable
-  // in a browser, and this case passed without ever exercising the ladder at all.
-  test('a metro switch pays for the whole-metro fallback ONCE per layer, not twice', async ({ page }) => {
-    const urls = await browseRecording(page);
-    expect(urls.length).toBeGreaterThan(0);
-    for (let i = 0; i < FILL_LAYERS.length * 3; i++) expectApiStatus(page, 422);
+  // SUPERSEDED, 2026-09-12 (A32). `a metro switch pays for the whole-metro fallback ONCE per
+  // layer, not twice` stood here: it armed three rounds of refusals, drained whatever was left
+  // with `forgetExpectedApiFailures`, and asserted an UPPER bound, because the sequence it
+  // measured was a race — its own comment recorded that cutting the 0.1.21 stale-box guard out
+  // left it green, and named a metro envelope in the catalogue as "the real remedy … scheduled
+  // for 0.1.22". That remedy was built, reviewed and withdrawn (the route is bbox-scoped and
+  // metro-agnostic, so refusing on geometry would have blanked a member who panned off the
+  // metro); what landed instead is A32, which removes the doomed round rather than declining to
+  // send it. With no race left the count is deterministic in both directions, so the two cases
+  // below assert EQUALITIES and spend every allowance they arm.
 
-    // One zoom-out doubles the span: at 1440 px and zoom 10 the padded box is about 3.2 degrees,
-    // and at zoom 9 about 6.3 — over the route's 4.0 cap, which is what makes the fallback live
-    // (`prepare`'s stub refuses on the same cap the real route does). The design mounts Leaflet
-    // with `zoomControl: false` (C11) and draws its OWN control, so this is the design's button.
-    //
-    // Every refusal is a console 4xx and has to be armed. How MANY there are depends on which
-    // side of the settle/refusal race the run lands on — two rounds of six is what the harness
-    // usually produces — so this arms an upper bound and drains what is left rather than
-    // requiring every allowance to be spent.
-    await page.getByRole('button', { name: 'Zoom out' }).first().click();
-    await page.waitForTimeout(1200);
+  // ---------------------------------------------------------------------------------------
+  // A32 (2026-09-12) — a metro switch waits for the map to move before it asks.
+  //
+  // Measured on QA `db8bf67` (New York, 1,912 x 1,228): a metro switch pulled the whole metro
+  // TWICE — 24 requests, 7.85 MB gzipped. `setMarket` runs BEFORE the map has moved, so the
+  // request it used to issue carried the box the OLD metro was still settled on; on a wide screen
+  // that box is past the route's span cap, the ladder falls back to the whole metro and pays for
+  // it, and `logic.js`'s own guard then discards the answer because the settled view has moved on
+  // by the time it lands. The listener repeats the sequence and THAT answer is drawn.
+  //
+  // The unit cases own the branch (`src/logic.test.ts`) and the notification (`src/map/
+  // viewport.test.ts`, `src/components/MarketMapView.test.ts`). What only a real browser can
+  // prove is the chain: the design's dropdown → `setMarket` → Vue's watcher → Leaflet's own
+  // `setView` → the forced publish → the debounce → the adapter → the query string.
+  // ---------------------------------------------------------------------------------------
+  const REQUEST_SETTLE_MS = 1500;
+
+  /** Click the metro dropdown's own row for `name` — A13's listbox, never a native select. */
+  async function chooseMetro(page: Page, name: string): Promise<void> {
+    await page.getByRole('combobox', { name: 'Metro area' }).click();
+    const menu = page.getByRole('listbox', { name: 'Metro area' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name }).click();
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+  }
+
+  /** The padded span the settled view will ask for, in degrees, read off the real map element —
+   *  the same arithmetic `src/map/viewport.ts` does, so a case can STATE which side of the
+   *  route's `MAX_BBOX_DEG` it is on instead of assuming a layout. */
+  async function paddedSpanDeg(page: Page): Promise<number> {
+    const width = (await page.locator('.leaflet-container').first().boundingBox())!.width;
+    return width * (360 / (256 * 2 ** 10)) * 1.6;
+  }
+
+  /** Every box a set of recorded requests carried, in order, without de-duplicating: a count of
+   *  requests is the thing these cases measure, so `bboxesOf`'s Set would hide the double pull.
+   *  The whole-metro request's `null` is dropped — these are the boxes that were NAMED. */
+  const boxesOf = (urls: string[]) => urls.map((u) => new URL(u).searchParams.get('bbox')).filter((b): b is string => b !== null);
+
+  /** Painted pixels on the polygon layer's own canvas, the way the degradation block below reads
+   *  them. Same-origin, so the canvas is untainted and readable. */
+  const paintedPixels = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  test('a metro switch on a WIDE map pulls the new metro whole ONCE per layer, and never asks with the old box', async ({ page }) => {
+    // Wide enough that the padded box at the design's own zoom 10 is past the route's 4-degree
+    // span cap — the shape of the QA measurement, where the map was 1,912 px. The precondition is
+    // ASSERTED rather than assumed: if the Browse layout ever gives the map less of the window,
+    // this says so instead of quietly testing the narrow case twice.
+    await page.setViewportSize({ width: 2400, height: 1100 });
+    // Every box past the cap is a console 422 and has to be armed BEFORE the view that provokes
+    // it: six for the metro the page boots on, six more for the metro it switches to.
+    const urls = await browseRecording(page, FILL_LAYERS.length);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(await paddedSpanDeg(page), 'this viewport no longer produces a box past the route span cap')
+      .toBeGreaterThan(4.0);
+    const austin = boxesOf(urls);
+    expect(austin.length, 'the boot never asked with a box').toBeGreaterThan(0);
+    for (let i = 0; i < FILL_LAYERS.length; i++) expectApiStatus(page, 422);
 
     const before = urls.length;
+    await chooseMetro(page, 'Atlanta, GA');
+
+    const after = urls.slice(before);
+    // NOT ONE request carrying a box Austin settled on. That request is the defect: its answer
+    // was bought, discarded on arrival, and paid for again by the listener.
+    expect(after.filter((u) => austin.includes(new URL(u).searchParams.get('bbox') ?? '')),
+      'the metro switch asked with the box the previous metro was settled on').toEqual([]);
+    // EXACTLY one whole-metro pull per layer — the ladder's fallback, once. Twelve is the defect.
+    const wholeMetro = after.filter((u) => new URL(u).searchParams.get('bbox') === null);
+    expect(wholeMetro.length, `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers`)
+      .toBe(FILL_LAYERS.length);
+    // …and every request is for the metro the member CHOSE. Atlanta's geoid, never Austin's.
+    expect([...new Set(after.map((u) => new URL(u).pathname.split('/')[3]))]).toEqual(['12060']);
+    // The refused round and the fallback round, and nothing before them.
+    expect(after.length).toBe(FILL_LAYERS.length * 2);
+    // Every one of the twelve allowances armed above is SPENT — `assertExpectedApiFailuresObserved`
+    // at teardown fails on any that is not — so the refusal count is asserted as exactly as the
+    // request count. There is no race left to lose.
+  });
+
+  test('a metro switch on a NARROW map asks for the new metro once per layer, and never for the old box', async ({ page }) => {
+    // The project's own 1440 x 940, where the padded box sits UNDER the span cap — so nothing is
+    // refused, nothing falls back, and the whole cost of a metro switch is one request per layer.
+    // Before A32 it was twelve: six carrying the box the previous metro had settled on (served,
+    // and describing ground the member is no longer looking at) and six carrying the real one.
+    const urls = await browseRecording(page);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(await paddedSpanDeg(page), 'this viewport now produces a box past the route span cap')
+      .toBeLessThan(4.0);
+    const austin = boxesOf(urls);
+
+    const before = urls.length;
+    await chooseMetro(page, 'Atlanta, GA');
+
+    const after = urls.slice(before);
+    expect(after.filter((u) => austin.includes(new URL(u).searchParams.get('bbox') ?? '')),
+      'the metro switch asked with the box the previous metro was settled on').toEqual([]);
+    expect(after.length, 'a metro switch costs more than one request per layer').toBe(FILL_LAYERS.length);
+    expect(after.filter((u) => new URL(u).searchParams.get('bbox') === null), 'the whole metro was pulled at all').toEqual([]);
+    expect([...new Set(after.map((u) => new URL(u).pathname.split('/')[3]))]).toEqual(['12060']);
+    // One box, and it is a box over ATLANTA — the metro the member chose, not the one they left.
+    const boxes = [...new Set(boxesOf(after))];
+    expect(boxes).toHaveLength(1);
+    const [w, , e] = boxes[0]!.split(',').map(Number);
+    expect(w).toBeLessThan(-84.39);
+    expect(e).toBeGreaterThan(-84.39);
+  });
+
+  // CONTINUITY — the case a client-side "is this box inside the metro?" guard would have failed,
+  // and the reason that guard was withdrawn (review of ADAPT-STALE-2, 2026-09-12).
+  //
+  // `_BOUNDARY_SQL` filters on summary level, vintage and `ST_Intersects(geom, bbox)` and NEVER on
+  // the CBSA: the `cbsa` path segment picks the whole-metro fallback box, the cache key and the
+  // 404, and nothing else. So the shading has always followed a member who pans off the selected
+  // metro, and it must keep doing so — "the map must work wherever a hospital is displayed".
+  test('panning clean off the selected metro still asks, and still shades', async ({ page }) => {
+    const urls = await browseRecording(page);
+    const first = new URL(urls.at(-1)!).searchParams.get('bbox')!.split(',').map(Number);
+
+    // Three full-width drags east: at zoom 10 the padded box is about 3.2 deg wide, so this
+    // leaves Austin's own ground entirely — the design's practices span -98.09 to -97.62.
+    const map = (await page.locator('.leaflet-container').first().boundingBox())!;
+    for (let i = 0; i < 3; i++) {
+      await page.mouse.move(map.x + map.width * 0.85, map.y + map.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(map.x + map.width * 0.15, map.y + map.height / 2, { steps: 12 });
+      await page.waitForTimeout(200);            // stand still: Leaflet throws an inertia pan otherwise
+      await page.mouse.up();
+      await page.waitForTimeout(700);
+    }
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+
+    const last = new URL(urls.at(-1)!).searchParams.get('bbox')!.split(',').map(Number);
+    expect(last[0], 'the map never left the ground it started on').toBeGreaterThan(first[2]);
+    // The requests were made — for the new ground, and still against the selected metro's geoid,
+    // which the route reads as a cache key and not as a filter.
+    expect(urls.filter((u) => new URL(u).searchParams.get('bbox') === last.join(',')).length)
+      .toBeGreaterThanOrEqual(1);
+    // …and the answer is drawn. A client that refused to ask here would leave this at zero.
+    expect(await paintedPixels(page), 'the map went blank once it left the metro').toBeGreaterThan(0);
+  });
+
+  // A24.41/A24.42: `hasRamp` is true while `mdAreas === null`, which is precisely the state A32
+  // puts the map in for the length of a metro switch. The legend must therefore keep its ramp and
+  // its geography line throughout — the flicker those entries exist to prevent, now reachable by
+  // a second route.
+  test('the legend keeps its ramp and its geography line through a metro switch', async ({ page }) => {
+    await browseRecording(page);
+    // The two elements A24.41 and A24.42 gate on `areaFc.features.length > 0 || areasPending`:
+    // the ramp's own "No data" class (`hasRamp`) and the geography line (`hasGeo`). Both are
+    // present while `mdAreas === null`, which is exactly the state A32 holds the map in for the
+    // length of a switch — so a ramp that vanished mid-switch would be the flicker those entries
+    // exist to prevent, reached by a second route.
+    const ramp = page.getByText('No data', { exact: true }).first();
+    const geo = page.getByText('Census tract', { exact: true }).first();
+    await expect(ramp, 'no ramp before the switch — this case would assert nothing').toBeVisible();
+    await expect(geo).toBeVisible();
+
     await page.getByRole('combobox', { name: 'Metro area' }).click();
     const menu = page.getByRole('listbox', { name: 'Metro area' });
     await menu.waitFor({ state: 'visible' });
     await menu.getByRole('option', { name: 'Atlanta, GA' }).click();
-    await page.waitForTimeout(1500);
+    // MID-SWITCH: the map has moved, the settle has not fired, `mdAreas` is null.
+    await page.waitForTimeout(120);
+    await expect(ramp, 'the legend dropped its ramp while the new metro was pending').toBeVisible();
+    await expect(geo, 'the legend dropped its geography line while the new metro was pending').toBeVisible();
 
-    const after = urls.slice(before);
-    expect(after.length, 'the metro switch asked for nothing at all').toBeGreaterThan(0);
-    const wholeMetro = after.filter((u) => new URL(u).searchParams.get('bbox') === null);
-    const geoids = [...new Set(wholeMetro.map((u) => new URL(u).pathname.split('/')[3]))];
-    expect(geoids.length, 'more than one metro was pulled whole').toBeLessThanOrEqual(1);
-    // An UPPER BOUND, not an equality. One pull per layer is the fallback doing its job; ZERO is
-    // the better outcome and the one the guard produces when it wins the race against the settle,
-    // so an equality here would turn correct behaviour red. The QA re-measure shows the guard
-    // usually LOSES that race — the real remedy is a metro envelope in the catalogue, so the
-    // client never sends a box it knows is too wide, and that is scheduled for 0.1.22.
-    expect(
-      wholeMetro.length,
-      `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers — at most once per layer is the fallback, twice is the same answer bought and discarded`
-    ).toBeLessThanOrEqual(FILL_LAYERS.length);
-    // The refusals are armed the same way, and for the same reason: the number depends on which
-    // side of that race the run lands on, so the allowances are DRAINED rather than required.
-    forgetExpectedApiFailures(page);
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+    await expect(ramp).toBeVisible();
+    await expect(geo).toBeVisible();
   });
 
   test('panning the map asks again, for the new ground and once', async ({ page }) => {

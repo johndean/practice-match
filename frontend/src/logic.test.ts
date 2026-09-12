@@ -5157,14 +5157,92 @@ describe('A24 — the market adapter', () => {
     expect(drawn(comp), "box-1's answer landed on box-2's map").toEqual(['box-2']);
   });
 
-  it('a metro change still CLEARS first, even with a viewport — one city is never drawn over another', () => {
-    const a = viewportAdapter(['box-1']);
+  // -----------------------------------------------------------------------------------
+  // A32 (2026-09-12) — a metro change waits for the map to move before it asks.
+  //
+  // Measured on QA `db8bf67` (New York, 1,912 x 1,228): a metro switch pulled the whole metro
+  // TWICE, 24 requests and 7.85 MB gzipped. `setMarket` runs BEFORE the map has moved, so the
+  // request it issues carries the box the OLD metro is still settled on; on a wide screen that
+  // box is past the route's span cap, the adapter's ladder falls back to the whole metro and pays
+  // for it, and `loadAreas`'s own guard then discards the answer because the settled view has
+  // moved on by the time it lands. The listener repeats the sequence and THAT answer is drawn.
+  //
+  // The first request was never answerable, so it is not made. The shading goes PENDING —
+  // `mdAreas: null`, the state A24.41 keeps the legend's ramp and geography line for — and the
+  // settled-view listener asks once, with the box the new metro has actually settled on.
+  //
+  // NOT a guess about where the box is. The boundaries route is bbox-scoped and metro-agnostic
+  // (`_BOUNDARY_SQL` filters on level, vintage and `ST_Intersects(geom, bbox)` and never on the
+  // CBSA), so shading FOLLOWS a member who pans off the selected metro, and a client that refused
+  // to ask on geometry would blank exactly that. This asks the same questions, in the order that
+  // makes them answerable.
+  // -----------------------------------------------------------------------------------
+  it('a metro change asks for NOTHING until the map has moved, and goes pending meanwhile', () => {
+    const a = viewportAdapter(['box-austin']);
     const comp: any = new Component({ market: a.adapter });
     comp.componentDidMount();
     a.pending[0]({ income: FC(['austin']) });
     comp.setMarket('Sacramento, CA');
-    expect(comp.state.mdAreas).toBeNull();
-    expect(a.calls.map((c) => c.market)).toEqual(['Austin, TX', 'Sacramento, CA']);
+    expect(a.calls.map((c) => c.market), 'Sacramento was asked for with Austin\'s box').toEqual(['Austin, TX']);
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is chosen').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('…and the settled-view listener then asks ONCE, for the new metro with the new box', async () => {
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    a.move('box-sacramento');                    // the map has moved and settled
+    expect(a.calls).toEqual([
+      { market: 'Austin, TX', bbox: 'box-austin' },
+      { market: 'Sacramento, CA', bbox: 'box-sacramento' }
+    ]);
+    a.pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('the SAME metro re-selected asks immediately — there is no move to wait for', () => {
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Austin, TX');
+    expect(a.calls).toEqual([
+      { market: 'Austin, TX', bbox: 'box-austin' },
+      { market: 'Austin, TX', bbox: 'box-austin' }
+    ]);
+  });
+
+  it('a metro the catalogue no longer holds asks immediately too — there is no centre to compare', () => {
+    // `load.ts` prunes `MARKETS` to the metros the API actually served, so a stale dropdown row
+    // can name one that is gone. `MARKETS[v]` is then undefined, no comparison is possible, and
+    // the design's own immediate path is the honest answer — never a silent do-nothing.
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Nowhere, ZZ');
+    expect(a.calls.map((c) => c.market)).toEqual(['Austin, TX', 'Nowhere, ZZ']);
+  });
+
+  it('with an adapter that publishes no viewport the design\'s own immediate load is unchanged', () => {
+    // The reference and the Claude Design preview take this path, and so does any build whose
+    // adapter predates the bbox wiring: there is no settled-view listener to wait for, so waiting
+    // would mean never loading at all.
+    const asked: unknown[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string, b: unknown) => { asked.push([n, b]); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual([['Austin, TX', null], ['Sacramento, CA', null]]);
+  });
+
+  it('with NO market adapter at all setMarket touches neither mdAreas nor the API', () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.market).toBe('Sacramento, CA');
+    expect(comp.state.mdAreas, 'the design\'s fixture path reads areaSet, never mdAreas').toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
   });
 
   it('unsubscribes on unmount, so a torn-down screen stops asking the API for boxes', () => {

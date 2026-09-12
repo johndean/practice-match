@@ -424,7 +424,18 @@ class Component extends DCLogic {
   // change event the way setF does, so the transition below is the one the <select> had.
   setMarket = (e) => {
     const v = e && e.target ? e.target.value : e;
-    this.loadAreas(v);
+    // A32: this runs BEFORE the map has moved, so the box the adapter would send is the one
+    // the PREVIOUS metro is still settled on -- a question about ground nobody is looking at,
+    // whose answer `loadAreas` own guard then discards. With a viewport-publishing adapter and
+    // a metro whose centre is somewhere else it is not asked: the shading goes PENDING and the
+    // settled-view listener asks once, with the box the new metro actually settles on. The same
+    // metro re-selected, a metro MARKETS no longer holds, and every path with no viewport
+    // adapter keep the immediate load -- there is no move to wait for.
+    const from = MARKETS[this.state.market || "Austin, TX"], to = MARKETS[v];
+    const willMove = !!(this.props.market && this.props.market.viewport && from && to
+      && (from.center[0] !== to.center[0] || from.center[1] !== to.center[1]));
+    if (willMove) this.setState({ mdAreas: null });
+    else this.loadAreas(v);
     this.setState({ market: v, activeId: null, hoverId: null, mdSel: null, loading: true, marketMenu: false, marketMenuAt: -1 }, () => {
       clearTimeout(this._t);
       this._t = setTimeout(() => this.setState({ loading: false }), 320);

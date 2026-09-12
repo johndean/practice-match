@@ -353,6 +353,11 @@ describe('local design amendments (spec D15)', () => {
     // is the only honest state"). One literal edit: `setMarket` clears `mdSel` in the same
     // object literal A13.1 wrote, so it reads A13.1's own output and is appended last.
     'A30',
+    // A32 — the metro switch waits for the map to move before asking (Task ADAPT-STALE-3,
+    // 2026-09-12). One literal edit, CHAINED on A24.18: its `find` is the `this.loadAreas(v);`
+    // line A24.18 put in `setMarket`, so it is appended after it. A31 belongs to the snapshot
+    // branch and is not in this list.
+    'A32',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -518,7 +523,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(286);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(287);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

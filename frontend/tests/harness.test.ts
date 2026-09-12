@@ -327,6 +327,47 @@ describe('the boundary stubs (A24.14-A24.18)', () => {
     expect(JSON.parse(designBoundariesBody('econ')).source_dataset).toBe('cbp');
   });
 
+  it('answers for the ground it was ASKED about — the route is bbox-scoped and metro-agnostic', () => {
+    // `_BOUNDARY_SQL` filters on summary level, vintage and `ST_Intersects(geom, bbox)` and never
+    // on the CBSA, so a member who pans clean off the selected metro keeps getting polygons under
+    // the view. A stub that answered the same Austin geometry whatever it was asked could not tell
+    // that continuity from a blank map, which is what `smoke.spec.ts`'s continuity case measures.
+    const lngs = (body: string) => {
+      const out: number[] = [];
+      const walk = (c: unknown): void => {
+        if (Array.isArray(c) && typeof c[0] === 'number') { out.push(c[0] as number); return; }
+        if (Array.isArray(c)) c.forEach(walk);
+      };
+      walk((JSON.parse(body) as { features: { geometry: { coordinates: unknown } }[] }).features.map((f) => f.geometry.coordinates));
+      return out;
+    };
+    const own = lngs(designBoundariesBody('income'));
+    expect(own.length, 'the design draws no income polygons at all').toBeGreaterThan(0);
+
+    // A box over the design's own ground: the geometry is returned UNTOUCHED. Every approved
+    // state's box is one of these, which is why none of them moves.
+    const austin = `${Math.min(...own) - 0.5},20,${Math.max(...own) + 0.5},50`;
+    expect(designBoundariesBody('income', austin)).toBe(designBoundariesBody('income'));
+
+    // A box the fixture is nowhere near: the SAME polygons, carried to the centre of that box.
+    // They INTERSECT it rather than sit inside it, which is what the real route returns too — a
+    // tract on the edge of a viewport is served whole, not clipped.
+    const far = lngs(designBoundariesBody('income', '-84.9,33.3,-83.9,34.3'));
+    expect(far).toHaveLength(own.length);
+    expect(Math.min(...far), 'the fixture is still east of the box').toBeLessThan(-83.9);
+    expect(Math.max(...far), 'the fixture is still west of the box').toBeGreaterThan(-84.9);
+    expect((Math.min(...far) + Math.max(...far)) / 2, 'the fixture was not centred on the box').toBeCloseTo(-84.4, 6);
+    // …the SHAPE is the design's, unchanged: every polygon moved by the same vector.
+    const deltas = [...new Set(far.map((v, i) => (v - own[i]).toFixed(6)))];
+    expect(deltas, 'the fixture was reshaped, not translated').toHaveLength(1);
+
+    // A collection with no coordinates at all (the design carries no ZCTAs) is left alone rather
+    // than divided by zero into NaNs.
+    expect(JSON.parse(designBoundariesBody('competition', '-84.9,33.3,-83.9,34.3')).features).toEqual([]);
+    // …and a malformed box is the route's question, not this stub's: it answers as it always did.
+    expect(designBoundariesBody('income', 'not,a,box')).toBe(designBoundariesBody('income'));
+  });
+
   it('answer a market catalogue the adapter can resolve the design\'s own metro by NAME in', () => {
     const rows = JSON.parse(designMarketsBody()) as { cbsa_geoid: string; name: string }[];
     expect(rows.map((r) => r.name)).toContain('Austin, TX');

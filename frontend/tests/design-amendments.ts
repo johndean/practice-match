@@ -5661,6 +5661,58 @@ const A30: Amendment = {
   count: 1
 };
 
+/** A32 — a metro change waits for the map to move before it asks (Task ADAPT-STALE-3, 2026-09-12).
+ *
+ *  Measured on QA `db8bf67` (New York, 1,912 x 1,228): switching metro pulled the whole metro
+ *  TWICE — 24 requests, 7.85 MB gzipped. `setMarket` runs BEFORE the map has moved, so the request
+ *  A24.18 put there carries the box the OLD metro is still settled on. On a wide screen that box
+ *  is past the route's span cap, the adapter's ladder falls back to the whole metro and pays for
+ *  it, and `loadAreas`'s own guard then DISCARDS the answer because the settled view is the new
+ *  metro's by the time it lands. A24.22's settled-view listener then repeats the whole sequence,
+ *  and that second answer is the one drawn. The first was never answerable.
+ *
+ *  So it is not made. With a viewport-publishing adapter AND a metro whose centre is somewhere
+ *  else, `setMarket` marks the shading PENDING — `mdAreas: null`, the state A24.41 keeps the
+ *  legend's ramp and geography line for, so nothing flickers — and A24.22's listener asks once,
+ *  with the box the new metro has actually settled on.
+ *
+ *  THE COMPARISON IS THE CENTRE, not the name, and that is deliberate: what decides whether there
+ *  is a move to wait for is whether the map is going to move. Re-selecting the metro already
+ *  chosen moves nothing, so it keeps the design's immediate load; so does a metro `MARKETS` no
+ *  longer holds (`load.ts` prunes it to what the API served, so a stale dropdown row can name one
+ *  that is gone — `MARKETS[v]` is then undefined, no comparison is possible, and asking is the
+ *  honest answer); and so does every path with no viewport adapter at all — the reference, the
+ *  Claude Design preview, and any build whose adapter predates the bbox wiring — where there is no
+ *  listener to wait for and waiting would mean never loading.
+ *
+ *  NOT a guess about which metro a box can see. That was tried (ADAPT-STALE-2, withdrawn): the
+ *  boundaries route is bbox-scoped and metro-agnostic — `_BOUNDARY_SQL` filters on level, vintage
+ *  and `ST_Intersects(geom, bbox)` and never on the CBSA, so the `cbsa` path segment only picks
+ *  the whole-metro fallback box, the cache key and the 404 — which means shading has always
+ *  FOLLOWED a member who pans off the selected metro, and a client refusing on geometry would
+ *  blank exactly that. This changes the ORDER of the questions and not which ones are answerable.
+ *
+ *  CHAINED on A24.18, whose `this.loadAreas(v);` line is this entry's whole `find`. One literal
+ *  edit. */
+const A32: Amendment = {
+  id: 'A32', date: '2026-09-12',
+  ruling: 'the metro switch waits for the map to move before asking, so the box the previous metro settled on is never sent — and shading still follows a member who pans off the metro, because the route is bbox-scoped (Task ADAPT-STALE-3)',
+  find: '    this.loadAreas(v);\n',
+  replace: '    // A32: this runs BEFORE the map has moved, so the box the adapter would send is the one\n'
+    + '    // the PREVIOUS metro is still settled on -- a question about ground nobody is looking at,\n'
+    + '    // whose answer `loadAreas` own guard then discards. With a viewport-publishing adapter and\n'
+    + '    // a metro whose centre is somewhere else it is not asked: the shading goes PENDING and the\n'
+    + '    // settled-view listener asks once, with the box the new metro actually settles on. The same\n'
+    + '    // metro re-selected, a metro MARKETS no longer holds, and every path with no viewport\n'
+    + '    // adapter keep the immediate load -- there is no move to wait for.\n'
+    + '    const from = MARKETS[this.state.market || "Austin, TX"], to = MARKETS[v];\n'
+    + '    const willMove = !!(this.props.market && this.props.market.viewport && from && to\n'
+    + '      && (from.center[0] !== to.center[0] || from.center[1] !== to.center[1]));\n'
+    + '    if (willMove) this.setState({ mdAreas: null });\n'
+    + '    else this.loadAreas(v);\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5849,5 +5901,9 @@ export function amendments(): Amendment[] {
     // A30 -- a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Reads
     // A13.1's own output (the `setMarket` object literal it wrote), so it is appended last, as
     // every family is.
-    A30];
+    A30,
+    // A32 -- the metro switch waits for the map to move before asking (Task ADAPT-STALE-3,
+    // 2026-09-12). CHAINED on A24.18, whose `this.loadAreas(v);` line is its whole `find`, so it
+    // runs after it. A31 is the snapshot branch's and is not in this list.
+    A32];
 }
