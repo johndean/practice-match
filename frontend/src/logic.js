@@ -500,10 +500,11 @@ class Component extends DCLogic {
   // interpolation, and not new data"), applied to real Census boundaries instead of grid
   // cells, with longitude scaled by cos(lat) exactly as the mosaic scaled it.
   //
-  // The value is taken as it comes and is NOT put through `num()`: that helper strips
-  // everything but digits and a dot, so `num(-5.1)` is `5.1` - it would turn a declining
-  // area into a growing one. Invisible until now, because every one of the design's own
-  // nine communities grows; A24.13 (D-C46) makes a negative growth a first-class value.
+  // The value is taken as it comes and is NOT put through `num()`: by this point it is
+  // already a number, parsed once by `communities()`, and a second pass would be a second
+  // chance to lose something. (The older reason - that `num` stripped a leading minus, so
+  // `num(-5.1)` was `5.1` and a decline read as growth - stopped being true with A24.43,
+  // which taught it to read the first signed number and nothing after it.)
   areaSet(layer) {
     const src = (this.state.areas || {})[AREA_LEVEL[layer]];
     if (!src) return { type: "FeatureCollection", features: [] };
@@ -600,7 +601,7 @@ class Component extends DCLogic {
       return {
         id: p.id, name: p.area, lat: p.lat, lng: p.lng, communityLabel: p.communityLabel,
         pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
-        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0) : undefined,
+        growth: p.growth != null ? num(p.growth) : undefined,
         pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
         econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
         vets: VETS[p.id]

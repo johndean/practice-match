@@ -4862,6 +4862,26 @@ describe('A24 — real boundary polygons', () => {
   // right all along because `communities()` uses `parseFloat` and keeps the sign; the strip is
   // the ONE reader that goes through `num`, which is why one screen said the opposite of the
   // other about the same city.
+  // Fix round 2, C (found by the re-review). `communities()` has its OWN growth parser, and it
+  // has the same trap `num` had: stripping everything but digits, a dot and a minus leaves the
+  // year glued to the figure — "+14.2% since 2015" parses as 14.22015. Harmless today only
+  // because `toFixed(1)` rounds it away on the one surface that prints it and no fixture sits on
+  // a class boundary; a number nothing measured is still a number nothing measured, and the two
+  // parsers are now one helper with two readers.
+  it('communities() parses a growth figure to the number it states, year and all', () => {
+    const through = (raw: string) => {
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', growth: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0].growth; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('+14.2% since 2015')).toBe(14.2);
+    expect(through('-1.5% since 2018')).toBe(-1.5);
+    expect(through('+3% since 2018')).toBe(3);
+    // The design's own zero-for-absent contract on this field is unchanged.
+    expect(through('no figure')).toBe(0);
+  });
+
   it('num keeps a figure\'s sign and stops at the end of the number', () => {
     // `num` is module-scoped in the ported script and the trailing export is pinned byte for byte
     // (`app-generated.test.ts`), so it is exercised through the ONE reader whose output is a

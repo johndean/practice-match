@@ -344,6 +344,9 @@ describe('local design amendments (spec D15)', () => {
     // carries the ruled sentence alone (E). A24.56 reads A24.20's output and A24.57 A24.38's.
     'A24.44', 'A24.45', 'A24.46', 'A24.47', 'A24.48', 'A24.49', 'A24.50', 'A24.52', 'A24.51',
     'A24.54', 'A24.53', 'A24.55', 'A24.56', 'A24.57',
+    // Fix round 2, C and D: one number parser, and a comment that stopped being true when A24.43
+    // fixed it. A24.59 reads A24.3's own output.
+    'A24.58', 'A24.59',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -502,7 +505,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(283);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(285);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

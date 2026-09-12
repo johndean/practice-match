@@ -5579,6 +5579,46 @@ const A24_57: Amendment = {
   count: 1
 };
 
+/** A24.58 / A24.59 -- FIX ROUND 2, C and D (2026-09-12, found by the re-review of round 1).
+ *
+ *  C: `communities()` carries its OWN growth parser, and it had the same trap A24.43 took out of
+ *  `num` -- stripping everything but digits, a dot and a minus leaves the YEAR glued to the
+ *  figure, so "+14.2% since 2015" parsed as 14.22015 and "-1.5% since 2018" as -1.52018. Harmless
+ *  today only because `toFixed(1)` rounds it away on the one surface that prints it and no fixture
+ *  sits on a class boundary; it is still a number nothing measured, and the same defect in a
+ *  second place is how the first one came back. One helper, two readers: this parses with
+ *  `num()` itself. The sign survives because `num` keeps it (A24.43), which is the whole reason
+ *  `communities()` had a parser of its own in the first place.
+ *
+ *  D: the comment above `areaSet` justified NOT using `num()` by saying `num(-5.1)` is `5.1`.
+ *  A24.43 made that false. What still holds is the other half of the reason, so that is what it
+ *  says now. */
+const FIX2CD = {
+  date: '2026-09-12',
+  ruling: 'The design has one number parser, not two: `communities()` parsed a growth figure with a second regex that glued the trailing year onto the digits ("+14.2% since 2015" → 14.22015), and the comment justifying a third path cited behaviour A24.43 had already removed.'
+};
+
+const A24_58: Amendment = {
+  id: 'A24.58', ...FIX2CD,
+  find: '        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0) : undefined,\n',
+  replace: '        growth: p.growth != null ? num(p.growth) : undefined,\n',
+  count: 1
+};
+
+const A24_59: Amendment = {
+  id: 'A24.59', ...FIX2CD,
+  find: '  // The value is taken as it comes and is NOT put through `num()`: that helper strips\n'
+    + '  // everything but digits and a dot, so `num(-5.1)` is `5.1` - it would turn a declining\n'
+    + '  // area into a growing one. Invisible until now, because every one of the design\'s own\n'
+    + '  // nine communities grows; A24.13 (D-C46) makes a negative growth a first-class value.\n',
+  replace: '  // The value is taken as it comes and is NOT put through `num()`: by this point it is\n'
+    + '  // already a number, parsed once by `communities()`, and a second pass would be a second\n'
+    + '  // chance to lose something. (The older reason - that `num` stripped a leading minus, so\n'
+    + '  // `num(-5.1)` was `5.1` and a decline read as growth - stopped being true with A24.43,\n'
+    + '  // which taught it to read the first signed number and nothing after it.)\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5760,5 +5800,8 @@ export function amendments(): Amendment[] {
     // and A24.54 the term A24.53 reads, so each pair is ordered.
     A24_44, A24_45, A24_46, A24_47, A24_48, A24_49, A24_50, A24_52, A24_51, A24_54, A24_53,
     A24_55, A24_56, A24_57,
+    // A24.58/A24.59 -- fix round 2, C and D: one number parser, and a comment that stopped being
+    // true when A24.43 fixed it. A24.59 reads A24.3's own output.
+    A24_58, A24_59,
     A24_9, A24_10, A24_11, A24_12];
 }
