@@ -3752,6 +3752,10 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 
   // ---- F-6, the Market data strip cards ----------------------------------------------------
 
+  // A21.2n/o's posture, kept through A31 (Task SNAP, D-C50 as revised) and re-measured on its own
+  // basis: the strip summarises the POLYGONS the map shades now, not the listings, so "the metro
+  // has no figure" is "no polygon carries one" — which is what `without(austin())` produces here,
+  // every polygon taking its value from the nearest community and there being none.
   it('a strip card whose metro has no figure keeps its title, source and link and shows no value (A21.2n/o)', () => {
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
     without(austin(), () => {
@@ -3763,25 +3767,358 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         expect(card.title.length).toBeGreaterThan(0);
         expect(card.src.length).toBeGreaterThan(0);
         expect(card.linkLabel.length).toBeGreaterThan(0);
-        expect(card.valueNote).toBe('metro median');
+        // Fix round 1, Minor 1 (controller, 2026-09-13): a card with NO figure carries NO
+        // caption. It used to read "metro median · 0 ZIP areas" — a caption over a blank,
+        // visible in the approved DOM oracle — and `absent beats faked` governs a caption as
+        // much as a figure. The title, the source and the link stay, which is A21.2n/o.
+        expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
       }
     });
   });
 
-  it('…and prints the metro median over the DEFINED values only when some are missing', () => {
+  // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12). This case used to prove the median was
+  // taken over the DEFINED listings only; the basis has moved, so it proves the property that
+  // replaced it — the AREA card is the metro's own distribution, measured over the polygons the
+  // map shades, and its bars are the five quantiles of that distribution rather than the first
+  // seven hospitals in listing order.
+  it('an AREA card is the metro polygons’ own median and its five quantiles, never the listings’', () => {
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
-    const all = c.renderVals().md.stripCards;
-    const households = all.filter((x: any) => x.title === 'Households')[0];
-    const nine = austin();
-    // Drop the two lowest-household communities: a median over nine becomes a median over seven,
-    // and the old `num(raw)` coercion would instead have pushed two ZEROS to the bottom of the
-    // sort and moved the median the other way.
-    const byHh = nine.slice().sort((a, b) => Number(String(a.hh).replace(/[^0-9]/g, '')) - Number(String(b.hh).replace(/[^0-9]/g, '')));
-    without(byHh.slice(0, 2), () => {
-      const card = c.renderVals().md.stripCards.filter((x: any) => x.title === 'Households')[0];
-      expect(card.bars, 'one bar per community that HAS the figure').toHaveLength(7);
-      expect(card.value).not.toBe(households.value);
-      expect(card.value).not.toContain('0K0');
+    const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const own = c.summarySet();
+    expect(card.value).toBe(c.fmtMetric('households', own.households.median));
+    expect(card.bars, 'five bars: p10, p25, p50, p75, p90').toHaveLength(5);
+    // Fix round 1, the Addendum (controller, 2026-09-13): the caption states exactly what the
+    // number IS and drops the word "metro". Measured on QA: this card would read "$95K metro
+    // median" for income (percentile_cont over the metro's valued tracts) while the Census
+    // PUBLISHES a metro median for CBSA 12420 — 97,638 ± 1,163 at summary level 310 — so a
+    // stakeholder reading "$95K metro median" beside a Census metro median of "$98K" has a
+    // fourth number to explain. A median OF 503 tracts is what this is, and now what it says.
+    expect(card.valueNote).toBe(`median of ${own.households.with_value.toLocaleString()} Census tracts`);
+    expect(card.valueNote, 'the caption still claims to be the metro\u2019s own median').not.toContain('metro');
+    // The defect the ruling names, in one assertion: a Census tract holds about 1,500 households
+    // and a listing's five-mile ring holds six figures, so the two bases are an order of
+    // magnitude apart — the card must be on the tract's side of that gap.
+    const listings = c.communities().map((x: { hh: number }) => x.hh).filter((v: number) => v != null).sort((a: number, b: number) => a - b);
+    const listingMedian = listings[Math.floor(listings.length / 2)];
+    expect(card.value, 'the card is still the median of the LISTINGS’ own ring totals')
+      .not.toBe(c.fmtMetric('households', listingMedian));
+    // …and the bars are a DISTRIBUTION: they rise, because quantiles are sorted. The old ones were
+    // hospitals in listing order and had no order at all.
+    const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
+    expect(heights, 'the bars are not ordered, so they are not a distribution')
+      .toEqual([...heights].sort((a, b) => a - b));
+  });
+
+  // ---- A31, the two modes (Task SNAP, ruling D-C50 as revised, 2026-09-12) -------------------
+
+  it('AREA is the default, and it names the geography and the count it summarised', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const md = c.renderVals().md;
+    expect(md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
+    expect(md.hasStripModeSub).toBe(true);
+    expect(md.stripModeSub).toBe('Census areas across the metro, as the map shades them');
+    // Every card names the MAP's geography, which is what it now measures — the interim
+    // per-listing basis (A24.53's `stripBasis`) is gone with the figures it described.
+    const income = md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0];
+    expect(income.src).toBe('U.S. Census ACS 5-year estimates (2023) · Census tract');
+  });
+
+  it('growth\u2019s source line composes like the other five (A31.12c, fix round 1 Minor 3)', () => {
+    // `LAYER_META.growth` was the one layer left carrying a whole `source` SENTENCE ending
+    // "\u00b7 community level" while its AREA card measures PLACE polygons and `AREA_LABEL.growth`
+    // is "Place (city/town)" — so the vaguer wording stood on the card AND on the map legend,
+    // which is what A24.45's split (income, households, competition) had corrected for the
+    // others. It carries the DATASET now and `metaSource` composes the rest for the surface
+    // that prints it, which is one string per fact.
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const growth = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(growth.src).toBe('U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …the LEGEND takes the same composition, which is where the vaguer wording also stood.
+    c.setState({ mdValue: 'growth' });
+    expect(c.renderVals().md.active.sourceLine)
+      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …and LOCATION mode carries the dataset alone, as the other five do (A31.12).
+    c.setState({ mdValue: 'income', mdSel: austin()[0].id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0].src)
+      .toBe('U.S. Census ACS population estimates, 2015\u20132023');
+  });
+
+  it('selecting a practice switches the strip to LOCATION and to that practice’s own figures', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const area = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    const md = c.renderVals().md;
+    expect(md.stripMode).toBe(`LOCATION · ${c.practiceName(p)}`);
+    // Both words are never shown at once — the ruling's own requirement.
+    expect(md.stripMode.includes('AREA')).toBe(false);
+    const card = md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const own = c.communities().filter((x: { id: string }) => x.id === p.id)[0];
+    expect(card.value).toBe(c.fmtMetric('households', own.hh));
+    expect(card.value, 'LOCATION printed the metro figure').not.toBe(area.value);
+    expect(card.valueNote, 'the AREA caption’s "median of N areas" wording reached LOCATION mode').not.toContain('median of');
+    // The bars stay the METRO's distribution, so the card says WHERE the practice sits: same
+    // count, same heights, and exactly the classes the practice is NOT in are dimmed.
+    expect(card.bars).toHaveLength(area.bars.length);
+    const height = (b: { style: string }) => /height: (\d+)px/.exec(b.style)![1];
+    expect(card.bars.map(height)).toEqual(area.bars.map(height));
+    const dimmed = card.bars.filter((b: { style: string }) => b.style.includes('opacity: .6'));
+    expect(dimmed.length, 'no bar is highlighted, so the card says nothing about where it sits')
+      .toBeLessThan(card.bars.length);
+    expect(area.bars.some((b: { style: string }) => b.style.includes('opacity')), 'AREA mode dims a bar')
+      .toBe(false);
+  });
+
+  it('closing the panel returns the strip to AREA', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: austin()[0].id });
+    expect(c.renderVals().md.stripMode).toContain('LOCATION');
+    c.renderVals().md.closePanel();
+    expect(c.renderVals().md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
+  });
+
+  it('LOCATION mode on a practice the API has no figures for shows no value, and no bar is dimmed', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const p = austin()[0];
+    const saved = { hh: p.hh };
+    (p as unknown as { hh: unknown }).hh = null;
+    try {
+      c.setState({ mdSel: p.id });
+      const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+      expect(card.value).toBeUndefined();
+      // The metro's shape is still drawn — the absence is the PRACTICE's, not the metro's — and
+      // nothing is highlighted, because there is no figure to place.
+      expect(card.bars.length).toBeGreaterThan(0);
+      expect(card.bars.every((b: { style: string }) => !b.style.includes('opacity'))).toBe(true);
+    } finally { (p as unknown as { hh: unknown }).hh = saved.hh; }
+  });
+
+  it('with a `market` adapter present and NO summary the cards show nothing — never the listings’ median', () => {
+    // A-SL23 (2)'s posture, one surface over: with an adapter the strip describes what the API
+    // answered or nothing at all. The figure it must never fall back to is the one D-C50 removed.
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: {} });
+    const cards = withAdapter.renderVals().md.stripCards;
+    for (const card of cards) {
+      expect(card.value, `${card.title} fell back to the listings' own median`).toBeUndefined();
+      expect(card.bars).toEqual([]);
+      expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
+      expect(card.src.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('the AREA bars are classed on the MAP’s own breaks, not the community scale', () => {
+    // MEASURED, and the reason the third argument is there at all: a Census tract holds about
+    // 1,500 households and `VALUE_LAYERS.households` starts at 10,000, so on the community scale
+    // every one of the five quantiles lands in class 0 and the card draws five identical 6 px
+    // stubs — the same collapse A24.25 cut `AREA_LAYERS` to remove on the map. These are the
+    // map's polygons, so they take the map's classes.
+    const quantiles = [900, 1200, 1500, 1900, 2400];
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles } }
+    });
+    const card = withAdapter.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    const drawn = card.bars.map(colour);
+    // Both scales are NAMED and the MAP's is the one required — an assertion that only checked
+    // "the colours differ" would pass on any third scale somebody introduced later. The expected
+    // colour is the one the MAP paints that value (`bucket(…, true).color`, `areaVals`' own door).
+    expect(drawn).toEqual(quantiles.map((v) => withAdapter.bucket('households', v, true).color));
+    expect(drawn, 'the bars are drawn on the COMMUNITY scale, which collapses a tract distribution')
+      .not.toEqual(quantiles.map((v) => withAdapter.bucket('households', v).color));
+    expect(new Set(drawn).size, 'every bar is one colour — the distribution collapsed').toBeGreaterThan(1);
+    expect(new Set(quantiles.map((v) => withAdapter.bucket('households', v).t)).size,
+      'the community scale no longer collapses these values, so this case proves nothing').toBe(1);
+    // …and the heights follow the same classes, so the shape is the distribution's and not a flat row.
+    const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
+    expect(new Set(heights).size).toBeGreaterThan(1);
+  });
+
+  // A31.13 (fix round 1, 2026-09-13). The case above proved colour identity for `households`
+  // ALONE, and passed for a reason that does not generalise: A31.8 painted each bar with
+  // `ramp(k)[Math.min(3, Math.round(t * 3))]` — the design's own pre-A31 expression — which can
+  // only address indices 0–3, and the households ramp happens to carry exactly four colours.
+  // `income`'s carries FIVE: `t = i / 4` for i = 0–4, so `Math.round(t * 3)` maps classes 2 and 3
+  // onto ONE colour and can never reach class 4 at all. The strip drew a five-class distribution
+  // in four colours, two of them the same, while the map beside it painted five — which is
+  // exactly what A31.8's own comment ("the strip and the legend then agree about what colour a
+  // tract's figure is") claimed it did not. The bars take the colour from the SAME door the
+  // polygons do, `bucket(k, v, true)`, so that sentence is true for all six layers.
+  it('every strip bar is the colour the MAP paints that value — all six layers (A31.13)', () => {
+    const QUANTILES: Record<string, number[]> = {
+      income: [30000, 60000, 85000, 120000, 180000],
+      pets: [400, 700, 900, 1000, 1500],
+      competition: [3, 5, 7, 9, 12],
+      growth: [-2, 2, 7, 10, 20],
+      households: [900, 1200, 1500, 1900, 2400],
+      econ: [300000, 500000, 700000, 800000, 1000000]
+    };
+    const TITLE: Record<string, string> = {
+      income: 'Median household income', pets: 'Pet ownership (estimated)',
+      competition: 'Veterinary competition', growth: 'Population growth',
+      households: 'Households', econ: 'Average practice payroll'
+    };
+    const summary: Record<string, unknown> = {};
+    for (const k of Object.keys(QUANTILES)) {
+      summary[k] = { layer: k, geo_label: 'Census tract', with_value: 503, median: QUANTILES[k][2], quantiles: QUANTILES[k] };
+    }
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: summary });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    for (const k of Object.keys(QUANTILES)) {
+      const card = cards.filter((x: { title: string }) => x.title === TITLE[k])[0];
+      expect(card, `no card titled "${TITLE[k]}"`).toBeDefined();
+      expect(card.bars.map(colour), `${k}'s bars are not the colours the map paints those values`)
+        .toEqual(QUANTILES[k].map((v) => withAdapter.bucket(k, v, true).color));
+    }
+    // The measurement that names the defect: income's ramp has FIVE colours and its five
+    // quantiles fall in five different classes, so five distinct colours must be drawn — and
+    // the TOP one, which `Math.round(t * 3)` could never address, must be among them.
+    const incomeDrawn = cards.filter((x: { title: string }) => x.title === TITLE.income)[0].bars.map(colour);
+    expect(new Set(incomeDrawn).size, 'two of income\u2019s five classes collapsed onto one colour').toBe(5);
+    expect(incomeDrawn[4], 'the top income class can never appear on a bar').toBe(withAdapter.bucket('income', QUANTILES.income[4], true).color);
+  });
+
+  it('LOCATION highlights only where the practice and the metro are ONE measurement', () => {
+    // The practice's figure is its five-mile ring's and the metro's is a tract's, a place's or a
+    // county's. Those are the same scale only for a RATE or a MEDIAN — exactly the layers
+    // `AREA_LAYERS` does not re-scale — so a COUNT layer carries the distribution undimmed rather
+    // than marking a ring's household count inside a distribution of tract counts, which is this
+    // ruling's own defect one card over.
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: austin()[0].id,
+      mdSummary: {
+        households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles: [900, 1200, 1500, 1900, 2400] },
+        income: { layer: 'income', geo_label: 'Census tract', with_value: 1791, median: 92150, quantiles: [48200, 67400, 92150, 121300, 158900] }
+      }
+    });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const dimmed = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0]
+      .bars.filter((b: { style: string }) => b.style.includes('opacity: .6')).length;
+    // A median IS comparable across geographies, so the practice's class is marked…
+    expect(dimmed('Median household income'), 'no bar is dimmed on a layer where the comparison holds').toBeGreaterThan(0);
+    // …and a COUNT is not, so nothing is marked, while the distribution itself is still drawn.
+    expect(dimmed('Households'), 'a ring’s household count was marked inside a distribution of tract counts').toBe(0);
+    expect(cards.filter((x: { title: string }) => x.title === 'Households')[0].bars).toHaveLength(5);
+    // The premise, asserted rather than assumed: `AREA_LAYERS` is what tells the two apart, and it
+    // names exactly the three COUNT layers.
+    expect(dimmed('Median household income') + dimmed('Households')).toBeGreaterThan(0);
+  });
+
+  // ---- A31.12 (fix round 1, 2026-09-13): the caption over a figure is that figure's own ------
+
+  it('LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s (A31.12)', () => {
+    // D-C48 (John, 2026-09-11), applied to this surface. In LOCATION mode every card read the
+    // listing's own `communityLabel` — "Within about 5 miles of the practice" — while `growth`
+    // is served at place-or-county with its own `growth_scope` and `econ` is the COUNTY CBP row
+    // everywhere and always (`app/census/serve.py`: "`econ_k` is county everywhere and always").
+    // On 28 of 29 QA listings that sentence was false on two of the six cards: the exact defect
+    // D-C48 removed from the docked panel's Population tile one day earlier.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { growthScope: string }).growthScope = 'Dallas';
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const note = (title: string) => c.renderVals().md.stripCards
+        .filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Population growth'), 'growth is measured at place or county, not at the ring').toBe('Dallas');
+      expect(note('Average practice payroll'), 'payroll is the county CBP row, everywhere and always').toBe('surrounding county');
+      // …and the four figures the ring DOES describe keep the ring's own label.
+      expect(note('Median household income')).toBe(ring);
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+      expect(note('Veterinary competition')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { growthScope?: string }).growthScope;
+    }
+  });
+
+  it('the income card carries the API\u2019s own approximate qualifier (A31.12, D-C51)', () => {
+    // The catchment median is a household-weighted median of tract medians — never published and
+    // never suppressible — so the API qualifies it with `income_note` ("Within about 5 miles of
+    // the practice · approximate", `app/census/serve.py`). The DETAIL card has rendered that since
+    // A27.1; the strip printed the bare ring label beside the same number, so one figure was
+    // qualified on one surface and not on the other.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { incomeNote: string }).incomeNote = `${ring} \u00b7 approximate`;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const note = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Median household income')).toBe(`${ring} \u00b7 approximate`);
+      // …and the other five are untouched by it: the qualifier belongs to the median alone.
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { incomeNote?: string }).incomeNote;
+    }
+    // With no note served — the reference path, and every approved state: the design's fixtures
+    // carry no `incomeNote` and `load.ts` leaves the key off where the API sends null.
+    expect('incomeNote' in (p as object), 'the fixture carries a note, so this proves nothing').toBe(false);
+    c.setState({ mdSel: p.id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0].valueNote)
+      .toBe('community level');
+  });
+
+  it('growth names the geography the API supplies, and A24.20\u2019s own phrase where it supplies none (A31.12)', () => {
+    // The design's own fixtures carry no `growth_scope` — `load.ts` leaves the key OFF the
+    // practice where the API sends null — so the fallback is what the reference and every
+    // approved state render, and it is A24.20's own wording for the same fact.
+    const p = austin()[0];
+    expect('growthScope' in (p as object), 'the fixture carries a scope, so this proves nothing').toBe(false);
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+    const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(card.valueNote).toBe('surrounding city or county');
+  });
+
+  it('in LOCATION mode the source line carries the DATASET alone \u2014 one string per fact (A31.12)', () => {
+    // A24.44–A24.57's own rule, measured on this surface: with the basis on both the mode
+    // sub-line and each card's own `valueNote`, the `src` line repeating it printed the
+    // geography TEN times on one strip, four cards printing it twice. The card's own note
+    // carries the geography; the source line carries where the number came from.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const src = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].src;
+      expect(src('Median household income')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Households')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Veterinary competition')).toBe('U.S. Census ZIP Code Business Patterns (2022), NAICS 541940');
+      for (const card of cards) {
+        expect(card.src.endsWith(' \u00b7 '), `${card.title}'s source line ends in a dangling separator`).toBe(false);
+        expect(card.src, `${card.title} prints the basis twice`).not.toContain(ring);
+      }
+      // AREA mode is untouched: there the card measures the MAP's polygons and names them,
+      // exactly as the legend and the tip do (A24.49/A24.50).
+      c.setState({ mdSel: null });
+      expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+        .toBe('U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract');
+    } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
+  });
+
+  it('loadSummary discards an answer for a metro the member has already left', () => {
+    let resolveIt: (v: unknown) => void = () => {};
+    const adapter = {
+      boundaries: () => new Promise(() => {}),
+      summary: () => new Promise((res) => { resolveIt = res; })
+    };
+    const withAdapter = new Component({ market: adapter } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    withAdapter.loadSummary(AUSTIN);
+    withAdapter.setState({ market: 'Orlando, FL' });
+    resolveIt({ income: { layer: 'income', geo_label: 'Census tract', with_value: 9, median: 1, quantiles: [1, 1, 1, 1, 1] } });
+    return Promise.resolve().then(() => {
+      expect(withAdapter.state.mdSummary, 'Austin’s answer was painted over Orlando').toBeNull();
     });
   });
 
@@ -3906,17 +4243,38 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     });
   });
 
-  it('A25.3 — …and the strip cards still count its figures, because a figure is not a point', () => {
+  // SUPERSEDED BY A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12), and re-pointed rather than
+  // deleted, because the RULE it defends is unchanged and the surface it defended it on has moved.
+  //
+  // A25.3 held that an unlocated listing keeps its place in everything that is not the map: the
+  // rail, the count, the sort, the filters — and, then, the snapshot strip, because the strip was
+  // a median of the LISTINGS' own figures and a figure is not a point. D-C50 removed that basis:
+  // in AREA mode the strip summarises the POLYGONS the map shades, so a listing with no point
+  // cannot reach it, by construction and correctly — on the real API those figures are the
+  // Census's and no listing contributes to them at all. What the case measures now is that the
+  // rest of A25.3 still holds, and that the strip follows the MAP rather than diverging from it,
+  // which is the whole of the ruling in one line.
+  it('A25.3 — an unlocated listing keeps its place in the rail, and the strip follows the MAP', () => {
     const p = austin()[0];
     const before = c.marketVals(c.filtered());
     at([p], null, null, () => {
       const md = c.marketVals(c.filtered());
       // The premise, asserted rather than assumed (fix round 1, Minor-3): the MAP's list really
-      // did lose the unlocated community. Without this the case only discriminates because
-      // dropping one of nine values happens to move a median.
+      // did lose the unlocated community.
       expect(md.communities.length, 'the map list did not shrink, so this control proves nothing')
         .toBeLessThan(c.communities().length);
-      expect(md.stripCards.map((s: any) => s.value)).toEqual(before.stripCards.map((s: any) => s.value));
+      // The listing itself is untouched everywhere the map is not: it is still in the results.
+      expect(md.mdResults.map((r: { name: string }) => r.name), 'the rail lost an unlocated listing')
+        .toEqual(before.mdResults.map((r: { name: string }) => r.name));
+      // …and the strip describes the same polygons the map draws, which is what D-C50 ruled: it
+      // reads `summarySet()` — the distribution over `areaSet`'s own features — so it moves when
+      // and only when the map moves. `before` is kept as the control that it DID move: the
+      // unlocated listing was the nearest community to some of those polygons.
+      const fromMap = c.summarySet();
+      expect(md.stripCards.map((s: { value: string }) => s.value))
+        .not.toEqual(before.stripCards.map((s: { value: string }) => s.value));
+      const income = md.stripCards.filter((s: { title: string }) => s.title === 'Median household income')[0];
+      expect(income.value).toBe(c.fmtMetric('income', fromMap.income.median));
     });
   });
 
@@ -4646,6 +5004,8 @@ describe('A26 (Q2) — opening any one of the four menus closes the other three 
 // is characterised here; `logic.js` itself is never hand-edited.
 // ---------------------------------------------------------------------------------------
 describe('A24 — real boundary polygons', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
   const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
   const feat = (props: Record<string, unknown>) => ({
     type: 'Feature', geometry: null,
@@ -4828,34 +5188,43 @@ describe('A24 — real boundary polygons', () => {
   // geography, which is right for the legend and made the strip borrow a caption that is false
   // for it. Until D-C50 makes the strip describe the map (Task SNAP, 0.1.22) the strip must
   // describe what it IS: the same dataset, and the practice-area basis the API already serves.
-  it('the snapshot caption names the area its own figures describe, never the map geography', () => {
+  // SUPERSEDED BY A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) and re-pointed, not
+  // deleted: fix round 2's interim made the CAPTION honest about a per-listing median while
+  // the ruling was pending. The ruling moved the FIGURE instead, so the caption follows it —
+  // in AREA mode the card measures the map's own geography and names it, exactly as the legend
+  // and the tip do (A24.49/A24.50), and in LOCATION mode it names the selected practice's own
+  // basis. The interim's `stripBasis` and the per-community `communityLabel` it read are gone
+  // (A31.8/A31.9), so the two halves of this pair become one case about both modes.
+  it('the snapshot caption names the area its own figures describe — the map’s in AREA, the practice’s in LOCATION', () => {
     const ring = 'Within about 5 miles of the practice';
-    c.communities = () => [
-      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: ring },
-      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: ring }
-    ];
-    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
-    expect(card.src).toContain(ring);
-    expect(card.src, 'the strip borrowed the map\'s geography for a practice-area median').not.toContain('Census tract');
-    // …and the dataset itself is unchanged: one string per fact, composed for each surface.
-    expect(card.src).toContain('U.S. Census ACS 5-year estimates (2023)');
-    // The LEGEND still names the map's own geography — that is what it describes.
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const area = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(area.src).toBe('U.S. Census ACS 5-year estimates (2023) · Census tract');
+
+    // LOCATION: the practice's own label where the API serves one…
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    try {
+      c.setState({ mdSel: p.id });
+      const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+      // A31.12 (fix round 1, 2026-09-13): the geography is named ONCE in LOCATION mode, on the
+      // card's own note; the source line carries the DATASET alone. One string per fact is
+      // A24.44–A24.57's own rule, and this surface was breaking it ten times over.
+      expect(card.src).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(card.valueNote).toBe(ring);
+    } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
+
+    // …and with no label served the note is still the design's own wording, which is the
+    // reference path and every approved state — the fixtures carry no `communityLabel` at all.
+    c.setState({ mdSel: p.id });
+    const bare = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023)');
+    expect(bare.valueNote).toBe('community level');
+
+    // The LEGEND still names the map's own geography — that is what it describes, and it has not
+    // moved: one string per fact, composed for the surface that prints it.
     c.state.mdValue = 'households';
     expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
-  });
-
-  it('a mixed or absent practice-area basis falls back to the design\'s own wording', () => {
-    // The design's own fixtures carry no `communityLabel` at all, which is the reference path and
-    // every approved state; and a metro whose listings disagree has no ONE area to name.
-    c.communities = () => [
-      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: 'Within about 5 miles of the practice' },
-      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: 'City of Dallas' }
-    ];
-    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
-      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
-    c.communities = () => [{ id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000 }];
-    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
-      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
   });
 
   // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro

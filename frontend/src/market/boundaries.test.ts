@@ -401,3 +401,67 @@ describe('the settled view is what the adapter answers for (fix round 1)', () =>
     expect(adapter.viewport()).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task SNAP (D-C50 as revised, 2026-09-12) — the metro-wide summary the snapshot strip's AREA
+// mode reads. It lives beside `boundaries()` on the SAME adapter rather than in a file of its
+// own because it shares the one thing that is expensive here: the memoised metro catalogue.
+// `logic.js` speaks in market names and knows no CBSA geoid, so both methods have to resolve
+// one, and a second module would read `/api/markets` a second time per page for no gain.
+// ---------------------------------------------------------------------------------------
+const summaryRow = (layer: string) => ({
+  layer, summary_level: '140', geo_label: 'Census tract', unit: 'usd', state: 'enabled',
+  count: 577, with_value: 561, suppressed: 12, no_data: 4,
+  median: 92150, quantiles: [48200, 67400, 92150, 121300, 158900],
+  value_vintage: '2019–2023', source_dataset: 'acs5'
+});
+const summaryBody = () => ({ cbsa_geoid: '12420', boundary_vintage: '2023', attribution: [], layers: FILL_LAYERS.map(summaryRow) });
+const okSummary = () => fakeFetch((url) => ({ body: url.includes('/summary') ? summaryBody() : MARKETS }));
+
+describe('the metro summary (Task SNAP)', () => {
+  it('resolves the metro by the listing\'s own market key and keys the answer by layer', async () => {
+    const f = okSummary();
+    const rows = await makeMarketAdapter(f as unknown as typeof fetch).summary('Austin, TX');
+    expect(f.mock.calls.map(([u]) => String(u))).toContain('/api/markets/12420/summary');
+    expect(Object.keys(rows).sort()).toEqual([...FILL_LAYERS].sort());
+    expect(rows.income.median).toBe(92150);
+    expect(rows.income.quantiles).toEqual([48200, 67400, 92150, 121300, 158900]);
+  });
+
+  it('asks for the METRO and nothing else — no bbox, because "metro median" names the metro', async () => {
+    const f = okSummary();
+    await makeMarketAdapter(f as unknown as typeof fetch).summary('Austin, TX');
+    const asked = f.mock.calls.map(([u]) => String(u)).filter((u) => u.includes('/summary'));
+    expect(asked).toEqual(['/api/markets/12420/summary']);
+  });
+
+  it('shares the one memoised catalogue with boundaries(), so a page reads /api/markets once', async () => {
+    const f = fakeFetch((url) => ({
+      body: url.includes('/summary') ? summaryBody()
+        : url.includes('/boundaries') ? collection(new URL(url, 'http://x').searchParams.get('layer') ?? 'income')
+        : MARKETS
+    }));
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    await adapter.boundaries('Austin, TX', null);
+    await adapter.summary('Austin, TX');
+    expect(f.mock.calls.map(([u]) => String(u)).filter((u) => u === '/api/markets')).toHaveLength(1);
+  });
+
+  it('rejects for a market the catalogue does not carry, exactly as boundaries() does', async () => {
+    const adapter = makeMarketAdapter(okSummary() as unknown as typeof fetch);
+    await expect(adapter.summary('Nowhere, ZZ')).rejects.toThrow('no CBSA for market Nowhere, ZZ');
+  });
+
+  it('rejects on a refusal, carrying the route\'s own code — never an empty summary', async () => {
+    // An empty record would be indistinguishable from "every layer is off", and the strip would
+    // print six cards with no figures over a metro that has them. A rejection says so instead.
+    const f = fakeFetch((url) => (url.includes('/summary') ? { ok: false, status: 404, body: { error: { code: 'NOT_FOUND', message: 'No such metro.' } } } : { body: MARKETS }));
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).summary('Austin, TX')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('rejects a body that carries no layers array', async () => {
+    const f = fakeFetch((url) => ({ body: url.includes('/summary') ? { cbsa_geoid: '12420' } : MARKETS }));
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).summary('Austin, TX'))
+      .rejects.toThrow('the market summary answered no layers');
+  });
+});

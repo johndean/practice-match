@@ -37,6 +37,33 @@ def test_contract_doc_names_every_market_and_admin_route():
         assert path in text, path
 
 
+def test_contract_doc_counts_the_market_routes_it_describes():
+    """Fix round 1, Minor 4 (2026-09-13). The permission-model paragraph said "The five `market.py`
+    routes resolve this dependency once, at import time" while `market.py` mounts SIX — Task SNAP
+    added `/summary` and the sentence was not counted. It had drifted before (the route table above
+    is checked path by path and this sentence is not), so it is pinned rather than corrected a
+    second time.
+
+    The number is read off the MODULE, never typed here: the doc's own spelled-out word must be the
+    word for however many `@router.get` decorators `app/api/market.py` carries. The source is read
+    as text rather than counted off `market.router.routes` deliberately — the sentence is about
+    what is WRITTEN in that file, and a route mounted from elsewhere onto the same router would
+    make the router's count right and the sentence's still wrong."""
+    from app.api import market
+
+    words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+    source = Path(market.__file__).read_text(encoding="utf-8")
+    mounted = len(re.findall(r"^@router\.get\(", source, re.MULTILINE))
+    assert mounted, "no @router.get found in app/api/market.py — the pattern has drifted"
+    assert mounted < len(words), f"no spelled-out word on hand for {mounted} routes"
+    stated = re.search(r"The (\w+) `market\.py` routes resolve", DOC.read_text(encoding="utf-8"))
+    assert stated, "the permission-model paragraph no longer states a route count this test can read"
+    assert stated.group(1).lower() == words[mounted], (
+        f"the contract doc says '{stated.group(1)} `market.py` routes'; the module mounts "
+        f"{mounted} ('{words[mounted]}')"
+    )
+
+
 def test_contract_doc_carries_the_fixture_field_names_and_the_vintage_statement():
     text = DOC.read_text(encoding="utf-8")
     for field in ("pop", "hh", "income", "growth", "pets", "econ", "vets"):
@@ -186,6 +213,29 @@ def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces
         assert "authoritative geography" in text
         assert "ZIP Code Business Patterns" in text
     assert '`shading` is the geography the MAP paints' in text
+
+
+def test_contract_doc_states_the_summary_routes_own_constants_and_its_partition_rule() -> None:
+    """Task SNAP. Every number in the summary section is read off `app.api.market` rather than
+    typed here, for the reason the boundary caps beside it are: a hand-maintained figure in a
+    document is a defect waiting to happen (plan Global Constraint (i)).
+
+    The partition rule — `count == with_value + suppressed + no_data` — is the one an integrator
+    can get wrong SILENTLY: a client that reads `with_value` as "how many polygons this metro has"
+    would print "9 Census tracts" over a metro of eleven. It is stated in the document and pinned
+    here so it cannot quietly leave."""
+    from app.api import market
+
+    text = DOC.read_text(encoding="utf-8")
+    section = text.split("## `GET /api/markets/{cbsa}/summary`", 1)[1].split("\n## ", 1)[0]
+    assert f"`SUMMARY_TTL = {market.SUMMARY_TTL}`" in section
+    # The fractions, in the route's own order, spelled the way the payload's `quantiles` array is.
+    assert "[p10, p25, p50, p75, p90]" in section
+    assert [float(p.lstrip("p")) / 100 for p in ("p10", "p25", "p50", "p75", "p90")] == list(market.SUMMARY_FRACTIONS)
+    assert "`median` is that array's own middle element" in section
+    assert market.SUMMARY_FRACTIONS[market.SUMMARY_MEDIAN_AT] == 0.5, "the documented middle element is not the median"
+    assert "`count == with_value + suppressed + no_data`" in section
+    assert "percentile_cont" in section
 
 
 #: The adapter, as TEXT. `frontend/src/market/boundaries.ts` is TypeScript and this is pytest, so

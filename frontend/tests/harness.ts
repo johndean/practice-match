@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+import { designSummaryBody } from './design-summary.mjs';
 
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
@@ -255,6 +256,19 @@ export async function prepare(page: Page): Promise<void> {
           body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income', bbox)
         });
       }
+    );
+    // A31 (Task SNAP) — the metro summary. Two approved states open the Market snapshot strip and,
+    // with the `market` adapter present, the app prints what this answered and nothing else — so
+    // the oracle answers with the DESIGN's own distribution, derived from `summarySet` by
+    // design-summary.mjs exactly as the polygons above are derived from `areaSet`. The reference
+    // has no adapter and computes the same distribution for itself, which is what keeps the two
+    // targets on one set of pixels.
+    await page.route(
+      (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/summary'),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: designSummaryBody(new URL(route.request().url()).pathname.split('/')[3])
+      })
     );
   }
 }

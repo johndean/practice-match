@@ -228,6 +228,57 @@ SELECT g.geo_id, g.name, m.value_num, m.moe, m.suppressed, m.suppress_reason,
  ORDER BY g.geo_id
 """
 
+# Task SNAP (D-C50 as revised by the stakeholder, 2026-09-12): the METRO-WIDE distribution of one
+# layer, over exactly the population `_BOUNDARY_SQL` would serve with no bbox -- same FROM, same
+# WHERE, no geometry on the wire. The Browse snapshot strip's AREA mode reads it, so "the median
+# the strip prints" and "the polygons the map shades" are the same set of rows by construction
+# rather than by two pieces of code agreeing.
+#
+# Three things about it are deliberate:
+#
+#   * `percentile_cont`, not `percentile_disc` or a hand-rolled nearest rank -- the five fractions
+#     are what the five bars draw, and an interpolating quantile is the one that describes a
+#     distribution rather than naming five of its members. The MEDIAN is read out of the same
+#     array (index 2) rather than computed a second time, so the value and the bars beside it can
+#     never disagree.
+#   * `::double precision` on both sides, explicitly: `geo_metric.value_num` is `numeric` and
+#     `percentile_cont` takes `double precision`. Postgres would find the cast, and stating it
+#     keeps the answer's type the same one the JSON carries.
+#   * the FILTER clause, rather than trusting the ordered-set aggregate to skip nulls: a SUPPRESSED
+#     row has a real `value_num` the publication rules hide, so it has to be excluded by its
+#     verdict and not by its nullness -- and it is still COUNTED, because "eleven tracts, nine of
+#     them summarisable" is the honest statement and "nine tracts" is not.
+_SUMMARY_SQL = """
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE m.value_num IS NOT NULL AND NOT m.suppressed) AS with_value,
+       count(*) FILTER (WHERE m.suppressed) AS suppressed,
+       percentile_cont(CAST(:fractions AS double precision[]))
+           WITHIN GROUP (ORDER BY CAST(m.value_num AS double precision))
+           FILTER (WHERE m.value_num IS NOT NULL AND NOT m.suppressed) AS quantiles
+  FROM geo_area g
+  LEFT JOIN geo_metric m
+    ON m.geo_id = g.geo_id AND m.summary_level = g.summary_level
+   AND m.metric_key = :metric AND m.vintage = :value_vintage
+ WHERE g.summary_level = :level AND g.vintage = :geo_vintage
+   AND ST_Intersects(g.geom, ST_Transform(ST_MakeEnvelope(:w, :s, :e, :n, 4326), 4269))
+"""
+
+#: The five fractions the snapshot's five bars are, in order. p10 and p90 rather than the extremes
+#: because a single outlying tract is not a class the card should draw (the shape of the metro is
+#: what the bars are for), and five rather than seven because five is what the endpoint publishes
+#: and the card's bar row is `flex: 1` per bar -- it divides whatever space it has, so neither
+#: count changes the card's approved layout.
+SUMMARY_FRACTIONS: tuple[float, ...] = (0.1, 0.25, 0.5, 0.75, 0.9)
+#: Which of them IS the median, read out of the same array rather than measured again.
+SUMMARY_MEDIAN_AT = 2
+SUMMARY_TTL = 86400
+#: Every dataset whose ACTIVE VINTAGE the summary's cache key has to span. One body carries six
+#: layers stamped with four datasets, so a key naming only the ACS vintage would go on serving a
+#: stale ZIP Business Patterns card for a day after that dataset's own vintage was activated.
+#: Derived from `BOUNDARY_METRIC` rather than typed, plus `acs5_prior` — growth's rows are stamped
+#: `acs5` and its figure is a difference of two ACS periods (correction 6).
+SUMMARY_DATASETS: tuple[str, ...] = tuple(sorted({s for _, s in BOUNDARY_METRIC.values()} | {"acs5_prior"}))
+
 # §7, the other direction: a value whose geography the boundary vintage no longer carries. The
 # writer never invents a shape and the endpoint never silently loses a row. Deliberately NOT
 # narrowed by the bbox: "values whose geography is not in this viewport" would be non-zero on
@@ -661,6 +712,120 @@ def _geojson(packed: bytes, request: Request, cache: str) -> Response:
     if "gzip" in request.headers.get("accept-encoding", ""):
         return Response(packed, media_type="application/geo+json", headers={**headers, "Content-Encoding": "gzip"})
     return Response(gzip.decompress(packed), media_type="application/geo+json", headers=headers)
+
+
+@router.get("/markets/{cbsa}/summary", dependencies=[Depends(REQUIRE_MARKET_READ)])
+async def summary(cbsa: str) -> Response:
+    """The metro-wide distribution of every shaded layer — what the Browse "Market snapshot" strip
+    prints in AREA mode (Task SNAP; ruling D-C50 as revised by the stakeholder, 2026-09-12).
+
+    Until this existed the strip computed a "metro median" from `/api/markets/{cbsa}/communities`
+    — one row per LISTING, each hospital's own five-mile ring — while the map beside it painted
+    Census geography per layer. On Dallas the strip read Households **162K** over tracts that hold
+    0\u20135,988 and Competition **41** over ZIP areas that hold 3\u201316: two numbers about two different
+    things, one caption. The stakeholder ruled the map correct and the snapshot wrong, so the
+    strip now describes the polygons the map shades — and it reads them from here rather than
+    deriving them client-side, because the client never holds the whole metro (the boundary route
+    is answered for a VIEWPORT, deliberately, and a median over whatever is on screen is a
+    different number every time the member pans).
+
+    One body for all six layers, not one request per layer: the strip shows them together, so six
+    round trips would buy nothing but six chances to render half a card set. The whole answer is
+    cached for `SUMMARY_TTL` under a key carrying the licence-gate counter and the writer's own
+    version, exactly as the boundary route's is, so a licence decision or a nightly rewrite makes
+    every cached body unreachable within the same minute (§11).
+
+    There is no `bbox` and no `layer` parameter, and that is the point: this is the METRO, which
+    is the geography the card's caption names.
+    """
+    # Fix round 1: the clock starts before the cache is read, because what the line at the end of
+    # this function reports is the cost of a MISS end to end -- six runs of `_SUMMARY_SQL` over
+    # the metro's WHOLE envelope, each with a `percentile_cont` over every valued polygon of that
+    # layer's level. `boundaries` has carried its own such line since A24's fix round 2, for the
+    # same reason and in the same shape; a HIT stays silent, because a line per request would
+    # drown the thing this exists to make visible.
+    started = time.perf_counter()
+    r = sync_redis()
+    geo_version = cast("bytes | str | None", r.get(GEO_VERSION_KEY))
+    async with engine().connect() as conn:
+        act, reg = await _active(conn), await _registry(conn)
+        geo_vintage = act.get("tiger_cb")
+        # EVERY value vintage in the body, not only the ACS one: one answer carries six layers
+        # stamped with four datasets, so a key naming one of them would serve a stale ZIP Business
+        # Patterns card for a day after that dataset's vintage was activated.
+        values = ",".join(f"{k}={act.get(k)}" for k in SUMMARY_DATASETS)
+        key = (f"summary:{cbsa}:{geo_vintage}:{values}:g{gate.version(r)}"
+               f":m{int(geo_version) if geo_version else 0}")
+        cached = cast("bytes | str | None", r.get(key))
+        if cached is not None:
+            return JSONResponse(json.loads(cached), headers={"x-cache": "hit"})
+        metro = (await conn.execute(text(
+            "SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM geo_area "
+            "WHERE geo_id = :cbsa AND summary_level = '310' AND vintage = :gv"), {"cbsa": cbsa, "gv": geo_vintage})).first()
+        if metro is None:
+            return _error("NOT_FOUND", "No such metro.", 404)
+        used: set[str] = set()
+        layers: list[dict[str, Any]] = []
+        for layer, shading in SHADING.items():
+            metric_key, source = BOUNDARY_METRIC[layer]
+            entry = next(l for l in LAYERS if l["key"] == layer)
+            state, blocked_reason = _layer_state(reg, entry["dataset_key"])
+            # Belt as well as braces, exactly as `boundaries` does it: `_layer_state` reads the
+            # layer CATALOGUE's dataset (growth's is `acs5_prior`) while the rows themselves are
+            # stamped with `source`, so either licence moving has to turn the layer off.
+            if state == "enabled" and not (_cleared(reg, source) and _extra_cleared(reg, metric_key, source)):
+                state = "disabled"
+            row: dict[str, Any] = {
+                "layer": layer, "summary_level": shading["summary_level"], "geo_label": shading["label"],
+                "unit": UNIT[layer], "state": state,
+                # A layer that is off answers with its geography, its state and NO figures — never
+                # a 403, because the client has to be able to draw "unavailable" (the boundary
+                # route's own rule, for the same reason).
+                "count": 0, "with_value": 0, "suppressed": 0, "no_data": 0,
+                "median": None, "quantiles": None,
+                "value_vintage": act.get(source), "source_dataset": source,
+            }
+            if blocked_reason is not None:
+                row["blocked_reason"] = blocked_reason
+            if state == "enabled":
+                used.add(source)
+                if metric_key == "population_growth_pct":
+                    used.add("acs5_prior")
+                stat = (await conn.execute(text(_SUMMARY_SQL), {
+                    "metric": metric_key, "value_vintage": act.get(source),
+                    "level": shading["summary_level"], "geo_vintage": geo_vintage,
+                    "fractions": list(SUMMARY_FRACTIONS),
+                    "w": float(metro[0]), "s": float(metro[1]), "e": float(metro[2]), "n": float(metro[3]),
+                })).mappings().one()
+                quantiles = None if stat["quantiles"] is None else [float(q) for q in stat["quantiles"]]
+                n, with_value, suppressed = int(stat["n"]), int(stat["with_value"]), int(stat["suppressed"])
+                row.update({
+                    "count": n, "with_value": with_value, "suppressed": suppressed,
+                    # Never queried separately: the three counts have to add up to the population,
+                    # and subtracting is the only way to say so rather than to hope so.
+                    "no_data": n - with_value - suppressed,
+                    "median": None if quantiles is None else quantiles[SUMMARY_MEDIAN_AT],
+                    "quantiles": quantiles,
+                })
+            layers.append(row)
+    body = {
+        "cbsa_geoid": cbsa, "boundary_vintage": geo_vintage,
+        # From `dataset_registry`, never composed here (Census spec §2b). Boundaries first, then
+        # one line per value dataset that actually answered — a withdrawn licence takes its
+        # attribution with it, because nothing of that dataset is on the wire to attribute.
+        "attribution": [reg["tiger_cb"]["attribution_text"]] + [reg[k]["attribution_text"] for k in sorted(used)],
+        "layers": layers,
+    }
+    r.set(key, json.dumps(body), ex=SUMMARY_TTL)
+    # Identifiers and sizes only, as `boundaries`' own line is: `cbsa` is a Census geoid, `layers`
+    # is how many rows the body carries and `rows` how many polygons were counted across them --
+    # no median, no quantile, no geography NAME, nothing the payload shows a member.
+    log.info(
+        "summary miss cbsa=%s layers=%d rows=%d ms=%.1f",
+        cbsa, len(layers), sum(int(row["count"]) for row in layers),
+        (time.perf_counter() - started) * 1000,
+    )
+    return JSONResponse(body, headers={"x-cache": "miss"})
 
 
 _PANEL_SQL = """
