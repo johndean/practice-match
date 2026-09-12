@@ -3520,6 +3520,8 @@ One route, on the existing router, guarded by the existing module constant, insi
   BOUNDARY_METRIC: dict[str, tuple[str, str]]   # layer -> (metric_key, stamped source_dataset)
   ```
 
+  Amended 2026-09-12 (Task CAP, `d197db4`): re-measured for Census tracts on the stakeholder's 1460 × 1228 map — `MAX_FEATURES = 12000` (densest legal 4° box 9,767 tracts + 23 %), `MAX_BODY_BYTES = 6_000_000` (largest first view 4.29 MB at the 1/4000 tier, 0.78 px, + 40 %); the state-scale refusal is `MAX_BBOX_DEG = 4.0` alone.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `tests/census/test_boundaries.py`. It sits beside `tests/census/test_market_api.py` (the market API's tests live here, not in `tests/api/` — the spec's `tests/api/test_boundaries.py` names a directory this route's siblings are not in) and reuses that file's `client`/`H` fixtures by importing them.
@@ -3881,6 +3883,10 @@ BOUNDARY_TTL = 86400
 MAX_BBOX_DEG = 4.0
 MAX_FEATURES = 4000
 MAX_BODY_BYTES = 2_000_000
+# Amended 2026-09-12 (Task CAP, `d197db4`): re-measured for Census tracts on the stakeholder's
+# 1460 x 1228 map — MAX_FEATURES = 12000 (densest legal 4 deg box 9,767 tracts + 23 %),
+# MAX_BODY_BYTES = 6_000_000 (largest first view 4.29 MB at the 1/4000 tier, 0.78 px, + 40 %);
+# the state-scale refusal is MAX_BBOX_DEG = 4.0 alone.
 
 # D-C35's three geographies, and the label the legend prints. A NEW member on /api/layers rather
 # than a change to `geo_level`: `income`'s geo_level is "place|catchment" and describes the
@@ -4135,6 +4141,8 @@ degrees on either axis, `MAX_FEATURES = 4000`, `MAX_BODY_BYTES = 2_000_000` unco
 is `422` with `{"error": {"code": "BBOX_TOO_LARGE" | "AREA_TOO_LARGE", "message": …}}`. A bbox
 that is not four ordered numbers is `422 BAD_BBOX`; a layer that is not one of the three is
 `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`.
+
+Amended 2026-09-12 (Task CAP, `d197db4`): re-measured for Census tracts on the stakeholder's 1460 × 1228 map — `MAX_FEATURES = 12000` (densest legal 4° box 9,767 tracts + 23 %), `MAX_BODY_BYTES = 6_000_000` (largest first view 4.29 MB at the 1/4000 tier, 0.78 px, + 40 %); the state-scale refusal is `MAX_BBOX_DEG = 4.0` alone.
 
 **Licence.** A layer whose dataset is not `cleared` answers `200` with `"features": []` and
 `"state": "disabled"` or `"blocked"` (+ `blocked_reason`) — never a `403`, because `/api/layers`

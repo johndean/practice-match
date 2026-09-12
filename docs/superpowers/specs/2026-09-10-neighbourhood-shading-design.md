@@ -245,6 +245,8 @@ The envelope is transformed **into** 4269 rather than the geometry column out of
 | unknown `layer`, or a layer not in `FILL_KEYS` | — | `422 BAD_LAYER`, message naming `income`, `growth`, `econ` |
 | unknown `cbsa` | — | `404 NOT_FOUND` |
 
+Amended 2026-09-12 (Task CAP, `d197db4`): re-measured for Census tracts on the stakeholder's 1460 × 1228 map — `MAX_FEATURES = 12000` (densest legal 4° box 9,767 tracts + 23 %), `MAX_BODY_BYTES = 6_000_000` (largest first view 4.29 MB at the 1/4000 tier, 0.78 px, + 40 %); the state-scale refusal is `MAX_BBOX_DEG = 4.0` alone.
+
 Every refusal goes through `market.py:122-126`'s `_error(code, message, status)` and its `{"error": {"code", "message"}}` envelope, never a bare `HTTPException`, and query parameters are parsed by hand rather than through `Query(ge=…)` so a bad value gets the same envelope — the shape `_resolve_band` (`market.py:136-140`) already uses for `BAD_BAND`.
 
 The caps exist because of one measurement: **a whole-Texas bounding box returns 6,884 tracts and 9.2 MB**, and there is no bound today. `MAX_BBOX_DEG = 4.0` is chosen against the geography rather than against the bytes — the Austin metro's own envelope is roughly 1.0° × 0.9°, and 4° on a side covers any single CBSA in the six states with room to spare, while refusing a state. `MAX_FEATURES = 4000` sits above the largest plausible single-metro ZCTA count and below the 6,884 the Texas box returns.
@@ -524,7 +526,7 @@ And four more this spec's own boundaries require:
 | D-NS9 | Nightly beat entry `geo-metric-nightly` at 03:30 UTC, half an hour after `materialize-nightly`; never on the request path. |
 | D-NS10 | One route, `GET /api/markets/{cbsa}/boundaries?layer=&bbox=`, on `market.router`, guarded by the existing `REQUIRE_MARKET_READ` module constant, mounted in `site_mode == "app"` only. |
 | D-NS11 | `ST_AsGeoJSON(ST_Transform(geom, 4326), 6)`; the bbox is transformed into 4269 so the GiST index is usable; `ST_SimplifyPreserveTopology` is not on the request path. |
-| D-NS12 | Bounds: `MAX_BBOX_DEG = 4.0`, `MAX_FEATURES = 4000`, `MAX_BODY_BYTES = 2_000_000`; every breach is a `422` in `_error`'s envelope. |
+| D-NS12 | Bounds: `MAX_BBOX_DEG = 4.0`, `MAX_FEATURES = 4000`, `MAX_BODY_BYTES = 2_000_000`; every breach is a `422` in `_error`'s envelope. Amended 2026-09-12 (Task CAP, `d197db4`): re-measured for Census tracts on the stakeholder's 1460 × 1228 map — `MAX_FEATURES = 12000` (densest legal 4° box 9,767 tracts + 23 %), `MAX_BODY_BYTES = 6_000_000` (largest first view 4.29 MB at the 1/4000 tier, 0.78 px, + 40 %); the state-scale refusal is `MAX_BBOX_DEG = 4.0` alone. |
 | D-NS13 | Cache key `boundaries:{cbsa}:{layer}:{geo_vintage}:{value_vintage}:g{gate_version}`, TTL 86400 s, plus a live `_cleared`/`_extra_cleared` re-filter on every miss. |
 | D-NS14 | Gzip in the handler, compressed bytes cached; no global `GZipMiddleware`. |
 | D-NS15 | `/api/layers` gains a `shading` member per fill layer, separate from `geo_level`; the contract document gains the route or the backend gate fails. |
