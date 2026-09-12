@@ -274,6 +274,8 @@ def test_community_rows_missing_listing_is_six_nulls_and_no_label(conn):
         "vets": None, "econ_k": None, "label": None,
         # D-C38: a row that names no figure names no geography either.
         "growth_scope": None, "income_note": None,
+        # A33.1: …and says nothing about a median it does not have.
+        "income_vs_us_pct": None, "income_approximate": None,
     }
 
 
@@ -674,6 +676,7 @@ def test_a_listing_with_neither_band_is_six_nulls_and_no_label(conn):
         "pop": None, "growth": None, "income": None, "hh": None,
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
+        "income_vs_us_pct": None, "income_approximate": None,
     }
 
 
@@ -932,6 +935,7 @@ def test_a_listing_with_neither_band_carries_no_scope_and_no_income_note(conn):
         "pop": None, "growth": None, "income": None, "hh": None,
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
+        "income_vs_us_pct": None, "income_approximate": None,
     }
 
 
@@ -964,6 +968,201 @@ def test_a_derived_place_median_carries_the_qualifier_too(conn):
     assert row["label"] is None
     assert row["income"] == "$67,760"
     assert row["income_note"] == "Approximate"
+
+
+# ---------------------------------------------------------------------------------------------
+# A33.1 (Task SCREEN-LABELS, 2026-09-13) — THE PANEL'S INDEX IS THE PIPELINE'S OWN.
+#
+# Measured on QA 0.1.21 (Austin, DEF Veterinary Hospital): the docked panel's Median Income tile
+# read "$94K · +25% vs US". The $94K is DEF's own 8 km ring (a household-weighted median of 99
+# tract medians, 93,750); the "+25%" was the DESIGN's fixture arithmetic against a hard-coded
+# `incomeNat = 75149` in `logic.js`, while QA's own database holds the US median for the SAME
+# vintage the listing's figure comes from — `acs_measure` summary level 010, geo_id 1,
+# B19013_001E = 78,538 — against which DEF is +19 %. And the pipeline already STORES that index
+# per listing and band (`market_metric.income_index_vs_us`, `materialize.py:294`, DEF's drive_10
+# = 19.368967888156053). Nothing served it and nothing read it.
+#
+# So the index is served here, from the SAME BAND the median came from, and the approximate flag
+# is served as a FACT beside it rather than left to be sniffed off the end of `income_note`'s
+# prose: the note is the detail card's composed sentence, the flag is what the docked panel's own
+# one-line sub-line composes from. One string per fact, which is A24 fix round 2's own rule.
+# ---------------------------------------------------------------------------------------------
+
+_INDEX = ("income_index_vs_us", "2019-2023", None, "pct", True, "v1", None, False, None, "acs5")
+
+
+def _seed_index(conn, listing_id, band, value, *, suppressed=False, source_dataset="acs5"):
+    """One `income_index_vs_us` row, in ONE band — the row `materialize.py` writes beside the
+    median in every band it computes (`_row(..., "income_index_vs_us", ..., derived=True)`).
+
+    Its own helper rather than a seventh member of `_PLACE_SIX`/`_CATCHMENT_SIX`: those two
+    tuples are the SIX Community Context figures and are asserted as such throughout this module,
+    and the index is not one of them — it qualifies one of them."""
+    with conn.cursor() as cur:
+        cur.execute(
+            _METRIC_INSERT,
+            (listing_id, band, _INDEX[0], _INDEX[1], value, _INDEX[3], _INDEX[4], _INDEX[5],
+             _INDEX[6], suppressed, "high_moe" if suppressed else None, source_dataset),
+        )
+
+
+def test_the_income_index_is_served_from_the_band_the_median_came_from(conn):
+    """The two bands carry DIFFERENT indices, as they do in production — the ring's median and
+    the city's are different numbers measured against the same US median — and the served index
+    is the one belonging to the band the median itself came from, never the other."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _seed_index(conn, listing_id, "place", -13.7)
+    _seed_index(conn, listing_id, "drive_10", 39.5)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] == "$109,548"          # the ring's median
+    assert row["income_vs_us_pct"] == 39.5      # …and the ring's own index, not the city's
+
+
+def test_the_index_follows_the_median_back_to_the_place_band(conn):
+    """The other arm of the same rule. With no catchment figures at all the median is the city's,
+    so the index must be the city's too — an index from a band the median did not come from is a
+    percentage of a number the tile is not showing."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_index(conn, listing_id, "place", -13.7)
+    _seed_index(conn, listing_id, "drive_10", 39.5)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] == "$67,760"
+    assert row["income_vs_us_pct"] == -13.7
+
+
+def test_the_index_is_rounded_to_one_decimal(conn):
+    """`income_index_vs_us` is a full-precision float (DEF's own is 19.368967888156053). The
+    panel prints a whole number; one decimal is what the payload carries, so a later ruling that
+    wants the tenth has it and nothing has to re-read the database."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_index(conn, listing_id, "place", 19.368967888156053)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_vs_us_pct"] == 19.4
+
+
+def test_a_median_with_no_index_row_is_served_without_one(conn):
+    """D-C31 at this field too: a missing index is `None`, never `0`. A zero would read as "this
+    community earns exactly the US median", which is a statement nobody measured — and it is the
+    state a database with no `acs_measure` row at summary level 010 produces for every listing in
+    the country at once (`materialize._Ctx.us_income`)."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] == "$67,760"
+    assert row["income_vs_us_pct"] is None
+
+
+def test_an_index_row_with_a_null_value_is_absent_rather_than_a_500(conn):
+    """`materialize.py` writes the row whether or not `M.income_index_vs_us` could answer — a
+    listing whose median or whose US median is missing gets a row with `value_num` NULL — so the
+    row's PRESENCE is not its answer, exactly as `_servable`'s own docstring says (C2)."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_index(conn, listing_id, "place", None)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_vs_us_pct"] is None
+
+
+def test_a_suppressed_index_is_not_served(conn):
+    """The index goes through `_servable` like every other figure, so a suppressed row is absent
+    rather than shown. Only the suppressed arm is stubbed: `materialize.py` stamps this metric
+    `source="acs5"` unconditionally, so an index from an uncleared dataset is a state the
+    producer cannot write — and stubbing one would pin a row the API can never emit (the rule
+    `_ring`'s own docstring records, whole-branch review 2026-09-11)."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_index(conn, listing_id, "place", 12.5, suppressed=True)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] == "$67,760"
+    assert row["income_vs_us_pct"] is None
+
+
+def test_an_index_without_a_median_is_never_served_alone(conn):
+    """The index qualifies the median above it. With no median on the card there is no tile for
+    it to sit under, and a bare "+39.5% vs US" would be a percentage of a number the buyer cannot
+    see — so the index is served only where its own figure is."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_suppressing(_PLACE_SIX, "median_hh_income"))
+    _seed_index(conn, listing_id, "place", 39.5)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] is None
+    assert row["income_vs_us_pct"] is None
+
+
+def test_the_approximate_flag_is_the_served_medians_own_is_derived(conn):
+    """The FACT, beside `income_note`'s composed sentence. The panel's tile has one sub-line and
+    composes it from the index and this flag; the detail card keeps the sentence (A27.1). Sniffing
+    the word off the end of `income_note` would make a copy edit silently change what the panel
+    asserts about a number, which is the coupling `metaSource` was introduced to remove."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_approximate"] is True
+    assert row["income_note"] == f"{_BAND_LABEL} · approximate"
+
+
+def test_a_published_median_says_it_is_not_approximate(conn):
+    """`False`, not `None`: the Census published this median, which is a fact worth stating — and
+    `None` is reserved for "there is no median here at all"."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_approximate"] is False
+    assert row["income_note"] is None
+
+
+def test_no_median_means_nothing_to_say_about_it(conn):
+    """The third state. A listing with no median carries no flag — `None` — rather than `False`,
+    which would assert that a figure nobody has is a published one."""
+    listing_id = make_listing(conn, city="Cedar Park", state="TX")
+    _clear_all(conn)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_approximate"] is None
+    assert row["income_vs_us_pct"] is None
 
 
 # ---------------------------------------------------------------------------------------------

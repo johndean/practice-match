@@ -5407,3 +5407,135 @@ describe("A30 — a metro change closes the docked panel (Task PANEL-STALE)", ()
     // and `marketVals` never resolves a `selComm` at all, let alone this mismatched one.
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A33.1 — the docked panel's income index is the pipeline's own (Task SCREEN-LABELS,
+// 2026-09-13). Measured on QA 0.1.21, Austin, DEF Veterinary Hospital: the Median Income tile
+// read "$94K · +25% vs US". The $94K is DEF's own 8 km ring median (93,750); the "+25%" divided
+// it by `incomeNat = 75149`, a constant in the design's script commented "ACS 2023 U.S. median
+// household income", while QA's own database holds 78,538 for the SAME 2019-2023 vintage the
+// $94K comes from — against which DEF is +19 %. The pipeline already STORED that index per
+// listing and band (`market_metric.income_index_vs_us`) and nothing served or read it.
+//
+// The constant STAYS, as the design's own FIXTURE arithmetic and nothing more: `incomeIdx` also
+// feeds the Affluence opportunity tile, and the reference — which has no API at all — must go on
+// rendering both. Measured, not assumed: `oppTiles[0]` is the second reader, and the cases below
+// pin that it follows the SERVED index wherever there is one, which is the whole point of
+// preferring the pipeline's own number rather than only relabelling one tile.
+// ---------------------------------------------------------------------------------------
+describe('A33.1 — the panel prefers the pipeline\'s own income index', () => {
+  const AUSTIN = 'Austin, TX';
+  const sel = () => P.filter((x: any) => x.market === AUSTIN && x.status === 'published')[0] as any;
+  const panelFor = (listing: any) =>
+    c.marketPanel(listing, c.communities().filter((x: any) => x.id === listing.id)[0], c.communities(), AUSTIN);
+
+  /** Run `body` with `over`'s keys set on the fixture, and every one of them removed afterwards —
+   *  the design's own fixtures carry none of them, and a leaked key would move a baseline. */
+  function withFields(listing: any, over: Record<string, unknown>, body: () => void): void {
+    Object.assign(listing, over);
+    try { body(); } finally { for (const k of Object.keys(over)) delete listing[k]; }
+  }
+
+  it('renders the served index rather than its own arithmetic against the constant', () => {
+    const p = sel();
+    const own = panelFor(p).overviewTiles[2].sub;
+    expect(own, 'sanity: the design\'s own fixture arithmetic is what the reference renders').toMatch(/^\+\d+% vs US$/);
+    withFields(p, { incomeVsUs: 19.4 }, () => {
+      expect(panelFor(p).overviewTiles[2].sub).toBe('+19% vs US');
+    });
+  });
+
+  it('keeps the sign on an index below the US median, and prints no "+" on it', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: -13.7 }, () => {
+      expect(panelFor(p).overviewTiles[2].sub).toBe('-14% vs US');
+    });
+  });
+
+  it('a community exactly on the US median reads 0 %, never nothing (the D-C31 sentinel)', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: 0 }, () => {
+      expect(panelFor(p).overviewTiles[2].sub).toBe('0% vs US');
+    });
+  });
+
+  it('says "approximate" beside the index when the API says the median is', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: 19.4, incomeApproximate: true }, () => {
+      expect(panelFor(p).overviewTiles[2].sub).toBe('+19% vs US · approximate');
+    });
+  });
+
+  // "A median with no index to hang the word on" is UNREACHABLE, and that is why the qualifier
+  // rides on the index rather than getting an arm of its own: A33.1a keeps the design's fixture
+  // arithmetic as the fallback, so an index exists whenever a median does — served or computed.
+  // Pinned, because it is the precondition A33.1b's shape rests on: if the constant is ever
+  // retired the sub-line needs a second arm, and this case is what says so.
+  it('an index exists whenever a median does, served or not — which is why the qualifier rides on it', () => {
+    const p = sel();
+    withFields(p, { incomeApproximate: true }, () => {
+      expect(panelFor(p).overviewTiles[2].v, 'the design\'s own fixture median').toBeDefined();
+      expect(panelFor(p).overviewTiles[2].sub).toMatch(/^[+-]?\d+% vs US · approximate$/);
+    });
+  });
+
+  it('and where there is no median there is no sub-line at all, flag or no flag (A21.2d\'s guard)', () => {
+    const p = sel();
+    const savedIncome = p.income;
+    p.income = null;
+    try {
+      withFields(p, { incomeApproximate: true }, () => {
+        const tile = panelFor(p).overviewTiles[2];
+        expect(tile.v).toBeUndefined();
+        expect(tile.sub, 'a qualifier with no figure beside it is a caption for something absent').toBeUndefined();
+      });
+    } finally { p.income = savedIncome; }
+  });
+
+  it('with no index and no flag the design\'s own sub-line stands, byte for byte', () => {
+    const p = sel();
+    expect(panelFor(p).overviewTiles[2].sub).toMatch(/^[+-]?\d+% vs US$/);
+    expect(panelFor(p).overviewTiles[2].sub).not.toContain('approximate');
+  });
+
+  // The API never serves an index without the median it is a percentage of
+  // (`tests/census/test_serve.py::test_an_index_without_a_median_is_never_served_alone`), so the
+  // design does not re-guard that pairing — this case NAMES the contract rather than pinning a
+  // second guard the payload makes unreachable, and records what the tile does if it is ever
+  // broken: the value goes, the sub-line stays.
+  it('does not re-guard the index against the median — the payload pairs them', () => {
+    const p = sel();
+    const savedIncome = p.income;
+    p.income = null;
+    try {
+      withFields(p, { incomeVsUs: 19.4 }, () => {
+        const tile = panelFor(p).overviewTiles[2];
+        expect(tile.v, 'no median, no value').toBeUndefined();
+        expect(tile.sub, 'and the sub-line the API would never have sent on its own').toBe('+19% vs US');
+      });
+    } finally { p.income = savedIncome; }
+  });
+
+  // The SECOND reader, measured rather than assumed: the Affluence opportunity tile reads the
+  // same `incomeIdx`, so serving the pipeline's own index corrects it in the same stroke instead
+  // of leaving one tile honest and the one beside it computing against a stale constant.
+  it('the Affluence tile follows the served index too', () => {
+    const p = sel();
+    // `on` is not a member of the mapped tile — the design spends it on `tone(t.on)` — so the
+    // assertion is on the COLOUR it produces, which is what a member actually sees.
+    const ON = 'var(--vf-navy)';
+    const OFF = '#8d99a6';
+    expect(panelFor(p).oppTiles[0].label, 'sanity: the design\'s own +57 % fixture reads High')
+      .toBe('High');
+    withFields(p, { incomeVsUs: 19.4 }, () => {
+      const opp = panelFor(p).oppTiles[0];
+      expect(opp.sub).toBe('Affluence');
+      expect(opp.label, '+19 % is above the US median but not more than 25 % above it').toBe('Above avg.');
+      expect(opp.labelStyle).toContain(ON);
+    });
+    withFields(p, { incomeVsUs: -13.7 }, () => {
+      expect(panelFor(p).oppTiles[0].label).toBe('Median');
+      expect(panelFor(p).oppTiles[0].labelStyle).toContain(OFF);
+    });
+  });
+});

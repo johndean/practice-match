@@ -45,6 +45,8 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     community_label: null,
     growth_scope: null,
     income_note: null,
+    income_vs_us_pct: null,
+    income_approximate: null,
     ...over
   };
 }
@@ -279,6 +281,25 @@ describe('applyListings', () => {
       .toBe('Within about 5 miles of the practice \u00b7 approximate');
     expect('growthScope' in toPractice(row({ growth_scope: null }))).toBe(false);
     expect('incomeNote' in toPractice(row({ income_note: null }))).toBe(false);
+  });
+
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13): the pipeline's own index and the fact behind
+  // `income_note`, under the design's own camel-case names. The same absence rule as every field
+  // above it — the design's fixtures carry neither, and the docked panel's `sel.incomeVsUs !=
+  // null` and `sel.incomeApproximate` guards both have to fall through to the design's own
+  // arithmetic and its own sub-line for the approved states to keep their pixels.
+  it('carries income_vs_us_pct and income_approximate under the design\'s own names, and omits each when the API sent none', () => {
+    expect(toPractice(row({ income_vs_us_pct: 19.4 })).incomeVsUs).toBe(19.4);
+    expect(toPractice(row({ income_approximate: true })).incomeApproximate).toBe(true);
+    expect('incomeVsUs' in toPractice(row({ income_vs_us_pct: null }))).toBe(false);
+    expect('incomeApproximate' in toPractice(row({ income_approximate: null }))).toBe(false);
+    // A NEGATIVE index and a FALSE flag are both real answers and must survive `!= null`, which
+    // `!` or a truthiness test would drop: a community below the US median reads "-13.7% vs US",
+    // and a published median is a fact the payload states rather than omits.
+    expect(toPractice(row({ income_vs_us_pct: -13.7 })).incomeVsUs).toBe(-13.7);
+    expect(toPractice(row({ income_approximate: false })).incomeApproximate).toBe(false);
+    // …and zero, the sentinel D-C31 exists for: a community exactly on the US median.
+    expect(toPractice(row({ income_vs_us_pct: 0 })).incomeVsUs).toBe(0);
   });
 
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the

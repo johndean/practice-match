@@ -358,6 +358,9 @@ describe('local design amendments (spec D15)', () => {
     // line A24.18 put in `setMarket`, so it is appended after it. A31 belongs to the snapshot
     // branch and is not in this list.
     'A32',
+    // A33 — three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
+    // 2026-09-13). A33.1b is CHAINED on A21.2d, whose `replace` its `find` is part of.
+    'A33.1a', 'A33.1b',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -523,7 +526,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(287);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(289);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

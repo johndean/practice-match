@@ -1,4 +1,4 @@
-import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
@@ -788,7 +788,7 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     );
   }
 
-  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null };
+  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null, income_vs_us_pct: null, income_approximate: null };
 
   /** Cedar Park's docked panel, opened the way `browse-market-panel` opens it: a card click. */
   async function openPanel(page: Page) {
@@ -977,6 +977,66 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     // its frozen hash.
     await expect(detail.getByText('Household, 2023').first()).toBeVisible();
     await expect(detail.getByText('Since 2015', { exact: true }).first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13) — the docked panel's Median Income tile, in a real
+  // browser and through the real payload.
+  //
+  // Measured on QA 0.1.21 (Austin, DEF Veterinary Hospital): "$94K · +25% vs US", where the +25 %
+  // was the design dividing its own fixture median by a hard-coded `incomeNat = 75149` while the
+  // pipeline's own index for the same listing and band was +19.4 — stored in `market_metric` and
+  // served by nothing. The tile also showed a DERIVED median with no qualifier, while the detail
+  // card behind it has carried one since D-C38 (A27.1).
+  //
+  // Its oracle is here rather than an approved state, for A27.7's own measured reason: the
+  // design's fixtures carry neither `incomeVsUs` nor `incomeApproximate`, `design-listings.mjs`
+  // sends both null, and the reference has no way to be handed either without editing approved
+  // fixture data or declaring a ninth prototype prop. So the assertion is on the RENDERED DOM
+  // under a stubbed API.
+  // -----------------------------------------------------------------------------------------
+  /** The docked panel's overview tile whose key is `key`, as one flattened string. */
+  async function overviewTile(panel: Locator, key: string): Promise<string | null> {
+    return panel.evaluate((root, k) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === k);
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : null;
+    }, key);
+  }
+
+  test('the Median Income tile renders the served index and the served qualifier', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, {
+      community_label: LABEL,
+      income_vs_us_pct: 19.4,
+      income_approximate: true,
+      income_note: `${LABEL} \u00b7 approximate`,
+    });
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    expect(tile, 'the panel has no Median Income tile').toBeTruthy();
+    // The SERVED index, rounded, and the qualifier joined to it by the design's own middot.
+    expect(tile).toContain('+19% vs US · approximate');
+    // …and NOT the design's own arithmetic against the constant, which for this fixture median
+    // reads +57 %: the number that made the QA panel say +25 % about a listing that is +19 %.
+    expect(tile, 'the tile still divides by the hard-coded incomeNat').not.toContain('+57% vs US');
+    expect(errors).toEqual([]);
+  });
+
+  test('…and with no index and no flag the design\'s own sub-line stands', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    // The D6 stub sends both fields null, which is the reference path and every approved state:
+    // the design's own fixture arithmetic, and no qualifier anywhere on the tile.
+    expect(tile).toMatch(/[+-]\d+% vs US/);
+    expect(tile, 'a qualifier appeared for a median the API did not call approximate').not.toContain('approximate');
     expect(errors).toEqual([]);
   });
 

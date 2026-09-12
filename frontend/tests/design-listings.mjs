@@ -87,7 +87,13 @@ export function toApiShape(p, i) {
     // Median income tiles render the design's own "Since <year>" and "Household, 2023" — which is
     // what keeps `detail`'s frozen hash where it is. A non-null here would move it.
     growth_scope: null,
-    income_note: null
+    income_note: null,
+    // A33.1: the design's fixtures carry no stored index and no approximate median, so the panel
+    // falls through to the design's OWN fixture arithmetic (`incomeNat`) and its own sub-line —
+    // which is what keeps every approved Browse state on its pixels. A non-null here would move
+    // `browse-market-panel`.
+    income_vs_us_pct: null,
+    income_approximate: null
   };
 }
 

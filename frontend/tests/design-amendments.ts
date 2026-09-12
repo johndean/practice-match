@@ -5765,6 +5765,83 @@ const A24_12: Amendment = {
   count: 1
 };
 
+/** A33 — three label defects on the Browse screen, measured on QA 0.1.21 and ruled by the
+ *  controller on 2026-09-13 (Task SCREEN-LABELS, decide-and-surface). Each one is a caption that
+ *  states something the data does not support, which is the class D-C38/D-C39 opened and A27
+ *  worked through one tile at a time; A33 applies the same rule — a figure names its own basis —
+ *  to the three places on Browse that still did not.
+ *
+ *  A33.1 — THE PANEL'S INDEX IS THE PIPELINE'S OWN, AT THE SAME VINTAGE. With DEF Veterinary
+ *  Hospital selected, the docked panel's Median Income tile read "$94K · +25% vs US". The $94K is
+ *  correct — DEF's own 8 km ring, a household-weighted median of 99 tract medians, 93,750 — and
+ *  the "+25%" is the design dividing it by incomeNat = 75149, a constant its own comment calls
+ *  "ACS 2023 U.S. median household income". QA's database holds the US median for the SAME
+ *  2019-2023 release the $94K comes from (acs_measure, summary level 010, geo_id 1,
+ *  B19013_001E = 78,538 ± 176), against which DEF is +19 %. And the pipeline already STORED that
+ *  index, per listing and per band — market_metric.income_index_vs_us, DEF's drive_10 =
+ *  19.368967888156053 (materialize.py:294) — where nothing served it and nothing read it.
+ *
+ *  So the API serves it (income_vs_us_pct, from the band the median itself came from) and the
+ *  panel prefers it. The tile's other missing fact goes with it: the API has served income_note
+ *  since D-C38 and the DETAIL card renders it (A27.1), while the panel's tile — the one a buyer
+ *  reaches first, from Browse — showed a derived median with no qualifier at all. The panel says
+ *  "approximate" from the served FACT (income_approximate) rather than by reading the end of the
+ *  detail card's sentence: two surfaces, one fact, different copy, which is metaSource's own rule
+ *  (A24 fix round 2).
+ *
+ *  THE CONSTANT STAYS, and it is measured rather than assumed. The brief asked for it to be
+ *  deleted if nothing else read it; incomeIdx has a SECOND reader — oppTiles[0], the Affluence
+ *  opportunity tile — so deleting it would blank an element of the approved design on the
+ *  reference path, which has no API and no ruling to do that under. It is demoted instead: the
+ *  comment now says what it is (the design's own FIXTURE arithmetic, at the vintage the design
+ *  shipped) and that a served index supersedes it. Its one remaining live-data reach is recorded
+ *  rather than hidden — a listing WITH a median and no stored index (a database with no
+ *  summary-level-010 ACS row) still falls back to it — and that is in the task report as a
+ *  concern, not silently left as a fact about a screen.
+ *
+ *  Preferring the served index also corrects the Affluence tile in the same stroke, because both
+ *  read one binding. The design's own fixtures carry neither incomeVsUs nor incomeApproximate
+ *  (design-listings.mjs sends both as null, as it does for community_label), so the reference
+ *  path is byte-identical and no approved state re-bases. */
+const A33_1a: Amendment = {
+  id: 'A33.1a', date: '2026-09-13',
+  ruling: "the panel's income index is the pipeline's own, at the same vintage as the median it qualifies (Task SCREEN-LABELS)",
+  find: '    const incomeNat = 75149; // ACS 2023 U.S. median household income\n'
+    + '    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;',
+  replace: "    // The DESIGN'S OWN FIXTURE ARITHMETIC, at the vintage the design shipped: the ACS 2023\n"
+    + '    // U.S. median household income. It is not a live figure and is not read where the API\n'
+    + "    // has one — `income_vs_us_pct` is the pipeline's own `income_index_vs_us`, taken from\n"
+    + '    // the same band the median above it came from and measured against the stored US median\n'
+    + '    // for that same ACS release. Kept because `incomeIdx` also feeds the Affluence tile\n'
+    + '    // below, which the reference — no API, no served index — still has to render.\n'
+    + '    const incomeNat = 75149;\n'
+    + '    const incomeIdx = sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  count: 1
+};
+
+/** A33.1b — the tile's one sub-line, composed from the two facts the API now serves rather than
+ *  from one of them. The index leads and the qualifier follows, joined by the design's own " · "
+ *  — A27.8's shape, and for A27.8's reason: this line BEGINS with a number.
+ *
+ *  CHAINED on A21.2d, whose `replace` this `find` is part of: A21.2d already rewrote this tile to
+ *  render nothing rather than a dangling unit where the API sent no figure, and the qualifier
+ *  sits INSIDE that guard — no figure is still no sub-line, exactly as A27.8's own term does.
+ *
+ *  The qualifier RIDES ON THE INDEX rather than being a second arm of its own, and that is a
+ *  measured choice, not a shortcut: A33.1a leaves the design's fixture arithmetic as the
+ *  fallback, so `incomeIdx` is defined WHENEVER `c.income` is — with a served index or without
+ *  one — and "a median with no index to hang the word on" is a state neither the reference nor
+ *  the API can produce. An arm for it would be unreachable code carrying approved copy, which is
+ *  the thing the bundle's own dead-code rule removes elsewhere in this file. If A33.1a's constant
+ *  is ever retired, this entry gains that arm in the same change. */
+const A33_1b: Amendment = {
+  id: 'A33.1b', date: '2026-09-13',
+  ruling: "the panel's income index is the pipeline's own, and says approximate when the API does (same ruling)",
+  find: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },',
+  replace: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : undefined },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -5905,5 +5982,9 @@ export function amendments(): Amendment[] {
     // A32 -- the metro switch waits for the map to move before asking (Task ADAPT-STALE-3,
     // 2026-09-12). CHAINED on A24.18, whose `this.loadAreas(v);` line is its whole `find`, so it
     // runs after it. A31 is the snapshot branch's and is not in this list.
-    A32];
+    A32,
+    // A33 -- three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
+    // 2026-09-13). A33.1b is CHAINED on A21.2d, whose `replace` its `find` is part of.
+    // Appended last, as every family is.
+    A33_1a, A33_1b];
 }

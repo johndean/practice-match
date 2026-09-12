@@ -1198,8 +1198,14 @@ class Component extends DCLogic {
     const s = this.state;
     const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };
     const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;
-    const incomeNat = 75149; // ACS 2023 U.S. median household income
-    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
+    // The DESIGN'S OWN FIXTURE ARITHMETIC, at the vintage the design shipped: the ACS 2023
+    // U.S. median household income. It is not a live figure and is not read where the API
+    // has one — `income_vs_us_pct` is the pipeline's own `income_index_vs_us`, taken from
+    // the same band the median above it came from and measured against the stored US median
+    // for that same ACS release. Kept because `incomeIdx` also feeds the Affluence tile
+    // below, which the reference — no API, no served index — still has to render.
+    const incomeNat = 75149;
+    const incomeIdx = sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);
     const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;
     const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;
     const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(
@@ -1262,7 +1268,7 @@ class Component extends DCLogic {
       overviewTiles: [
         { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " · " + sel.growthScope : "")) : undefined },
         { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
-        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },
+        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : undefined },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
       compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,

@@ -490,7 +490,9 @@ only a new source for the same seven:
 unformatted, for the detail page's market report; `metrics.income_index_vs_us`,
 `metrics.vets_per_10k_households` and the still-unpublished `opportunity_score` (with its
 `components`) are the three figures the design's `marketPanel()` fixture (`incomeNat = 75149`,
-`per10k`, `score`) sketched without a real source.
+`per10k`, `score`) sketched without a real source. Since A33.1 (2026-09-13) the first of the
+three also reaches the listing payload itself, as `income_vs_us_pct` below: the docked panel
+needs it on the Browse screen, where it never fetches a listing's market report.
 
 ### Which band a listing's figures come from (`community_label`, Task B10 / D-C32, D-C38, D-C39)
 
@@ -517,7 +519,7 @@ the VIN Foundation has not cleared) is indistinguishable from no place at all to
 `drive_20` is never a fallback: a wider area served under a narrower heading would be a reading
 the data does not support.
 
-`GET /api/listings` and `GET /api/listings/{id}` therefore carry three more fields:
+`GET /api/listings` and `GET /api/listings/{id}` therefore carry five more fields:
 
 | Field | Value | Meaning |
 |---|---|---|
@@ -525,6 +527,8 @@ the data does not support.
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
 | `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
 | `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
+| `income_vs_us_pct` | e.g. `19.4`, `-13.7` | How far the served median sits above or below the US median household income, as a percentage, to one decimal. It is the pipeline's own `income_index_vs_us` (`(local − us) / us × 100`, spec §8), read from the SAME band the `income` figure came from and measured against `acs_measure` summary level 010's own `B19013_001E` at the listing's own ACS vintage — not a client-side ratio against a constant. `null` when the index is absent or suppressed, and `null` whenever `income` itself is `null`: the index qualifies the figure above it, and a bare percentage under no median is a ratio of a number the buyer cannot see. |
+| `income_approximate` | `true`, `false`, `null` | Whether the served median is an approximation rather than a published Census figure — the SAME `is_derived` guard `income_note` is composed from, served as the fact rather than only as the sentence, because the two surfaces that state it compose different copy: the detail card takes `income_note` whole (one sub-line, with the area named), the docked panel joins the word to `income_vs_us_pct` in its own. `null` — not `false` — where there is no median at all, because `false` asserts that a figure nobody has was published. |
 
 **When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
 is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is
