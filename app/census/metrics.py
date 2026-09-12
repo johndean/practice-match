@@ -86,10 +86,17 @@ def weighted_median(parts: Iterable[tuple[float | None, float | None]]) -> float
     medians; measured on QA over the 64 tracts in one Austin listing's 5-mile ring it read $109,744
     against a true $99,357, 10.5 % high.
 
-    A part with a missing value or a missing/zero weight is skipped. `None` when no part
-    contributes any weight. The figure stays flagged approximate: it is still an approximation of
+    A part with a missing value, or a weight that is not a positive number, is skipped — missing,
+    zero, negative or NaN alike (fix round 1, Minor 2). The earlier guard was `w not in (None, 0)`,
+    which let the last two through: a negative weight makes the running total go DOWN, so the
+    cumulative weight can cross half the total more than once, and a NaN poisons `sum` so that
+    `cum < half` is False on the first test and the sentinel index reads the LAST part by negative
+    indexing — `[(100000, 1000), (999999, nan)]` returned their midpoint, a number fabricated out of
+    an unusable weight. No caller can produce either (`materialize.py` multiplies households by an
+    overlap fraction, both non-negative), which is why the guard has to say so rather than rely on
+    it. `None` when no part contributes any weight. The figure stays flagged approximate: it is still an approximation of
     the combined-area median and still has no combined margin of error by construction."""
-    usable = sorted(((float(v), float(w)) for v, w in parts if v is not None and w not in (None, 0)), key=lambda p: p[0])
+    usable = sorted(((float(v), float(w)) for v, w in parts if v is not None and w is not None and float(w) > 0), key=lambda p: p[0])
     total = sum(w for _, w in usable)
     if not total:
         return None

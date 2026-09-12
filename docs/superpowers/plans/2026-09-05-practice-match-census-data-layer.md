@@ -3200,6 +3200,8 @@ Run: `poetry run pytest tests/census/test_catchment.py -q` → all pass (GREEN);
 
 ### Task B4: Metric formulas (§8), data-quality rules (§14), materialisation into `market_metric` — three bands
 
+> **Amended 2026-09-12 (Task INCOME-MEDIAN).** Everything below is this task's original record and is kept as written. `weighted_median` is no longer a household-weighted AVERAGE of tract medians: it is a true household-weighted MEDIAN, interpolated at a straddle, and the `note` it stamps on a `market_metric` row names that. The test sketch's `== 62500` and the implementation sketch below are therefore both superseded — see the amended §14 line at the top of this plan for the ruling and `app/census/metrics.py` for what ships.
+
 **Files:**
 - Create: `app/census/metrics.py`, `app/census/materialize.py`, `tests/census/test_metrics.py`, `tests/census/test_materialize.py`
 - Modify: `app/tasks/census.py` (`census.materialize_metrics` nightly, `census.backfill_listing`), `app/tasks/celery_app.py` (beat entry), `scripts/census_load.py` (`materialize` subcommand)

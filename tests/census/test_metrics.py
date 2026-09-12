@@ -159,6 +159,33 @@ def test_weighted_median_is_none_with_no_usable_weight() -> None:
     assert m.weighted_median([]) is None
 
 
+def test_weighted_median_skips_a_negative_weight() -> None:
+    """Task INCOME-MEDIAN fix round 1, Minor 2. The skip guard was `w not in (None, 0)`, which
+    admits a NEGATIVE weight. Under the old weighted MEAN a negative weight merely skewed the
+    answer; under a weighted median it corrupts the walk itself — the running total can go DOWN, so
+    the cumulative weight can cross half the total more than once, and `sum` can even produce a
+    total smaller than a part's own weight. No caller can produce one (`materialize.py` multiplies
+    households by an overlap fraction, both non-negative), which is exactly why the guard has to say
+    so rather than rely on it. A weight that is not positive contributes nothing and is skipped,
+    like a zero."""
+    assert m.weighted_median([(100000, 1000), (999999, -5000)]) == 100000
+    assert m.weighted_median([(999999, -5000)]) is None
+
+
+def test_weighted_median_skips_a_nan_weight() -> None:
+    """The other value `w not in (None, 0)` let through, and the worse of the two. `float("nan")`
+    compares unequal to everything including itself, so it passed that guard and poisoned `sum`:
+    `total` became NaN, `not total` was False (NaN is truthy) so the `None` arm never fired, `half`
+    became NaN, and `cum < half` was False on the first test — so the walk never ran, `i` stayed at
+    its sentinel -1, and `usable[i]` read the LAST part by negative indexing. Measured before the
+    fix: `[(100000, 1000), (999999, nan)]` returned 549999.5, the midpoint of the two, a number
+    fabricated out of an unusable weight and indistinguishable from a real answer. `w > 0` is False
+    for NaN, so it is skipped structurally, without a NaN-specific branch."""
+    nan = float("nan")
+    assert m.weighted_median([(100000, 1000), (999999, nan)]) == 100000
+    assert m.weighted_median([(999999, nan)]) is None
+
+
 def test_weighted_median_is_bounded_by_its_parts_and_invariant_to_duplicating_them() -> None:
     """Two properties the weighted MEAN also satisfied, kept so the new statistic is not merely
     different but still well-formed, over 200 pseudo-random catchments (fixed seed, so a failure
