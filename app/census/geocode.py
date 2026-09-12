@@ -94,6 +94,7 @@ from typing import cast
 import httpx
 import psycopg2.extensions
 
+from app.cache import drop_list_cache, sync_redis
 from app.census.states import FIPS_BY_ABBR
 
 #: A-C15 correction 2, widened to the nation on 2026-09-12: every state `market_state` carries,
@@ -376,20 +377,56 @@ def resolve(conn: psycopg2.extensions.connection, geocoder: Geocoder, listing_id
         # real seller's listing reached Browse with no pin however well it geocoded --
         # `app/api/listings.py`'s `_SELECT` reads `ST_Y(geom::geometry)`/`ST_X(geom::geometry)`
         # and nothing else. One writer, here, beside `practice_location.point`: a second writer
-        # elsewhere is how the two columns start disagreeing. The column is
-        # `geography(Point,4326)` (`migrations/016_listing.sql:26`) and this is the seeder's own
-        # expression, so both writers write the same thing; the `CASE` mirrors the row above, so
-        # a resolution that found no coordinate leaves no pin rather than one at [0, 0] (A25).
+        # elsewhere is how the two columns start disagreeing.
+        #
+        # Review minor 7 -- ONE coordinate, transformed, rather than two expressions that agree.
+        # `practice_location.point` above is `geometry(Point,4269)` (NAD83, what the Census
+        # geocoder returns) and `listing.geom` is `geography(Point,4326)` (WGS84,
+        # `migrations/016_listing.sql:26`), so the datum is named in the SQL and PostGIS converts
+        # between them instead of the two columns being the same place by coincidence. The
+        # NUMBERS do not move: PROJ treats NAD83 and WGS84 as equivalent without a grid shift, so
+        # this returns what `scripts/seed_listings.py`'s own `ST_SetSRID(..., 4326)` convention
+        # has always produced, to sub-metre -- the seeder is not wrong and is not changed.
+        #
+        # Review minor 4 -- ABSENCE OF A NEW COORDINATE IS NOT EVIDENCE AGAINST THE ONE ALREADY
+        # HELD. This used to mirror the `CASE WHEN ... IS NULL THEN NULL` of the row above, which
+        # meant a re-resolve landing on a rung with no coordinate (`geo_area.centroid` is
+        # nullable, so the place and county rungs can both yield `None`) NULLED a pin that was
+        # already there -- and the pins most likely to be re-resolved are the twenty-nine demo
+        # hospitals' curated ones. The `WHERE` term makes such a resolve update no row at all:
+        # `practice_location` still records honestly that this pass found no point, and the
+        # listing keeps the pin it had. A listing that has never had one still has none, which is
+        # A25's "no point, no pin" unchanged.
         cur.execute(
             """UPDATE listing
-                  SET geom = CASE WHEN %s IS NULL THEN NULL
-                                  ELSE ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography END
-                WHERE id = %s""",
-            (loc.lng, loc.lng, loc.lat, listing_id),
+                  SET geom = ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4269), 4326)::geography
+                WHERE id = %s AND %s IS NOT NULL AND %s IS NOT NULL""",
+            (loc.lng, loc.lat, listing_id, loc.lng, loc.lat),
         )
         if precision != "rooftop":
+            # Review minor 8: one OPEN item per listing, not one per pass. `geocode_review` is the
+            # staff queue for a listing that resolved below rooftop (§11) and carries no
+            # uniqueness of its own (`migrations/060_geocode_cache.sql`), while every re-publish,
+            # every address correction and every `census_load.py geocode --force` runs this
+            # function again -- so the queue grew a duplicate row per pass for a condition that
+            # had not changed and that staff cannot action twice. Guarded in the INSERT rather
+            # than by a migration: `060` is applied on QA and production and an applied migration
+            # is immutable, and a partial unique index would also refuse the row this deliberately
+            # ALLOWS -- a row a staff member has already closed does not suppress a new one,
+            # because the condition recurring after it was dealt with is a real new item.
             cur.execute(
-                "INSERT INTO geocode_review (listing_id, reason) VALUES (%s, %s)",
-                (listing_id, f"geocoder fell back to {precision}; market panel shows 'approximate community data'"),
+                """INSERT INTO geocode_review (listing_id, reason)
+                   SELECT %s, %s
+                    WHERE NOT EXISTS (SELECT 1 FROM geocode_review
+                                       WHERE listing_id = %s AND resolved_at IS NULL)""",
+                (listing_id, f"geocoder fell back to {precision}; market panel shows 'approximate community data'",
+                 listing_id),
             )
+    # Review minor 6: the pin is now visible to Browse at once. `GET /api/listings` caches a page
+    # for 60 s and the PUBLISH drops that cache when the reviewer decides -- which is before this
+    # function has run, so a buyer who loaded Browse in between would have been served a card with
+    # no pin for the rest of the TTL. Dropped through `app.cache`, never by importing a route
+    # module: `app/census/` depends on no part of `app/api/`, and this is the one function both
+    # sides share.
+    drop_list_cache(sync_redis())
     return loc

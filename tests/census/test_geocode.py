@@ -585,3 +585,115 @@ def test_resolve_below_rooftop_writes_the_fallback_centroid_as_the_pin(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
         assert cur.fetchone() == (-97.8, 30.55)
+
+
+# ---- fix round 1: the pin, the review queue and the Browse cache -------------------------------
+
+
+def _pin(conn, lid):
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        return cur.fetchone()
+
+
+def _open_reviews(conn, lid):
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM geocode_review WHERE listing_id=%s AND resolved_at IS NULL", (lid,))
+        return cur.fetchone()[0]
+
+
+def test_a_resolve_that_finds_no_coordinate_leaves_an_existing_pin_alone(conn):
+    """Review minor 4. The pin write used a `CASE WHEN … IS NULL THEN NULL` mirroring the
+    `practice_location` row above it — which means a re-resolve that lands on a rung with no
+    coordinate would have NULLED a pin that was already there. `scripts/seed_listings.py` writes
+    the seeds' own curated points, so the row this could silently blank is a demo hospital's.
+
+    The rung is reachable, not hypothetical: `geo_area.centroid` is nullable, and a place row
+    loaded without one resolves at `place` precision with `lat`/`lng` both `None`. Absence of a
+    new coordinate is not evidence against the coordinate already held."""
+    with conn.cursor() as cur:
+        # A place the city name matches, with NO centroid — and no ZCTA for this ZIP, so the
+        # ladder cannot take rung 1 and falls to rung 2.
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom) VALUES "
+            "('4813552','160','2023','Cedar Park city','48',"
+            " ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)))"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                    " VALUES ('tiger_cb','2023',now(),'test')")
+    lid = make_listing(conn, zip="00000", city="Cedar Park")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET geom = ST_SetSRID(ST_MakePoint(-97.75,30.51),4326)::geography WHERE id=%s", (lid,))
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert (loc.geo_precision, loc.lat, loc.lng) == ("place", None, None)
+    assert _pin(conn, lid) == (-97.75, 30.51), "a resolve with no coordinate must not blank the pin"
+
+
+def test_resolve_drops_the_browse_list_cache_so_a_new_pin_is_visible_at_once(conn, redis):
+    """Review minor 6. `GET /api/listings` caches its page under `listings:v1:*` for 60 s, and the
+    publish that enqueues the geocode drops that cache BEFORE the worker has written the pin — so
+    a buyer who loaded Browse in between would see the new listing pinless for up to a minute,
+    which is exactly the defect GEO-WIRE exists to remove, merely shortened.
+
+    The worker drops it again when the pin lands. Through `app.cache`, never by importing the API:
+    nothing under `app/census/` may depend on a route module."""
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    redis.set("listings:v1:::50", b"stale page")
+
+    geocode.resolve(conn, _geocoder(MATCH), lid)
+
+    assert redis.get("listings:v1:::50") is None
+
+
+def test_the_pin_and_the_practice_location_point_are_the_same_place(conn):
+    """Review minor 7. `practice_location.point` is `geometry(Point,4269)` (NAD83) and
+    `listing.geom` is `geography(Point,4326)` (WGS84), and the two used to be built by two
+    separate expressions that happened to agree. They are now ONE coordinate put through an
+    explicit `ST_Transform`, so they are the same point by construction rather than by
+    coincidence.
+
+    Stated honestly about what this gate does and does not prove: it catches a swapped argument
+    pair (`ST_MakePoint(lat, lng)`) or a mis-declared SRID, either of which separates the two
+    columns by hundreds of kilometres. It does NOT distinguish the two DATUMS, because PROJ
+    treats NAD83 and WGS84 as equivalent absent a grid shift and returns the identical numbers —
+    which is the very reason the seeder's own convention (`ST_SetSRID(..., 4326)` over a Census
+    coordinate) has always been right to sub-metre, and why minor 7 is a correctness-of-
+    construction change rather than a change of behaviour."""
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    geocode.resolve(conn, _geocoder(MATCH), lid)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ST_X(l.geom::geometry), ST_Y(l.geom::geometry),"
+            "       ST_X(ST_Transform(p.point, 4326)), ST_Y(ST_Transform(p.point, 4326))"
+            "  FROM listing l JOIN practice_location p ON p.listing_id = l.id WHERE l.id = %s", (lid,)
+        )
+        gx, gy, px, py = cur.fetchone()
+    assert abs(gx - px) < 1e-7 and abs(gy - py) < 1e-7
+
+
+def test_two_sub_rooftop_resolves_leave_one_open_review_row(conn):
+    """Review minor 8. `geocode_review` is the staff queue for a listing that resolved below
+    rooftop (§11), and it has no uniqueness of its own (`migrations/060_geocode_cache.sql`). Every
+    re-publish, every address correction and every `census_load.py geocode --force` runs `resolve`
+    again, so the queue grew one duplicate row per pass for a condition that had not changed —
+    the same listing, the same reason, nothing for staff to do twice.
+
+    An UNRESOLVED row is the open item, so a second resolve adds nothing while one stands. A row a
+    staff member has closed (`resolved_at`) does not suppress a new one: the condition recurring
+    after it was dealt with is a real new item. No migration — the guard is in the INSERT."""
+    _seed_geo(conn)
+    lid = make_listing(conn, zip="78613")
+
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid).geo_precision == "zcta"
+    assert _open_reviews(conn, lid) == 1
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid).geo_precision == "zcta"
+    assert _open_reviews(conn, lid) == 1, "a second pass must not re-queue an open review"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE geocode_review SET resolved_at = now() WHERE listing_id = %s", (lid,))
+    geocode.resolve(conn, _geocoder(NOMATCH), lid)
+    assert _open_reviews(conn, lid) == 1, "once staff have closed it, the condition can be raised again"

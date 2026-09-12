@@ -31,12 +31,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.listings import _error, drop_list_cache, enqueue_geocode, has_geocode
+from app.api.listings import _error, enqueue_geocode, has_geocode
 from app.api.seller_listings import _COLUMNS, _row, _rows, assets_for, assets_of, serialise_draft
 from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import require
-from app.cache import sync_redis
+from app.cache import drop_list_cache, sync_redis
 from app.db import sync_conn
 from app.mail.outbox import enqueue
 

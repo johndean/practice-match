@@ -24,11 +24,19 @@ patch with `reset()` on both sides of its yield.
 from __future__ import annotations
 
 import threading
+from typing import Any
 
 import redis as redis_sync
 import redis.asyncio as aioredis
 
 from app.config import settings
+
+#: The key prefix `GET /api/listings` caches a page under. It lives HERE, beside the client, and
+#: not in the route module, because two very different callers have to agree on it: the API, which
+#: writes and drops it, and `app.census.geocode`, which drops it from the WORKER when a listing's
+#: pin lands (review minor 6). Nothing under `app/census/` may import a route module, so a shared
+#: constant in a module both already depend on is the only place one implementation can live.
+LIST_CACHE_PREFIX = "listings:v1:"
 
 
 # `Redis.from_url`, not the module-level `redis.from_url`/`redis.asyncio.from_url`: those two are
@@ -86,3 +94,29 @@ def reset() -> None:
     global _sync_client
     with _sync_lock:
         _sync_client = None
+
+
+def drop_list_cache(cache: Any) -> int:
+    """Every `listings:v1:*` key, dropped; the number removed.
+
+    Spec 2026-09-08 D16, which is `app/api/listings.py`'s own review-round-2 M4 requirement made
+    real: a disclosure flag turned OFF must stop reaching buyers AT ONCE, not within the 60 s TTL.
+    Every writer in `app/api/seller_listings.py` and `app/api/admin_listings.py` calls this AFTER
+    its transaction commits — the ordering `admin_users.py` learned in I5c fix round 1 — because
+    dropping the key while the write is uncommitted leaves a window in which a concurrent read
+    re-caches the pre-write payload for the full TTL.
+
+    `app.census.geocode.resolve` calls it too (review minor 6). The publish drops the cache when
+    the reviewer decides, which is BEFORE the worker has resolved the point, so a buyer who loaded
+    Browse in between would have been served a pinless card for the rest of the TTL. The worker
+    drops it again when the pin actually lands.
+
+    `scan_iter`, not `keys`: the cache is small but a blocking KEYS on a shared Railway Redis is a
+    stall every other consumer pays for. The prefix is the key shape's own, so a v2 key scheme
+    cannot be silently missed — it would not match, and the test that plants two keys would fail.
+    """
+    removed = 0
+    for key in cache.scan_iter(match=f"{LIST_CACHE_PREFIX}*"):
+        cache.delete(key)
+        removed += 1
+    return removed

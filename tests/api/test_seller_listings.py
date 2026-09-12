@@ -2239,3 +2239,44 @@ async def test_a_second_republish_inside_the_dedupe_window_enqueues_nothing(
         assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"},
                                   headers=signed)).status_code == 200
     assert sent == [("census.geocode_listing", [listing_id])]
+
+
+# --- fix round 1, review minor 2: the dedupe key is the listing's canonical id -------------------
+async def test_an_address_edit_clears_the_dedupe_key_whatever_the_path_spells(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Review minor 2. `enqueue_geocode` keys on `str(parsed)` in the admin decide route — the
+    canonical lower-case hyphenated uuid — while these two seller routes keyed on the raw PATH
+    STRING. `UUID()` accepts upper case, braces and no hyphens at all, so a seller (or an adapter,
+    or a copied link) presenting any of those spellings cleared a key nobody had set and left the
+    real one standing: the address change would then be swallowed by the 600 s window and the
+    listing would keep the geography of an address it no longer has.
+
+    Both sites now key on `str(row["id"])`, which is the row's own id and can be spelled one way
+    only."""
+    listing_id, signed = await _ready(client, member)
+    redis.set(f"geocode:{listing_id}", "1")
+
+    shouted = listing_id.upper()
+    response = await client.patch(f"/api/seller/listings/{shouted}?step=2",
+                                  json={"city": "Round Rock", "zip": "78664"}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert redis.get(f"geocode:{listing_id}") is None
+
+
+async def test_a_republish_sets_the_dedupe_key_whatever_the_path_spells(
+    client: Any, conn: Any, redis: Any, member: Any, monkeypatch: Any
+) -> None:
+    """The same normalisation on the other seller site: the key a republish SETS must be the one
+    an address edit (or the admin route) later looks for."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='paused', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    from app.tasks.celery_app import celery_app
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: None)
+
+    response = await client.post(f"/api/seller/listings/{listing_id.upper()}/status",
+                                 json={"action": "republish"}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert redis.get(f"geocode:{listing_id}") is not None

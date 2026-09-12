@@ -65,7 +65,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.auth.deps import require
-from app.cache import sync_redis
+from app.cache import LIST_CACHE_PREFIX, sync_redis
 from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
@@ -85,7 +85,6 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_MARKET_LEN = 64
 PHOTO_CACHE_CONTROL = "private, max-age=86400"
-LIST_CACHE_PREFIX = "listings:v1:"
 # GEO-WIRE (1). `app/api/market.py`'s `BACKFILL_DEDUPE_TTL` (600 s) and its key shape, one task
 # earlier in the same chain: geocode -> backfill -> materialise.
 GEOCODE_DEDUPE_PREFIX = "geocode:"
@@ -110,27 +109,6 @@ SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_
 def _error(code: str, message: str, status: int) -> JSONResponse:
     """Decision A5's body for the refusals this module raises itself."""
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
-
-
-def drop_list_cache(cache: Any) -> int:
-    """Every `listings:v1:*` key, dropped; the number removed.
-
-    Spec 2026-09-08 D16, which is this module's own review-round-2 M4 requirement made real: a
-    disclosure flag turned OFF must stop reaching buyers AT ONCE, not within the 60 s TTL. Every
-    writer in `app/api/seller_listings.py` and `app/api/admin_listings.py` calls this AFTER its
-    transaction commits — the ordering `admin_users.py` learned in I5c fix round 1 — because
-    dropping the key while the write is uncommitted leaves a window in which a concurrent read
-    re-caches the pre-write payload for the full TTL.
-
-    `scan_iter`, not `keys`: the cache is small but a blocking KEYS on a shared Railway Redis is a
-    stall every other consumer pays for. The prefix is the key shape's own, so a v2 key scheme
-    cannot be silently missed — it would not match, and the test that plants two keys would fail.
-    """
-    removed = 0
-    for key in cache.scan_iter(match=f"{LIST_CACHE_PREFIX}*"):
-        cache.delete(key)
-        removed += 1
-    return removed
 
 
 def has_geocode(conn: Any, listing_id: Any) -> bool:

@@ -57,7 +57,6 @@ from app.api.listings import (
     REQUIRE_LISTING_READ,
     _error,
     clear_geocode_dedupe,
-    drop_list_cache,
     enqueue_geocode,
     has_geocode,
     photo_list,
@@ -75,7 +74,7 @@ from app.auth.limits import (
     LISTING_UPLOAD,
     hit,
 )
-from app.cache import sync_redis
+from app.cache import drop_list_cache, sync_redis
 from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
@@ -690,8 +689,13 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # GEO-WIRE (2), after the commit like every other cache write here: the dedupe key is what
     # would otherwise swallow the re-geocode, since a correction arrives precisely inside the
     # window the publish that revealed the mistake opened.
+    #
+    # `str(row["id"])`, never the raw path string (review minor 2): `UUID()` accepts upper case,
+    # braces and an unhyphenated form, so a path spelled any of those ways would have cleared a
+    # key nobody set and left the real one standing — and the admin route that SETS it keys on
+    # the canonical `str(parsed)`. The row's own id has one spelling.
     if moved:
-        clear_geocode_dedupe(sync_redis(), listing_id)
+        clear_geocode_dedupe(sync_redis(), str(row["id"]))
     return JSONResponse(payload)
 
 
@@ -1439,5 +1443,7 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
     # reason: a listing the seller puts back on the market needs the pin, the community card and
     # the metro every other published listing has.
     if needs_geocode:
-        enqueue_geocode(sync_redis(), str(listing_id))
+        # `str(row["id"])` for `clear_geocode_dedupe`'s own reason (review minor 2): the key this
+        # SETS has to be the one an address edit, or the admin route, later looks for.
+        enqueue_geocode(sync_redis(), str(row["id"]))
     return JSONResponse(payload)
