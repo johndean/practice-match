@@ -183,7 +183,7 @@ const metaSource = (k, basis) => {
 const LAYER_META = {
   income: {
     title: "Median household income",
-    sub: "Household income by community · ACS 5-year",
+    sub: "Median household income by Census tract · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
@@ -191,7 +191,7 @@ const LAYER_META = {
   },
   pets: {
     title: "Pet ownership (estimated)",
-    sub: "Estimated pet households · derived from ACS households",
+    sub: "Estimated pet households by Census tract · derived from ACS households",
     updated: "Updated: derived Jan 2025 from ACS 2023",
     source: "Derived estimate from ACS household counts (2023) · not an observed count",
     means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
@@ -199,7 +199,7 @@ const LAYER_META = {
   },
   competition: {
     title: "Veterinary competition",
-    sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",
+    sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
     dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
     means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
@@ -207,7 +207,7 @@ const LAYER_META = {
   },
   growth: {
     title: "Population growth",
-    sub: "Change · ACS population estimates",
+    sub: "Population change by place (city/town) · ACS population estimates",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     source: "U.S. Census ACS population estimates, 2015–2023 · community level",
     means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
@@ -215,7 +215,7 @@ const LAYER_META = {
   },
   households: {
     title: "Households",
-    sub: "Total households · ACS 5-year",
+    sub: "Total households by Census tract · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "The count of occupied housing units in each community — the denominator behind most other figures here.",
@@ -223,7 +223,7 @@ const LAYER_META = {
   },
   econ: {
     title: "Average practice payroll",
-    sub: "Derived · total CBP payroll ÷ establishments",
+    sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",
     updated: "Updated: derived from CBP 2023 (Nov 2024)",
     source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",
     means: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures.",

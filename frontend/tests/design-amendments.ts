@@ -5905,6 +5905,89 @@ const A33_2c: Amendment = {
   count: 1
 };
 
+/** A33.3 — THE LAYER ROWS NAME THE GEOGRAPHY THEY SHADE. Ruled 2026-09-13 on the D-C51 caption
+ *  audit (`one-vocabulary-audit.md` §3.2, rows R13–R18), widening the brief's single income row
+ *  to all six: `LAYER_META.income.sub` read "Household income by community · ACS 5-year" on a
+ *  layer that shades Census tracts and whose own legend line says "Census tract", and the other
+ *  five named no geography at all — so five rows were silent and the sixth was wrong.
+ *
+ *  MEASURED, not assumed: `.sub` is rendered in exactly TWO places, both the "Market data layers"
+ *  drawer's own rows — `layerChoices[].sub` at `App.vue:575` (desktop) and `:1565` (the phone
+ *  frame's sheet). `md.active.sub` is computed and rendered NOWHERE, so the legend under the map
+ *  does not print this string and takes its geography from `AREA_LABEL` through `geoLine`. That
+ *  is why these are literal strings rather than a per-surface composition in `metaSource`'s shape
+ *  (A24 fix round 2): there is one surface, and it is the map's own drawer, so one string is one
+ *  fact. `tests/census/test_design_shading_labels.py` pins each row's geography phrase against
+ *  `app.api.market.SHADING[layer]["label"]`, which is the SAME table the legend, the tip and the
+ *  route all read — so a layer that moves geography again (income moved 860 → 140 on 2026-09-12,
+ *  which is how this row came to be wrong) fails on both sides at once instead of leaving a
+ *  drawer row describing a map nobody draws any more.
+ *
+ *  The grammar is one sentence for all six — `<statistic> by <geography> · <dataset>` — and the
+ *  geography is the ruled label, lower-cased where the sentence demands it ("by place
+ *  (city/town)", "by county"). Six entries, one per string, so each row carries its own
+ *  `LOCAL_AMENDMENTS.md` row and its own reason; they are independent literals and the count is
+ *  what says how many strings the ruling reached.
+ *
+ *  RE-BASED, measured rather than reasoned: baselines were regenerated from the pre-change
+ *  design and from this one and the PNG hashes diffed. Exactly ONE of the 54 approved states
+ *  moves — `browse-layers-open`, the desktop drawer. `mobile-sheet` does not: the phone
+ *  frame's own copy of these rows is behind a control no approved state opens. None of
+ *  `baseline-manifest.json`'s thirteen frozen hashes moves. */
+const A33_3a: Amendment = {
+  id: 'A33.3a', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // The one row the QA measurement started from: it read “by community” on a layer that shades Census tracts and whose own legend line beneath the map says “Census tract”. The statistic is renamed to the one LAYER_META.income.title already uses, so the row says what the number is as well as where it is drawn.
+  find: 'sub: "Household income by community · ACS 5-year",',
+  replace: 'sub: "Median household income by Census tract · ACS 5-year",',
+  count: 1
+};
+
+const A33_3b: Amendment = {
+  id: 'A33.3b', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // Households moved to the tract with income on 2026-09-12 (D-L1) and its row never named a geography at all.
+  find: 'sub: "Total households · ACS 5-year",',
+  replace: 'sub: "Total households by Census tract · ACS 5-year",',
+  count: 1
+};
+
+const A33_3c: Amendment = {
+  id: 'A33.3c', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // Pets is households × 0.57 and is drawn at the same tract; the modelled-estimate caveat stays where it is, in `means` and in the map tip (§9).
+  find: 'sub: "Estimated pet households · derived from ACS households",',
+  replace: 'sub: "Estimated pet households by Census tract · derived from ACS households",',
+  count: 1
+};
+
+const A33_3d: Amendment = {
+  id: 'A33.3d', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // The one layer whose geography is the dataset's own authoritative one (§6's single exception), which the row now says rather than leaving to the legend.
+  find: 'sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",',
+  replace: 'sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",',
+  count: 1
+};
+
+const A33_3e: Amendment = {
+  id: 'A33.3e', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // “Change” alone named neither the statistic nor its geography. It is the one layer whose geography is NOT the tract and cannot be until the 2010→2020 crosswalk lands (D12), so naming it here is what keeps a reader from carrying the tract across from the rows above.
+  find: 'sub: "Change · ACS population estimates",',
+  replace: 'sub: "Population change by place (city/town) · ACS population estimates",',
+  count: 1
+};
+
+const A33_3f: Amendment = {
+  id: 'A33.3f', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // “Derived” alone said only that it is a derivation. The statistic is the one `short` already uses, the geography is the county, and the word “derived” survives in front of the formula.
+  find: 'sub: "Derived · total CBP payroll ÷ establishments",',
+  replace: 'sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6050,5 +6133,6 @@ export function amendments(): Amendment[] {
     // 2026-09-13). Three of them are CHAINED: A33.1b on A21.2d, A33.2a on A24.25/A24.37 (the
     // `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the margin
     // expression it rewrites). Appended last, as every family is.
-    A33_1a, A33_1b, A33_2a, A33_2b, A33_2c];
+    A33_1a, A33_1b, A33_2a, A33_2b, A33_2c,
+    A33_3a, A33_3b, A33_3c, A33_3d, A33_3e, A33_3f];
 }

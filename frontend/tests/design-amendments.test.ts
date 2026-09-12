@@ -365,6 +365,9 @@ describe('local design amendments (spec D15)', () => {
     // (the `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the
     // margin expression it rewrites); A33.2b's `find` is the pristine bundle's own `bucket`.
     'A33.2a', 'A33.2b', 'A33.2c',
+    // A33.3 — every Market data layer row names the geography it shades (D-C51 caption audit,
+    // rows R13–R18). Six independent literals, one per row, each measured in the pristine bundle.
+    'A33.3a', 'A33.3b', 'A33.3c', 'A33.3d', 'A33.3e', 'A33.3f',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -530,7 +533,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(292);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(298);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

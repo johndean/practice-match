@@ -71,3 +71,94 @@ def test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_
     assert THRESHOLD_RULE in design, "the design's tooltip no longer states the Census rule the API states"
     assert design.count(THRESHOLD_RULE) == 1, "the rule is stated once in the design, not twice"
     assert "source_threshold" in design, "nothing in the design branches on the reason the API sends"
+
+
+# ---------------------------------------------------------------------------------------------
+# A33.3 (Task SCREEN-LABELS, 2026-09-13; D-C51 caption audit §3.2, rows R13-R18) — EVERY LAYER
+# ROW NAMES THE GEOGRAPHY IT SHADES.
+#
+# `LAYER_META.<layer>.sub` is the sentence under each row of the Browse "Market data layers"
+# drawer. It read "Household income by community · ACS 5-year" for a layer that draws Census
+# tracts, and the other five named no geography at all -- five rows silent and the sixth wrong.
+# The wrong one is not a typo: income moved 860 -> 140 on 2026-09-12 and the row did not follow,
+# which is exactly the drift `test_the_designs_geography_labels_are_the_ruled_ones` catches for
+# `AREA_LABEL` and nothing caught here.
+#
+# So the rows are pinned against the SAME table -- `SHADING`, which the route, the legend, the
+# map tip and the community notes all read -- and a layer that moves again fails on both sides at
+# once. The phrase is the ruled label, lower-cased where the sentence demands it ("by place
+# (city/town)", "by county"): what is pinned is the NAME, not its capitalisation.
+# ---------------------------------------------------------------------------------------------
+
+
+def _layer_subs() -> dict[str, str]:
+    """Each layer's `sub` line from the amended design's `LAYER_META`, read rather than retyped.
+
+    Anchored on the declaration and split per layer key, for `_dict_literal`'s own reason: this
+    object is NESTED, so a flat `[^}]*` read stops at the first inner brace and a bare search for
+    `income:` would match one of its thirty other occurrences in the file."""
+    design = DESIGN.read_text(encoding="utf-8")
+    start = design.index("const LAYER_META = {")
+    block = design[start:design.index("\n};", start)]
+    subs: dict[str, str] = {}
+    layer = None
+    for line in block.split("\n"):
+        head = re.match(r"  (\w+): \{", line)
+        if head:
+            layer = head.group(1)
+        m = re.match(r'    sub: "([^"]*)",', line)
+        if m and layer:
+            subs[layer] = m.group(1)
+    return subs
+
+
+def test_every_layer_row_names_the_geography_that_layer_shades() -> None:
+    """The pin, both ways round: every shading layer has a row, and every row names its OWN ruled
+    geography and no other layer's. The second half is what catches a copy-paste: "Total
+    households by ZIP Code Tabulation Area" would pass a test that only looked for the presence of
+    a geography word."""
+    subs = _layer_subs()
+    assert set(subs) == set(RULED_LABEL), (
+        f"the design's LAYER_META rows ({sorted(subs)}) are not the shading layers "
+        f"({sorted(RULED_LABEL)})"
+    )
+    for layer, sub in subs.items():
+        own = RULED_LABEL[layer]
+        assert f"by {own.lower()}" in sub.lower(), (
+            f"LAYER_META.{layer}.sub does not name its own geography {own!r}: {sub!r}"
+        )
+        for label in RULED_LABEL.values():
+            if label.lower() == own.lower():
+                continue
+            assert label.lower() not in sub.lower(), (
+                f"LAYER_META.{layer}.sub names {label!r}, which is not the geography it shades"
+            )
+
+
+def test_no_layer_row_still_calls_its_geography_the_community() -> None:
+    """The word the audit found, gone as a GEOGRAPHY from every row. It is a real word elsewhere
+    in the catalogue -- `means` and `why` describe what a figure is for -- so the assertion is on
+    the rows alone, which is the only place it stood for a geography."""
+    for layer, sub in _layer_subs().items():
+        assert "community" not in sub.lower(), (
+            f"LAYER_META.{layer}.sub still calls its geography 'community': {sub!r}"
+        )
+
+
+def test_every_layer_row_follows_the_one_ruled_grammar() -> None:
+    """One sentence for all six -- `<statistic> by <geography> · <dataset>` -- so a member reading
+    down the drawer is reading one list and not six. Pinned as a SHAPE rather than as six
+    literals: the strings themselves are the design's and belong in
+    `frontend/tests/design-amendments.ts`, and what this owns is that none of them drifts out of
+    the grammar the ruling set."""
+    for layer, sub in _layer_subs().items():
+        statistic, sep, rest = sub.partition(" by ")
+        assert sep, f"LAYER_META.{layer}.sub does not use the ruled 'by' grammar: {sub!r}"
+        assert statistic and statistic[0].isupper(), f"{layer}: the statistic leads: {sub!r}"
+        geography, mid, dataset = rest.partition(" \u00b7 ")
+        assert mid, f"LAYER_META.{layer}.sub names no dataset after its geography: {sub!r}"
+        assert geography.lower() == RULED_LABEL[layer].lower(), (
+            f"{layer}: the geography phrase is {geography!r}, not the ruled {RULED_LABEL[layer]!r}"
+        )
+        assert dataset, f"{layer}: the dataset half is empty: {sub!r}"
+
