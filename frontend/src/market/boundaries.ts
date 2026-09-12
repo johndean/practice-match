@@ -49,6 +49,20 @@ export interface BoundaryProperties {
 }
 export interface BoundaryFeature { type: 'Feature'; id: string; properties: BoundaryProperties; geometry: unknown }
 export interface BoundaryCollection { type: 'FeatureCollection'; state: string; features: BoundaryFeature[] }
+/**
+ * One row of `GET /api/markets`.
+ *
+ * `name` is LOAD-BEARING and its meaning is a cross-language contract: it is `listing.market`
+ * verbatim — the design's own `P[i].market`, the exact string `logic.js`'s metro dropdown lists —
+ * and `boundaries()` below joins on it with `rows.find(m => m.name === marketName)`. It is NOT the
+ * CBSA's official name: the route selects `l.market AS name` precisely so that no name heuristic
+ * stands between the dropdown and the geoid (Task CK, which deleted `short_market_name`). Rename
+ * that column alias on the server and every metro silently fails to resolve, so
+ * `tests/api/test_contract_doc.py` pins the two halves of the join against each other.
+ *
+ * One market key can hold rows in two CBSAs; `find` takes the first, and the route orders on
+ * `(name, cbsa_geoid)` so that "first" is stable rather than whatever Postgres returned.
+ */
 interface MetroRow { cbsa_geoid: string; name: string }
 
 /** What `logic.js` sees as `this.props.market`. */

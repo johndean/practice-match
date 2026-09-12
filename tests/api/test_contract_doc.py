@@ -221,3 +221,35 @@ def test_the_refusal_codes_the_boundary_adapter_branches_on_are_pinned_to_the_ro
         assert code in bounds, (
             f"{ADAPTER.name} branches on {code!r} but the contract doc's Bounds section never names it"
         )
+
+
+def test_the_metro_catalogue_name_join_is_the_same_field_on_both_sides() -> None:
+    """The client resolves a metro by NAME, and nothing pinned what that name is.
+
+    `boundaries.ts` joins `rows.find((m) => m.name === marketName)` where `marketName` is the
+    design's own `P[i].market`; `markets()` serves `l.market AS name` precisely so that no name
+    heuristic stands between the dropdown and the geoid (Task CK deleted `short_market_name` for
+    exactly that reason). The two halves are in different languages and nothing connected them:
+    alias that column to anything else — `cbsa_name`, `label`, the CBSA's official title — and
+    every metro silently fails to resolve, with every gate in this repository green.
+
+    Read as TEXT, the `step-fields.json` posture, like the refusal-code pin above it.
+    """
+    import inspect
+
+    from app.api import market
+
+    adapter = ADAPTER.read_text(encoding="utf-8")
+    join = re.search(r"rows\.find\(\((\w+)\)\s*=>\s*\1\.(\w+)\s*===\s*marketName\)", adapter)
+    assert join is not None, (
+        f"{ADAPTER.name} no longer resolves a metro with `rows.find(m => m.<field> === marketName)`; "
+        "this pin reads that join and must be rewritten with it"
+    )
+    field = join.group(2)
+    assert field == "name", f"{ADAPTER.name} joins the metro catalogue on {field!r}"
+
+    source = inspect.getsource(market.markets)
+    assert f"l.market AS {field}" in source, (
+        f"{ADAPTER.name} joins on {field!r} but `app.api.market.markets` does not select "
+        f"`l.market AS {field}` — the dropdown key and the served name are no longer the same string"
+    )
