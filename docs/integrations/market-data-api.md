@@ -215,6 +215,12 @@ over the CBSA's official name). Two listing market keys inside one CBSA are two 
 `"Sacramento, CA"` and `"South Lake Tahoe, CA"`, both CBSA `40900`). A published listing whose
 point lies outside every CBSA has no row here, and therefore no shading.
 
+The reverse case — **one market key spanning two CBSAs**, which happens where a metro boundary runs
+through a market key's own listings — is also two rows, with the same `name`. A client that resolves
+a metro by name takes one of them, so the rows are ordered by `(name, cbsa_geoid)`: the choice is
+arbitrary but **stable**, and the same catalogue will not shade a different CBSA between two
+requests. A client that needs a particular one of the two must select on `cbsa_geoid`, not on `name`.
+
 ## `GET /api/markets/{cbsa}/communities?band=place|drive_10|drive_20` (default `place`)
 
 ```json

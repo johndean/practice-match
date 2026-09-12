@@ -34,6 +34,7 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from app.api import market
 from app.cache import sync_redis
 from app.census import gate, materialize
 from app.config import settings
@@ -189,6 +190,55 @@ async def test_markets_serves_one_row_per_market_key_when_two_keys_share_a_cbsa(
     assert named.get("South Lake Tahoe, CA") == "40900"
     pairs = [(r["name"], r["cbsa_geoid"]) for r in rows]
     assert len(pairs) == len(set(pairs))  # no duplicate (name, cbsa_geoid) pair
+
+
+async def test_markets_orders_one_market_key_that_spans_two_cbsas_deterministically(client, materialized, conn, H):
+    """The REVERSE of the case above, and the one that was undefined (fix round 2, Minor 1).
+
+    Where a metro boundary runs through a market key's own listings, one `listing.market` value
+    holds rows in two CBSAs. The client resolves a metro with `rows.find(m => m.name === marketName)`
+    — the FIRST match — and `ORDER BY l.market` alone left Postgres free to return either row first,
+    so the same catalogue could shade a different half of the country between two requests with
+    nothing anywhere to notice. `pl.cbsa_geoid` is the tie-break: still arbitrary, now STABLE.
+    """
+    from tests.census.listing_fixtures import make_listing
+
+    ids = [make_listing(conn, city="Kansas City", state="MO") for _ in range(2)]
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "(%s,'310','2023',%s, ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(%s,%s,4269))",
+            [
+                ("28140", "Kansas City, MO-KS Metro Area", "POLYGON((-95 38,-94 38,-94 39,-95 39,-95 38))", -94.58, 39.10),
+                ("41140", "St. Joseph, MO-KS Metro Area", "POLYGON((-95 39,-94 39,-94 40,-95 40,-95 39))", -94.85, 39.77),
+            ],
+        )
+        cur.executemany(
+            "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoded_at, geocoder_vintage, cbsa_geoid) "
+            "VALUES (%s, 'h', 'rooftop', now(), 'Current_Current', %s)",
+            [(ids[0], "41140"), (ids[1], "28140")],
+        )
+    mine = [r["cbsa_geoid"] for r in (await client.get("/api/markets", headers=H)).json() if r["name"] == "Kansas City, MO"]
+    assert mine == ["28140", "41140"], mine
+
+    # …and the served order ALONE cannot prove this, which is the whole point of the defect: an
+    # unordered query returns SOME order, and on this fixture Postgres happens to return the right
+    # one — measured, by deleting the tie-break and watching this test still pass. A result that is
+    # accidentally right is exactly what was shipping. So the guarantee is pinned where it lives,
+    # in the query, the way `test_contract_doc` pins the refusal codes off the route's own source.
+    import inspect
+    import re
+
+    sql = inspect.getsource(market.markets)
+    # Anchored on the SQL literal's own closing quotes, so the prose above cannot be read as SQL.
+    order_by = re.search(r'ORDER BY ([\w. ,]+)"""', sql)
+    assert order_by is not None, "markets() has no ORDER BY at all; its row order is undefined"
+    ordered = [c.strip() for c in order_by.group(1).split(",")]
+    assert ordered == ["l.market", "pl.cbsa_geoid"], (
+        f"markets() orders by {ordered}; one market key spanning two CBSAs then has no defined "
+        "first row, and `rows.find(m => m.name === marketName)` on the client takes whichever "
+        "Postgres felt like returning"
+    )
 
 
 async def test_markets_omits_a_published_listing_whose_point_is_in_no_cbsa(client, materialized, conn, H):

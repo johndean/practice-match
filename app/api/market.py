@@ -354,6 +354,15 @@ async def markets() -> Response:
     # lists and `boundaries()` joins against; two market keys sharing one CBSA (e.g. "Sacramento,
     # CA" and "South Lake Tahoe, CA", both CBSA 40900) are two rows, and a published listing whose
     # point falls in no CBSA (`practice_location.cbsa_geoid IS NULL`) has no row at all.
+    #
+    # THE REVERSE CASE -- one market key spanning two CBSAs -- is the one this ORDER BY settles.
+    # It is not hypothetical: a key like "Kansas City, MO" can hold listings on both sides of a
+    # metro boundary, and the client resolves a metro with `rows.find(m => m.name === marketName)`,
+    # which takes the FIRST match. Ordering on `l.market` alone left Postgres free to return either
+    # row first, so the same catalogue could shade a different half of the country between two
+    # requests, with nothing anywhere to notice. `pl.cbsa_geoid` is the tie-break: an arbitrary
+    # choice made DETERMINISTIC, which is all that is available until a market key is allowed to
+    # name its own CBSA.
     async with engine().connect() as conn:
         act = await _active(conn)
         rows = (await conn.execute(text("""
@@ -363,7 +372,7 @@ async def markets() -> Response:
             JOIN geo_area ga ON ga.geo_id = pl.cbsa_geoid AND ga.summary_level = '310' AND ga.vintage = :gv
             WHERE l.status = 'published'
             GROUP BY l.market, pl.cbsa_geoid, ga.centroid
-            ORDER BY l.market"""), {"gv": act.get("tiger_cb")})).mappings().all()
+            ORDER BY l.market, pl.cbsa_geoid"""), {"gv": act.get("tiger_cb")})).mappings().all()
     return JSONResponse([
         {"cbsa_geoid": r["cbsa_geoid"], "name": r["name"], "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10}
         for r in rows
