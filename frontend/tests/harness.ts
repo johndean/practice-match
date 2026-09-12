@@ -4,6 +4,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+
+/** `app.api.market.MAX_BBOX_DEG`, the span cap the boundary route refuses on — stated in
+ *  `docs/integrations/market-data-api.md` and pinned against this copy by
+ *  `harness.test.ts`, so the stub cannot go on answering 200 to a box the real route would
+ *  refuse. It is a number rather than an import because this file runs in a browser test
+ *  process and the constant lives in Python. */
+export const MAX_BBOX_DEG = 4.0;
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
@@ -221,10 +228,26 @@ export async function prepare(page: Page): Promise<void> {
     }));
     await page.route(
       (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
-      (route) => route.fulfill({
-        status: 200, contentType: 'application/geo+json',
-        body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income')
-      })
+      (route) => {
+        // The route's OWN span refusal, imitated: a box wider than `MAX_BBOX_DEG` on either axis
+        // is `422 BBOX_TOO_LARGE` in decision A5's envelope. Without it this stub answers 200 to
+        // everything and the adapter's whole refusal ladder — the retry, the whole-metro fallback
+        // and the guard that stops both for a box the member has left — is unreachable in a real
+        // browser, so a case written against it can only pass. (Proved: the metro-switch case
+        // below passed with the guard cut out until this existed.)
+        const bbox = new URL(route.request().url()).searchParams.get('bbox');
+        const box = bbox === null ? null : bbox.split(',').map(Number);
+        if (box !== null && (box[2] - box[0] > MAX_BBOX_DEG || box[3] - box[1] > MAX_BBOX_DEG)) {
+          return route.fulfill({
+            status: 422, contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'BBOX_TOO_LARGE', message: `bbox spans more than ${MAX_BBOX_DEG} degrees` } })
+          });
+        }
+        return route.fulfill({
+          status: 200, contentType: 'application/geo+json',
+          body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income')
+        });
+      }
     );
   }
 }

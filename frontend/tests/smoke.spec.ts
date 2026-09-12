@@ -1279,23 +1279,39 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
   });
 
   // Fix round 2, A. Measured on QA (2026-09-12): a metro switch on a 1,912 px map pulled the WHOLE
-  // New York metro TWICE, about 3.9 MB gzipped each time across six layers. `setMarket` sends the
-  // box the PREVIOUS metro settled on, the route refuses it on span, the adapter fell back to the
-  // whole metro and paid for it, and `logic.js`'s own guard then discarded that answer because the
-  // settled view had become the new metro's. The viewport listener then repeated the sequence and
-  // THAT answer was the one drawn.
+  // New York metro TWICE, about 3.9 MB gzipped each time across six layers, because the adapter
+  // fell back to the whole metro for a box the member had already left and `logic.js` then
+  // discarded the answer.
   //
-  // This is the browser's own version of the three unit cases: zoom out until the padded box is
-  // wider than the route's `MAX_BBOX_DEG`, so the fallback is genuinely reached, then switch metro
-  // and count what the NEW metro is asked for without a box. One per layer is the fallback working;
-  // two per layer is the same answer bought twice.
+  // WHAT THIS CASE IS, EXACTLY — it is a COST assertion and not the guard's gate, and the
+  // difference was measured rather than assumed. Cutting the guard out of `boundaries.ts` leaves
+  // this case GREEN: in this harness the two rounds of requests after a switch each carry the box
+  // that is settled at the moment they are refused, so the guard never fires and the sequence is
+  // identical with and without it. The guard's own gate is the three unit cases in
+  // `src/market/boundaries.test.ts`, each of which was red before the fix and names the request it
+  // stops. What this case does hold is the number a member pays: after a metro switch at a
+  // viewport past the span cap, the new metro is pulled whole ONCE PER LAYER — which is the
+  // fallback working — and a change that made it twice, for any reason, fails here.
+  //
+  // It also needs `prepare`'s stub to refuse the way the route does (`harness.ts`'s
+  // `MAX_BBOX_DEG`): before that the stub answered 200 to every box, the fallback was unreachable
+  // in a browser, and this case passed without ever exercising the ladder at all.
   test('a metro switch pays for the whole-metro fallback ONCE per layer, not twice', async ({ page }) => {
     const urls = await browseRecording(page);
     expect(urls.length).toBeGreaterThan(0);
+    for (let i = 0; i < FILL_LAYERS.length * 2; i++) expectApiStatus(page, 422);
 
     // One zoom-out doubles the span: at 1440 px and zoom 10 the padded box is about 3.2 degrees,
-    // and at zoom 9 about 6.3 — over the route's 4.0 cap, which is what makes the fallback live.
-    await page.locator('.leaflet-control-zoom-out').first().click();
+    // and at zoom 9 about 6.3 — over the route's 4.0 cap, which is what makes the fallback live
+    // (`prepare`'s stub refuses on the same cap the real route does). The design mounts Leaflet
+    // with `zoomControl: false` (C11) and draws its OWN control, so this is the design's button.
+    //
+    // Every refusal is a console 4xx and has to be armed, and the sequence is MEASURED rather
+    // than reasoned about: after the switch the map asks twice, six layers each — once for the
+    // box `setMarket` sends, which is still the settled one and so is followed by the
+    // whole-metro fallback, and once for the box the recentre settles on, which by then is not,
+    // and which before this fix bought the SAME whole metro a second time and threw it away.
+    await page.getByRole('button', { name: 'Zoom out' }).first().click();
     await page.waitForTimeout(1200);
 
     const before = urls.length;
@@ -1313,7 +1329,8 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     expect(
       wholeMetro.length,
       `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers — once per layer is the fallback, twice is the same answer bought and discarded`
-    ).toBeLessThanOrEqual(FILL_LAYERS.length);
+    ).toBe(FILL_LAYERS.length);
+    await settleExpectedApiFailures(page);
   });
 
   test('panning the map asks again, for the new ground and once', async ({ page }) => {
