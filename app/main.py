@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+from app import config
 from app.api.admin_data_sources import router as admin_data_sources_router
 from app.api.admin_listings import router as admin_listings_router
 from app.api.admin_signups import router as admin_signups_router
@@ -55,13 +56,19 @@ def _configure_logging() -> None:
     each creation would stack another handler and print one record once per app ever created.
     """
     logger = logging.getLogger("app")
-    logger.setLevel(settings.log_level.upper())
+    # Already normalised and validated by `app.config.Settings._log_level_known`, which never
+    # raises: an unknown value is INFO here and is named in the warning below.
+    logger.setLevel(settings.log_level)
     if any(h.get_name() == _LOG_HANDLER_NAME for h in logger.handlers):
         return
     handler = logging.StreamHandler(sys.stderr)
     handler.set_name(_LOG_HANDLER_NAME)
     handler.setFormatter(logging.Formatter(_LOG_FORMAT))
     logger.addHandler(handler)
+    if config.log_level_rejected is not None:
+        # After the handler is installed, so the line has somewhere to go, and inside the
+        # once-per-process guard above, so a suite that builds the app dozens of times says it once.
+        logger.warning("LOG_LEVEL=%r is not a known level; using INFO", config.log_level_rejected)
 
 
 def create_app(dist: Path | None = None) -> FastAPI:

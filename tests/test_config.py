@@ -84,3 +84,60 @@ def test_load_settings_names_a_model_level_error_cleanly(monkeypatch, capsys):
     assert info.value.code == 1
     err = capsys.readouterr().err
     assert "SITE_MODE=coming_soon is never valid on QA" in err and "Traceback" not in err and "IndexError" not in err
+
+
+_BASE = {"database_url": "postgresql://x", "redis_url": "redis://x", "environment": "test", "api_secret_key": "x"}
+
+
+def _settings(**kw):
+    from app.config import Settings
+    return Settings(**_BASE, **kw)
+
+
+def test_log_level_defaults_to_info_and_normalises_case_and_whitespace():
+    """Release-tip review, Important 1. `app/main.py`'s `_configure_logging` hands this value
+    straight to `logging.Logger.setLevel`, which raises `ValueError: Unknown level` for anything it
+    does not recognise — INSIDE `create_app()`, which runs at module import, so uvicorn never loads
+    the app and the container restart-loops with a bare traceback. A trailing space is enough:
+    `setLevel("INFO ")` raises. Whitespace and case are normalised here rather than being treated as
+    typos, because neither is one."""
+    assert _settings().log_level == "INFO"
+    assert _settings(log_level="debug").log_level == "DEBUG"
+    assert _settings(log_level="  INFO  ").log_level == "INFO"
+
+
+def test_a_known_level_is_kept_so_log_level_actually_selects_the_level():
+    """The perturbation the review asked for: a validator hard-coded to return "INFO" would pass
+    every other case in this file and silently pin the api at INFO for ever. `WARNING` must survive
+    as `WARNING`, and `WARN` — a real, if deprecated, member of
+    `logging.getLevelNamesMapping()` — is a KNOWN level, not a typo, so it survives too."""
+    import logging
+
+    assert _settings(log_level="WARNING").log_level == "WARNING"
+    assert _settings(log_level="warn").log_level == "WARN"
+    assert logging.getLevelNamesMapping()["WARN"] == logging.WARNING
+    for name in logging.getLevelNamesMapping():
+        assert _settings(log_level=name.lower()).log_level == name
+
+
+def test_an_unknown_log_level_falls_back_to_info_and_never_raises():
+    """RULING (release-tip review): a log level never takes the api down. `20` is the realistic
+    typo — a number where a name belongs — and `setLevel("20")` raises today. The value is refused,
+    INFO is used, and the process boots."""
+    from app import config
+
+    assert _settings(log_level="20").log_level == "INFO"
+    assert _settings(log_level="verbose").log_level == "INFO"
+    assert config.log_level_rejected == "verbose"
+
+
+def test_the_rejected_log_level_is_recorded_only_while_there_is_one():
+    """The record is what lets `_configure_logging` name the refused value in ONE warning line
+    rather than swallowing the typo. It is cleared by a good value, so it always describes the
+    settings object most recently built rather than accumulating across a process."""
+    from app import config
+
+    _settings(log_level="nonsense")
+    assert config.log_level_rejected == "nonsense"
+    _settings(log_level="ERROR")
+    assert config.log_level_rejected is None

@@ -3,10 +3,19 @@ exits the process naming it, so a misconfigured deploy fails at boot, not on the
 first request."""
 from __future__ import annotations
 
+import logging
 import sys
 
 from pydantic import ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: The `LOG_LEVEL` value the validator below REFUSED, or `None` when the configured level was
+#: understood. `app.main._configure_logging` reads it once, when it installs the handler, and
+#: emits one warning naming it — a typo that silently becomes INFO is the same class of problem as
+#: the crash the fallback replaces: the operator set something and got something else with nothing
+#: to tell them. Written on every `Settings` construction, cleared by a good value, so it always
+#: describes the settings object most recently built rather than accumulating across a process.
+log_level_rejected: str | None = None
 
 
 class Settings(BaseSettings):
@@ -67,6 +76,31 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
+
+    @field_validator("log_level")
+    @classmethod
+    def _log_level_known(cls, v: str) -> str:
+        """A log level NEVER takes the api down (release-tip review, Important 1).
+
+        `app.main._configure_logging` hands this value to `logging.Logger.setLevel`, which raises
+        `ValueError: Unknown level` for anything it does not recognise — inside `create_app()`,
+        which runs at module import, so uvicorn never loads the app and the container restart-loops
+        on a bare traceback. `LOG_LEVEL=20` (a number where a name belongs) and `LOG_LEVEL="INFO "`
+        (a trailing space, invisible in a Railway variables table) both did exactly that.
+
+        Whitespace and case are NORMALISED rather than refused, because neither is a typo. What is
+        left is checked against `logging.getLevelNamesMapping()` — which includes the deprecated
+        alias `WARN`, a known level and therefore kept as it is — and anything else falls back to
+        `INFO`, recording the refused value in `log_level_rejected` so the fallback announces
+        itself once instead of swallowing the typo. This validator never raises.
+        """
+        global log_level_rejected
+        name = v.strip().upper()
+        if name in logging.getLevelNamesMapping():
+            log_level_rejected = None
+            return name
+        log_level_rejected = v
+        return "INFO"
 
     @field_validator("site_mode")
     @classmethod

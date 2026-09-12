@@ -5,7 +5,7 @@ import sys
 import httpx
 from httpx import ASGITransport
 
-from app import db, main
+from app import config, db, main
 from app.checks import async_dsn
 from app.config import settings
 from app.main import create_app
@@ -134,3 +134,71 @@ def test_configuring_the_app_logger_leaves_uvicorns_own_loggers_alone():
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         assert logging.getLogger(name).handlers == [], name
         assert logging.getLogger(name).level == logging.NOTSET, name
+
+
+def test_a_rejected_log_level_is_named_in_exactly_one_warning(monkeypatch):
+    """Release-tip review, Important 1: the fallback is silent unless it says so. A typo that
+    quietly becomes INFO is the same class of problem as the crash it replaces — the operator set
+    something and got something else with nothing to tell them. ONE line, naming the value refused.
+
+    It is emitted where the handler is installed rather than on every `create_app()`, so a process
+    that builds the app repeatedly (this suite does, dozens of times) says it once. Identifiers
+    only: the rejected string is a level name an operator typed, never data."""
+    app_logger = logging.getLogger("app")
+    installed = [h for h in app_logger.handlers if h.get_name() == main._LOG_HANDLER_NAME]
+    for h in installed:
+        app_logger.removeHandler(h)
+    monkeypatch.setattr(config, "log_level_rejected", "20")
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = _Capture()
+    app_logger.addHandler(capture)
+    try:
+        create_app()
+        create_app()   # the handler is already installed; the warning is NOT repeated
+    finally:
+        app_logger.removeHandler(capture)
+        for h in [h for h in app_logger.handlers if h.get_name() == main._LOG_HANDLER_NAME]:
+            app_logger.removeHandler(h)
+        for h in installed:
+            app_logger.addHandler(h)
+    warnings = [r for r in records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == "LOG_LEVEL='20' is not a known level; using INFO"
+
+
+def test_a_good_log_level_says_nothing_and_is_the_level_that_is_used(monkeypatch):
+    """The other half: no rejection, no line — and the level actually selected is the one
+    configured, which is the perturbation guard for `_configure_logging` itself (a hard-coded
+    `logging.INFO` there would pass every test above and fail this one)."""
+    app_logger = logging.getLogger("app")
+    installed = [h for h in app_logger.handlers if h.get_name() == main._LOG_HANDLER_NAME]
+    previous_level = app_logger.level
+    for h in installed:
+        app_logger.removeHandler(h)
+    monkeypatch.setattr(config, "log_level_rejected", None)
+    monkeypatch.setattr(config.settings, "log_level", "WARNING")
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = _Capture()
+    app_logger.addHandler(capture)
+    try:
+        create_app()
+        assert logging.getLogger("app.api.market").getEffectiveLevel() == logging.WARNING
+        logging.getLogger("app.api.market").info("this must not be recorded")
+    finally:
+        app_logger.removeHandler(capture)
+        for h in [h for h in app_logger.handlers if h.get_name() == main._LOG_HANDLER_NAME]:
+            app_logger.removeHandler(h)
+        for h in installed:
+            app_logger.addHandler(h)
+        app_logger.setLevel(previous_level)
+    assert records == []
