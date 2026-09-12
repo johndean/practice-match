@@ -348,6 +348,11 @@ describe('local design amendments (spec D15)', () => {
     // fixed it. A24.59 reads A24.3's own output.
     'A24.58', 'A24.59',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
+    // A30 — a metro change closes the docked panel (John's ruling, Task PANEL-STALE, 2026-09-12:
+    // "the design has no treatment for 'the selected practice is not in this metro', and closing
+    // is the only honest state"). One literal edit: `setMarket` clears `mdSel` in the same
+    // object literal A13.1 wrote, so it reads A13.1's own output and is appended last.
+    'A30',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -513,7 +518,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(285);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(286);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
