@@ -53,17 +53,66 @@ Proved RED again for fix round 1, the same way as round 0: temporarily left
 `test_argon2id_parameters_hash_verify_rehash_and_cost` unmarked and reran —
 `test_every_timing_budget_test_is_accounted_for` failed, naming it as a candidate declared
 nowhere (`NOT_YET_SERIALISED` no longer exists as a place to park it); restored, reran, green.
+
+**Fix round 2 correction.** Both rounds above scanned only `MODULES` — a hand-picked 4-tuple
+(`test_auth`, `test_api_latency`, `test_db`, `test_passwords`) — so the opening paragraph's own
+claim, "applied across the whole suite", was false: a `time.perf_counter()` test added to any OTHER
+module (the other eighty in `tests/`) would never be discovered, marked or not. Proved directly:
+a throwaway module, `tests/_tmp_fifth_module_test.py`, with one unmarked function reading the clock
+(`test_a_new_unmarked_timing_probe`) was added and `test_every_timing_budget_test_is_accounted_for`
+still passed — `3 passed`, silently blind to it — under the old `MODULES` tuple.
+
+`_discover_test_modules` (below) replaces `MODULES`: it walks `tests/` itself and imports every
+file pytest's own default `python_files` patterns would collect as a test module (`test_*.py` and
+`*_test.py` — matched, not assumed; `pyproject.toml` sets no override), so a FIFTH module — a new
+file in an existing package, or a whole new subpackage — is found the moment it exists, with no
+line to add here. Re-ran the same throwaway module against the walk:
+`test_every_timing_budget_test_is_accounted_for` now FAILED, naming
+`tests._tmp_fifth_module_test::test_a_new_unmarked_timing_probe` as a new, undeclared candidate —
+proving the fix catches exactly what the old tuple missed. The throwaway module is then deleted
+(it does not ship); `_discover_test_modules` also happens to pick up `tests/e2e/api_under_test.py`
+(matches `*_test.py`) and every other real `test_*.py` file in the tree, none of which changes the
+candidate set — `api_under_test.py` is production-shaped code with no `test_`-prefixed function in
+it (pytest itself collects it as a module and finds zero test items, checked directly), and every
+other file was already being imported by every full-suite run regardless.
 """
 import ast
+import fnmatch
+import importlib
 import inspect
 import textwrap
+from pathlib import Path
 
 from tests import test_db
 from tests.api import test_auth
 from tests.auth import test_passwords
 from tests.perf import test_api_latency
 
-MODULES = (test_auth, test_api_latency, test_db, test_passwords)
+ROOT = Path(__file__).resolve().parent.parent
+TESTS_DIR = ROOT / "tests"
+
+# pytest's own default `python_files` (pyproject.toml's `[tool.pytest.ini_options]` sets no
+# override — read directly above, not assumed). Matched here so the walk finds exactly what
+# pytest itself would collect as a test module, not an arbitrary subset of it.
+_PYTEST_DEFAULT_TEST_FILE_GLOBS = ("test_*.py", "*_test.py")
+
+
+def _is_a_pytest_test_module(filename: str) -> bool:
+    return any(fnmatch.fnmatch(filename, pattern) for pattern in _PYTEST_DEFAULT_TEST_FILE_GLOBS)
+
+
+def _discover_test_modules() -> list[object]:
+    """Every module under `tests/` pytest's own default collection rules would treat as a test
+    module — walked from the directory, not a hand-picked list of imports, so a new module is
+    found the moment it exists. `tests/` and every sub-package under it already declare
+    `__init__.py` (checked directly), so each discovered file has a valid dotted import path."""
+    modules = []
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        if not _is_a_pytest_test_module(path.name):
+            continue
+        dotted = ".".join(path.relative_to(ROOT).with_suffix("").parts)
+        modules.append(importlib.import_module(dotted))
+    return modules
 
 # All fourteen tests `reads_the_clock` matches, `@pytest.mark.timing`, moved to the gate's serial,
 # last step (fix round 1 — round 0 marked only the first four here and named the other ten
@@ -92,9 +141,18 @@ NOT_YET_SERIALISED: set[tuple[object, str]] = set()
 
 
 def reads_the_clock(fn: object, _seen: set[int] | None = None) -> bool:
-    """True if `fn`'s own source contains `time.perf_counter()`, or if it calls a plain
-    module-level helper that does (recursively, one function at a time, cycle-guarded by object
-    id). A class name called as a constructor (`AsyncClient(...)`) is not a function and is never
+    """True if `fn`'s own body CALLS `time.perf_counter()` (or a bare `perf_counter()` reached
+    through `from time import perf_counter`), or calls a plain module-level helper that does
+    (recursively, one function at a time, cycle-guarded by object id). Structural — an `ast.Call`
+    node whose target is literally named `perf_counter` — never a text search: this module's own
+    fix-round-2 correction is that a naive `"perf_counter" in src` check matches THIS FUNCTION'S
+    OWN source (the string appears here only because this docstring and the code below name it),
+    which meant the walk in `tests/test_timing_marker.py` itself — reached once discovery stopped
+    being a hand-picked module list — flagged this module's own test functions as candidates,
+    tracing back through `_collect_candidates` to this docstring's literal text. An AST call-site
+    match has no such blind spot: a docstring or a string comparison is never a `Call`.
+
+    A class name called as a constructor (`AsyncClient(...)`) is not a function and is never
     recursed into; a name this cannot resolve to a plain function in the same module (a fixture, a
     builtin, an unimported name) simply does not match — it does not raise."""
     seen = _seen if _seen is not None else set()
@@ -105,16 +163,18 @@ def reads_the_clock(fn: object, _seen: set[int] | None = None) -> bool:
         src = inspect.getsource(fn)
     except (OSError, TypeError):
         return False
-    if "perf_counter" in src:
-        return True
-    module = inspect.getmodule(fn)
-    if module is None:
-        return False
     tree = ast.parse(textwrap.dedent(src))
+    module = inspect.getmodule(fn)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            callee = getattr(module, node.func.id, None)
-            if reads_the_clock(callee, seen):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "perf_counter":
+            return True
+        if isinstance(func, ast.Name):
+            if func.id == "perf_counter":
+                return True
+            if module is not None and reads_the_clock(getattr(module, func.id, None), seen):
                 return True
     return False
 
@@ -125,7 +185,7 @@ def _timing_marked(fn: object) -> bool:
 
 def _collect_candidates() -> set[tuple[object, str]]:
     found = set()
-    for module in MODULES:
+    for module in _discover_test_modules():
         for name, obj in vars(module).items():
             if name.startswith("test_") and inspect.isfunction(obj) and reads_the_clock(obj):
                 found.add((module, name))

@@ -46,6 +46,14 @@ Neither budget is widened or skipped; only WHEN they run moves. `tests/test_timi
 the RED-first proof that every test asserting a real wall-clock budget carries the marker, checked
 against the whole suite rather than a hand-typed list of names.
 
+**Fix round 2 correction (2026-09-12).** The paragraph above said "three constant-time auth checks
+and eleven p95 latency gates" — the accurate composition of the fourteen is four constant-time auth
+checks, eight `gate_p95` latency gates, one DB-timeout probe and one Argon2id duration check, per
+`tests/test_timing_marker.py`'s own docstring. Also from that round: `test_timing_marker.py`'s
+"checked against the whole suite" is now literally true — it was checked against a hand-picked
+four-module list until this round, which a throwaway fifth-module test proved blind before the fix
+and caught after it (see the report).
+
 ## 3. "Always fast" — performance budgets, enforced
 
 | Budget | Test | Threshold |

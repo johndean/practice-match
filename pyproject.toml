@@ -62,8 +62,9 @@ testpaths = ["tests"]
 # Postgres/Redis and a real ASGI app (a constant-time delta or a p95 gate) — the class of test that
 # measures the MACHINE under load, not the code. Registered so `-W error` (the gate's own flag)
 # turns an unregistered-marker warning into a build failure rather than a silent typo. The gate
-# runs these serially and LAST, in a second step (`-m timing -p no:randomly`, coverage appended
-# onto the first step's — see CLAUDE.md's Common operations and .github/workflows/quality.yml).
+# runs these serially and LAST, in a second step (`-m timing -p no:randomly` — a no-op today, since
+# pytest-randomly is not installed; harmless if it ever is), coverage appended onto the first
+# step's — see CLAUDE.md's Common operations and .github/workflows/quality.yml).
 markers = [
     "timing: asserts a real wall-clock time budget; run serially, last, isolated from CPU-heavy neighbours",
 ]
