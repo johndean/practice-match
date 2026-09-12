@@ -83,6 +83,45 @@ def test_the_design_income_stops_equal_the_band_constants() -> None:
     assert b and len(b.group(1).split(",")) == len(bands.INCOME_STOPS) + 1
 
 
+def _area_layers() -> str:
+    """The amended design's `AREA_LAYERS` object literal — the CHOROPLETH's own class breaks
+    (A24.22, D-L1). Anchored on the declaration for the same reason `_value_layers` is."""
+    design = DESIGN.read_text(encoding="utf-8")
+    start = design.index("const AREA_LAYERS = {")
+    return design[start:design.index("\n};", start)]
+
+
+def test_the_design_households_stops_equal_the_band_constants() -> None:
+    """Income's pin, for the second layer that carries a published margin and can therefore be
+    band-ambiguous. `band_ambiguous` takes its stops as a parameter and the endpoint passes
+    `BAND_STOPS[layer]`, so asking the question against the WRONG layer's legend is possible in
+    principle -- and would be invisible, because it answers True or False either way. The two
+    tables must agree, and here they are made to.
+
+    The DESIGN side is `AREA_LAYERS`, not `VALUE_LAYERS`: the choropleth and the community cards
+    class the same metric at different geographies, and it is the choropleth's legend a polygon's
+    caveat is about (A24.22)."""
+    layers = _area_layers()
+    m = re.search(r"households:\s*\{[^}]*?stops:\s*\[([^\]]*)\]", layers)
+    assert m, "AREA_LAYERS.households no longer declares `stops` — the map's bands moved"
+    assert tuple(int(s) for s in m.group(1).split(",")) == bands.HOUSEHOLDS_STOPS
+    b = re.search(r"households:\s*\{[^}]*?buckets:\s*\[([^\]]*)\]", layers)
+    # The LABELS are counted by their quotes, not by commas: a tract-scale label carries a
+    # thousands separator ("1,000 to 1,500") and splitting on commas counts it twice.
+    assert b and len(re.findall(r'"[^"]*"', b.group(1))) == len(bands.HOUSEHOLDS_STOPS) + 1
+
+
+def test_every_layer_the_endpoint_bands_has_the_designs_own_stops_and_no_other_does() -> None:
+    """The set, both ways. A layer in `BAND_STOPS` with no published margin would be asking a
+    question about a number nobody reported; a layer with a margin and NO entry would silently
+    answer False for every polygon, which is the quieter failure of the two."""
+    from app.api.market import BAND_STOPS
+
+    assert set(BAND_STOPS) == {"income", "households"}
+    assert BAND_STOPS["income"] is bands.INCOME_STOPS
+    assert BAND_STOPS["households"] is bands.HOUSEHOLDS_STOPS
+
+
 def test_band_index_keeps_the_minus_sign_on_a_break_that_has_a_band_below_zero() -> None:
     """`band_index` takes its `stops` as a parameter, and the design now has a break with a band
     BELOW ZERO: D-C46 re-scaled `growth` to `[0, 5, 15]`, whose bottom bucket is labelled

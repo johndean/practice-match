@@ -40,7 +40,13 @@ const LIST_URL = '/api/markets';
  */
 const TIMEOUT_MS = 20000;
 
-export const FILL_LAYERS = ['income', 'growth', 'econ'] as const;
+/**
+ * Every layer the map can shade, and the exact set the app asks for: selecting a layer draws
+ * `mdAreas[layer]`, so a layer absent from this list can never be drawn however well the API
+ * serves it. `households`, `pets` and `competition` joined it on 2026-09-12 (D-L1) — they were
+ * three of the four layers the stakeholder reported as painting NOTHING.
+ */
+export const FILL_LAYERS = ['income', 'growth', 'econ', 'households', 'pets', 'competition'] as const;
 
 export interface BoundaryProperties {
   geo_id: string; name: string;
@@ -118,17 +124,42 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
     metros = body as MetroRow[];
     return metros;
   }
-  const collect = async (geoid: string, bbox: string | null) => {
+  /**
+   * One pass over every fill layer. `allSettled`, not `all`: one layer's refusal must cost THAT
+   * layer and not the map. `Promise.all` rejects on the first failure, the design's own
+   * `loadAreas` rejection arm empties `mdAreas` wholesale, and all six layers go blank together —
+   * which is the failure this adapter was widened to fix, one level up (D-L1). A national `zbp`
+   * load can still be running, a layer's licence can be withdrawn on its own, and neither is a
+   * reason to take the other five down. A layer that could not be read is simply ABSENT from the
+   * answer: the design's own `|| { type: "FeatureCollection", features: [] }` draws it as no
+   * polygons, and A24.32's legend then declines to print a ramp over a map that carries none.
+   *
+   * The ONE exception is the refusal the CALLER can do something about. A bbox the route calls
+   * too large is a property of the request, not of the layer, so while a retry is still on the
+   * table (`final` false) the first such refusal is re-thrown for the caller's own ladder below —
+   * otherwise a New York income layer would simply vanish instead of being asked again with a
+   * tighter box. On the retry pass (`final` true) even that is kept rather than thrown, because
+   * whatever DID come back is more than the nothing a rejection would leave.
+   */
+  const collect = async (geoid: string, bbox: string | null, final: boolean) => {
     const at = bbox === null ? '' : `&bbox=${encodeURIComponent(bbox)}`;
-    const collections = await Promise.all(
+    const settled = await Promise.allSettled(
       FILL_LAYERS.map((layer) => read(fetchFn, `/api/markets/${encodeURIComponent(geoid)}/boundaries?layer=${layer}${at}`))
     );
     const out: Record<string, BoundaryCollection> = {};
+    let retryable: Refused | null = null;
     FILL_LAYERS.forEach((layer, i) => {
-      const body = collections[i] as BoundaryCollection;
-      if (!Array.isArray(body?.features)) throw new Error(`${layer}: the answer carries no features array`);
+      const answer = settled[i];
+      if (answer.status === 'rejected') {
+        const e: unknown = answer.reason;
+        if (!final && retryable === null && e instanceof Refused && (e.code === 'AREA_TOO_LARGE' || e.code === 'BBOX_TOO_LARGE')) retryable = e;
+        return;
+      }
+      const body = answer.value as BoundaryCollection;
+      if (!Array.isArray(body?.features)) return;
       out[layer] = body;
     });
+    if (retryable !== null) throw retryable;
     return out;
   };
   return {
@@ -148,7 +179,7 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
       const metro = rows.find((m) => m.name === marketName);
       if (!metro) throw new Error(`no CBSA for market ${marketName}`);
       try {
-        return await collect(metro.cbsa_geoid, bbox);
+        return await collect(metro.cbsa_geoid, bbox, false);
       } catch (e) {
         // ONE retry, and only where the route's own refusal names a box the client can change.
         // The ladder is the route's instruction, not an invention of ours:
@@ -171,7 +202,7 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
         const again = e.code === 'BBOX_TOO_LARGE' ? null : (v === null ? null : bboxOf(v, 0));
         if (bbox === null || (e.code !== 'AREA_TOO_LARGE' && e.code !== 'BBOX_TOO_LARGE') || again === bbox) throw e;
         if (e.code === 'AREA_TOO_LARGE' && again === null) throw e;
-        return await collect(metro.cbsa_geoid, again);
+        return await collect(metro.cbsa_geoid, again, true);
       }
     }
   };

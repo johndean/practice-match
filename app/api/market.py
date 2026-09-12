@@ -80,7 +80,7 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
-from app.census.bands import band_ambiguous
+from app.census.bands import HOUSEHOLDS_STOPS, INCOME_STOPS, band_ambiguous
 from app.census.geo_metric import GEO_VERSION_KEY
 from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
@@ -178,6 +178,9 @@ SHADING: dict[str, dict[str, str]] = {
     "income": {"summary_level": "140", "label": "Census tract"},
     "growth": {"summary_level": "160", "label": "Place (city/town)"},
     "econ": {"summary_level": "050", "label": "County"},
+    "households": {"summary_level": "140", "label": "Census tract"},
+    "pets": {"summary_level": "140", "label": "Census tract"},
+    "competition": {"summary_level": "860", "label": "ZIP Code Tabulation Area"},
 }
 # layer -> (metric_key, the dataset its geo_metric rows are STAMPED with, whose active vintage is
 # therefore the value vintage).
@@ -185,7 +188,19 @@ BOUNDARY_METRIC: dict[str, tuple[str, str]] = {
     "income": ("median_hh_income", "acs5"),
     "growth": ("population_growth_pct", "acs5"),
     "econ": ("revenue_per_establishment", "cbp"),
+    "households": ("households", "acs5"),
+    "pets": ("pet_households_est", "acs5"),
+    "competition": ("establishments", "zbp"),
 }
+# The layer's own unit, from `geo_metric.unit`. A count served as `usd` or `pct` is a wrong
+# reading of the number, not a cosmetic slip -- it was `"usd" if layer in ("income", "econ") else
+# "pct"` while only three layers shaded and every one of them was one or the other.
+UNIT: dict[str, str] = {"income": "usd", "econ": "usd", "growth": "pct",
+                        "households": "count", "pets": "count", "competition": "count"}
+# The legend stops each layer's own `band_ambiguous` is judged against (`app.census.bands`).
+# A layer absent here has no published margin at all, so the question cannot arise -- and asking
+# it against the WRONG layer's stops is the failure this dict exists to make impossible.
+BAND_STOPS: dict[str, tuple[int, ...]] = {"income": INCOME_STOPS, "households": HOUSEHOLDS_STOPS}
 
 # D-NS11. The CASTs on `:tol` are load-bearing, not decoration: an UNTYPED bound parameter inside
 # a `CASE WHEN` silently takes the ELSE branch under asyncpg. Measured on this database --
@@ -241,7 +256,7 @@ LAYERS: list[dict[str, Any]] = [
     {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
-     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community."},
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography."},
     {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
     {"key": "drive_10", "label": "5\u201310 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
     {"key": "drive_20", "label": "10\u201320 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},
@@ -506,7 +521,7 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
         )
 
     if layer not in SHADING:
-        return _error("BAD_LAYER", "layer must be one of ('income', 'growth', 'econ')", 422)
+        return _error("BAD_LAYER", f"layer must be one of {tuple(SHADING)}", 422)
     box: tuple[float, float, float, float] | None = None
     if bbox is not None:
         box = _parse_bbox(bbox)
@@ -546,7 +561,7 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
             body: dict[str, Any] = {
                 "type": "FeatureCollection", "cbsa_geoid": cbsa, "layer": layer, "metric_key": metric_key,
                 "summary_level": SHADING[layer]["summary_level"], "geo_label": SHADING[layer]["label"],
-                "unit": "usd" if layer in ("income", "econ") else "pct", "state": state,
+                "unit": UNIT[layer], "state": state,
                 "boundary_vintage": geo_vintage, "value_vintage": value_vintage, "source_dataset": source,
                 # Read from dataset_registry, never composed here: attribution is legally load-bearing
                 # and a terms change must be one UPDATE rather than a redeploy. Boundaries first — the
@@ -615,9 +630,12 @@ def _boundary_feature(row: RowMapping, layer: str) -> dict[str, Any]:
             "geo_id": row["geo_id"], "name": row["name"],
             "value": None if row["suppressed"] else value, "moe": moe,
             "suppressed": bool(row["suppressed"]), "suppress_reason": row["suppress_reason"],
-            # Only `income` can be band-ambiguous: growth and econ carry no published margin
-            # (D-NS17), so `band_ambiguous` is False for them by construction, not by omission.
-            "band_ambiguous": layer == "income" and band_ambiguous(value, moe),
+            # Judged against THIS layer's own legend stops, never another's. Growth, payroll
+            # and competition carry no published margin at all (D-NS17) and pets is a rounded
+            # model output, so `band_ambiguous` is False for those four by construction rather
+            # than by omission -- `BAND_STOPS` does not name them and `band_ambiguous` is False
+            # for a missing margin anyway.
+            "band_ambiguous": layer in BAND_STOPS and band_ambiguous(value, moe, BAND_STOPS[layer]),
         },
         "geometry": json.loads(row["geometry"]),
     }

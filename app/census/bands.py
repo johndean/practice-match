@@ -3,7 +3,7 @@
 The design's published bands are kept — they are dollar-meaningful, legible, and what the design
 published — and the honesty is carried by the hover tip rather than by re-cutting the legend. This
 is the one implementation of "does this polygon's margin of error cross a legend stop", read both
-by the endpoint (which puts the caveat in the tip) and by `scripts/measure_band_ambiguity.py`
+by the endpoint (which puts the caveat in the tip, against the asking layer's OWN stops) and by `scripts/measure_band_ambiguity.py`
 (which produces the share D-C34 gates the tract toggle on). Two implementations would put
 different sentences on the same polygon.
 
@@ -20,6 +20,15 @@ from __future__ import annotations
 # logic.js's VALUE_LAYERS.income.stops. Five buckets, four stops (V3 widened income's ramp from
 # V2's four; every other layer keeps four buckets and three stops).
 INCOME_STOPS: tuple[int, ...] = (50000, 75000, 100000, 150000)
+
+# logic.js's VALUE_LAYERS.households.stops, re-cut on 2026-09-12 when households moved from a
+# graduated symbol at the listing point to a shaded layer at the CENSUS TRACT. The design's
+# city-scale `[10000, 25000, 45000]` put 100.0 % of the 85,381 US tracts that carry
+# `B11001_001E` into ONE class; these are its quartiles rounded to numbers a 10.5 px legend can
+# carry (p25 1,054, p50 1,446, p75 1,897) and take 21.9 / 31.4 / 26.0 / 20.7 % of them.
+# Pinned two-way against the design by `tests/census/test_bands.py`, exactly as income's are: a
+# re-cut on either side fails on both.
+HOUSEHOLDS_STOPS: tuple[int, ...] = (1000, 1500, 2000)
 
 
 def band_index(value: float, stops: tuple[int, ...] = INCOME_STOPS) -> int:

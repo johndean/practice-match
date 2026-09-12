@@ -329,23 +329,42 @@ describe('local design amendments (spec D15)', () => {
     // entries they read: A24.19 after A24.2, A24.20 after A24.7.
     'A24.19', 'A24.20',
     'A24.21', 'A24.22', 'A24.23',
+    // D-L1 (John, 2026-09-12): the four layers that painted nothing. Every entry is CHAINED on
+    // an earlier A24 entry's output, so each runs after the one it reads.
+    'A24.24', 'A24.25', 'A24.26', 'A24.27', 'A24.28', 'A24.29', 'A24.30a', 'A24.30b',
+    'A24.31a', 'A24.31b', 'A24.32',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
-  it('A24 draws real boundary polygons, at the three ruled geographies, through the design\'s own bucket()', () => {
+  it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const jsx = readFileSync(AMENDED_JSX, 'utf8');
 
-    // D-C35's three geographies and their legend labels, and nothing wider: the three symbol
-    // layers are not in either map.
+    // D-C35's rule and the six geographies it now governs, each with its own legend label.
     // income moved 860 -> 140 "Census tract" on 2026-09-12 (A24.19); growth and econ did NOT,
     // and that asymmetry is the ruling rather than an oversight — growth cannot be computed at
     // tract level across the 2010->2020 boundary change (plan D12).
-    expect(amended).toContain('const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };');
-    expect(amended).toContain('const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };');
-    for (const k of ['pets', 'households', 'competition']) {
-      expect(amended, `${k} must not gain a geography — D-C35 keeps it a graduated symbol`).not.toContain(`AREA_LEVEL = { ${k}`);
-    }
+    // A24.24 (D-L1, 2026-09-12) INVERTS the assertion that stood here: `pets`, `households` and
+    // `competition` were required NOT to have a geography, because they were graduated symbols
+    // at the listing point. They painted NOTHING on QA, the stakeholder said so, and each now
+    // shades where its own figure is measured — the two ACS counts at the tract beside income,
+    // and the ZIP Business Patterns count at the ZCTA, which is that dataset's own geography.
+    expect(amended).toContain('const AREA_LEVEL = { income: "140", growth: "160", econ: "050", households: "140", pets: "140", competition: "860" };');
+    expect(amended).toContain('const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };');
+    expect(amended).toContain('const FILL_KEYS = ["income", "growth", "econ", "households", "pets", "competition"];');
+    // The choropleth's own class breaks, measured over the distribution the MAP paints rather
+    // than over the community cards' (A24.25). `VALUE_LAYERS` is untouched, which is what keeps
+    // the snapshot strip, the Compare rows and the docked panel on their own scale and pixels.
+    expect(amended).toContain('  households: { buckets: ["< 1,000", "1,000\u20131,500", "1,500\u20132,000", "> 2,000"], stops: [1000, 1500, 2000] },');
+    expect(amended).toContain('  pets: { buckets: ["< 600", "600\u2013850", "850\u20131,100", "> 1,100"], stops: [600, 850, 1100] },');
+    expect(amended).toContain('  competition: { buckets: ["1\u20133", "4\u20135", "6\u20139", "10+"], stops: [4, 6, 10] }');
+    expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
+    // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
+    expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
+    // §15: a competition count never reaches the screen bare — it names what it counts and the
+    // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
+    expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
+    expect(amended).toContain('"within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset\u2019s own authoritative geography.');
 
     // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
     // the legend gains one row reading exactly "No data".
@@ -354,7 +373,7 @@ describe('local design amendments (spec D15)', () => {
 
     // The one door (spec §2.2): every polygon's colour comes from the design's own bucket() and
     // its label from the design's own fmtMetric(), so the fill and the legend cannot disagree.
-    expect(amended).toContain('const b = shown ? this.bucket(layer, p.value) : null;');
+    expect(amended).toContain('const b = shown ? this.bucket(layer, p.value, true) : null;');
     expect(amended).toContain('label: shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL,');
 
     // The tip is built ONCE, in the script, and both renderers bind it — the design and the port
@@ -393,7 +412,15 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     // A16.1's exact shape (A-SL23 (2)): with the adapter present the map draws what the API
     // answered or NOTHING, and never the design's fixture, whatever the API answered.
-    expect(amended).toContain('areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),');
+    // A24.31a/A24.31b hoisted the expression into `areaFc` so the legend can see how many
+    // polygons were drawn; the ternary itself is byte-unchanged and still keyed on adapter
+    // PRESENCE rather than on data.
+    expect(amended).toContain('    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);');
+    expect(amended).toContain('      areas: areaFc,');
+    // A24.32 (whole-branch review, finding 5): zero polygons drawn, no ramp and no geography
+    // name — the legend never claims a scale the map does not carry.
+    expect(amended).toContain('          hasRamp: !!valueLayer && areaFc.features.length > 0,');
+    expect(amended).toContain('          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,');
     expect(amended).toContain('mdAreas: null,');
     // One loader, with the rejection arm every adapter path in this design keeps forgetting
     // (A16.17's own lesson): a refused load empties the map, it does not restore the fixture.
@@ -441,7 +468,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(247);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(258);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

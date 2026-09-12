@@ -5023,6 +5023,190 @@ const A24_23: Amendment = {
   count: 1
 };
 
+/** A24.24-A24.32 -- the FOUR LAYERS THAT PAINTED NOTHING (D-L1, 2026-09-12). The stakeholder saw
+ *  median income and population growth render as real Census geography for the first time and
+ *  said so; in the same message he reported that households, average practice payroll, veterinary
+ *  competition and pet ownership (estimated) render NOTHING. Payroll was a backend defect (the CBP
+ *  noise flag read as a withholding flag, all 392 counties suppressed); the other three had no
+ *  writer row, no `SHADING` entry and no `AREA_LEVEL` entry, so the route answered
+ *  `422 BAD_LAYER` and the app -- which draws what the API answered or nothing at all -- correctly
+ *  drew nothing.
+ *
+ *  Every entry below is CHAINED on an earlier A24 entry's own output, so none occurs in the
+ *  pristine bundle and each must run after the entry it reads.
+ *
+ *  THE CLASS BREAKS ARE MEASURED, NOT CHOSEN, and they are a SECOND table rather than a re-cut of
+ *  the design's own (A24.25). `VALUE_LAYERS` classes the figures the design's community cards
+ *  carry -- a city's households, a metro's establishment count -- and a polygon carries the same
+ *  metric at a different GEOGRAPHY, where the same numbers mean something else: 1,480 households
+ *  is an ordinary Census tract and an implausibly small city. Income, growth and payroll are
+ *  scale-invariant (a median, a percentage, a per-establishment figure) and keep one table. The
+ *  three COUNT layers get their own, measured over the distribution the map actually paints:
+ *
+ *    households / pets -- ACS 2019-2023 `B11001_001E`, the Census Bureau's own keyless
+ *    table-based summary file, every Census tract in the United States: 85,381 tracts carry the
+ *    variable. p25 1,054, p50 1,446, p75 1,897, max 10,466. The design's city-scale
+ *    `[10000, 25000, 45000]` put **100.0 %** of them in ONE class -- the whole map one colour,
+ *    which is the complaint this entire stream answers. `[1000, 1500, 2000]` takes
+ *    21.9 / 31.4 / 26.0 / 20.7 %. Pets is that distribution times the design's own 0.57
+ *    (p25 601, p50 824, p75 1,081), so `[600, 850, 1100]` takes 24.9 / 27.9 / 23.7 / 23.5 %.
+ *
+ *    competition -- ZIP Code Business Patterns 2022, NAICS 541940, the Census Bureau's own
+ *    keyless `zbp22detail` file, every ZIP area in the United States: 4,720 carry a published
+ *    count, min 3 (the file publishes no smaller cell), p50 4, p75 6, p90 8, p95 10, max 44. The
+ *    design's `[3, 6, 10]` leaves its FIRST class **empty** and puts 73.1 % in one; `[4, 6, 10]`
+ *    takes 37.0 / 36.1 / 21.4 / 5.5 %. The first bucket is labelled "1-3" rather than "3",
+ *    because the label states the class's RANGE and must stay true if a smaller count is ever
+ *    published.
+ *
+ *  Because `VALUE_LAYERS` itself is untouched, the snapshot strip's cards, the Compare rows, the
+ *  graduated symbols and the docked panel keep their own community-scale classification and their
+ *  own pixels, and the legend over a tract map reads tract-scale bands. */
+const LAYERS_RULING = {
+  date: '2026-09-12',
+  ruling: 'households, average practice payroll, veterinary competition and pet ownership (estimated) render NOTHING (John, 2026-09-12, on QA). Each layer shades at the geography its figure is honest at and the legend names it; the estimate is identified as an estimate; the ZIP Code Tabulation Area is used for ZIP Code Business Patterns alone, because it is that dataset’s own authoritative geography.'
+};
+
+const A24_24: Amendment = {
+  id: 'A24.24', ...LAYERS_RULING,
+  find: 'const FILL_KEYS = ["income", "growth", "econ"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `pets`, `households` and `competition` stay graduated symbols at the\n'
+    + '// listing point - city-scale class breaks on small areas produce a picture with no\n'
+    + '// information, and `households` first `< 10K` bucket would swallow essentially every one.\n'
+    + 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };\n',
+  replace: 'const FILL_KEYS = ["income", "growth", "econ", "households", "pets", "competition"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `households` and `pets` joined income at the tract on 2026-09-12 and\n'
+    + '// `competition` at the ZCTA (D-L1): they were graduated symbols at the listing point on the\n'
+    + '// grounds that city-scale class breaks on small areas produce a picture with no information,\n'
+    + '// which was true of the BREAKS and not of the geography - `AREA_LAYERS` below cuts them at\n'
+    + '// the scale the map paints. `competition` is the one ZIP-area layer, and it is honest there\n'
+    + '// rather than approximate: ZIP Code Business Patterns is published per ZIP code and exists\n'
+    + '// at no other geography, so the ZCTA is where it was measured.\n'
+    + 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050", households: "140", pets: "140", competition: "860" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };\n',
+  count: 1
+};
+
+const A24_25: Amendment = {
+  id: 'A24.25', ...LAYERS_RULING,
+  find: 'const NO_DATA_FILL = "#e6e6e6";\nconst NO_DATA_LABEL = "No data";\n',
+  replace: 'const NO_DATA_FILL = "#e6e6e6";\nconst NO_DATA_LABEL = "No data";\n'
+    + '// A24 (D-L1): the CHOROPLETH\'s own class breaks, for the three layers whose figure is a\n'
+    + '// COUNT and therefore means something different at a different geography. `VALUE_LAYERS`\n'
+    + '// classes what the community cards carry (a city\'s households); these class what the map\n'
+    + '// paints (a tract\'s). Measured over every US tract and every US ZIP area, not over Austin:\n'
+    + '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n'
+    + '// design\'s own breaks put 100.0 % of tracts and 73.1 % of ZIP areas into ONE class.\n'
+    + '// Income, growth and payroll are scale-invariant and are deliberately absent.\n'
+    + 'const AREA_LAYERS = {\n'
+    + '  households: { buckets: ["< 1,000", "1,000–1,500", "1,500–2,000", "> 2,000"], stops: [1000, 1500, 2000] },\n'
+    + '  pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },\n'
+    + '  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n'
+    + '};\n',
+  count: 1
+};
+
+const A24_26: Amendment = {
+  id: 'A24.26', ...LAYERS_RULING,
+  find: '  bucket(metric, v) {\n    const cfg = VALUE_LAYERS[metric];\n',
+  replace: '  bucket(metric, v, area) {\n'
+    + '    // `area` asks for the CHOROPLETH\'s breaks. Everything else on the screen classes a\n'
+    + '    // community-scale figure and must keep asking for the design\'s own (A24.25).\n'
+    + '    const cfg = (area && AREA_LAYERS[metric]) || VALUE_LAYERS[metric];\n',
+  count: 1
+};
+
+const A24_27: Amendment = {
+  id: 'A24.27', ...LAYERS_RULING,
+  find: '        const b = shown ? this.bucket(layer, p.value) : null;\n',
+  replace: '        const b = shown ? this.bucket(layer, p.value, true) : null;\n',
+  count: 1
+};
+
+const A24_28: Amendment = {
+  id: 'A24.28', ...LAYERS_RULING,
+  find: '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n',
+  replace: '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: ((AREA_LAYERS[valueLayer] || cfg).buckets)[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n',
+  count: 1
+};
+
+const A24_29: Amendment = {
+  id: 'A24.29', ...LAYERS_RULING,
+  find: '    return v >= 1000 ? Math.round(v / 1000) + "K" : String(v);\n',
+  replace: '    // Abbreviated from ten thousand, not from one: a Census tract holds about 1,400\n'
+    + '    // households and "1K" is the same label for 1,000 and for 1,499. `toLocaleString` is\n'
+    + '    // the design\'s own separator, the one `p.sqft` already uses.\n'
+    + '    return v >= 10000 ? Math.round(v / 1000) + "K" : Math.round(v).toLocaleString();\n',
+  count: 1
+};
+
+const A24_30a: Amendment = {
+  id: 'A24.30a', ...LAYERS_RULING,
+  find: '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL) + "</div>" +\n',
+  replace: '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) + (layer === "competition" ? " veterinary practices" : "") : NO_DATA_LABEL) + "</div>" +\n',
+  count: 1
+};
+
+const A24_30b: Amendment = {
+  id: 'A24.30b', ...LAYERS_RULING,
+  find: '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : "");\n',
+  replace: '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : layer === "competition"\n'
+    + '              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n'
+    + '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: households × 0.57. Not an observed count."\n'
+    + '                : "");\n',
+  count: 1
+};
+
+const A24_31a: Amendment = {
+  id: 'A24.31a', ...LAYERS_RULING,
+  find: '    const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;\n',
+  replace: '    const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;\n'
+    + '    // Hoisted out of the returned object so the LEGEND can see how many polygons were\n'
+    + '    // actually drawn (A24.32). One call, one collection, no second classification pass.\n'
+    + '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n',
+  count: 1
+};
+
+const A24_31b: Amendment = {
+  id: 'A24.31b', ...LAYERS_RULING,
+  find: '      areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),\n',
+  replace: '      areas: areaFc,\n',
+  count: 1
+};
+
+/** A24.32 -- the legend must not claim a ramp the map does not carry (whole-branch review of
+ *  `feat/tract`, finding 5). A practice in a metro that is in no CBSA -- Bozeman, deliberately --
+ *  reaches the metro picker, because the client builds `MARKETS` from the listings’ own market
+ *  strings while `/api/markets` INNER JOINs a `310` geography. `boundaries()` then rejects, the
+ *  loader’s own rejection arm empties `mdAreas`, and the map draws no polygons at all -- while
+ *  the legend went on printing the full colour ramp, the "No data" swatch and the geography name
+ *  over an unshaded map, which reads as "every area here is unmeasured" rather than "nothing was
+ *  drawn". No new copy and no new state: `hasRamp` and `hasGeo` already exist and already gate
+ *  exactly the two blocks that would be lying. */
+const A24_32: Amendment = {
+  id: 'A24.32', ...LAYERS_RULING,
+  find: '          hasRamp: !!valueLayer,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1,\n',
+  replace: '          hasRamp: !!valueLayer && areaFc.features.length > 0,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5184,5 +5368,11 @@ export function amendments(): Amendment[] {
     // A24.15's whole output, A24.22 reads A24.17's line and A24.23 reads A13.5's, so each
     // must sit after the entry it reads.
     A24_21, A24_22, A24_23,
+    // A24.24-A24.32 -- the four layers that painted nothing (D-L1, 2026-09-12). Every entry is
+    // CHAINED on an earlier A24 entry's output, so each runs after the one it reads: A24.24 reads
+    // A24.2's and A24.19's, A24.25 A24.2's, A24.27/A24.30a/A24.30b A24.3's, A24.28 and A24.32
+    // A24.5's (A24.32 runs after A24.28, which edits the same block), and A24.31b A24.16's.
+    // Definition order in this file matches this list (m8).
+    A24_24, A24_25, A24_26, A24_27, A24_28, A24_29, A24_30a, A24_30b, A24_31a, A24_31b, A24_32,
     A24_9, A24_10, A24_11, A24_12];
 }

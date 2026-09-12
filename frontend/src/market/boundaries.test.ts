@@ -153,8 +153,11 @@ describe('the viewport bbox (2026-09-12)', () => {
 const ok = () => fakeFetch((url) => ({ body: url.includes('/boundaries') ? collection(new URL(url, 'http://x').searchParams.get('layer') ?? 'income') : MARKETS }));
 
 describe('the market adapter (spec §8.3)', () => {
-  it('names the three fill layers and nothing else', () => {
-    expect([...FILL_LAYERS]).toEqual(['income', 'growth', 'econ']);
+  it('names every shaded layer, so selecting one fetches it', () => {
+    // D-L1 (2026-09-12): households, pets and competition painted nothing on QA, and one reason
+    // was this list — the app asks for exactly what it names here, so a layer absent from it can
+    // never be drawn however well the API serves it.
+    expect([...FILL_LAYERS]).toEqual(['income', 'growth', 'econ', 'households', 'pets', 'competition']);
   });
 
   it('resolves the metro by NAME through /api/markets, then reads one collection per fill layer', async () => {
@@ -162,9 +165,9 @@ describe('the market adapter (spec §8.3)', () => {
     const f = fakeFetch((url) => { seen.push(url); return { body: url.includes('/boundaries') ? collection(new URL(url, 'http://x').searchParams.get('layer') ?? 'income') : MARKETS }; });
     const out = await makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX');
     expect(seen[0]).toContain('/api/markets');
-    expect(seen.filter((u) => u.includes('/boundaries'))).toHaveLength(3);
+    expect(seen.filter((u) => u.includes('/boundaries'))).toHaveLength(FILL_LAYERS.length);
     for (const layer of FILL_LAYERS) expect(seen.some((u) => u.includes(`/api/markets/12420/boundaries?layer=${layer}`))).toBe(true);
-    expect(Object.keys(out).sort()).toEqual(['econ', 'growth', 'income']);
+    expect(Object.keys(out).sort()).toEqual([...FILL_LAYERS].sort());
     expect(out.income.features[0].properties.value).toBe(92150);
   });
 
@@ -192,17 +195,31 @@ describe('the market adapter (spec §8.3)', () => {
     await expect(adapter.boundaries('Austin, TX')).resolves.toHaveProperty('income');
   });
 
-  it('rejects on a refused catalogue, a refused layer and an unparseable body — every path has an arm', async () => {
+  it('rejects on a refused CATALOGUE — there is no metro to ask about and no partial answer to give', async () => {
     await expect(makeMarketAdapter(fakeFetch(() => ({ ok: false, status: 401 })) as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow();
-    const refusedLayer = fakeFetch((url) => (url.includes('/boundaries') ? { ok: false, status: 422 } : { body: MARKETS }));
-    await expect(makeMarketAdapter(refusedLayer as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow();
-    const rubbish = fakeFetch((url) => ({ body: url.includes('/boundaries') ? { type: 'FeatureCollection' } : MARKETS }));
-    await expect(makeMarketAdapter(rubbish as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow(/features/);
   });
 
-  it('an ABSENT route (404, the deploy-order case) rejects like any other refusal', async () => {
-    const missing = fakeFetch((url) => (url.includes('/boundaries') ? { ok: false, status: 404 } : { body: MARKETS }));
-    await expect(makeMarketAdapter(missing as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow(/404/);
+  it('one layer refused, or absent, or rubbish, costs that layer and NOT the other five', async () => {
+    // The national `zbp` load was still running when competition was built, and a layer whose
+    // data is not there yet must not take the map down with it: `Promise.all` rejects on the
+    // first refusal, which would have emptied `mdAreas` and blanked every layer at once —
+    // exactly the failure this whole task is fixing, one level up. A layer that could not be
+    // read is simply ABSENT from the answer, which the design's own `|| { features: [] }` draws
+    // as no polygons and A24.29's legend declines to put a ramp over.
+    for (const bad of [{ ok: false, status: 422 }, { ok: false, status: 404 }, { body: { type: 'FeatureCollection' } }]) {
+      const f = fakeFetch((url) => {
+        if (!url.includes('/boundaries')) return { body: MARKETS };
+        return url.includes('layer=competition') ? bad : { body: collection(new URL(url, 'http://x').searchParams.get('layer') ?? 'income') };
+      });
+      const out = await makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX');
+      expect(Object.keys(out).sort()).toEqual(['econ', 'growth', 'households', 'income', 'pets']);
+      expect(out.income.features[0].properties.value).toBe(92150);
+    }
+  });
+
+  it('every layer refused answers with nothing at all, which the map draws as nothing at all', async () => {
+    const f = fakeFetch((url) => (url.includes('/boundaries') ? { ok: false, status: 503 } : { body: MARKETS }));
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX')).resolves.toEqual({});
   });
 
   it('a catalogue that is not an array rejects rather than reading `find` off it', async () => {

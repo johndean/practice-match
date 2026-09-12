@@ -4671,8 +4671,14 @@ describe('A24 — real boundary polygons', () => {
     expect(set.features.length).toBe(c.state.areas['140'].features.length);
   });
 
-  it('areaSet returns an empty collection for a layer with no geography — the three symbol layers', () => {
-    for (const k of ['pets', 'households', 'competition']) expect(c.areaSet(k).features).toEqual([]);
+  it('areaSet returns a collection for every layer with a geography, and none for no layer at all', () => {
+    // A24.24 (D-L1, 2026-09-12) INVERTS the half of this case that asserted `pets`, `households`
+    // and `competition` had no geography: all three shade now. The two ACS counts take the tract,
+    // beside income, and read the design's own tract fixture; `competition` takes the ZCTA, which
+    // the design's fixture does not carry at all — so it is EMPTY on the reference path, and
+    // empty is the honest answer there rather than a fabricated one.
+    for (const k of ['households', 'pets']) expect(c.areaSet(k).features.length).toBe(c.state.areas['140'].features.length);
+    expect(c.areaSet('competition').features, 'the design fixture carries no ZCTAs').toEqual([]);
     expect(c.areaSet(null).features).toEqual([]);
     expect(c.areaSet(undefined).features).toEqual([]);
   });
@@ -4746,8 +4752,9 @@ describe('A24 — real boundary polygons', () => {
     expect(tip({ value: 92150, moe: 6420 })).toContain('<div style="font-size:10.5px;color:#494949;margin-top:4px">\u00b1 $6K</div>');
   });
 
-  it('the legend names the geography and gains a No data row, for the three fill layers only', () => {
-    for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County']] as const) {
+  it('the legend names the geography and gains a No data row, for every layer that shades', () => {
+    for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County'],
+      ['households', 'Census tract'], ['pets', 'Census tract']] as const) {
       c.state.mdValue = layer;
       const active = c.marketVals(P).active;
       expect(active.hasGeo).toBe(true);
@@ -4756,11 +4763,24 @@ describe('A24 — real boundary polygons', () => {
       // …and exactly one such row, appended, with the design's own classes ahead of it.
       expect(active.ramp.filter((r: { label: string }) => r.label === 'No data')).toHaveLength(1);
     }
+    // A24.28: a shading layer with its OWN class breaks prints its own labels, not the design's
+    // community-scale ones — a legend reading "< 10K" over a map cut at 1,000 households would be
+    // the caption for a different map.
     c.state.mdValue = 'households';
-    const symbols = c.marketVals(P).active;
-    expect(symbols.hasGeo).toBe(false);
-    expect(symbols.geoLine).toBe('');
-    expect(symbols.ramp.some((r: { label: string }) => r.label === 'No data')).toBe(false);
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< 1,000', '1,000–1,500', '1,500–2,000', '> 2,000', 'No data']);
+    c.state.mdValue = 'income';
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< $50K', '$50–75K', '$75–100K', '$100–150K', '> $150K', 'No data']);
+
+    // A24.32 (review finding 5): zero polygons drawn, no ramp and no geography line. On the
+    // reference path `competition` is the reachable case — the design's fixture has no ZCTAs —
+    // and on the app it is any metro the API could not answer for, Bozeman included.
+    c.state.mdValue = 'competition';
+    const nothingDrawn = c.marketVals(P).active;
+    expect(nothingDrawn.hasRamp, 'a ramp was printed over a map with no polygons').toBe(false);
+    expect(nothingDrawn.hasGeo).toBe(false);
+
     // "No shading — practices only": no ramp at all, so no no-data row either.
     c.state.mdValue = null;
     const none = c.marketVals(P).active;
@@ -4777,9 +4797,42 @@ describe('A24 — real boundary polygons', () => {
       expect(typeof f.properties.color).toBe('string');
       expect(typeof f.properties.tip).toBe('string');
     }
-    // A symbol layer hands the map nothing to shade — the polygons are for fills only.
+    // Every shading layer is handed its own polygons now (A24.24), and a layer the fixture has
+    // no geography for is handed none rather than another layer's.
     c.state.mdValue = 'pets';
+    expect(c.marketVals(P).areas.features.length).toBe(c.state.areas['140'].features.length);
+    c.state.mdValue = 'competition';
     expect(c.marketVals(P).areas.features).toEqual([]);
+  });
+
+  // A24.25/A24.26: one classifier, two tables. The choropleth asks for the breaks measured over
+  // the geography it paints; everything else on the screen keeps asking for the design's own.
+  it('the choropleth classes a count against the tract-scale breaks and the cards against the city-scale ones', () => {
+    // 1,480 households is an ordinary Census tract and an implausibly small city, and the two
+    // tables say so: the design's own breaks put every US tract in one class, which was the
+    // whole complaint.
+    expect(c.bucket('households', 1480, true).t).not.toBe(c.bucket('households', 1480).t);
+    expect(c.bucket('households', 1480).t, 'the design\'s own first class swallows every tract').toBe(0);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v, true).color)).size).toBe(4);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v).color)).size).toBe(1);
+    // A layer with no area table of its own is classed identically either way.
+    expect(c.bucket('income', 92150, true)).toEqual(c.bucket('income', 92150));
+    // A24.29: a tract-scale count is not abbreviated to the thousand it shares with 500 others.
+    expect(c.fmtMetric('households', 1446)).toBe('1,446');
+    expect(c.fmtMetric('households', 27600), 'nothing at ten thousand or above moves').toBe('28K');
+    expect(c.fmtMetric('competition', 7)).toBe('7');
+  });
+
+  // §15 (the stakeholder's own directive): a competition count states its geography on screen.
+  it('a competition tip names what it counts and the geography it counts them in', () => {
+    const tip = c.areaTip({ name: 'ZCTA5 78704', value: 7, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'competition', true);
+    expect(tip).toContain('7 veterinary practices');
+    expect(tip).toContain('within this ZIP Code Tabulation Area');
+    expect(tip).toContain('authoritative geography');
+    // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
+    const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
+    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
   });
 
   // D-C46 (John, 2026-09-11). Measured against ACS 2014-2018 -> 2019-2023 place populations; the

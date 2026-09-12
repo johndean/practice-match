@@ -58,21 +58,25 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
     "vintage": "2019–2023", "geo_level": "place|catchment",
     "shading": { "summary_level": "140", "label": "Census tract" },
     "state": "enabled", "is_derived": false, "caveat": null },
-  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "shading": null, "state": "enabled",
+  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5",
+    "shading": { "summary_level": "140", "label": "Census tract" }, "state": "enabled",
     "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
   { "key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior",
     "vintage": "2014–2018 → 2019–2023", "geo_level": "place",
     "shading": { "summary_level": "160", "label": "Place (city/town)" },
     "state": "enabled", "is_derived": true,
     "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP." },
-  { "key": "households", "label": "Households", "dataset_key": "acs5", "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "households", "label": "Households", "dataset_key": "acs5",
+    "shading": { "summary_level": "140", "label": "Census tract" },
+    "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "geo_level": "county",
     "shading": { "summary_level": "050", "label": "County" },
     "state": "enabled", "is_derived": true,
     "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level." },
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
-    "shading": null, "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
-    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." },
+    "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
+    "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
+    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography." },
   { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
   { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
@@ -100,21 +104,38 @@ A licence decision on `/api/admin/data-sources/{key}/license` is reflected here 
 market-payload cache key below, so a stale answer cannot outlive the decision by more than the
 gate's own TTL.
 
-## `GET /api/markets/{cbsa}/boundaries?layer=income|growth|econ[&bbox=minLng,minLat,maxLng,maxLat]`
+## `GET /api/markets/{cbsa}/boundaries?layer=income|growth|econ|households|pets|competition[&bbox=minLng,minLat,maxLng,maxLat]`
 
 The shaded map layer: real Census boundary polygons joined to `geo_metric`, one geography per
-layer (John's rulings D-C34–D-C37, 2026-09-10). `income` draws Census tracts
-(`"summary_level": "140"`), `growth` draws Place (city/town) (`"summary_level": "160"`), `econ`
-draws County (`"summary_level": "050"`). Income moved from the ZIP Code Tabulation Area to the
+layer (John's rulings D-C34–D-C37, 2026-09-10). `income`, `households` and `pets` draw Census
+tracts (`"summary_level": "140"`), `growth` draws Place (city/town) (`"summary_level": "160"`),
+`econ` draws County (`"summary_level": "050"`), and `competition` draws the ZIP Code Tabulation
+Area (`"summary_level": "860"`). Income moved from the ZIP Code Tabulation Area to the
 Census tract on 2026-09-12 (controller ruling): the tract is the canonical granular unit,
 nationwide. `growth` **cannot** follow it -- the 2010→2020 tract boundary change means a
 tract-level growth figure is not computable from the data we hold (plan D12, a registered Phase C
 deferral) -- so it keeps Place, `econ` keeps County, and each layer's own `geo_label` is what the
 legend prints, which is how a coarser figure is never presented as a tract-level one. **No layer is ever painted at a geography finer than its
 figure is honest at** — spec §6's standing rule, "Never silently promote a county figure into a
-tract-labeled slot", applied to the map. The three graduated-symbol layers (`pets`, `households`,
-`competition`) are not shaded and are not served here; `/api/layers` names each layer's own
-geography in its `shading` member, or `null` where it has none.
+tract-labeled slot", applied to the map. `/api/layers` names each layer's own geography in its
+`shading` member, or `null` where it has none — the three overlays that shade nothing
+(`practices`, `drive_10`, `drive_20`).
+
+**Why `competition` is served at the ZIP Code Tabulation Area.** Spec §6 forbids treating a ZIP
+code as a neighbourhood or any other Census geography, **unless the ZIP area is the dataset's own
+authoritative geography and the response says so.** For ZIP Code Business Patterns it literally
+is: the product is published per ZIP code and exists at no other geography, so serving it at the
+ZCTA is reporting it where it was measured rather than approximating it anywhere. The response
+carries `"geo_label": "ZIP Code Tabulation Area"` and the client prints that name on the legend
+and in every tooltip, so a count is never read as a neighbourhood figure. The approximation the
+same spec does forbid — apportioning ZIP counts into some finer or differently-shaped area — is
+not done anywhere on this route.
+
+**`households` and `pets` shade at the tract, and `pets` is modelled.** `households` is
+`B11001_001E`, a published ACS estimate with a published margin, served where the ACS publishes
+it. `pets` is `households × 0.57`, a national placeholder incidence rate: its `/api/layers` entry
+carries `"is_derived": true` and a caveat naming the rate, its `geo_metric` rows carry
+`is_derived` and `formula_version`, and it is never presented as an observed count (spec §9).
 
 One GeoJSON `FeatureCollection` with foreign members (RFC 7946 permits them; `L.geoJSON` ignores
 what it does not know):

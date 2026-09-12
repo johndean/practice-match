@@ -173,7 +173,14 @@ def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces
     # integration contract whose example payload is missing a field is one Task 10 codes without.
     sample = text.split("## `GET /api/layers`", 1)[1].split("```", 2)[1]
     assert sample.count('"shading"') == 9, "every layer in the /api/layers sample must show the member"
-    assert sample.count('"shading": null') == 6, "the six unshaded layers must each show shading: null"
+    assert sample.count('"shading": null') == 9 - len(market.SHADING), (
+        "every layer that does NOT shade must show shading: null"
+    )
+    # The one exception spec §6 grants, written down where an integrator will read it: a ZIP area
+    # may be used where it IS the dataset's authoritative geography, and the answer must say so.
+    if any(v["summary_level"] == "860" for v in market.SHADING.values()):
+        assert "authoritative geography" in text
+        assert "ZIP Code Business Patterns" in text
     assert '`shading` is the geography the MAP paints' in text
 
 

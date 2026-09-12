@@ -115,13 +115,17 @@ const VALUE_LAYERS = {
 
 // Rates and medians belong to the area → choropleth fill (one at a time: two
 // translucent fills mix into a third colour that means nothing).
-const FILL_KEYS = ["income", "growth", "econ"];
+const FILL_KEYS = ["income", "growth", "econ", "households", "pets", "competition"];
 // A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the
-// legend names it. `pets`, `households` and `competition` stay graduated symbols at the
-// listing point - city-scale class breaks on small areas produce a picture with no
-// information, and `households` first `< 10K` bucket would swallow essentially every one.
-const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };
-const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };
+// legend names it. `households` and `pets` joined income at the tract on 2026-09-12 and
+// `competition` at the ZCTA (D-L1): they were graduated symbols at the listing point on the
+// grounds that city-scale class breaks on small areas produce a picture with no information,
+// which was true of the BREAKS and not of the geography - `AREA_LAYERS` below cuts them at
+// the scale the map paints. `competition` is the one ZIP-area layer, and it is honest there
+// rather than approximate: ZIP Code Business Patterns is published per ZIP code and exists
+// at no other geography, so the ZCTA is where it was measured.
+const AREA_LEVEL = { income: "140", growth: "160", econ: "050", households: "140", pets: "140", competition: "860" };
+const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };
 // D-NS16 (John, 2026-09-10): a polygon with no usable figure is drawn in a neutral class
 // and never omitted - a hole in a choropleth reads as a boundary, not as an absence. The
 // colour is the design's own --border-subtle value at the same fillOpacity every other
@@ -129,6 +133,19 @@ const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: 
 // figure that WAS measured but whose margin spans a band is shown with its value (D-C36).
 const NO_DATA_FILL = "#e6e6e6";
 const NO_DATA_LABEL = "No data";
+// A24 (D-L1): the CHOROPLETH's own class breaks, for the three layers whose figure is a
+// COUNT and therefore means something different at a different geography. `VALUE_LAYERS`
+// classes what the community cards carry (a city's households); these class what the map
+// paints (a tract's). Measured over every US tract and every US ZIP area, not over Austin:
+// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times
+// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The
+// design's own breaks put 100.0 % of tracts and 73.1 % of ZIP areas into ONE class.
+// Income, growth and payroll are scale-invariant and are deliberately absent.
+const AREA_LAYERS = {
+  households: { buckets: ["< 1,000", "1,000–1,500", "1,500–2,000", "> 2,000"], stops: [1000, 1500, 2000] },
+  pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },
+  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }
+};
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
 const SYMBOL_KEYS = ["pets", "households", "competition"];
@@ -511,7 +528,7 @@ class Component extends DCLogic {
       features: feats.map((f) => {
         const p = f.properties;
         const shown = p.value !== null && p.value !== undefined && !p.suppressed;
-        const b = shown ? this.bucket(layer, p.value) : null;
+        const b = shown ? this.bucket(layer, p.value, true) : null;
         return {
           type: "Feature", id: p.geo_id, geometry: f.geometry,
           properties: {
@@ -541,11 +558,15 @@ class Component extends DCLogic {
           ? "Derived from two ACS 5-year periods. No combined margin of error is published."
           : layer === "econ"
             ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
-            : "");
+            : layer === "competition"
+              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
+              : layer === "pets"
+                ? "Modelled estimate: households × 0.57. Not an observed count."
+                : "");
     return '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
       '<div style="font-size:12.5px;font-weight:800;color:#003a70">' + p.name + "</div>" +
       '<div style="font-size:11px;color:#494949;margin-top:3px">' + (meta.title || "") + "</div>" +
-      '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">' + (shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL) + "</div>" +
+      '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">' + (shown ? this.fmtMetric(layer, p.value) + (layer === "competition" ? " veterinary practices" : "") : NO_DATA_LABEL) + "</div>" +
       '<div style="font-size:10.5px;color:#494949;margin-top:4px">' + (shown ? margin : absent) + "</div>" +
       '<div style="font-size:10px;color:#767676;margin-top:5px">' + (meta.source || "") + "</div>" +
     "</div>";
@@ -566,8 +587,10 @@ class Component extends DCLogic {
     });
   }
 
-  bucket(metric, v) {
-    const cfg = VALUE_LAYERS[metric];
+  bucket(metric, v, area) {
+    // `area` asks for the CHOROPLETH's breaks. Everything else on the screen classes a
+    // community-scale figure and must keep asking for the design's own (A24.22).
+    const cfg = (area && AREA_LAYERS[metric]) || VALUE_LAYERS[metric];
     const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
     const ramp = pal[metric === "vets" ? "competition" : metric] || BRAND_RAMP;
     let i = 0;
@@ -579,7 +602,10 @@ class Component extends DCLogic {
     const u = VALUE_LAYERS[metric].unit;
     if (u === "usd") return "$" + Math.round(v / 1000) + "K";
     if (u === "pct") return (v > 0 ? "+" : "") + v.toFixed(1) + "%";
-    return v >= 1000 ? Math.round(v / 1000) + "K" : String(v);
+    // Abbreviated from ten thousand, not from one: a Census tract holds about 1,400
+    // households and "1K" is the same label for 1,000 and for 1,499. `toLocaleString` is
+    // the design's own separator, the one `p.sqft` already uses.
+    return v >= 10000 ? Math.round(v / 1000) + "K" : Math.round(v).toLocaleString();
   }
 
   marketVals(list) {
@@ -600,6 +626,9 @@ class Component extends DCLogic {
       (k) => layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
     );
     const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;
+    // Hoisted out of the returned object so the LEGEND can see how many polygons were
+    // actually drawn (A24.29). One call, one collection, no second classification pass.
+    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);
 
     const lats = comms.map((c) => c.lat), lngs = comms.map((c) => c.lng);
     const pad = 0.12;
@@ -655,7 +684,7 @@ class Component extends DCLogic {
       driveCenter: (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) ? [sel.lat, sel.lng] : cfg.center,
       layers,
       valueLayer,
-      areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),
+      areas: areaFc,
       communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {
         const vals = {};
         ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
@@ -689,13 +718,13 @@ class Component extends DCLogic {
           updatedLine: meta.updated || "",
           means: meta.means || "",
           why: meta.why || "",
-          hasRamp: !!valueLayer,
-          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1,
+          hasRamp: !!valueLayer && areaFc.features.length > 0,
+          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,
           geoLine: AREA_LABEL[valueLayer] || "",
           ramp: valueLayer
             ? ramp(valueLayer).map((c, i) => ({
                 style: "flex: 1; height: 9px; background: " + c + ";",
-                label: cfg.buckets[i]
+                label: ((AREA_LAYERS[valueLayer] || cfg).buckets)[i]
               })).concat(FILL_KEYS.indexOf(valueLayer) > -1
                 ? [{ style: "flex: 1; height: 9px; background: " + NO_DATA_FILL + ";", label: NO_DATA_LABEL }]
                 : [])

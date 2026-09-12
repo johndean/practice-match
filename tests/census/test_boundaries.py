@@ -68,6 +68,21 @@ def seeded(conn):
             "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, suppressed, suppress_reason, source_dataset, computed_at) VALUES "
             "('4805000','160','2019\u20132023','population_growth_pct',11.6,'pct',NULL,false,NULL,'acs5',now())"
         )
+        # The three layers that shaded nothing until 2026-09-12. Households and pets are the
+        # TRACT's own, beside income; competition is the ZCTA's, which is ZIP Business Patterns'
+        # own geography and a fourth summary level in this fixture for that reason.
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('78704','860','2023','ZCTA5 78704', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.75,30.25,4269))",
+            (INSIDE,),
+        )
+        cur.execute(
+            "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, is_derived, formula_version, suppressed, suppress_reason, source_dataset, computed_at) VALUES "
+            f"('{TRACT_A}','140','2019\u20132023','households',1480,'count',95,false,NULL,false,NULL,'acs5',now()), "
+            f"('{TRACT_A}','140','2019\u20132023','pet_households_est',844,'count',NULL,true,'v1',false,NULL,'acs5',now()), "
+            "('78704','860','2022','establishments',7,'count',NULL,false,NULL,false,NULL,'zbp',now())"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('zbp','2022',now(),'test')")
     return conn
 
 
@@ -182,7 +197,7 @@ async def test_growth_is_served_at_its_own_geography_and_can_never_be_band_ambig
 
 
 @pytest.mark.parametrize("query,code", [
-    ("?layer=pets", "BAD_LAYER"),
+    ("?layer=vets_per_10k", "BAD_LAYER"),   # a real market_metric key that shades at no geography
     ("?layer=nonsense", "BAD_LAYER"),
     ("", "BAD_LAYER"),
     ("?layer=income&bbox=not,a,box,at-all", "BAD_BBOX"),
@@ -197,8 +212,8 @@ async def test_every_refusal_uses_decision_A5s_envelope_and_names_what_it_wants(
     assert r.json()["error"]["code"] == code
     assert "detail" not in r.json()
     if code == "BAD_LAYER":
-        for name in ("income", "growth", "econ"):
-            assert name in r.json()["error"]["message"]
+        for name in market.SHADING:
+            assert name in r.json()["error"]["message"], f"the refusal does not name the {name} layer"
     if code == "BBOX_TOO_LARGE":
         assert "4.0" in r.json()["error"]["message"]
 
@@ -451,7 +466,7 @@ def _registry_sync(conn):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-async def test_layers_gains_a_shading_member_on_the_three_fills_and_null_on_the_other_six(client, seeded, H) -> None:  # noqa: F811
+async def test_layers_gains_a_shading_member_on_the_six_fills_and_null_on_the_other_three(client, seeded, H) -> None:  # noqa: F811
     """D-NS15: a NEW member, never a change to `geo_level`. `income`'s `geo_level` is
     "place|catchment" and describes the PANEL's geography; the docked panel and the map answer
     different questions about the same layer, and collapsing them is exactly the "silently promote
@@ -460,9 +475,54 @@ async def test_layers_gains_a_shading_member_on_the_three_fills_and_null_on_the_
     assert layers["income"]["shading"] == {"summary_level": "140", "label": "Census tract"}
     assert layers["growth"]["shading"] == {"summary_level": "160", "label": "Place (city/town)"}
     assert layers["econ"]["shading"] == {"summary_level": "050", "label": "County"}
-    for key in ("pets", "households", "competition", "practices", "drive_10", "drive_20"):
+    assert layers["households"]["shading"] == {"summary_level": "140", "label": "Census tract"}
+    assert layers["pets"]["shading"] == {"summary_level": "140", "label": "Census tract"}
+    assert layers["competition"]["shading"] == {"summary_level": "860", "label": "ZIP Code Tabulation Area"}
+    for key in ("practices", "drive_10", "drive_20"):
         assert layers[key]["shading"] is None, key
     assert layers["income"]["geo_level"] == "place|catchment", "the panel's geography must not move"
+
+
+async def test_the_three_layers_that_painted_nothing_answer_at_their_own_geography(client, seeded, H) -> None:  # noqa: F811
+    """The stakeholder's report, 2026-09-12: median income and population growth render as real
+    Census geography and "households, average practice payroll, veterinary competition and pet
+    ownership (estimated) render NOTHING". Three of the four had no `SHADING` entry at all, so the
+    route answered `422 BAD_LAYER` and the app -- which draws what the API answered or nothing --
+    correctly drew nothing.
+
+    Each answers at its OWN geography and says which, because that is what stops a ZIP-area count
+    being read as a neighbourhood one."""
+    for layer, level, label in (("households", "140", "Census tract"), ("pets", "140", "Census tract"),
+                                ("competition", "860", "ZIP Code Tabulation Area")):
+        r, body = await _body(client, H, f"?layer={layer}")
+        assert r.status_code == 200, body
+        assert (body["summary_level"], body["geo_label"]) == (level, label), layer
+        assert body["unit"] == "count", f"{layer} is a count, and a count labelled usd or pct is a wrong reading"
+        assert body["features"], f"{layer} answered with no polygons at all"
+    _r, hh = await _body(client, H, "?layer=households")
+    assert [f["properties"]["value"] for f in hh["features"] if f["id"] == TRACT_A] == [1480.0]
+    _r, pets = await _body(client, H, "?layer=pets")
+    assert [f["properties"]["value"] for f in pets["features"] if f["id"] == TRACT_A] == [844.0]
+    _r, comp = await _body(client, H, "?layer=competition")
+    assert [(f["id"], f["properties"]["value"]) for f in comp["features"]] == [("78704", 7.0)]
+    assert comp["source_dataset"] == "zbp" and comp["value_vintage"] == "2022"
+
+
+async def test_a_households_margin_is_judged_against_the_households_legend_not_incomes(client, seeded, conn, H) -> None:  # noqa: F811
+    """`band_ambiguous` answers "does this polygon's margin cross a legend stop", so it is
+    meaningless unless it is asked against THAT layer's own stops. Households' are 1 000 / 1 500 /
+    2 000 households and income's are $50K / $75K / $100K / $150K: a margin of 95 on 1 480 crosses
+    nothing on either scale, but a margin of 600 on 1 480 spans the 1 000 and 2 000 stops and would
+    be judged perfectly unambiguous against income's."""
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE geo_metric SET moe = 600 WHERE geo_id = '{TRACT_A}' AND metric_key = 'households'")
+    sync_redis().flushdb()
+    _r, body = await _body(client, H, "?layer=households")
+    assert [f["properties"]["band_ambiguous"] for f in body["features"] if f["id"] == TRACT_A] == [True]
+    _r, pets = await _body(client, H, "?layer=pets")
+    assert all(f["properties"]["band_ambiguous"] is False for f in pets["features"]), (
+        "a derived estimate carries no margin, so it can never be band-ambiguous"
+    )
 
 
 def test_income_shades_at_census_tract_and_the_coarser_layers_say_so() -> None:
