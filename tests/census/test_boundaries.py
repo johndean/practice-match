@@ -8,12 +8,13 @@ from __future__ import annotations
 import json
 import logging
 
+import fakeredis
 import pytest
 
 from app.api import market
 from app.api.market import SIMPLIFY_TIERS
 from app.cache import sync_redis
-from app.census import gate, geo_metric
+from app.census import gate, geo_metric, materialize
 from app.config import settings
 from tests.api.conftest import auth_headers
 from tests.census.test_market_api import H, client  # noqa: F401 -- the fixtures, by name
@@ -329,8 +330,17 @@ async def test_the_endpoint_and_community_rows_agree_on_suppression(client, seed
     """D-NS18/R2: "$72,400" in the docked panel over a grey polygon is the failure this stops.
     The parity case runs at the PLACE level, because `serve.community_rows` reads `market_metric`
     and only `growth` shades at place — so the income parity is asserted against a place-level
-    `geo_metric` row written for the test, and the ZCTA path is covered by the shared-function
-    assertion in tests/census/test_geo_metric.py."""
+    `geo_metric` row written for the test, and the tract path is covered by the shared-function
+    assertion in tests/census/test_geo_metric.py.
+
+    The INCOME arm below seeds both tables by hand, so it compares two verdicts this test itself
+    wrote — which is why it passed for a week while the two writers disagreed about payroll on
+    every county in the United States (`geo_metric._econ` suppressed on the CBP flag's TRUTHINESS,
+    `materialize.py` served the same row, and 392 of 392 counties were `source_flag` on QA while
+    the docked panel showed "$819K"). The PAYROLL arm therefore RUNS BOTH REAL WRITERS off ONE
+    `cbp_industry` row, and uses the two flag strings that matter: the one live QA actually holds
+    (`EMP_N=0;PAYANN_N=0` — CBP noise level ZERO on both fields, i.e. published cleanly) and a
+    genuinely withheld cell (`D`)."""
     from app.census import serve
     from tests.census.listing_fixtures import make_listing
 
@@ -363,6 +373,47 @@ async def test_the_endpoint_and_community_rows_agree_on_suppression(client, seed
         with conn.cursor() as cur:
             cur.execute("SELECT suppressed, suppress_reason FROM geo_metric WHERE geo_id='4805000' AND metric_key='median_hh_income'")
             assert cur.fetchone() == (suppressed, reason)
+
+    # ---- payroll: one `cbp_industry` row, both writers, the flag strings CBP really publishes --
+    with conn.cursor() as cur:
+        cur.execute("UPDATE practice_location SET county_geoid = '48453' WHERE listing_id = %s", (lid,))
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) VALUES "
+            "('48453','050','2023','Travis County','48', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.75,30.25,4269))",
+            (AUSTIN,),
+        )
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES ('acs5','2019\u20132023',now(),'succeeded') RETURNING id"
+        )
+        run = int(cur.fetchone()[0])
+        # The place band's own inputs, so `materialize_listing` reaches its payroll row at all:
+        # the row is nested inside the competition branch, and with no ZCTA weights the county
+        # apportionment is the path that produces one (`materialize._competition`).
+        cur.executemany(
+            "INSERT INTO acs_measure VALUES ('4805000','160','2019\u20132023',%s,%s,%s,%s)",
+            [("B01003_001E", 1_100_000, 900, run), ("B11001_001E", 420_000, 600, run), ("B19013_001E", 92_150, 4_100, run)],
+        )
+        cur.execute("INSERT INTO acs_measure VALUES ('48453','050','2019\u20132023','B11001_001E',520000,1200,%s)", (run,))
+        cur.execute(
+            "INSERT INTO cbp_industry (geo_id, summary_level, vintage, naics_code, establishments, annual_payroll_k, flag, ingest_run_id) "
+            "VALUES ('48453','050','2022','541940',179,146535,NULL,%s)",
+            (run,),
+        )
+    for flag, hidden in (("EMP_N=0;PAYANN_N=0", False), ("EMP_N=0", False), ("D", True), (None, False)):
+        with conn.cursor() as cur:
+            cur.execute("UPDATE cbp_industry SET flag = %s WHERE geo_id = '48453'", (flag,))
+        materialize.materialize_listing(conn, fakeredis.FakeRedis(), lid)
+        geo_metric.materialize_geo(conn, fakeredis.FakeRedis())
+        with conn.cursor() as cur:
+            cur.execute("SELECT suppressed, suppress_reason FROM market_metric WHERE listing_id = %s AND band = 'place' AND metric_key = 'revenue_per_establishment'", (lid,))
+            panel = cur.fetchone()
+            cur.execute("SELECT suppressed, suppress_reason FROM geo_metric WHERE geo_id = '48453' AND metric_key = 'revenue_per_establishment'")
+            polygon = cur.fetchone()
+        assert panel == polygon, f"the panel and the map disagree about payroll on flag {flag!r}"
+        assert panel == ((True, "source_flag") if hidden else (False, None)), flag
+        reg = {r["dataset_key"]: dict(r) for r in _registry_sync(conn)}
+        rows = serve.community_rows(conn, [str(lid)], active={"acs5": "2019\u20132023", "acs5_prior": "2014\u20132018", "cbp": "2022", "tiger_cb": "2023"}, registry=reg)
+        assert (rows[str(lid)]["econ_k"] is None) is hidden, f"the card and the table disagree on flag {flag!r}"
 
 
 def _registry_sync(conn):

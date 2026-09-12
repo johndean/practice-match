@@ -152,7 +152,7 @@ def test_the_three_ruled_metrics_land_at_the_three_ruled_levels(world: psycopg2.
     assert econ[1] == "050" and float(econ[3]) == 800_000 and econ[4] is None
     assert econ[5] == "usd" and econ[6] is True and econ[7] == "v1"
     assert econ[10] == "cbp" and econ[11] == CBP_V
-    assert econ[12] == {"cbp": CBP_V, "geo_level": "county", "note": "payroll per establishment, not revenue"}
+    assert econ[12] == {"cbp": CBP_V, "geo_level": "county", "note": "payroll per establishment, not revenue", "cbp_noise": None}
 
 
 def test_the_layer_table_is_d_c35s_assignment_and_nothing_wider() -> None:
@@ -245,15 +245,35 @@ def test_a_growth_or_payroll_geography_with_no_figure_is_written_with_a_null_val
     assert by[("revenue_per_establishment", "48001")][8] is False
 
 
-def test_a_cbp_flag_suppresses_the_county_as_source_flag(world: psycopg2.extensions.connection) -> None:
-    """§6: CBP withheld or noise-flagged the county cell. The figure is not shown and the tip says
-    which of the four reasons it is."""
+@pytest.mark.parametrize(("flag", "verdict"), [
+    ("D", (True, "source_flag")),                      # a withheld cell: nothing to show
+    ("EMP_N=0;PAYANN_N=0", (False, None)),             # what live QA holds for Dallas County 48113
+    ("EMP_N=3;PAYANN_N=3", (False, None)),             # the HIGHEST published noise level is still published
+    ("PAYANN_N=9", (True, "source_flag")),             # not a level CBP publishes -- fail closed
+    ("ESTAB_F=D", (True, "source_flag")),              # a withholding variable, not a noise one
+])
+def test_a_withheld_cbp_cell_is_suppressed_and_a_noise_level_is_not(
+    world: psycopg2.extensions.connection, flag: str, verdict: tuple[bool, str | None],
+) -> None:
+    """§6 and D-L1 (2026-09-12): the one thing that hides a county is the Census Bureau's own
+    WITHHOLDING, and CBP's `EMP_N`/`PAYANN_N` are noise RANGES, not withholding. Reading the flag's
+    truthiness suppressed all 392 county rows in the country over `EMP_N=0;PAYANN_N=0` -- noise
+    level zero on both fields -- while the docked panel served the very same row as "$819K"."""
     with world.cursor() as cur:
-        cur.execute("UPDATE cbp_industry SET flag = 'D' WHERE geo_id = '48453'")
+        cur.execute("UPDATE cbp_industry SET flag = %s WHERE geo_id = '48453'", (flag,))
     geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     with world.cursor() as cur:
         cur.execute("SELECT suppressed, suppress_reason FROM geo_metric WHERE metric_key = 'revenue_per_establishment'")
-        assert cur.fetchone() == (True, "source_flag")
+        assert cur.fetchone() == verdict
+        cur.execute("SELECT inputs->>'cbp_noise' FROM geo_metric WHERE metric_key = 'revenue_per_establishment'")
+        assert cur.fetchone()[0] == flag, "the flag itself is carried, so a later ruling needs no second read"
+
+
+def test_both_writers_decide_a_cbp_flag_through_the_same_function() -> None:
+    """The sibling of `test_suppression_is_applied_to_income_only_and_through_the_one_function`,
+    and the reason the payroll layer went dark: two spellings of one decision about one column."""
+    assert geo_metric._cbp_suppression is materialize._cbp_suppression, "a second CBP flag rule"
+    assert materialize._cbp_suppression("") == (False, None), "an empty flag withholds nothing"
 
 
 # ---- the write itself (D-NS7) ------------------------------------------------------------------

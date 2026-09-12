@@ -29,7 +29,7 @@ import psycopg2.extensions
 import redis as redis_sync
 
 from app.census import metrics as M
-from app.census.materialize import _suppression
+from app.census.materialize import _cbp_suppression, _suppression
 from app.census.registry import load as load_registry
 from app.census.vintage import active
 
@@ -148,12 +148,16 @@ def _econ(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str
     for geo_id, payroll_k, establishments, flag in cur.fetchall():
         value = M.revenue_per_establishment(_as_float(payroll_k), _as_float(establishments))
         # CBP is a census of establishments, not a sample, so there is no margin to test -- the one
-        # thing that hides a county is the Census Bureau's own withholding/noise flag (§6).
-        flagged = bool(flag)
+        # thing that hides a county is the Census Bureau's own WITHHOLDING flag (§6), which is not
+        # the same fact as its noise level. `_cbp_suppression` is IMPORTED, like `_suppression`
+        # beside it: this line read `bool(flag)` until 2026-09-12 and greyed every county in the
+        # country over `EMP_N=0;PAYANN_N=0`, a cell the Census published cleanly and the docked
+        # panel has been showing all along (D-L1).
+        suppressed, reason = _cbp_suppression(flag)
         out.append(_row(geo_id, "050", act["cbp"], "revenue_per_establishment", value, "usd", derived=True,
-                        suppressed=flagged, reason="source_flag" if flagged else None, source="cbp",
+                        suppressed=suppressed, reason=reason, source="cbp",
                         inputs={"cbp": act["cbp"], "geo_level": "county",
-                                "note": "payroll per establishment, not revenue"}))
+                                "note": "payroll per establishment, not revenue", "cbp_noise": flag}))
     return out
 
 
