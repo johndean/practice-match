@@ -27,6 +27,13 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { FakeMap, installLeafletStub, type LeafletStub } from '../map/testing/leaflet-stub';
 import MarketMapView from './MarketMapView.vue';
 import * as viewport from '../map/viewport';
+import { DEBOUNCE_MS, PAD, bboxOf } from '../map/viewport';
+
+/** Real timers, deliberately: the engine loader and Vue's own watcher flush are
+ *  promise-scheduled, and a fake clock that has to be advanced between them turns one
+ *  settle into four ordering decisions. `DEBOUNCE_MS` is 250 ms and there are two of these
+ *  per case. */
+const settle = () => new Promise((r) => setTimeout(r, DEBOUNCE_MS + 50));
 
 // Hoisted above every import by vitest. `loadLeaflet` hands back whatever the stub installed
 // on `window.L`, so the engine under test is the real LeafletMapEngine driving the fake.
@@ -892,6 +899,51 @@ describe('MarketMapView — the V3 map', () => {
         stub.map.handlers[ev]!();
         expect(viewport.current()!.zoom, `no publish on ${ev}`).toBe(ev === 'moveend' ? 10 : 12);
       }
+      w.unmount();
+    });
+
+    // A32, 2026-09-12. A metro change sets a new centre and issues NO boundary request of its
+    // own: `setMarket` marks the shading pending and waits for the settled-view listener to load
+    // the metro the map has actually moved to. The listener is therefore load-bearing, and
+    // `publish`'s own "same snapped box, say nothing" rule can silence it — two metro centres
+    // 0.01 deg apart snap to the same 1/8-tile cell, 32 CSS px at zoom 10, and the map would sit
+    // on `mdAreas: null` for ever with no request in flight and nothing that would ever make one.
+    //
+    // So the RECENTRE path — and only it, never a user pan — publishes with `force: true`. The
+    // two centres below are measured, not chosen: `bboxOf` gives them the same string, which the
+    // case asserts before it asserts anything else.
+    it('a programmatic recentre notifies even when the new centre snaps to the SAME box', async () => {
+      const stub = installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      await settle();
+      const before = bboxOf(viewport.settled()!, PAD);
+
+      const cb = vi.fn();
+      const off = viewport.subscribe(cb);
+      await w.setProps({ center: [30.32, -97.74] });
+      await flushPromises();
+      expect(bboxOf(viewport.current()!, PAD), 'the two centres no longer snap to one box — pick a closer pair').toBe(before);
+      await settle();
+      expect(cb, 'the recentre published without force, so the new metro would never load').toHaveBeenCalledTimes(1);
+
+      off();
+      w.unmount();
+    });
+
+    it('a USER pan to the same box still says nothing — the flag belongs to the recentre path alone', async () => {
+      const stub = installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      await settle();
+
+      const cb = vi.fn();
+      const off = viewport.subscribe(cb);
+      stub.map.setView([30.32, -97.74], 10);        // a drag, not a prop change: no watcher runs
+      await settle();
+      expect(cb, 'a pan inside one grid cell asked the API again').not.toHaveBeenCalled();
+
+      off();
       w.unmount();
     });
 

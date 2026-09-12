@@ -72,11 +72,22 @@ let engine = null;
 // `onMove` is the engine's own `moveend zoomend` subscription — the events Leaflet fires when
 // the map has SETTLED, which is the only view worth asking the API about.
 let offMove = null;
+// A32 (2026-09-12): the next publish is a PROGRAMMATIC recentre's, and must notify even if the
+// snapped box is where it already was. A metro change sets a new centre and issues no boundary
+// request of its own — `setMarket` marks the shading pending and waits for the settled-view
+// listener — and two metro centres can snap to the same 1/8-tile cell, 32 CSS px at zoom 10; the
+// map would then sit on `mdAreas: null` for ever, with no request in flight and nothing that
+// would ever make one. Armed by the recentre watcher and spent by the `moveend` Leaflet fires for
+// that `setView`, so a USER pan — which arms nothing — keeps the module's "same box, say nothing"
+// rule exactly as it was.
+let recentring = false;
 function publishViewport() {
   if (!engine) return;
   const b = engine.getBounds();
   if (!b) return;
-  publish({ w: b[0][1], s: b[0][0], e: b[1][1], n: b[1][0], zoom: engine.getZoom() });
+  const force = recentring;
+  recentring = false;
+  publish({ w: b[0][1], s: b[0][0], e: b[1][1], n: b[1][0], zoom: engine.getZoom() }, { force });
 }
 
 const BASEMAP_KEYS = ['map', 'satellite'];
@@ -110,7 +121,7 @@ onBeforeUnmount(() => {
 });
 
 watch([() => props.basemap, status], () => { if (engine) engine.setBase(props.basemap); });
-watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, () => props.recenterKey, status], () => { if (engine && props.center) engine.setView(props.center, props.zoom, true); });
+watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, () => props.recenterKey, status], () => { if (engine && props.center) { recentring = true; engine.setView(props.center, props.zoom, true); } });
 watch(() => props.resizeKey, () => { if (engine) engine.show(); });
 
 // C7 drive-time ring + A24 community boundary shading.

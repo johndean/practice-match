@@ -13,7 +13,13 @@ export class FakeTile extends FakeLayer { url: string; options: Record<string, u
 class FakeGroup extends FakeLayer { clearLayers() { this.added = []; } }
 export class FakeMap { added: unknown[] = []; handlers: Record<string, () => void> = {}; center: unknown; zoom: number; invalidated = 0; attributionControl = { _update: () => { (this as any).attrUpdated = ((this as any).attrUpdated ?? 0) + 1; } };
   constructor(public el: HTMLElement, public opts: any) { this.center = opts.center; this.zoom = opts.zoom; el.dataset.leafletMounted = '1'; }
-  setView(c: unknown, z: number, o?: unknown) { this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; }
+  // Leaflet's own `setView` ALWAYS settles: `_resetView` (leaflet-src.js:4287) runs
+  // `_moveStart -> _move -> _moveEnd`, and `_moveEnd` fires `zoomend` when the zoom changed and
+  // `moveend` unconditionally — the animated pan path reaches the same `_moveEnd` when its
+  // transition ends. This stub used to move silently, which made A32's recentre flag look like
+  // it leaked into the next user pan when in a real browser the `setView`'s own `moveend`
+  // always spends it.
+  setView(c: unknown, z: number, o?: unknown) { const zoomed = this.zoom !== z; this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; if (zoomed) this.handlers.zoomend?.(); this.handlers.moveend?.(); }
   getZoom() { return this.zoom; } getCenter() { const c = this.center as [number, number]; return { lat: c[0], lng: c[1] }; }
   // The Browse map measured at the design's own 1440 x 940 preview: 1020 x 740 CSS px beside the
   // results rail, which at zoom 10 is 1.401 deg of longitude and, at New York's latitude, 0.771

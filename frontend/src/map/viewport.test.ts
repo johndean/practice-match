@@ -124,6 +124,97 @@ describe('publish / subscribe — one notification per settled view', () => {
     expect(cb).not.toHaveBeenCalled();
   });
 
+  // A32, 2026-09-12. The "same box, say nothing" rule above is right for every move the MEMBER
+  // makes and wrong for the one the APP makes: a metro change sets a new centre, and two metro
+  // centres can snap to the same 1/8-tile cell — 32 CSS px at zoom 10. When they do, the listener
+  // never fires, and A32's `setMarket` is waiting for exactly that listener to load the new
+  // metro's shading. The map would sit on `mdAreas: null` for ever: a blank choropleth with no
+  // request in flight and nothing that will ever make one.
+  //
+  // So a PROGRAMMATIC recentre says "notify anyway". It is the only caller that passes the flag —
+  // `MarketMapView`'s recentre watcher, never a user pan — and it buys the flag nothing else: the
+  // debounce still applies, so a burst of recentres is still one notification.
+  it('notifies for an unchanged box when the publisher FORCES it — the programmatic recentre', () => {
+    vi.useFakeTimers();
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish(NY, { force: true });
+    expect(cb, 'the debounce is not skipped — force is about the box, not about the wait').not.toHaveBeenCalled();
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(settled()).toEqual(NY);
+    // …and exactly once: a forced publish is one question, not a subscription to every timer.
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  // …and a same-box publish that arrives AFTER the forced one must not cancel it. Every `publish`
+  // clears the pending timer before it decides anything, so without the sticky flag the jitter
+  // `moveend` Leaflet fires for an `invalidateSize` — or a selection that pans inside the current
+  // cell — would take the early exit and leave the forced notification cancelled and un-rearmed:
+  // the blank-for-ever state, reached by a different door.
+  it('a forced publish still coalesces with the moves around it — one notification, not three', () => {
+    vi.useFakeTimers();
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish({ ...NY, w: NY.w + 1e-7 });
+    publish(NY, { force: true });
+    publish({ ...NY, n: NY.n - 1e-7 });
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('a forced notification is spent once — the next unchanged box is silent again', () => {
+    vi.useFakeTimers();
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish(NY, { force: true });
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(cb).toHaveBeenCalledTimes(1);
+    publish({ ...NY, w: NY.w + 1e-7 });
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb, 'the flag outlived the notification it was set for').toHaveBeenCalledTimes(1);
+  });
+
+  it('a map that goes before a forced notification lands takes the flag with it', () => {
+    vi.useFakeTimers();
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish(NY, { force: true });
+    publish(null);                               // the frame is torn down mid-debounce
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb, 'publish(null) is its own notification and must be the only one').toHaveBeenCalledTimes(1);
+    expect(settled()).toBeNull();
+    // …and the flag did not survive the teardown: a remount publishing its own box is silent
+    // until that box is genuinely new.
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(cb).toHaveBeenCalledTimes(2);
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb).toHaveBeenCalledTimes(2);
+  });
+
+  it('force: false is the default and changes nothing', () => {
+    vi.useFakeTimers();
+    publish(NY);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    const cb = vi.fn();
+    subscribe(cb);
+    publish(NY, { force: false });
+    publish(NY, {});
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
+    expect(cb).not.toHaveBeenCalled();
+  });
+
   it('cancels a pending notification when the map comes back to the box it started on', () => {
     vi.useFakeTimers();
     publish(NY);

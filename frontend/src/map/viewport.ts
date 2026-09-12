@@ -104,6 +104,15 @@ export function bboxOf(v: Viewport, pad: number): string {
 let live: Viewport | null = null;
 let settledView: Viewport | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
+/** A forced publish that has not been delivered yet (A32).
+ *
+ *  STICKY, and it has to be: every `publish` clears the pending timer before it decides anything,
+ *  so an unforced same-box publish arriving after a forced one — Leaflet's own `invalidateSize`
+ *  jitter, a selection that pans inside the current cell — would take the early exit and leave the
+ *  forced notification cancelled and un-rearmed. That is the blank-for-ever state this flag exists
+ *  to prevent, reached by a different door. It is cleared when the notification is delivered, when
+ *  the map goes, and by `reset()`. */
+let pendingForce = false;
 const listeners = new Set<() => void>();
 
 const key = (v: Viewport | null) => (v === null ? null : bboxOf(v, PAD));
@@ -135,25 +144,43 @@ export function settled(): Viewport | null {
   return settledView;
 }
 
-/** `MarketMapView` calls this at mount, on every `moveend`/`zoomend`, and with `null` on unmount. */
-export function publish(v: Viewport | null): void {
+/**
+ * `MarketMapView` calls this at mount, on every `moveend`/`zoomend`, and with `null` on unmount.
+ *
+ * `force` (A32, 2026-09-12) says "notify even if the snapped box is where it already was". Exactly
+ * one caller passes it — `MarketMapView`'s RECENTRE watcher, the programmatic `setView` a metro
+ * change produces — and never a user pan. The "same box, say nothing" rule below is right for
+ * every move a MEMBER makes and wrong for that one: two metro centres can snap to the same
+ * 1/8-tile cell (32 CSS px at zoom 10), and A32's `setMarket` deliberately issues no request of
+ * its own and waits for this notification to load the new metro. Without the flag that map sits on
+ * `mdAreas: null` for ever — a blank choropleth with no request in flight and nothing that will
+ * ever make one.
+ *
+ * It is about the BOX and not about the wait: the debounce still applies, so a burst of recentres
+ * is still one notification, and a forced publish coalesces with the moves around it.
+ */
+export function publish(v: Viewport | null, opts?: { force?: boolean }): void {
   live = v;
   if (timer !== null) { clearTimeout(timer); timer = null; }
   // A torn-down map leaves NO box behind, and leaves none AT ONCE: waiting out the debounce would
   // let the adapter answer for a view that no longer exists. The notification still waits, so a
   // remount inside the window costs no request.
   if (v === null) {
+    pendingForce = false;
     if (settledView === null) return;
     settledView = null;
     timer = setTimeout(() => { timer = null; notify(); }, DEBOUNCE_MS);
     return;
   }
+  if (opts && opts.force) pendingForce = true;
   // Nothing to say when the SNAPPED box is where it already was: `invalidateSize()`, a selection
   // that pans the map inside the current cell, and the float jitter of any `moveend` at all all
-  // land here, and none of them is a new question for the API.
-  if (key(v) === key(settledView)) return;
+  // land here, and none of them is a new question for the API. A forced publish is the exception,
+  // and the one above says why.
+  if (!pendingForce && key(v) === key(settledView)) return;
   timer = setTimeout(() => {
     timer = null;
+    pendingForce = false;
     settledView = live;
     notify();
   }, DEBOUNCE_MS);
@@ -174,6 +201,7 @@ export function subscribe(cb: () => void): () => void {
 export function reset(): void {
   live = null;
   settledView = null;
+  pendingForce = false;
   if (timer !== null) { clearTimeout(timer); timer = null; }
   listeners.clear();
 }
