@@ -6,6 +6,7 @@ a real `buyer` session presented as a literal Cookie header (Task I9a).
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -724,3 +725,64 @@ def test_the_caps_clear_every_view_the_route_can_legally_be_asked_for() -> None:
     assert market.MAX_BODY_BYTES > largest_first_view_at_the_quarter_tier
     # …and the span cap is what refuses a state, unchanged.
     assert market.MAX_BBOX_DEG == 4.0
+
+
+async def test_a_served_cache_miss_logs_its_cost_once_and_a_hit_logs_nothing(client, seeded, H, caplog) -> None:  # noqa: F811
+    """Important 2 of fix round 2: the two costs the cap re-measurement opened are made MEASURABLE.
+
+    Re-measuring `MAX_FEATURES`/`MAX_BODY_BYTES` for Census tracts let two things through that
+    nobody had measured — the `BBOX_TOO_LARGE` fallback asking for a whole metro envelope at a far
+    zoom, and this handler re-running `_BOUNDARY_SQL` + `json.dumps(compose(...))` once per
+    delivery tier. Neither is visible from outside the process, so the controller's measurement on
+    QA would have been a guess. One INFO line per served miss carries the eight numbers it needs.
+
+    What is asserted: the line exists exactly once per miss, carries every field by name, is INFO
+    and not a warning, and a cache HIT is silent — a log line per request would drown the thing it
+    is meant to make visible. Nothing from the payload is in it.
+    """
+    caplog.set_level(logging.INFO, logger="app.api.market")
+    first = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
+    assert first.status_code == 200 and first.headers["x-cache"] == "miss"
+
+    lines = [r for r in caplog.records if r.getMessage().startswith("boundaries miss ")]
+    assert len(lines) == 1, [r.getMessage() for r in caplog.records]
+    line = lines[0]
+    assert line.levelno == logging.INFO
+    fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
+    assert sorted(fields) == ["bytes_gz", "bytes_raw", "cbsa", "features", "layer", "ms_sql", "ms_total", "tiers_tried"]
+    assert fields["cbsa"] == "12420" and fields["layer"] == "income"
+    # Two tracts in the fixture, one delivery tier tried (tier 0 fits), and the gzipped body is
+    # smaller than the raw one — read off the line, so a field wired to the wrong value fails here.
+    assert int(fields["features"]) == 2
+    assert int(fields["tiers_tried"]) == 1
+    assert 0 < int(fields["bytes_gz"]) < int(fields["bytes_raw"]) == len(first.content)
+    assert 0 <= float(fields["ms_sql"]) <= float(fields["ms_total"])
+    # No figure the payload carries reaches the log: the fixture's own median, by value.
+    assert "92150" not in line.getMessage()
+
+    caplog.clear()
+    again = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
+    assert again.headers["x-cache"] == "hit"
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("boundaries miss ")] == []
+
+
+async def test_the_cost_line_counts_every_delivery_tier_the_miss_actually_ran(client, seeded, H, caplog, monkeypatch) -> None:  # noqa: F811
+    """`tiers_tried` is the field that makes cost arm (b) readable, so it is pinned against a miss
+    that really coarsens: drop the byte cap under the exact outline and the handler walks the
+    ladder. Without this the field could be hard-wired to 1 and every other assertion would pass."""
+    # A real outline with real detail to generalise, and a cap ONE byte under what it costs exact
+    # — the same construction `test_a_body_over_the_cap_is_simplified_and_served_rather_than_refused`
+    # uses, so the ladder is walked rather than the request refused.
+    with seeded.cursor() as cur:
+        cur.execute(f"UPDATE geo_area SET geom = ST_Multi(ST_Buffer(ST_Point(-97.75,30.25,4269), 0.05, 200)) "
+                    f"WHERE geo_id = '{TRACT_A}' AND summary_level = '140'")
+    exact = json.loads((await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).content)
+    sync_redis().flushdb()          # the cache key does not span the caps; monkeypatching one must
+    caplog.set_level(logging.INFO, logger="app.api.market")
+    monkeypatch.setattr(market, "MAX_BODY_BYTES", len(json.dumps(exact).encode()) - 1)
+    r = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
+    assert r.status_code == 200, r.json()
+    line = next(x for x in caplog.records if x.getMessage().startswith("boundaries miss "))
+    fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
+    assert int(fields["tiers_tried"]) > 1, line.getMessage()
+    assert int(fields["tiers_tried"]) <= len(SIMPLIFY_TIERS)

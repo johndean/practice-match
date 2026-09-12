@@ -67,6 +67,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import time
 from typing import Any, cast
 from uuid import UUID
 
@@ -459,6 +460,12 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
     directly contradicts §11's "the layer disappears within one minute" the moment a tile carries
     values rather than only geometry. One route inside the existing `market:gate:v` cache key
     honours both."""
+    # The clock starts before the cache is even read, because what the line at the end of this
+    # function reports is the cost of a MISS end to end -- the number the caps' re-measurement
+    # (2026-09-12) makes worth watching, and which nobody could see from outside.
+    started = time.perf_counter()
+    sql_ms = 0.0
+    tiers_tried = 0
     if layer not in SHADING:
         return _error("BAD_LAYER", "layer must be one of ('income', 'growth', 'econ')", 422)
     box: tuple[float, float, float, float] | None = None
@@ -524,13 +531,18 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
         if state == "enabled":
             params = {"metric": metric_key, "value_vintage": value_vintage, "level": SHADING[layer]["summary_level"],
                       "geo_vintage": geo_vintage, "w": box[0], "s": box[1], "e": box[2], "n": box[3]}
+            sql_at = time.perf_counter()
             orphans = int((await conn.execute(text(_ORPHAN_SQL), params)).scalar_one())
+            sql_ms += (time.perf_counter() - sql_at) * 1000
             span = max(box[2] - box[0], box[3] - box[1])
             # Coarsen until it fits. A polygon is NEVER dropped to make room — a missing polygon
             # leaves a hole that reads as a boundary — so the feature cap is a refusal, not a rung.
             for frac in SIMPLIFY_TIERS:
                 simplified = span * frac
+                tiers_tried += 1
+                sql_at = time.perf_counter()
                 rows = list((await conn.execute(text(_BOUNDARY_SQL), {**params, "tol": simplified})).mappings().all())
+                sql_ms += (time.perf_counter() - sql_at) * 1000
                 if len(rows) > MAX_FEATURES:
                     break
                 raw = json.dumps(compose(rows, orphans, simplified)).encode("utf-8")
@@ -546,6 +558,18 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
         return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area even at the coarsest delivery tolerance; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
     packed = gzip.compress(raw)
     r.set(key, packed, ex=BOUNDARY_TTL)
+    # ONE line per served cache MISS, and only per miss: a hit costs a Redis read and is not what
+    # anyone is trying to size. Re-measuring the caps for Census tracts (2026-09-12) opened two
+    # costs nobody could see from outside and nobody had measured — the `BBOX_TOO_LARGE` fallback
+    # asking for a whole metro envelope at a far zoom, and this handler re-running `_BOUNDARY_SQL`
+    # and `json.dumps(compose(...))` once per delivery tier — so both are now readable off a log
+    # rather than guessed at. Identifiers and sizes only: `cbsa` is a Census geoid and `layer` is
+    # one of three literals, and no figure the payload carries appears here. `log.warning` above is
+    # the module's own idiom; this is its INFO sibling.
+    log.info(
+        "boundaries miss cbsa=%s layer=%s features=%d tiers_tried=%d bytes_raw=%d bytes_gz=%d ms_sql=%.1f ms_total=%.1f",
+        cbsa, layer, len(rows), tiers_tried, len(raw), len(packed), sql_ms, (time.perf_counter() - started) * 1000,
+    )
     return _geojson(packed, request, "miss")
 
 
