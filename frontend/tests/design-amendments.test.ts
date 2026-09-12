@@ -368,6 +368,8 @@ describe('local design amendments (spec D15)', () => {
     // Fix round 1 of Task SNAP (2026-09-13): A31.12 is CHAINED on A31.8's own two caption
     // lines and A31.12b on A24.45's whole helper, so both run after the entries they read.
     'A31.12', 'A31.12b',
+    // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
+    'A31.13', 'A31.13b',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -548,7 +550,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(300);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(302);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -2866,8 +2866,12 @@ class Component extends DCLogic {
           // tract holds about 1,500 households and the community breaks start at 10,000, so
           // the community scale puts ALL FIVE quantiles in one class and draws five identical
           // 6 px stubs, which is the same collapse A24.25 was cut to remove on the map.
-          const cls = (v) => Math.min(3, Math.round(this.bucket(k, num(v), true).t * 3));
-          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q), true).t);
+          // A31.13 (fix round 1): the bucket ITSELF, not a re-derived index. `income`'s ramp
+          // carries five colours, so `t` is i / 4 and `Math.round(t * 3)` collapsed classes 2
+          // and 3 onto one colour and could never reach class 4 - the strip drew five classes
+          // in four colours beside a map painting five. One call, one class, one colour.
+          const cls = (v) => this.bucket(k, num(v), true);
+          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => cls(q));
           // …and in LOCATION mode the class the practice's own figure falls in keeps its
           // colour while the rest take the caret's own .6, so the card says WHERE in the
           // metro the practice sits rather than repeating its number. ONLY where the two are
@@ -2892,10 +2896,10 @@ class Component extends DCLogic {
             // this line carries the DATASET alone in LOCATION mode - measured, the basis
             // printed ten times on one strip before this, four cards printing it twice.
             src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),
-            bars: dist.map((t) => ({
-              style: "flex: 1; height: " + Math.max(4, Math.round(6 + t * 24)) +
-                "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(t * 3))] + ";" +
-                ((here !== null && Math.min(3, Math.round(t * 3)) !== here) ? " opacity: .6;" : "")
+            bars: dist.map((b) => ({
+              style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +
+                "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +
+                ((here !== null && b.t !== here.t) ? " opacity: .6;" : "")
             })),
             activate: () => this.setState({ mdValue: k, mdInsightOff: false, mdLegendOff: false }),
             linkLabel: on ? "Showing on map" : "View on map \u2192",

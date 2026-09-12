@@ -6189,6 +6189,62 @@ const A31_12b: Amendment = {
   count: 1
 };
 
+/** Fix round 1's second ruling (2026-09-13). A31.8's comment claimed "the strip and the legend
+ *  then agree about what colour a tract's figure is"; it was false for `income`, whose ramp is the
+ *  one with FIVE colours. */
+const SNAP1B = {
+  date: '2026-09-13',
+  ruling: 'A31.13 (controller, 2026-09-13, fix round 1 of Task SNAP): a strip bar takes its colour from the SAME door the polygons do \u2014 `bucket(k, v, true)`\u2019s own `color`, never `ramp(k)[Math.round(t * 3)]`, which can address only four classes and so collapsed two of income\u2019s five onto one colour and could never draw its top one. The height keeps its `t`, and the LOCATION comparison is made on the class the bucket itself reports.'
+};
+
+/** A31.13 \u2014 the two lines that class a quantile. CHAINED on A31.8.
+ *
+ *  MEASURED: `ramp(k)[Math.min(3, Math.round(t * 3))]` is the DESIGN's own pre-A31 expression and
+ *  it is correct for a four-colour ramp, which five of the six are. `income`'s carries five
+ *  (`PALETTES.*.income`, "green, 5 classes"), so `bucket` returns `t = i / 4`: classes 2 and 3
+ *  (`t = .5`, `t = .75`) both round to index 2 and class 4 is unreachable. The approved
+ *  `browse-market-strip` therefore drew income's five bars in four colours, two of them the same,
+ *  beside a map painting five \u2014 the one thing A31.8's own comment said could not happen.
+ *
+ *  `cls` now returns the bucket itself rather than a re-derived index, so the colour and the class
+ *  come from one call and cannot disagree. `bucket()`'s return is UNCHANGED: `t = i / (ramp.length
+ *  - 1)` is injective in `i` within one ramp, so comparing two `t`s from the same layer IS
+ *  comparing their classes, and no index had to be added to it. The `here` line is untouched,
+ *  byte for byte \u2014 it already reads `cls(own)`. */
+const A31_13: Amendment = {
+  id: 'A31.13', ...SNAP1B,
+  find: "          const cls = (v) => Math.min(3, Math.round(this.bucket(k, num(v), true).t * 3));\n"
+    + "          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q), true).t);\n",
+  replace: "          // A31.13 (fix round 1): the bucket ITSELF, not a re-derived index. `income`'s ramp\n"
+    + "          // carries five colours, so `t` is i / 4 and `Math.round(t * 3)` collapsed classes 2\n"
+    + "          // and 3 onto one colour and could never reach class 4 - the strip drew five classes\n"
+    + "          // in four colours beside a map painting five. One call, one class, one colour.\n"
+    + "          const cls = (v) => this.bucket(k, num(v), true);\n"
+    + "          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => cls(q));\n",
+  count: 1
+};
+
+/** A31.13b \u2014 the bar's own style, reading that bucket. CHAINED on A31.8.
+ *
+ *  The colour is the bucket's `color`, which is the colour `areaVals` gives the polygon carrying
+ *  that value; the height keeps its `t`, which is what makes the row a distribution; and the
+ *  LOCATION comparison is `t` against `t` from the same ramp, which is class against class.
+ *  A31.8's sentence about the strip and the legend agreeing is true from here. */
+const A31_13b: Amendment = {
+  id: 'A31.13b', ...SNAP1B,
+  find: "            bars: dist.map((t) => ({\n"
+    + '              style: "flex: 1; height: " + Math.max(4, Math.round(6 + t * 24)) +\n'
+    + '                "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(t * 3))] + ";" +\n'
+    + '                ((here !== null && Math.min(3, Math.round(t * 3)) !== here) ? " opacity: .6;" : "")\n'
+    + "            })),\n",
+  replace: "            bars: dist.map((b) => ({\n"
+    + '              style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +\n'
+    + '                "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +\n'
+    + '                ((here !== null && b.t !== here.t) ? " opacity: .6;" : "")\n'
+    + "            })),\n",
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6338,5 +6394,7 @@ export function amendments(): Amendment[] {
     A31_1, A31_2, A31_3, A31_4, A31_5, A31_6, A31_7, A31_8, A31_9, A31_10, A31_11,
     // Fix round 1 (2026-09-13): A31.12 is CHAINED on A31.8's own two caption lines and
     // A31.12b on A24.45's whole helper, so both run after the entries they read.
-    A31_12, A31_12b];
+    A31_12, A31_12b,
+    // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
+    A31_13, A31_13b];
 }

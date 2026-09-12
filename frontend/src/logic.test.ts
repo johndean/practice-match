@@ -3894,9 +3894,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const drawn = card.bars.map(colour);
     // Both scales are NAMED and the MAP's is the one required — an assertion that only checked
     // "the colours differ" would pass on any third scale somebody introduced later. The expected
-    // colour is the one the MAP paints that value (`bucket(…, true).color`, `areaVals`' own door),
-    // which is the same colour the bar's `ramp[Math.round(t * 3)]` resolves to because the
-    // households ramp carries exactly four colours for `AREA_LAYERS`' four classes.
+    // colour is the one the MAP paints that value (`bucket(…, true).color`, `areaVals`' own door).
     expect(drawn).toEqual(quantiles.map((v) => withAdapter.bucket('households', v, true).color));
     expect(drawn, 'the bars are drawn on the COMMUNITY scale, which collapses a tract distribution')
       .not.toEqual(quantiles.map((v) => withAdapter.bucket('households', v).color));
@@ -3906,6 +3904,52 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     // …and the heights follow the same classes, so the shape is the distribution's and not a flat row.
     const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
     expect(new Set(heights).size).toBeGreaterThan(1);
+  });
+
+  // A31.13 (fix round 1, 2026-09-13). The case above proved colour identity for `households`
+  // ALONE, and passed for a reason that does not generalise: A31.8 painted each bar with
+  // `ramp(k)[Math.min(3, Math.round(t * 3))]` — the design's own pre-A31 expression — which can
+  // only address indices 0–3, and the households ramp happens to carry exactly four colours.
+  // `income`'s carries FIVE: `t = i / 4` for i = 0–4, so `Math.round(t * 3)` maps classes 2 and 3
+  // onto ONE colour and can never reach class 4 at all. The strip drew a five-class distribution
+  // in four colours, two of them the same, while the map beside it painted five — which is
+  // exactly what A31.8's own comment ("the strip and the legend then agree about what colour a
+  // tract's figure is") claimed it did not. The bars take the colour from the SAME door the
+  // polygons do, `bucket(k, v, true)`, so that sentence is true for all six layers.
+  it('every strip bar is the colour the MAP paints that value — all six layers (A31.13)', () => {
+    const QUANTILES: Record<string, number[]> = {
+      income: [30000, 60000, 85000, 120000, 180000],
+      pets: [400, 700, 900, 1000, 1500],
+      competition: [3, 5, 7, 9, 12],
+      growth: [-2, 2, 7, 10, 20],
+      households: [900, 1200, 1500, 1900, 2400],
+      econ: [300000, 500000, 700000, 800000, 1000000]
+    };
+    const TITLE: Record<string, string> = {
+      income: 'Median household income', pets: 'Pet ownership (estimated)',
+      competition: 'Veterinary competition', growth: 'Population growth',
+      households: 'Households', econ: 'Average practice payroll'
+    };
+    const summary: Record<string, unknown> = {};
+    for (const k of Object.keys(QUANTILES)) {
+      summary[k] = { layer: k, geo_label: 'Census tract', with_value: 503, median: QUANTILES[k][2], quantiles: QUANTILES[k] };
+    }
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: summary });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    for (const k of Object.keys(QUANTILES)) {
+      const card = cards.filter((x: { title: string }) => x.title === TITLE[k])[0];
+      expect(card, `no card titled "${TITLE[k]}"`).toBeDefined();
+      expect(card.bars.map(colour), `${k}'s bars are not the colours the map paints those values`)
+        .toEqual(QUANTILES[k].map((v) => withAdapter.bucket(k, v, true).color));
+    }
+    // The measurement that names the defect: income's ramp has FIVE colours and its five
+    // quantiles fall in five different classes, so five distinct colours must be drawn — and
+    // the TOP one, which `Math.round(t * 3)` could never address, must be among them.
+    const incomeDrawn = cards.filter((x: { title: string }) => x.title === TITLE.income)[0].bars.map(colour);
+    expect(new Set(incomeDrawn).size, 'two of income\u2019s five classes collapsed onto one colour').toBe(5);
+    expect(incomeDrawn[4], 'the top income class can never appear on a bar').toBe(withAdapter.bucket('income', QUANTILES.income[4], true).color);
   });
 
   it('LOCATION highlights only where the practice and the metro are ONE measurement', () => {
