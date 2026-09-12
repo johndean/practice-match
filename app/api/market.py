@@ -475,6 +475,36 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
     started = time.perf_counter()
     sql_ms = 0.0
     tiers_tried = 0
+
+    def cost(outcome: str, features: int, raw_bytes: int, gz_bytes: int) -> None:
+        """ONE line per cache MISS, whatever the miss cost and however it ended.
+
+        Every miss is logged, not only the ones that were served: a refusal spends the same SQL
+        and, on the byte arm, the same serialisations, so a measurement that saw only the successes
+        would be reading a survivor's sample and drawing the wrong conclusion about what a far
+        zoom costs. `outcome` is what tells them apart -- `served`, `refused_count` (the feature
+        cap, which breaks the ladder on its first tier because simplification never drops a
+        polygon) or `refused_bytes` (the byte cap at the coarsest tier, the one place the ladder
+        gives up). A cache HIT stays silent: a line per request would drown the thing this exists
+        to make visible.
+
+        `bytes_raw` is 0 on the count arm because no body was ever composed there, and `bytes_gz`
+        is 0 on BOTH refusals because a refused body is never compressed -- one gzip of several
+        megabytes on the path that is already failing is a cost nobody asked for. `outcome` is
+        what says why the zeros are there; a number invented for them would be read as a
+        measurement.
+
+        Identifiers and sizes only: `cbsa` is a Census geoid, `layer` is one of three literals,
+        and no figure the payload carries appears. `log.warning` below is the module's own idiom;
+        this is its INFO sibling.
+        """
+        log.info(
+            "boundaries miss outcome=%s cbsa=%s layer=%s features=%d tiers_tried=%d "
+            "bytes_raw=%d bytes_gz=%d ms_sql=%.1f ms_total=%.1f",
+            outcome, cbsa, layer, features, tiers_tried, raw_bytes, gz_bytes,
+            sql_ms, (time.perf_counter() - started) * 1000,
+        )
+
     if layer not in SHADING:
         return _error("BAD_LAYER", "layer must be one of ('income', 'growth', 'econ')", 422)
     box: tuple[float, float, float, float] | None = None
@@ -558,27 +588,18 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
                 if len(raw) <= MAX_BODY_BYTES:
                     break
     if len(rows) > MAX_FEATURES:
+        cost("refused_count", len(rows), 0, 0)
         return _error("AREA_TOO_LARGE", f"{len(rows)} features in this area; the cap is {MAX_FEATURES}. Zoom in or pass a smaller bbox.", 422)
     if orphans:
         # A non-zero count on a metro that has previously reported zero is how a boundary vintage
         # that has moved out from under the values announces itself (R4).
         log.warning("boundaries: %d %s values at level %s have no %s geometry", orphans, value_vintage, SHADING[layer]["summary_level"], geo_vintage)
     if len(raw) > MAX_BODY_BYTES:
+        cost("refused_bytes", len(rows), len(raw), 0)
         return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area even at the coarsest delivery tolerance; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
     packed = gzip.compress(raw)
     r.set(key, packed, ex=BOUNDARY_TTL)
-    # ONE line per served cache MISS, and only per miss: a hit costs a Redis read and is not what
-    # anyone is trying to size. Re-measuring the caps for Census tracts (2026-09-12) opened two
-    # costs nobody could see from outside and nobody had measured — the `BBOX_TOO_LARGE` fallback
-    # asking for a whole metro envelope at a far zoom, and this handler re-running `_BOUNDARY_SQL`
-    # and `json.dumps(compose(...))` once per delivery tier — so both are now readable off a log
-    # rather than guessed at. Identifiers and sizes only: `cbsa` is a Census geoid and `layer` is
-    # one of three literals, and no figure the payload carries appears here. `log.warning` above is
-    # the module's own idiom; this is its INFO sibling.
-    log.info(
-        "boundaries miss cbsa=%s layer=%s features=%d tiers_tried=%d bytes_raw=%d bytes_gz=%d ms_sql=%.1f ms_total=%.1f",
-        cbsa, layer, len(rows), tiers_tried, len(raw), len(packed), sql_ms, (time.perf_counter() - started) * 1000,
-    )
+    cost("served", len(rows), len(raw), len(packed))
     return _geojson(packed, request, "miss")
 
 

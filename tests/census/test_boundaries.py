@@ -749,7 +749,8 @@ async def test_a_served_cache_miss_logs_its_cost_once_and_a_hit_logs_nothing(cli
     line = lines[0]
     assert line.levelno == logging.INFO
     fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
-    assert sorted(fields) == ["bytes_gz", "bytes_raw", "cbsa", "features", "layer", "ms_sql", "ms_total", "tiers_tried"]
+    assert sorted(fields) == ["bytes_gz", "bytes_raw", "cbsa", "features", "layer", "ms_sql", "ms_total", "outcome", "tiers_tried"]
+    assert fields["outcome"] == "served"
     assert fields["cbsa"] == "12420" and fields["layer"] == "income"
     # Two tracts in the fixture, one delivery tier tried (tier 0 fits), and the gzipped body is
     # smaller than the raw one — read off the line, so a field wired to the wrong value fails here.
@@ -786,3 +787,49 @@ async def test_the_cost_line_counts_every_delivery_tier_the_miss_actually_ran(cl
     fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
     assert int(fields["tiers_tried"]) > 1, line.getMessage()
     assert int(fields["tiers_tried"]) <= len(SIMPLIFY_TIERS)
+
+
+async def test_a_refused_boundaries_request_logs_its_cost_too(client, seeded, H, caplog, monkeypatch) -> None:  # noqa: F811
+    """A refusal costs the same SQL and, on the byte arm, the same serialisations — and logged
+    nothing, so a far-zoom measurement would have seen only the pulls that SUCCEEDED and drawn the
+    wrong conclusion from a survivor's sample.
+
+    Both refusal arms now emit the same line as a served miss, told apart by `outcome`:
+
+      refused_count   the feature cap; the ladder breaks on the FIRST tier, because simplification
+                      never drops a polygon and the count is therefore the same at every tier.
+      refused_bytes   the byte cap at the COARSEST tier, the one place the ladder gives up.
+    """
+    caplog.set_level(logging.INFO, logger="app.api.market")
+    monkeypatch.setattr(market, "MAX_FEATURES", 1)
+    r = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "AREA_TOO_LARGE"
+
+    line = next(x for x in caplog.records if x.getMessage().startswith("boundaries miss "))
+    fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
+    assert line.levelno == logging.INFO
+    assert fields["outcome"] == "refused_count"
+    assert fields["cbsa"] == "12420" and fields["layer"] == "income"
+    assert int(fields["features"]) == 2, "the count that was refused, not the count that was served"
+    assert int(fields["tiers_tried"]) == 1
+    assert 0 <= float(fields["ms_sql"]) <= float(fields["ms_total"])
+    # The body is never composed on this arm and never compressed on either, so both sizes are 0
+    # and `outcome` is what says why — a number invented here would be read as a measurement.
+    assert int(fields["bytes_raw"]) == 0 and int(fields["bytes_gz"]) == 0
+
+
+async def test_the_byte_refusal_logs_the_bytes_it_could_not_get_under_the_cap(client, seeded, H, caplog, monkeypatch) -> None:  # noqa: F811
+    """The other refusal arm, and the one where a size IS known: the ladder ran every tier and the
+    coarsest still did not fit, so `bytes_raw` is the real composed size of that last attempt —
+    which is exactly the number a decision about the caps needs."""
+    caplog.set_level(logging.INFO, logger="app.api.market")
+    monkeypatch.setattr(market, "MAX_BODY_BYTES", 1)
+    r = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "AREA_TOO_LARGE"
+
+    line = next(x for x in caplog.records if x.getMessage().startswith("boundaries miss "))
+    fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("boundaries miss ").split(" "))
+    assert fields["outcome"] == "refused_bytes"
+    assert int(fields["tiers_tried"]) == len(SIMPLIFY_TIERS), "the ladder must be walked to its end before it gives up"
+    assert int(fields["bytes_raw"]) > market.MAX_BODY_BYTES
+    assert int(fields["bytes_gz"]) == 0, "a refused body is never compressed, so no size is claimed for it"
