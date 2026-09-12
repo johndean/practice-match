@@ -3767,9 +3767,11 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         expect(card.title.length).toBeGreaterThan(0);
         expect(card.src.length).toBeGreaterThan(0);
         expect(card.linkLabel.length).toBeGreaterThan(0);
-        // The note STATES the absence rather than hiding it: zero areas summarised is a reading,
-        // and a bare "metro median" over a blank figure is not.
-        expect(card.valueNote).toMatch(/^metro median · 0 /);
+        // Fix round 1, Minor 1 (controller, 2026-09-13): a card with NO figure carries NO
+        // caption. It used to read "metro median · 0 ZIP areas" — a caption over a blank,
+        // visible in the approved DOM oracle — and `absent beats faked` governs a caption as
+        // much as a figure. The title, the source and the link stay, which is A21.2n/o.
+        expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
       }
     });
   });
@@ -3785,7 +3787,14 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const own = c.summarySet();
     expect(card.value).toBe(c.fmtMetric('households', own.households.median));
     expect(card.bars, 'five bars: p10, p25, p50, p75, p90').toHaveLength(5);
-    expect(card.valueNote).toBe(`metro median · ${own.households.with_value.toLocaleString()} Census tracts`);
+    // Fix round 1, the Addendum (controller, 2026-09-13): the caption states exactly what the
+    // number IS and drops the word "metro". Measured on QA: this card would read "$95K metro
+    // median" for income (percentile_cont over the metro's valued tracts) while the Census
+    // PUBLISHES a metro median for CBSA 12420 — 97,638 ± 1,163 at summary level 310 — so a
+    // stakeholder reading "$95K metro median" beside a Census metro median of "$98K" has a
+    // fourth number to explain. A median OF 503 tracts is what this is, and now what it says.
+    expect(card.valueNote).toBe(`median of ${own.households.with_value.toLocaleString()} Census tracts`);
+    expect(card.valueNote, 'the caption still claims to be the metro\u2019s own median').not.toContain('metro');
     // The defect the ruling names, in one assertion: a Census tract holds about 1,500 households
     // and a listing's five-mile ring holds six figures, so the two bases are an order of
     // magnitude apart — the card must be on the tract's side of that gap.
@@ -3814,6 +3823,26 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     expect(income.src).toBe('U.S. Census ACS 5-year estimates (2023) · Census tract');
   });
 
+  it('growth\u2019s source line composes like the other five (A31.12c, fix round 1 Minor 3)', () => {
+    // `LAYER_META.growth` was the one layer left carrying a whole `source` SENTENCE ending
+    // "\u00b7 community level" while its AREA card measures PLACE polygons and `AREA_LABEL.growth`
+    // is "Place (city/town)" — so the vaguer wording stood on the card AND on the map legend,
+    // which is what A24.45's split (income, households, competition) had corrected for the
+    // others. It carries the DATASET now and `metaSource` composes the rest for the surface
+    // that prints it, which is one string per fact.
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const growth = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(growth.src).toBe('U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …the LEGEND takes the same composition, which is where the vaguer wording also stood.
+    c.setState({ mdValue: 'growth' });
+    expect(c.renderVals().md.active.sourceLine)
+      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …and LOCATION mode carries the dataset alone, as the other five do (A31.12).
+    c.setState({ mdValue: 'income', mdSel: austin()[0].id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0].src)
+      .toBe('U.S. Census ACS population estimates, 2015\u20132023');
+  });
+
   it('selecting a practice switches the strip to LOCATION and to that practice’s own figures', () => {
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
     const area = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
@@ -3827,7 +3856,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const own = c.communities().filter((x: { id: string }) => x.id === p.id)[0];
     expect(card.value).toBe(c.fmtMetric('households', own.hh));
     expect(card.value, 'LOCATION printed the metro figure').not.toBe(area.value);
-    expect(card.valueNote, 'the "metro median" wording is AREA mode’s alone').not.toContain('metro median');
+    expect(card.valueNote, 'the AREA caption’s "median of N areas" wording reached LOCATION mode').not.toContain('median of');
     // The bars stay the METRO's distribution, so the card says WHERE the practice sits: same
     // count, same heights, and exactly the classes the practice is NOT in are dimmed.
     expect(card.bars).toHaveLength(area.bars.length);
@@ -3872,7 +3901,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     for (const card of cards) {
       expect(card.value, `${card.title} fell back to the listings' own median`).toBeUndefined();
       expect(card.bars).toEqual([]);
-      expect(card.valueNote).toBe('metro median');
+      expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
       expect(card.src.length).toBeGreaterThan(0);
     }
   });

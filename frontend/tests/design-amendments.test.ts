@@ -367,7 +367,7 @@ describe('local design amendments (spec D15)', () => {
     'A31.1', 'A31.2', 'A31.3', 'A31.4', 'A31.5', 'A31.6', 'A31.7', 'A31.8', 'A31.9', 'A31.10', 'A31.11',
     // Fix round 1 of Task SNAP (2026-09-13): A31.12 is CHAINED on A31.8's own two caption
     // lines and A31.12b on A24.45's whole helper, so both run after the entries they read.
-    'A31.12', 'A31.12b',
+    'A31.12', 'A31.12b', 'A31.12c',
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     'A31.13', 'A31.13b',
   ];
@@ -416,6 +416,16 @@ describe('local design amendments (spec D15)', () => {
     // carry the dataset alone, and `metaSource` composes the rest for the surface that prints it.
     expect(amended).toContain('const metaSource = (k, basis) => {');
     expect(amended).toContain('    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",');
+    // A31.12c (fix round 1, 2026-09-13, Minor 3): `growth` was the ONE layer A24.45's split
+    // left carrying a whole `source` sentence ending "\u00b7 community level", while its AREA card
+    // measures PLACE polygons and `AREA_LABEL.growth` is "Place (city/town)" — so the vaguer
+    // wording stood on the card AND on the map legend. It carries the dataset now.
+    expect(amended).toContain('    dataset: "U.S. Census ACS population estimates, 2015\u20132023",');
+    expect(amended, 'growth still bakes a geography into its own source line')
+      .not.toContain('population estimates, 2015\u20132023 \u00b7 community level');
+    // …and the footnote's growth caveat is untouched by it, which is what keeps the
+    // paragraph true of both modes (A31.11 / A24.20).
+    expect(amended).toContain('Population growth is measured for the surrounding city or county, not the tract.');
     expect(amended, 'a layer still carries the map geography baked into its source line')
       .not.toContain('estimates (2023) \u00b7 Census tract",');
     // A31.8 (Task SNAP, D-C50 as revised) SUPERSEDES the interim basis: in AREA mode the card
@@ -550,7 +560,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(302);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(303);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

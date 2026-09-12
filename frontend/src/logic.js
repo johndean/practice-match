@@ -214,7 +214,7 @@ const LAYER_META = {
     title: "Population growth",
     sub: "Change · ACS population estimates",
     updated: "Updated: ACS 2023 release (Jan 2025)",
-    source: "U.S. Census ACS population estimates, 2015–2023 · community level",
+    dataset: "U.S. Census ACS population estimates, 2015–2023",
     means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
     why: "Areas adding households may add pet owners, which matters more for a practice you intend to hold for years."
   },
@@ -1148,7 +1148,13 @@ class Component extends DCLogic {
               ? (k === "growth" ? (sel.growthScope || "surrounding city or county")
                 : k === "econ" ? "surrounding county"
                 : k === "income" ? (sel.incomeNote || locBasis) : locBasis)
-              : (sum ? "metro median · " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : "metro median"),
+              // In AREA mode the caption states exactly what the number IS. Not "metro
+              // median": the Census PUBLISHES a metro median (summary level 310) and this
+              // is the median OF the metro's valued areas, which is a different figure -
+              // measured on CBSA 12420, 94,801 against the published 97,638. And a card
+              // with no figure carries NO caption: absent beats faked, for a caption as
+              // much as for a value.
+              : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis
             // printed ten times on one strip before this, four cards printing it twice.

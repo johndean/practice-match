@@ -6146,7 +6146,13 @@ const A31_12: Amendment = {
     + "              ? (k === \"growth\" ? (sel.growthScope || \"surrounding city or county\")\n"
     + "                : k === \"econ\" ? \"surrounding county\"\n"
     + "                : k === \"income\" ? (sel.incomeNote || locBasis) : locBasis)\n"
-    + "              : (sum ? \"metro median \u00b7 \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
+    + "              // In AREA mode the caption states exactly what the number IS. Not \"metro\n"
+    + "              // median\": the Census PUBLISHES a metro median (summary level 310) and this\n"
+    + "              // is the median OF the metro's valued areas, which is a different figure -\n"
+    + "              // measured on CBSA 12420, 94,801 against the published 97,638. And a card\n"
+    + "              // with no figure carries NO caption: absent beats faked, for a caption as\n"
+    + "              // much as for a value.\n"
+    + "              : ((sum && sum.with_value) ? \"median of \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n"
     + "            // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so\n"
     + "            // this line carries the DATASET alone in LOCATION mode - measured, the basis\n"
     + "            // printed ten times on one strip before this, four cards printing it twice.\n"
@@ -6246,6 +6252,25 @@ const A31_13b: Amendment = {
     + '                "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +\n'
     + '                ((here !== null && b.t !== here.t) ? " opacity: .6;" : "")\n'
     + "            })),\n",
+  count: 1
+};
+
+/** A31.12c \u2014 `growth` carries the DATASET, like the five layers A24.45's split already moved.
+ *  A24.46's own shape, applied to the one layer it left behind.
+ *
+ *  A24.44\u2013A24.48 converted `income`, `households` and `competition` because their `source` line
+ *  named the MAP's geography and the strip was borrowing it. `growth` was left with a whole
+ *  sentence ending "\u00b7 community level" on the grounds that it described place and county on both
+ *  surfaces \u2014 but its AREA card measures PLACE polygons now and `AREA_LABEL.growth` is "Place
+ *  (city/town)", so "community level" is vaguer than the truth on the card AND on the map legend,
+ *  which is the state Task SNAP's own report named and left. `metaSource` composes the rest for
+ *  the surface that prints it: the map's geography for the legend, the tip and the AREA card, and
+ *  the dataset alone in LOCATION mode (A31.12/A31.12b). The footnote's growth caveat is untouched
+ *  and stays true \u2014 growth is measured at the surrounding city or county in both modes. */
+const A31_12c: Amendment = {
+  id: 'A31.12c', ...SNAP1,
+  find: '    source: "U.S. Census ACS population estimates, 2015\u20132023 \u00b7 community level",\n',
+  replace: '    dataset: "U.S. Census ACS population estimates, 2015\u20132023",\n',
   count: 1
 };
 
@@ -6398,7 +6423,7 @@ export function amendments(): Amendment[] {
     A31_1, A31_2, A31_3, A31_4, A31_5, A31_6, A31_7, A31_8, A31_9, A31_10, A31_11,
     // Fix round 1 (2026-09-13): A31.12 is CHAINED on A31.8's own two caption lines and
     // A31.12b on A24.45's whole helper, so both run after the entries they read.
-    A31_12, A31_12b,
+    A31_12, A31_12b, A31_12c,
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     A31_13, A31_13b];
 }
