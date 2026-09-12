@@ -5258,3 +5258,74 @@ describe('A24 — the market adapter', () => {
     expect(drawn(comp)).toEqual(['x']);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A29 — a metro change closes the docked panel, so a practice is never captioned with another
+// metro's figures (Task PANEL-STALE, root cause read from QA 0.1.21: with GHI Veterinary
+// Hospital, Austin, selected and its docked panel open, switching the metro to Dallas left the
+// panel OPEN with GHI's header over the first Dallas listing's community figures).
+//
+// `setMarket` set `market`, `activeId` and `hoverId` but never `mdSel`, so `sel` — found by id
+// alone (`P.filter((x) => x.id === s.mdSel)[0]`, market-blind) — survived the switch. `selComm`
+// — filtered to communities() of the NEW market — no longer matched it, so `marketPanel`'s own
+// fallback chain (`selComm || comms[0] || { …all undefined }`) took over: with the design's own
+// fixtures every OTHER market still has its own communities (Sacramento's c1-c4 etc.), so the
+// fallback actually taken is `comms[0]` — the new market's FIRST community — never A25.4's own
+// last-resort literal, which stands in only when the market has NO communities of its own at
+// all (empty `comms`) and is otherwise untouched here.
+//
+// The design has no treatment for "the selected practice is not in this metro", so the ruled
+// fix (John) is that a metro change closes the panel: `setMarket` now clears `mdSel` too.
+// ---------------------------------------------------------------------------------------
+describe("A29 — a metro change closes the docked panel (Task PANEL-STALE)", () => {
+  it('switching the metro clears the selected practice and closes the panel', () => {
+    c.setState({ screen: 'browse', mdSel: 'p2' });
+    expect(c.marketVals(c.filtered()).panel, 'sanity: the panel is open before the switch').not.toBeNull();
+    c.setMarket('Sacramento, CA');
+    expect(c.state.mdSel, 'a metro change must clear the selection, not leave it pointed at a practice from the metro just left').toBeNull();
+    expect(c.marketVals(c.filtered()).panel, 'the panel must close — the design has no treatment for "the selected practice is not in this metro"').toBeNull();
+  });
+
+  it('the same holds through the metro listbox\'s own choice path (marketOptions[i].go), not only a direct setMarket call', () => {
+    c.setState({ screen: 'browse', mdSel: 'p7' });
+    c.renderVals().toggleMarketMenu();
+    const orlando = c.renderVals().marketOptions.find((o: any) => o.label.startsWith('Orlando'));
+    orlando.go();
+    expect(c.state.mdSel).toBeNull();
+    expect(c.marketVals(c.filtered()).panel).toBeNull();
+  });
+
+  it('…and a plain change EVENT (V3:1907\'s own contract) clears it exactly the same way', () => {
+    c.setState({ mdSel: 'p1' });
+    c.setMarket({ target: { value: 'Atlanta, GA' } });
+    expect(c.state.mdSel).toBeNull();
+  });
+
+  // The characterisation the ruling asks for: `marketPanel` is never handed a `selComm`
+  // belonging to a different practice than `sel` names, because `sel` itself is unreachable
+  // once a metro change clears `mdSel` — proved through the real component flow, not by asserting
+  // on `marketPanel` in isolation. Named here (not just asserted): the fallback the stale defect
+  // actually took is Sacramento's OWN `comms[0]` (Roseville, `c1`) — a real practice's real
+  // figures under another practice's header — never A25.4's empty-market literal, which A25.4's
+  // own test (`marketPanel(sel, null, [], AUSTIN)`) reaches by handing it an EMPTY community
+  // list; Sacramento's is not empty, so that arm is not what this defect exercises and A25.4's
+  // own arm is left untouched.
+  it('names the fallback the stale defect actually took: comms[0], never A25.4\'s empty-market literal', () => {
+    const p2 = P.filter((x: any) => x.id === 'p2')[0];
+    c.setState({ market: 'Sacramento, CA' });
+    const comms = c.communities();
+    expect(comms.map((x: any) => x.id)).toEqual(['c1', 'c2', 'c3', 'c4']);
+    const selComm = comms.filter((x: any) => x.id === p2.id)[0];
+    expect(selComm, "p2 is not one of Sacramento's own communities").toBeUndefined();
+    // marketPanel itself takes no metro guard — it renders whatever it is handed, which is
+    // exactly why the guard has to live where `sel` is resolved (marketVals/setMarket) and not
+    // here. This is the shape a stale `mdSel` would have produced had the panel stayed open.
+    const panel = c.marketPanel(p2, selComm, comms, 'Sacramento, CA');
+    expect(panel.name, 'the header still names p2 (Round Rock)').toBe(c.practiceName(p2));
+    expect(comms[0].name).toBe('Roseville');
+    expect(panel.overviewTiles[0].v, "the figures are comms[0]'s (Roseville) — a different practice's").toBe(c.fmtMetric('households', comms[0].pop));
+    // Through the real component flow this call is never made in the first place: selecting p2
+    // and then switching to Sacramento (the first case above) clears `mdSel`, so `sel` is null
+    // and `marketVals` never resolves a `selComm` at all, let alone this mismatched one.
+  });
+});

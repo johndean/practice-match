@@ -5632,6 +5632,35 @@ const A24_59: Amendment = {
   count: 1
 };
 
+/** A29 — a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Root cause read
+ *  from QA 0.1.21 (screenshot `screenshots/qa-0121-dallas.png`): with GHI Veterinary Hospital,
+ *  Austin, selected and its docked panel open, switching the metro to Dallas left the panel OPEN
+ *  with GHI's header ("GHI Veterinary Hospital · $2.76M · Austin, TX") over the FIRST Dallas
+ *  listing's community figures — a false statement about a practice, reachable in two clicks and
+ *  present on production since 0.1.20 (the design's own behaviour, not a regression this branch
+ *  introduced).
+ *
+ *  `setMarket` (A13.1's class property) sets `market`, `activeId` and `hoverId` but never
+ *  `mdSel`. `marketVals` resolves `sel` by id alone (`P.filter((x) => x.id === s.mdSel)[0]`,
+ *  market-blind), so it survives a metro change, while `selComm` — filtered to `communities()`
+ *  of the NEW market — no longer matches it and `marketPanel` falls back through its own chain
+ *  (`selComm || comms[0] || { …all undefined }`, A25.4's own literal being the third link). With
+ *  the design's OWN fixtures every other market still carries its own communities (Sacramento's
+ *  `c1`-`c4`, Orlando's `o1`-`o4`, Atlanta's `g1`-`g4`), so the arm actually taken is `comms[0]`
+ *  — the new market's FIRST community — never A25.4's empty-market literal, which stands in only
+ *  when the market has no communities of its own at all and is left untouched here.
+ *
+ *  The design has no treatment for "the selected practice is not in this metro", and closing is
+ *  the only honest state (John's ruling, `task-panel-stale-brief.md`, 2026-09-11): `setMarket`
+ *  now clears `mdSel` too, in the same object literal A13.1 wrote. One literal edit. */
+const A29: Amendment = {
+  id: 'A29', date: '2026-09-12',
+  ruling: 'a metro change closes the docked panel, so a practice is never captioned with another metro\'s figures — the design has no treatment for "the selected practice is not in this metro", and closing is the only honest state (Task PANEL-STALE)',
+  find: 'market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1',
+  replace: 'market: v, activeId: null, hoverId: null, mdSel: null, loading: true, marketMenu: false, marketMenuAt: -1',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5816,5 +5845,9 @@ export function amendments(): Amendment[] {
     // A24.58/A24.59 -- fix round 2, C and D: one number parser, and a comment that stopped being
     // true when A24.43 fixed it. A24.59 reads A24.3's own output.
     A24_58, A24_59,
-    A24_9, A24_10, A24_11, A24_12];
+    A24_9, A24_10, A24_11, A24_12,
+    // A29 -- a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Reads
+    // A13.1's own output (the `setMarket` object literal it wrote), so it is appended last, as
+    // every family is.
+    A29];
 }
