@@ -5560,12 +5560,25 @@ const A24_55: Amendment = {
   count: 1
 };
 
-/** A24.56 -- the footnote, true for BOTH surfaces. A24.20's sentence describes the map alone, and
- *  it sits under the strip, whose figures are per-practice. CHAINED on A24.20. */
+/** A24.56 -- the footnote, true for BOTH surfaces. A24.20's FIRST sentence describes the map alone
+ *  and sits under the strip, whose figures are per-practice, so it is the one that is rewritten.
+ *  CHAINED on A24.20.
+ *
+ *  Its SECOND sentence -- "Population growth is measured for the surrounding city or county, not
+ *  the tract." -- is restored here byte for byte (fix round 3, the re-review's Important). The
+ *  first draft's `find` reached one sentence too far and took it out of the product, while
+ *  `CLAUDE.md`'s A24.20 narrative went on asserting it was there. It is exactly the fact the
+ *  snapshot cannot state for itself: growth is the one layer whose card still reads "· community
+ *  level", because its basis is place-or-county on both surfaces and neither the map's geography
+ *  nor the practice-area label describes it.
+ *
+ *  The new sentence also stops at "describe the area around each practice": the words that
+ *  followed it -- "not the practice itself" -- are the paragraph's own opening clause, three
+ *  sentences earlier. */
 const A24_56: Amendment = {
   id: 'A24.56', ...FIX2,
   find: 'Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.',
-  replace: 'The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice, not the practice itself.',
+  replace: 'The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice. Population growth is measured for the surrounding city or county, not the tract.',
   count: 1
 };
 

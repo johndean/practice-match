@@ -431,9 +431,17 @@ describe('local design amendments (spec D15)', () => {
     // The footnote John ruled on, byte for byte (§14 Q2), and the sentence it replaced is gone.
     // A24.20 (2026-09-12) renamed the geography here and added the growth caveat: a reader told the
     // areas are tracts would otherwise take EVERY figure on the strip for a tract-level one.
-    // A24.56 (fix round 2, B): A24.20's sentence describes the MAP alone and sits under the
-    // snapshot strip, whose figures are per-practice. One sentence, true of both surfaces.
-    expect(amended).toContain('The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer\u2019s legend names; the snapshot\u2019s figures describe the area around each practice, not the practice itself.');
+    // A24.56 (fix round 2, B) rewrote the sentence that described the MAP alone while sitting
+    // under the snapshot strip, whose figures are per-practice. Its `find` reached one sentence
+    // too far and took A24.20's ruled caveat with it (fix round 3, the re-review's Important):
+    // the growth geography is exactly the fact the snapshot cannot state — its card still reads
+    // "· community level" — so the paragraph carries BOTH sentences, in that order.
+    const footnote = amended.split('<p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">')[1].split('</p>')[0];
+    expect(footnote).toContain('The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer\u2019s legend names; the snapshot\u2019s figures describe the area around each practice.');
+    expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
+    // …and the opening clause is stated ONCE: A24.56's first draft ended on the same words the
+    // paragraph opens with.
+    expect(footnote.split('not the practice itself'), 'the paragraph repeats its own opening clause').toHaveLength(2);
     expect(amended).not.toContain('production draws Census ZCTA boundaries');
 
     // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
