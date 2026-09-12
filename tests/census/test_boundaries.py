@@ -943,6 +943,13 @@ async def test_the_cost_line_counts_every_delivery_tier_the_miss_actually_ran(cl
     exact = json.loads((await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).content)
     sync_redis().flushdb()          # the cache key does not span the caps; monkeypatching one must
     caplog.set_level(logging.INFO, logger="app.api.market")
+    # The `exact` request above is a served miss too and logs its own line. It used to be invisible
+    # here by accident: nothing configured logging, so the `app` hierarchy sat at the root's default
+    # WARNING and that INFO record was dropped before caplog ever saw it. `app/main.py` now puts the
+    # hierarchy at INFO at app creation (the whole point — the line exists to be read on QA), so
+    # both records are captured and `next(...)` would return the FIRST, whose `tiers_tried` is the
+    # uncoarsened 1. Clear, so the records this test reads are the ones the request under test made.
+    caplog.clear()
     monkeypatch.setattr(market, "MAX_BODY_BYTES", len(json.dumps(exact).encode()) - 1)
     r = await client.get("/api/markets/12420/boundaries?layer=income", headers=H)
     assert r.status_code == 200, r.json()

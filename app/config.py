@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     mail_from: str = "VIN Foundation — Practice Match <no-reply@foundation.vin>"  # spec §2: foundation.vin is the SENDER domain
     mail_reply_to: str = "practicematch@vin.com"  # placeholder until the VIN Foundation names the mailbox (spec §10 open item)
     db_pool_max: int = 10  # size of the psycopg2 REUSE pool per DSN (app/db.py); past it a caller gets an un-pooled connection, so this does not cap the connection count
+    # API ONLY: the level for the `app` logger hierarchy, set at app creation
+    # (`app.main._configure_logging`); the worker never calls `create_app()` and already runs
+    # `celery --loglevel=info` (`scripts/start.sh`), so its own INFO records always reached its log.
+    # Measured on QA 2026-09-12: with nothing configuring logging at all, the root logger sat at
+    # its default WARNING and every `log.info` the api emits — the boundaries cost line among them
+    # — went into the void while `log.warning` surfaced. INFO is the default because those records
+    # are the reason the logging exists; set WARNING to quieten a noisy deploy without a release.
+    log_level: str = "INFO"
     # A-I5d.4 (John, 2026-09-08, on the launch email's CAN-SPAM footer): "include the VIN
     # Foundation's official postal address if required for the communication type. Do not invent
     # the address." Optional at boot — read by both the api (the launch-mail endpoint's gate) and

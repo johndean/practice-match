@@ -1,3 +1,5 @@
+import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,8 +29,44 @@ from app.security_headers import SecurityHeadersMiddleware, server_error
 from app.static import dist_for, mount_spa
 from app.version import VERSION
 
+#: The one stream handler `_configure_logging` installs on the `app` logger, named so a second
+#: `create_app()` can recognise it rather than stacking another copy.
+_LOG_HANDLER_NAME = "practice-match-app"
+_LOG_FORMAT = "%(levelname)s %(name)s: %(message)s"
+
+
+def _configure_logging() -> None:
+    """Put the api's own INFO records where an operator can read them.
+
+    Measured on QA 2026-09-12 at `db8bf67`: `railway logs --service api` carried uvicorn's access
+    lines and nothing else. Nothing in this module or in `scripts/start.sh` ever called
+    `basicConfig` or `dictConfig`, and uvicorn's own `LOGGING_CONFIG` configures only the
+    `uvicorn*` loggers, so the root logger sat at its default WARNING with the last-resort handler:
+    `log.warning` surfaced and every `log.info` in `app/` — `app/api/market.py`'s structured
+    boundaries cost line among them — was written into the void. A cost line nobody can read is a
+    measurement nobody has.
+
+    Scope is the `app` logger and nothing else, so every module logger under it inherits the level
+    without a list to maintain here, and uvicorn's three loggers are untouched — it owns them and
+    configures them itself at server start; setting a level or a handler on them here would either
+    duplicate its access lines or silence them.
+
+    Idempotent: the test suite alone creates the app dozens of times, and without the name check
+    each creation would stack another handler and print one record once per app ever created.
+    """
+    logger = logging.getLogger("app")
+    logger.setLevel(settings.log_level.upper())
+    if any(h.get_name() == _LOG_HANDLER_NAME for h in logger.handlers):
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.set_name(_LOG_HANDLER_NAME)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logger.addHandler(handler)
+
 
 def create_app(dist: Path | None = None) -> FastAPI:
+    _configure_logging()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
