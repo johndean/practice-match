@@ -325,6 +325,9 @@ describe('local design amendments (spec D15)', () => {
     // Task 10 -- the adapter path. The plan allotted it A24.13-A24.17; D-C46 took A24.13
     // inside Task 4, so these are A24.14-A24.18 and the family totals twenty.
     'A24.14', 'A24.15', 'A24.16', 'A24.17', 'A24.18',
+    // The Census tract ruling (controller, 2026-09-12). Both CHAINED, so both sit after the
+    // entries they read: A24.19 after A24.2, A24.20 after A24.7.
+    'A24.19', 'A24.20',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -334,8 +337,11 @@ describe('local design amendments (spec D15)', () => {
 
     // D-C35's three geographies and their legend labels, and nothing wider: the three symbol
     // layers are not in either map.
-    expect(amended).toContain('const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };');
-    expect(amended).toContain('const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };');
+    // income moved 860 -> 140 "Census tract" on 2026-09-12 (A24.19); growth and econ did NOT,
+    // and that asymmetry is the ruling rather than an oversight — growth cannot be computed at
+    // tract level across the 2010->2020 boundary change (plan D12).
+    expect(amended).toContain('const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };');
+    expect(amended).toContain('const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };');
     for (const k of ['pets', 'households', 'competition']) {
       expect(amended, `${k} must not gain a geography — D-C35 keeps it a graduated symbol`).not.toContain(`AREA_LEVEL = { ${k}`);
     }
@@ -371,7 +377,9 @@ describe('local design amendments (spec D15)', () => {
     expect(amended.split('communities="{{ md.communities }}"')).toHaveLength(3);
 
     // The footnote John ruled on, byte for byte (§14 Q2), and the sentence it replaced is gone.
-    expect(amended).toContain('Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.');
+    // A24.20 (2026-09-12) renamed the geography here and added the growth caveat: a reader told the
+    // areas are tracts would otherwise take EVERY figure on the strip for a tract-level one.
+    expect(amended).toContain('Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.');
     expect(amended).not.toContain('production draws Census ZCTA boundaries');
 
     // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
@@ -432,7 +440,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(242);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(244);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

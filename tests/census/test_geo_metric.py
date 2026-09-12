@@ -98,17 +98,17 @@ def run_id(conn: psycopg2.extensions.connection) -> int:
 @pytest.fixture
 def world(conn: psycopg2.extensions.connection, run_id: int) -> psycopg2.extensions.connection:
     _activate(conn)
-    # ZCTA rows carry no state_fips (tiger.py's BoundarySpec for '860' has none — `app/census/
+    # Tract rows DO carry state_fips; income is nationwide so nothing filters on it (`app/census/
     # tiger.py:98`), and they do not need one: `load_boundaries` keeps only the ZCTAs whose
     # centroid falls inside a market state (`tiger.py:244-246`), so joining geo_area IS the scope
     # at that level. Place and county rows carry one, and are filtered on it.
-    _geo(conn, "78704", "860", "ZCTA5 78704", None)
-    _geo(conn, "78745", "860", "ZCTA5 78745", None)
+    _geo(conn, "48453001100", "140", "Census Tract 11", "48")
+    _geo(conn, "48453001200", "140", "Census Tract 12", "48")
     _geo(conn, "4805000", "160", "Austin", STATE_TX)
-    _geo(conn, "1600000", "160", "Elsewhere", STATE_IL)      # Illinois: not a market_state
+    _geo(conn, "1600000", "160", "Elsewhere", STATE_IL)      # Illinois: never a DEMO market, in scope since 065
     _geo(conn, "48453", "050", "Travis County", STATE_TX)
-    _acs(conn, run_id, "78704", "860", ACS_NOW, "B19013_001E", 92150, 6420)   # measured
-    _acs(conn, run_id, "78745", "860", ACS_NOW, "B19013_001E", 41000, 40000)  # CV over 0.30 -> high_moe
+    _acs(conn, run_id, "48453001100", "140", ACS_NOW, "B19013_001E", 92150, 6420)   # measured
+    _acs(conn, run_id, "48453001200", "140", ACS_NOW, "B19013_001E", 41000, 40000)  # CV over 0.30 -> high_moe
     _acs(conn, run_id, "4805000", "160", ACS_NOW, "B01003_001E", 1_100_000)
     _acs(conn, run_id, "4805000", "160", ACS_PRIOR, "B01003_001E", 1_000_000)
     _acs(conn, run_id, "1600000", "160", ACS_NOW, "B01003_001E", 500_000)
@@ -130,15 +130,17 @@ def _rows(conn: psycopg2.extensions.connection) -> list[tuple]:
 
 def test_the_three_ruled_metrics_land_at_the_three_ruled_levels(world: psycopg2.extensions.connection) -> None:
     counts = geo_metric.materialize_geo(world, fakeredis.FakeRedis())
-    assert counts == {"median_hh_income": 2, "population_growth_pct": 1, "revenue_per_establishment": 1}
+    # growth is 2, not 1: the Illinois place the fixture seeds is materialised now that every
+    # state is a market state. It was the negative control for the six-state scope until 065.
+    assert counts == {"median_hh_income": 2, "population_growth_pct": 2, "revenue_per_establishment": 1}
     by = {(r[0], r[2]): r for r in _rows(world)}
 
-    inc = by[("median_hh_income", "78704")]
-    assert inc[1] == "860" and float(inc[3]) == 92150 and float(inc[4]) == 6420
+    inc = by[("median_hh_income", "48453001100")]
+    assert inc[1] == "140" and float(inc[3]) == 92150 and float(inc[4]) == 6420
     assert inc[5] == "usd" and inc[6] is False and inc[7] is None, "a published ACS estimate is not derived"
     assert inc[8] is False and inc[9] is None
     assert inc[10] == "acs5" and inc[11] == ACS_NOW
-    assert inc[12] == {"acs5": ACS_NOW, "geo_level": "zcta"}
+    assert inc[12] == {"acs5": ACS_NOW, "geo_level": "tract"}
 
     growth = by[("population_growth_pct", "4805000")]
     assert growth[1] == "160" and round(float(growth[3]), 4) == 10.0 and growth[4] is None
@@ -157,15 +159,22 @@ def test_the_layer_table_is_d_c35s_assignment_and_nothing_wider() -> None:
     """`pets`, `households` and `competition` stay graduated symbols at the listing point
     (constraint (k)); no layer is ever promoted into a finer slot."""
     assert [(key, level) for key, level, _, _ in geo_metric.LAYERS] == [
-        ("median_hh_income", "860"), ("population_growth_pct", "160"), ("revenue_per_establishment", "050"),
+        ("median_hh_income", "140"), ("population_growth_pct", "160"), ("revenue_per_establishment", "050"),
     ]
 
 
-def test_scope_is_the_six_market_state_states(world: psycopg2.extensions.connection) -> None:
+def test_scope_is_every_state_so_a_place_outside_the_demo_markets_is_materialised(
+    world: psycopg2.extensions.connection,
+) -> None:
+    """The INVERSE of what this asserted until 2026-09-12, and the clearest single proof of the
+    ruling. The fixture seeds an Illinois place precisely BECAUSE Illinois was never one of the
+    six demo markets; this test used to assert it was skipped ("an Illinois place was
+    materialised" was the failure message). `market_state` now carries every state, so the same
+    place must be written -- with no code change, which is the requirement."""
     geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     with world.cursor() as cur:
-        cur.execute("SELECT geo_id FROM geo_metric WHERE metric_key = 'population_growth_pct'")
-        assert [r[0] for r in cur.fetchall()] == ["4805000"], "an Illinois place was materialised"
+        cur.execute("SELECT geo_id FROM geo_metric WHERE metric_key = 'population_growth_pct' ORDER BY geo_id")
+        assert [r[0] for r in cur.fetchall()] == ["1600000", "4805000"], "a place outside the demo markets was skipped"
 
 
 def test_a_declining_place_keeps_its_minus_sign(world: psycopg2.extensions.connection, run_id: int) -> None:
@@ -190,8 +199,8 @@ def test_suppression_is_applied_to_income_only_and_through_the_one_function(worl
     assert geo_metric._suppression is materialize._suppression, "a second CV/Z90 implementation"
     geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     rows = [(r[0], r[2], r[8], r[9]) for r in _rows(world)]
-    assert ("median_hh_income", "78745", True, "high_moe") in rows
-    assert ("median_hh_income", "78704", False, None) in rows
+    assert ("median_hh_income", "48453001200", True, "high_moe") in rows
+    assert ("median_hh_income", "48453001100", False, None) in rows
     assert all(not r[2] for r in rows if r[0] != "median_hh_income"), "growth or econ was greyed"
 
 
@@ -202,17 +211,17 @@ def test_an_income_estimate_with_no_margin_is_unmeasured_and_an_absent_one_is_no
     `(False, None)` and `_suppression(72400, None)` is `(True, 'no_moe')`. So "no data" is
     `value is None` and is a DIFFERENT state from `suppressed is True`: D-NS16's grey polygon is
     reached by both, and only the tip distinguishes them."""
-    _geo(world, "78702", "860", "ZCTA5 78702", None)
-    _acs(world, run_id, "78702", "860", ACS_NOW, "B19013_001E", None, None)   # loaded, but the cell is empty
-    _geo(world, "78703", "860", "ZCTA5 78703", None)
-    _acs(world, run_id, "78703", "860", ACS_NOW, "B19013_001E", 72400, None)  # an estimate with no published margin
+    _geo(world, "48453001300", "140", "Census Tract 13", "48")
+    _acs(world, run_id, "48453001300", "140", ACS_NOW, "B19013_001E", None, None)   # loaded, but the cell is empty
+    _geo(world, "48453001400", "140", "Census Tract 14", "48")
+    _acs(world, run_id, "48453001400", "140", ACS_NOW, "B19013_001E", 72400, None)  # an estimate with no published margin
 
     counts = geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     assert counts["median_hh_income"] == 4, "a geography with no figure is still written, never omitted"
     by = {(r[0], r[2]): r for r in _rows(world)}
-    assert (by[("median_hh_income", "78702")][3], by[("median_hh_income", "78702")][4]) == (None, None)
-    assert (by[("median_hh_income", "78702")][8], by[("median_hh_income", "78702")][9]) == (False, None)
-    assert (by[("median_hh_income", "78703")][8], by[("median_hh_income", "78703")][9]) == (True, "no_moe")
+    assert (by[("median_hh_income", "48453001300")][3], by[("median_hh_income", "48453001300")][4]) == (None, None)
+    assert (by[("median_hh_income", "48453001300")][8], by[("median_hh_income", "48453001300")][9]) == (False, None)
+    assert (by[("median_hh_income", "48453001400")][8], by[("median_hh_income", "48453001400")][9]) == (True, "no_moe")
 
 
 def test_a_growth_or_payroll_geography_with_no_figure_is_written_with_a_null_value(
@@ -228,7 +237,7 @@ def test_a_growth_or_payroll_geography_with_no_figure_is_written_with_a_null_val
     _cbp(world, run_id, "48001", None, None)
 
     counts = geo_metric.materialize_geo(world, fakeredis.FakeRedis())
-    assert counts == {"median_hh_income": 2, "population_growth_pct": 2, "revenue_per_establishment": 2}
+    assert counts == {"median_hh_income": 2, "population_growth_pct": 3, "revenue_per_establishment": 2}
     by = {(r[0], r[2]): r for r in _rows(world)}
     assert by[("population_growth_pct", "4827000")][3] is None
     assert by[("population_growth_pct", "4827000")][8] is False, "an absent figure is not a suppressed one"
@@ -255,7 +264,9 @@ def test_the_write_is_idempotent_and_rewrites_rather_than_accumulating(world: ps
     assert first == second
     with world.cursor() as cur:
         cur.execute("SELECT count(*) FROM geo_metric")
-        assert cur.fetchone()[0] == 4
+        # 5 = two tracts (income) + two places (growth: Austin AND the Illinois one, in scope
+        # since migration 065) + one county (payroll). It was 4 while scope was six states.
+        assert cur.fetchone()[0] == 5
 
 
 def test_the_rewrite_deletes_the_triples_old_rows_rather_than_only_upserting(world: psycopg2.extensions.connection) -> None:
@@ -264,13 +275,14 @@ def test_the_rewrite_deletes_the_triples_old_rows_rather_than_only_upserting(wor
     scoped to the triple, so the other two layers are untouched by it."""
     geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     with world.cursor() as cur:
-        cur.execute("DELETE FROM geo_area WHERE geo_id = '78745'")
+        cur.execute("DELETE FROM geo_area WHERE geo_id = '48453001200'")
     geo_metric.materialize_geo(world, fakeredis.FakeRedis())
     with world.cursor() as cur:
         cur.execute("SELECT geo_id FROM geo_metric WHERE metric_key = 'median_hh_income'")
-        assert [r[0] for r in cur.fetchall()] == ["78704"], "a geography no longer in the boundary vintage kept its row"
+        assert [r[0] for r in cur.fetchall()] == ["48453001100"], "a geography no longer in the boundary vintage kept its row"
         cur.execute("SELECT count(*) FROM geo_metric WHERE metric_key <> 'median_hh_income'")
-        assert cur.fetchone()[0] == 2, "the DELETE reached outside its own (level, metric, vintage)"
+        # 3 = two growth places (Austin + Illinois) and one payroll county; 2 before 065.
+        assert cur.fetchone()[0] == 3, "the DELETE reached outside its own (level, metric, vintage)"
 
 
 def test_a_failed_triple_rolls_back_and_leaves_the_earlier_rows_standing(
@@ -305,7 +317,7 @@ def test_the_licence_gate_is_the_last_line_of_defence_and_the_write_rolls_back(
     and fires ahead of the foreign key's AFTER-row check, so a tolerant
     `raises((RaiseException, ForeignKeyViolation))` would pass with the gate deleted (Task 5's
     measurement). This is also the one case that enters `_rewrite`'s own rollback arm."""
-    row = ("78704", "860", ACS_NOW, "median_hh_income", 92150.0, "usd", False, None, None, False, None, "{}", "pet_ownership")
+    row = ("48453001100", "140", ACS_NOW, "median_hh_income", 92150.0, "usd", False, None, None, False, None, "{}", "pet_ownership")
     with pytest.raises(psycopg2.errors.RaiseException) as exc:
         geo_metric._rewrite(world, "860", "median_hh_income", ACS_NOW, [row])
     assert "geo_metric write refused: dataset pet_ownership is not licence-cleared" in str(exc.value)

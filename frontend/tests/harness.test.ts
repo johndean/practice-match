@@ -300,7 +300,7 @@ describe('the boundary stubs (A24.14-A24.18)', () => {
         .toEqual(['band_ambiguous', 'geo_id', 'moe', 'name', 'suppress_reason', 'suppressed', 'value']);
     }
     // The three geographies D-C35 ruled, named the way the endpoint names them.
-    expect(JSON.parse(designBoundariesBody('income')).summary_level).toBe('860');
+    expect(JSON.parse(designBoundariesBody('income')).summary_level).toBe('140');
     expect(JSON.parse(designBoundariesBody('growth')).summary_level).toBe('160');
     expect(JSON.parse(designBoundariesBody('econ')).summary_level).toBe('050');
     // An unknown layer cannot fabricate a collection: it answers income's, as the design's own
@@ -311,7 +311,7 @@ describe('the boundary stubs (A24.14-A24.18)', () => {
     // `blocked_reason` is the one conditional member and is absent on an enabled layer.
     expect(Object.keys(JSON.parse(designBoundariesBody('income'))).sort()).toEqual([
       'attribution', 'boundary_vintage', 'cbsa_geoid', 'features', 'geo_label', 'layer',
-      'metric_key', 'source_dataset', 'state', 'summary_level', 'type', 'unit',
+      'metric_key', 'simplified_deg', 'source_dataset', 'state', 'summary_level', 'type', 'unit',
       'value_vintage', 'values_without_geometry'
     ]);
     // Attribution is read from `dataset_registry`, never composed, and the route puts the

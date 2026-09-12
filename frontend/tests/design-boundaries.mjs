@@ -20,8 +20,12 @@ export function designAreaSet(layer) {
   return new Component({}).areaSet(layer);
 }
 
-const LEVEL = { income: '860', growth: '160', econ: '050' };
-const LABEL = { income: 'ZIP Code Tabulation Area', growth: 'Place (city/town)', econ: 'County' };
+// `income` draws the CENSUS TRACT since 2026-09-12; `growth` and `econ` keep their coarser
+// geography because growth cannot be computed at tract level across the 2010->2020 boundary
+// change (plan D12). `app.api.market.SHADING` is the source and
+// `tests/census/test_design_shading_labels.py` pins the design against it.
+const LEVEL = { income: '140', growth: '160', econ: '050' };
+const LABEL = { income: 'Census tract', growth: 'Place (city/town)', econ: 'County' };
 const METRIC = { income: 'median_hh_income', growth: 'population_growth_pct', econ: 'revenue_per_establishment' };
 
 // `dataset_registry.attribution_text`, verbatim from `migrations/017_census_registry.sql` — the
@@ -54,6 +58,10 @@ export function designBoundariesBody(layer) {
     source_dataset: key === 'econ' ? 'cbp' : 'acs5',
     attribution: ATTRIBUTION[key],
     values_without_geometry: 0,
+    // The delivery tolerance the route used, in degrees. 0.0 is "the exact outline was served",
+    // which is what every metro-zoom viewport measured gets; the route only coarsens when the
+    // composed body would otherwise exceed MAX_BODY_BYTES and be refused.
+    simplified_deg: 0,
     features: set.features
   });
 }

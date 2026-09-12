@@ -9,9 +9,11 @@ already keeps `sourceLine`/`updatedLine` on `LAYER_META` for the same class of r
 
 So the two are pinned instead, in the shape
 `tests/api/test_seller_listings.py::test_the_design_ownership_options_equal_ownerships_tuple`
-(A22) established. **Task 9 has not landed**, so `app.api.market.SHADING` does not exist yet: the
-right-hand side below is D-C35's ruled values, and Task 9 or Task 11 re-points it at `SHADING`
-in one line. The LEVEL half already has a real counterpart today and is pinned to it —
+(A22) established. Task 9 has now landed, so the right-hand side is `app.api.market.SHADING`
+ITSELF rather than a typed copy of D-C35's ruled values — which is the one-line re-point Task 10's
+report asked for, and closes its concern 4. A geography that moves on one side and not the other
+is now a failure here rather than a map that labels a tract a ZIP area. The LEVEL half also has a
+real counterpart and is pinned to it —
 `app.census.tiger.BOUNDARY_FILES` must actually be able to load all three, or the endpoint would
 have no geometry to serve whatever the design says.
 """
@@ -19,11 +21,14 @@ have no geometry to serve whatever the design says.
 import re
 from pathlib import Path
 
+from app.api.market import SHADING
 from app.census.tiger import BOUNDARY_FILES
 
-# D-C35 (John, 2026-09-10): every layer at its own geography, and the legend names it.
-RULED_LEVEL = {"income": "860", "growth": "160", "econ": "050"}
-RULED_LABEL = {"income": "ZIP Code Tabulation Area", "growth": "Place (city/town)", "econ": "County"}
+# D-C35 (John, 2026-09-10): every layer at its own geography, and the legend names it. `income`
+# moved 860 -> 140 "Census tract" on 2026-09-12 (controller ruling); both sides read SHADING, so
+# the move is made in one place and this test is what proves the design followed it.
+RULED_LEVEL = {layer: v["summary_level"] for layer, v in SHADING.items()}
+RULED_LABEL = {layer: v["label"] for layer, v in SHADING.items()}
 
 DESIGN = (
     Path(__file__).resolve().parents[2]

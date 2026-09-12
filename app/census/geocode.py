@@ -91,18 +91,16 @@ from typing import cast
 import httpx
 import psycopg2.extensions
 
-#: A-C15 correction 2: the six states `market_state` (migration 017) pins, mapped to their
-#: two-digit FIPS codes -- `_fallback`'s place query filters `geo_area.state_fips` against this
-#: directly. `tests/census/test_geocode.py::test_state_fips_matches_the_market_state_registry`
-#: is the drift test correction 2 asks for.
-STATE_FIPS = {
-    "CA": "06",
-    "TX": "48",
-    "FL": "12",
-    "GA": "13",
-    "NY": "36",
-    "CO": "08",
-}
+from app.census.states import FIPS_BY_ABBR
+
+#: A-C15 correction 2, widened to the nation on 2026-09-12: every state `market_state` carries,
+#: mapped to its two-digit FIPS code -- `_fallback`'s place query filters `geo_area.state_fips`
+#: against this directly. It was a hand-kept SIX-entry literal until the ruling, which is what made
+#: the place rung skip forty-five states; it is now derived from `app/census/states.py`, the one
+#: place the United States is enumerated, and
+#: `tests/census/test_geocode.py::test_state_fips_matches_the_market_state_registry` is the drift
+#: test correction 2 asks for, now pinning all fifty-one.
+STATE_FIPS = FIPS_BY_ABBR
 
 #: The Census Geocoder benchmark/vintage pair every request in this module pins (spec §6) --
 #: distinct from the TIGER cartographic `vintage` `_tiger_vintage`/`_fallback` read out of

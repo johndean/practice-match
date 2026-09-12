@@ -30,6 +30,7 @@ import httpx
 import pytest
 
 from app.census import geocode
+from app.census.states import STATES as _STATES
 from app.tasks import census as CT
 from app.tasks.celery_app import celery_app
 from tests.census.listing_fixtures import make_listing
@@ -191,13 +192,13 @@ def test_first_geoid_returns_none_when_no_key_matches_any_needle():
 
 # ---- STATE_FIPS drift against the market_state registry --------------------------------------
 
-_STATE_NAMES_BY_ABBR = {"CA": "California", "TX": "Texas", "FL": "Florida", "GA": "Georgia", "NY": "New York", "CO": "Colorado"}
+_STATE_NAMES_BY_ABBR = {abbr: name for abbr, _fips, name in _STATES}
 
 
 def test_state_fips_matches_the_market_state_registry(conn):
-    """A-C15 correction 2: the six-entry mapping this module hard-codes must never drift from
-    the states migration 017 pins in `market_state` -- nothing else would catch a silent
-    divergence, since `_fallback` queries `geo_area.state_fips` directly rather than joining
+    """A-C15 correction 2, now pinning all fifty-one rather than six: the mapping this module
+    exposes must never drift from the states `market_state` carries -- nothing else would catch a
+    silent divergence, since `_fallback` queries `geo_area.state_fips` directly rather than joining
     through a geography name lookup."""
     with conn.cursor() as cur:
         cur.execute("SELECT state_fips, name FROM market_state")
@@ -339,19 +340,27 @@ def test_fallback_rung_order_is_zcta_then_place_then_county_then_geocode_failed(
         geocode.resolve(conn, _geocoder(NOMATCH), lid4)
 
 
-def test_resolve_fails_without_running_the_place_query_for_a_state_outside_the_six_ruled_states(conn):
-    """A-C18 ruling 4 (Minor): discriminating, not just outcome-matching -- a null `state_fips`
-    bind parameter would make `state_fips = %s` fail identically with the guard deleted (SQL
-    `NULL = NULL` is never true), so the ORIGINAL version of this test (asserting only
-    `GeocodeFailed`) could not tell a real guard from no guard at all. The recording connection
-    proves the place query's own SQL text never executes."""
+def test_the_place_rung_now_runs_for_every_state_not_only_the_original_six(conn):
+    """The INVERSE of what this test asserted until 2026-09-12, and the reason it was inverted.
+
+    It used to prove that a Washington listing never even ran the place query -- `STATE_FIPS` had
+    six entries, `state_fips` came back `None`, and the rung was skipped. That was the finite list
+    of supported places, observable from the outside: a practice in forty-five states silently got
+    one fewer chance to resolve. `STATE_FIPS` now derives from `app.census.states.STATES`, so the
+    rung runs everywhere.
+
+    Still discriminating, and in the same way A-C18 ruling 4 asked for: the recording connection
+    asserts the place query's own SQL text DID execute, which a test asserting only the outcome
+    could not tell from the guard still being there (both end in `GeocodeFailed` when no place
+    row matches)."""
     _seed_geo(conn)
-    lid = make_listing(conn, zip="00000", city="Cedar Park", state="WA")
-    rec = _RecordingConn(conn)
-    with pytest.raises(geocode.GeocodeFailed):
-        geocode.resolve(rec, _geocoder(NOMATCH), lid)
-    assert not any("summary_level = '160'" in q for q in rec.executed)
-    assert any("summary_level = '860'" in q for q in rec.executed)  # the zcta query DID run
+    for state in ("WA", "AK", "ME", "WY"):   # four states outside the original six, none seeded
+        lid = make_listing(conn, zip="00000", city="Cedar Park", state=state)
+        rec = _RecordingConn(conn)
+        with pytest.raises(geocode.GeocodeFailed):
+            geocode.resolve(rec, _geocoder(NOMATCH), lid)
+        assert any("summary_level = '160'" in q for q in rec.executed), state
+        assert any("summary_level = '860'" in q for q in rec.executed), state
 
 
 def test_fallback_place_query_requires_a_true_prefix_not_a_substring_match(conn):
@@ -440,3 +449,81 @@ def test_geocode_listing_task_lets_geocode_failed_propagate_without_enqueuing(co
     with pytest.raises(geocode.GeocodeFailed):
         CT.geocode_listing(lid)
     assert sent == []
+
+
+def test_every_us_state_is_a_market_state_so_a_new_listing_needs_no_code_change(conn) -> None:
+    """The "finite list of supported places" this removes was TWO hard-coded six-entry tables --
+    `market_state`, seeded with exactly 48/06/12/13/36/08 by migration 017, and `STATE_FIPS` in
+    this module, the same six again. Every loader in the programme reads the first and the
+    geocoder's place rung reads the second, so a listing in the other forty-five states skipped a
+    fallback rung entirely and no boundary or ACS row was ever loaded for it.
+
+    `app.census.states.STATES` is now the single source both sides derive from, and this asserts
+    the registry really carries all fifty states and the District of Columbia -- not a longer
+    subset."""
+    from app.census.states import STATES
+
+    assert len(STATES) == 51, "fifty states and the District of Columbia"
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips, name FROM market_state")
+        registry = dict(cur.fetchall())
+    assert registry == {fips: name for _abbr, fips, name in STATES}
+    assert {fips for _a, fips, _n in STATES} >= {"48", "06", "12", "13", "36", "08"}, "the original six are still there"
+
+
+def test_state_fips_is_derived_from_the_one_state_table_and_not_spelled_twice() -> None:
+    """The drift this closes is the one A-C15 correction 2 warned about, widened: two hand-kept
+    lists of states cannot be kept in step by review."""
+    from app.census.states import STATES
+
+    assert geocode.STATE_FIPS == {abbr: fips for abbr, fips, _name in STATES}
+
+
+def test_practices_resolve_in_states_across_the_country_including_one_in_no_cbsa(conn) -> None:
+    """The requirement this proves, stated as a prohibition: no city-specific code, and no finite
+    list of supported places, anywhere. A listing in ANY US state must resolve with no code change.
+
+    Four states are seeded, chosen so none is one of the six original demo markets and so they
+    exercise different corners of the mapping: Montana (30), Maine (23), West Virginia (54) and
+    Alaska (02). Every one resolves through the ZCTA rung to its own tract, in its own state, and
+    the stored `tract_geoid` is the one seeded for THAT state rather than a neighbour's.
+
+    **Bozeman, Montana is deliberately outside any CBSA** -- no `310` row is seeded for it at all
+    -- because the metro is what the boundary endpoint keys on, and a practice that belongs to no
+    metro must still geocode. Nothing in `resolve` reads a CBSA, and this is what says so.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('tiger_cb','2023',now(),'test')")
+    # (state abbr, FIPS, county, tract geoid, zip, city, a box far from every other one)
+    places = [
+        ("MT", "30", "031", "30031000600", "59715", "Bozeman",   (-111.1, 45.6)),
+        ("ME", "23", "005", "23005003600", "04101", "Portland",  (-70.3, 43.6)),
+        ("WV", "54", "039", "54039001300", "25301", "Charleston", (-81.7, 38.3)),
+        ("AK", "02", "020", "02020000400", "99501", "Anchorage", (-149.9, 61.2)),
+    ]
+    with conn.cursor() as cur:
+        for _abbr, fips, county, tract, zip_, city, (x, y) in places:
+            box = (f"POLYGON(({x} {y},{x + 0.1} {y},{x + 0.1} {y + 0.1},{x} {y + 0.1},{x} {y}))")
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     (%s,'140','2023',%s,%s,%s,%s, ST_Multi(ST_GeomFromText(%s,4269)), ST_SetSRID(ST_MakePoint(%s,%s),4269)),
+                     (%s,'860','2023',%s,NULL,NULL,NULL, ST_Multi(ST_GeomFromText(%s,4269)), ST_SetSRID(ST_MakePoint(%s,%s),4269)),
+                     (%s,'050','2023',%s,%s,%s,%s, ST_Multi(ST_GeomFromText(%s,4269)), ST_SetSRID(ST_MakePoint(%s,%s),4269))""",
+                (tract, f"Census Tract in {city}", fips, county, fips + county, box, x + 0.05, y + 0.05,
+                 zip_, f"ZCTA5 {zip_}", box, x + 0.05, y + 0.05,
+                 fips + county, f"{city} County", fips, county, fips, box, x + 0.05, y + 0.05),
+            )
+
+    for abbr, _fips, _county, tract, zip_, city, _pt in places:
+        lid = make_listing(conn, zip=zip_, city=city, state=abbr)
+        loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+        assert loc.geo_precision == "zcta", f"{city}, {abbr} did not resolve"
+        assert loc.tract_geoid == tract, f"{city}, {abbr} resolved to the wrong state's tract"
+        with conn.cursor() as cur:
+            cur.execute("SELECT tract_geoid FROM practice_location WHERE listing_id = %s", (lid,))
+            assert cur.fetchone()[0] == tract, f"{city}, {abbr} resolved to the wrong state's tract"
+
+    with conn.cursor() as cur:   # the premise of the Montana case, asserted rather than assumed
+        cur.execute("SELECT count(*) FROM geo_area WHERE summary_level = '310'")
+        assert cur.fetchone()[0] == 0, "no CBSA was seeded, so none of these practices is in a metro"

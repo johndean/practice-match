@@ -107,12 +107,36 @@ MAX_BBOX_DEG = 4.0
 MAX_FEATURES = 4000
 MAX_BODY_BYTES = 2_000_000
 
-# D-C35's three geographies, and the label the legend prints. A NEW member on /api/layers rather
+# Delivery generalisation, as a fraction of the request's own longest span, tried in order until
+# the body fits `MAX_BODY_BYTES`. MEASURED on real TIGER tract geometry, not chosen by feel:
+#
+#   * 0.0 -- serve the exact outline. Every metro-zoom viewport measured fits here (Austin 568
+#     tracts / 0.949 MB, Dallas 1,410 / 1.303 MB, Atlanta 1,037 / 1.100 MB, SF 1,093 / 1.043 MB)
+#     and every one of them is 0.0000 % uncovered, so neighbours share edges exactly and the
+#     shading has no slivers. This is the stakeholder's target view and it pays nothing here.
+#   * the three coarser rungs exist for the zoomed-out and the very dense: New York's whole-CBSA
+#     envelope is 5,935 tracts / 5.079 MB and Atlanta's 2.912 MB, both of which were answered 422
+#     before this ladder existed -- a blank map in three of six markets at tract scale.
+#
+# span/2000 is sub-pixel at a ~1200 px viewport, so a rung is invisible at the zoom it is served
+# for; the coarsest rung costs 0.89 % of covered area at a whole-CBSA span, against the 2.29 % the
+# fixture's 0.010 deg simplification lost. `ST_CoverageSimplify` would hold shared edges exactly,
+# but the runtime image's GEOS is 3.9.0 and that function needs 3.12+, so it is not available here.
+SIMPLIFY_TIERS: tuple[float, ...] = (0.0, 1 / 4000, 1 / 2000, 1 / 1000)
+
+# D-C35's three geographies, and the label the legend prints. `income` moved 860 -> 140 on
+# 2026-09-12 (controller ruling): the canonical granular unit is the Census TRACT, nationwide --
+# tracts are designed as neighbourhood approximations and ACS publishes the variable at tract
+# level, while calling a ZIP area a neighbourhood is a named prohibition. `growth` CANNOT follow:
+# the 2010->2020 tract boundary change means a tract-level growth figure is not computable from
+# what we hold (plan D12, a registered Phase C deferral), so it keeps place and `econ` keeps
+# county -- and each carries its own label, which is how a coarse figure is never shown as
+# granular. A NEW member on /api/layers rather
 # than a change to `geo_level`: `income`'s geo_level is "place|catchment" and describes the
 # PANEL's geography — the docked panel and the map answer different questions about the same
 # layer (D-NS15).
 SHADING: dict[str, dict[str, str]] = {
-    "income": {"summary_level": "860", "label": "ZIP Code Tabulation Area"},
+    "income": {"summary_level": "140", "label": "Census tract"},
     "growth": {"summary_level": "160", "label": "Place (city/town)"},
     "econ": {"summary_level": "050", "label": "County"},
 }
@@ -124,7 +148,14 @@ BOUNDARY_METRIC: dict[str, tuple[str, str]] = {
     "econ": ("revenue_per_establishment", "cbp"),
 }
 
-# D-NS11. Three things about it are deliberate. `ST_Transform(g.geom, 4326)` is required, not
+# D-NS11. The CASTs on `:tol` are load-bearing, not decoration: an UNTYPED bound parameter inside
+# a `CASE WHEN` silently takes the ELSE branch under asyncpg. Measured on this database --
+# `CASE WHEN 0.01 > 0 THEN ST_SimplifyPreserveTopology(geom, 0.01) ELSE geom END` gives 17 points,
+# the same expression with `:tol` bound to 0.01 gives 460 (the unsimplified count), and the same
+# call WITHOUT the CASE gives 17. No error is raised either way, so the failure mode is a response
+# that is silently never generalised; `test_the_delivery_tolerance_actually_reaches_postgis` is
+# the case that catches it, and it asserts vertex counts rather than body bytes for that reason.
+# Three further things about it are deliberate. `ST_Transform(g.geom, 4326)` is required, not
 # decorative: geo_area.geom is geometry(MultiPolygon, 4269) and GeoJSON is WGS84. The `6` is
 # measured to be a NO-OP -- cb_500k already carries six or fewer decimals -- and is kept as an
 # explicit ceiling. And the envelope is transformed INTO 4269 rather than the geometry column out
@@ -132,7 +163,8 @@ BOUNDARY_METRIC: dict[str, tuple[str, str]] = {
 # viewport: 49.8 ms).
 _BOUNDARY_SQL = """
 SELECT g.geo_id, g.name, m.value_num, m.moe, m.suppressed, m.suppress_reason,
-       ST_AsGeoJSON(ST_Transform(g.geom, 4326), 6) AS geometry
+       ST_AsGeoJSON(ST_Transform(CASE WHEN CAST(:tol AS double precision) > 0
+            THEN ST_SimplifyPreserveTopology(g.geom, CAST(:tol AS double precision)) ELSE g.geom END, 4326), 6) AS geometry
   FROM geo_area g
   LEFT JOIN geo_metric m
     ON m.geo_id = g.geo_id AND m.summary_level = g.summary_level
@@ -422,38 +454,56 @@ async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None
         # with `source` — so a withdrawn `acs5` licence would otherwise leave growth enabled.
         if state == "enabled" and not (_cleared(reg, source) and _extra_cleared(reg, metric_key, source)):
             state = "disabled"
+        used = sorted({source} | ({"acs5_prior"} if metric_key == "population_growth_pct" else set()))
+
+        def compose(rows: list[RowMapping], orphans: int, simplified: float) -> dict[str, Any]:
+            body: dict[str, Any] = {
+                "type": "FeatureCollection", "cbsa_geoid": cbsa, "layer": layer, "metric_key": metric_key,
+                "summary_level": SHADING[layer]["summary_level"], "geo_label": SHADING[layer]["label"],
+                "unit": "usd" if layer in ("income", "econ") else "pct", "state": state,
+                "boundary_vintage": geo_vintage, "value_vintage": value_vintage, "source_dataset": source,
+                # Read from dataset_registry, never composed here: attribution is legally load-bearing
+                # and a terms change must be one UPDATE rather than a redeploy. Boundaries first — the
+                # map carries the geometry's attribution beside the values' (Census spec §2b).
+                "attribution": [reg["tiger_cb"]["attribution_text"]] + [reg[k]["attribution_text"] for k in used],
+                "values_without_geometry": orphans,
+                # The delivery tolerance in degrees, 0.0 when the exact outline was served. Stated
+                # rather than hidden: it describes the GEOMETRY only and never the figures, and a
+                # client that wants to say "outlines generalised for display" can read it here.
+                "simplified_deg": simplified,
+                "features": [_boundary_feature(row, layer) for row in rows],
+            }
+            if blocked_reason is not None:
+                body["blocked_reason"] = blocked_reason
+            return body
+
         rows: list[RowMapping] = []
         orphans = 0
+        simplified = 0.0
+        raw = json.dumps(compose(rows, orphans, simplified)).encode("utf-8")
         if state == "enabled":
             params = {"metric": metric_key, "value_vintage": value_vintage, "level": SHADING[layer]["summary_level"],
                       "geo_vintage": geo_vintage, "w": box[0], "s": box[1], "e": box[2], "n": box[3]}
-            rows = list((await conn.execute(text(_BOUNDARY_SQL), params)).mappings().all())
             orphans = int((await conn.execute(text(_ORPHAN_SQL), params)).scalar_one())
+            span = max(box[2] - box[0], box[3] - box[1])
+            # Coarsen until it fits. A polygon is NEVER dropped to make room — a missing polygon
+            # leaves a hole that reads as a boundary — so the feature cap is a refusal, not a rung.
+            for frac in SIMPLIFY_TIERS:
+                simplified = span * frac
+                rows = list((await conn.execute(text(_BOUNDARY_SQL), {**params, "tol": simplified})).mappings().all())
+                if len(rows) > MAX_FEATURES:
+                    break
+                raw = json.dumps(compose(rows, orphans, simplified)).encode("utf-8")
+                if len(raw) <= MAX_BODY_BYTES:
+                    break
     if len(rows) > MAX_FEATURES:
         return _error("AREA_TOO_LARGE", f"{len(rows)} features in this area; the cap is {MAX_FEATURES}. Zoom in or pass a smaller bbox.", 422)
     if orphans:
         # A non-zero count on a metro that has previously reported zero is how a boundary vintage
         # that has moved out from under the values announces itself (R4).
         log.warning("boundaries: %d %s values at level %s have no %s geometry", orphans, value_vintage, SHADING[layer]["summary_level"], geo_vintage)
-
-    used = sorted({source} | ({"acs5_prior"} if metric_key == "population_growth_pct" else set()))
-    body: dict[str, Any] = {
-        "type": "FeatureCollection", "cbsa_geoid": cbsa, "layer": layer, "metric_key": metric_key,
-        "summary_level": SHADING[layer]["summary_level"], "geo_label": SHADING[layer]["label"],
-        "unit": "usd" if layer in ("income", "econ") else "pct", "state": state,
-        "boundary_vintage": geo_vintage, "value_vintage": value_vintage, "source_dataset": source,
-        # Read from dataset_registry, never composed here: attribution is legally load-bearing and
-        # a terms change must be one UPDATE rather than a redeploy. Boundaries first — the map
-        # carries the geometry's attribution beside the values' (Census spec §2b).
-        "attribution": [reg["tiger_cb"]["attribution_text"]] + [reg[k]["attribution_text"] for k in used],
-        "values_without_geometry": orphans,
-        "features": [_boundary_feature(row, layer) for row in rows],
-    }
-    if blocked_reason is not None:
-        body["blocked_reason"] = blocked_reason
-    raw = json.dumps(body).encode("utf-8")
     if len(raw) > MAX_BODY_BYTES:
-        return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
+        return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area even at the coarsest delivery tolerance; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
     packed = gzip.compress(raw)
     r.set(key, packed, ex=BOUNDARY_TTL)
     return _geojson(packed, request, "miss")

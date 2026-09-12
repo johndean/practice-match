@@ -27,6 +27,7 @@ from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import zbp as census_zbp
 from app.census.registry import load as load_registry
+from app.census.states import STATES as _STATES
 from app.tasks import census as CT
 from app.tasks.celery_app import celery_app
 
@@ -128,7 +129,7 @@ def test_load_tiger_builds_a_redirect_safe_client_and_delegates_to_load_boundari
     result = CT.load_tiger()
 
     assert result == {"dataset": "tiger_cb", "counts": {"140:cb_2023_48_tract_500k.zip": 2}}
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["vintage"] == "2023"
     assert captured["archive"] is None  # no S3_* settings configured in this suite
     ua = captured["http"].headers["User-Agent"]
@@ -227,7 +228,7 @@ def test_load_acs_builds_a_keyed_client_and_delegates_to_acs_load(conn, monkeypa
 
     assert result == {"dataset": "acs5", "rows": 42}
     assert captured["dataset_key"] == "acs5"
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["client"] == ("the-key", CONTACT)
 
 
@@ -449,7 +450,7 @@ def test_load_qwi_resolves_the_latest_quarter_when_omitted(conn, monkeypatch):
 
     assert result == {"year": 2025, "quarter": 1, "rows": 4, "trimmed": 0}
     assert len(resolve_calls) == 1
-    assert resolve_calls[0][0] == "06"  # states[0] -- market_state's alphabetically-first state_fips
+    assert resolve_calls[0][0] == _STATES[0][1] == "01"  # states[0] -- market_state's first state_fips, Alabama since 065
 
 
 def test_load_qwi_trims_to_20_quarters(conn, monkeypatch):

@@ -38,7 +38,7 @@ from app.census.vintage import active
 # `population_growth_pct` folds acs5_prior but can only be STAMPED with one dataset key, which is
 # exactly the hole A-C23 (1) closed for `vets_per_10k_households` -- hence the fourth element.
 LAYERS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
-    ("median_hh_income", "860", "acs5", ()),
+    ("median_hh_income", "140", "acs5", ()),
     ("population_growth_pct", "160", "acs5", ("acs5_prior",)),
     ("revenue_per_establishment", "050", "cbp", ()),
 )
@@ -60,15 +60,16 @@ ON CONFLICT (geo_id, summary_level, vintage, metric_key) DO UPDATE SET value_num
 # matches, so a geography that has LEFT the boundary vintage would keep its stale figure forever.
 _DELETE = "DELETE FROM geo_metric WHERE summary_level = %s AND metric_key = %s AND vintage = %s"
 
-# ZCTA rows in `geo_area` carry NO state_fips (tiger.py's BoundarySpec for '860' declares none,
-# `app/census/tiger.py:98`), and they do not need one: `load_boundaries` already keeps only the
-# ZCTAs whose centroid falls inside a market state (`tiger.py:244-246`), so joining geo_area IS
-# the scope at this level.
+# Income shades at the CENSUS TRACT (140) since 2026-09-12, nationwide. There is deliberately NO
+# `state_fips = ANY(%(states)s)` term here, unlike `_GROWTH_SQL` and `_ECON_SQL`: joining
+# `geo_area` IS the scope, and `geo_area` is now loaded for every state rather than for the six
+# `market_state` named, so a tract in any state gets its figure with no code change. The two
+# coarser builders keep their state term because their geographies are still loaded per state.
 _INCOME_SQL = """
 SELECT g.geo_id, a.estimate, a.moe
   FROM geo_area g
-  JOIN acs_measure a ON a.geo_id = g.geo_id AND a.summary_level = '860' AND a.vintage = %(av)s AND a.variable = 'B19013_001E'
- WHERE g.summary_level = '860' AND g.vintage = %(gv)s
+  JOIN acs_measure a ON a.geo_id = g.geo_id AND a.summary_level = '140' AND a.vintage = %(av)s AND a.variable = 'B19013_001E'
+ WHERE g.summary_level = '140' AND g.vintage = %(gv)s
 """
 
 _GROWTH_SQL = """
@@ -112,18 +113,18 @@ def _row(geo_id: str, level: str, vintage: str, key: str, value: float | None, u
 
 
 def _income(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
-    """Median household income at ZCTA, as loaded -- `is_derived = False`, because at '860' it is
-    a published ACS estimate with its own published margin, not a weighted average (D-NS4). The
-    uniform `(cur, act, states)` signature is what `_BUILDERS` dispatches on; `states` is unused
-    here for the reason in `_INCOME_SQL`'s comment."""
+    """Median household income at the CENSUS TRACT, as loaded -- `is_derived = False`, because at
+    '140' it is a published ACS estimate with its own published margin, not a weighted average
+    (D-NS4). The uniform `(cur, act, states)` signature is what `_BUILDERS` dispatches on; `states`
+    is unused here for the reason in `_INCOME_SQL`'s comment."""
     cur.execute(_INCOME_SQL, {"av": act["acs5"], "gv": act["tiger_cb"]})
     out: list[_Row] = []
     for geo_id, estimate, moe in cur.fetchall():
         value, margin = _as_float(estimate), _as_float(moe)
         suppressed, reason = _suppression(value, margin)
-        out.append(_row(geo_id, "860", act["acs5"], "median_hh_income", value, "usd", moe=margin,
+        out.append(_row(geo_id, "140", act["acs5"], "median_hh_income", value, "usd", moe=margin,
                         suppressed=suppressed, reason=reason, source="acs5",
-                        inputs={"acs5": act["acs5"], "geo_level": "zcta"}))
+                        inputs={"acs5": act["acs5"], "geo_level": "tract"}))
     return out
 
 

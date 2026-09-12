@@ -837,7 +837,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </template>
 

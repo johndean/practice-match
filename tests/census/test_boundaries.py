@@ -10,6 +10,7 @@ import json
 import pytest
 
 from app.api import market
+from app.api.market import SIMPLIFY_TIERS
 from app.cache import sync_redis
 from app.census import gate, geo_metric
 from app.config import settings
@@ -17,16 +18,23 @@ from tests.api.conftest import auth_headers
 from tests.census.test_market_api import H, client  # noqa: F401 -- the fixtures, by name
 
 AUSTIN = "POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))"
+#: Two real Travis County (Austin) tract GEOIDs: state 48 + county 453 + tract, eleven digits.
+TRACT_A = "48453001100"
+TRACT_B = "48453001200"
 INSIDE = "POLYGON((-97.8 30.2,-97.7 30.2,-97.7 30.3,-97.8 30.3,-97.8 30.2))"
 
 
 @pytest.fixture
 def seeded(conn):
-    """One metro, two ZCTAs inside it, one place inside it, and the four active vintages.
+    """One metro, two CENSUS TRACTS inside it, one place inside it, and the four active vintages.
 
-    `78704` carries a measured median; `78745` carries a SUPPRESSED one. The place row exists so a
-    `growth` request has a geography at level `160` to shade — the two layers are deliberately
-    different geographies (D-C35), and a fixture that only carried ZCTAs could not tell them apart.
+    `48453001100` carries a measured median; `48453001200` carries a SUPPRESSED one. Both are real
+    Travis County (Austin) tract GEOIDs — state(2) + county(3) + tract(6), eleven digits, which is
+    the shape `app.census.acs.geoid` composes for level 140 and the shape the TIGER `GEOID` field
+    carries. The place row exists so a `growth` request has a geography at level `160` to shade:
+    income moved to the tract on 2026-09-12 while growth CANNOT follow it (the 2010->2020 boundary
+    change, plan D12), so the two layers are deliberately different geographies and a fixture that
+    only carried tracts could not tell them apart.
     """
     with conn.cursor() as cur:
         for key, vintage in (("tiger_cb", "2023"), ("acs5", "2019\u20132023"), ("acs5_prior", "2014\u20132018"), ("cbp", "2022")):
@@ -36,10 +44,10 @@ def seeded(conn):
             "('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.5,30.5,4269))",
             (AUSTIN,),
         )
-        for geo_id, name in (("78704", "ZCTA5 78704"), ("78745", "ZCTA5 78745")):
+        for geo_id, name in ((TRACT_A, "Census Tract 11"), (TRACT_B, "Census Tract 12")):
             cur.execute(
-                "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
-                "(%s,'860','2023',%s, ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.75,30.25,4269))",
+                "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, geom, centroid) VALUES "
+                "(%s,'140','2023',%s,'48','453', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.75,30.25,4269))",
                 (geo_id, name, INSIDE),
             )
         cur.execute(
@@ -49,8 +57,8 @@ def seeded(conn):
         )
         cur.execute(
             "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, suppressed, suppress_reason, source_dataset, computed_at) VALUES "
-            "('78704','860','2019\u20132023','median_hh_income',92150,'usd',6420,false,NULL,'acs5',now()), "
-            "('78745','860','2019\u20132023','median_hh_income',41000,'usd',40000,true,'high_moe','acs5',now())"
+            f"('{TRACT_A}','140','2019\u20132023','median_hh_income',92150,'usd',6420,false,NULL,'acs5',now()), "
+            f"('{TRACT_B}','140','2019\u20132023','median_hh_income',41000,'usd',40000,true,'high_moe','acs5',now())"
         )
         cur.execute(
             "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, suppressed, suppress_reason, source_dataset, computed_at) VALUES "
@@ -82,24 +90,24 @@ async def test_a_feature_carries_the_value_the_margin_and_the_suppression_verdic
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/geo+json")
     assert body["type"] == "FeatureCollection"
     assert (body["cbsa_geoid"], body["layer"], body["metric_key"]) == ("12420", "income", "median_hh_income")
-    assert (body["summary_level"], body["geo_label"], body["unit"]) == ("860", "ZIP Code Tabulation Area", "usd")
+    assert (body["summary_level"], body["geo_label"], body["unit"]) == ("140", "Census tract", "usd")
     assert (body["state"], body["boundary_vintage"], body["value_vintage"], body["source_dataset"]) == ("enabled", "2023", "2019\u20132023", "acs5")
     assert body["attribution"][0] == "Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023"
     assert body["attribution"][1].startswith("Source: U.S. Census Bureau, American Community Survey")
     assert body["values_without_geometry"] == 0
     by = {f["id"]: f for f in body["features"]}
-    assert sorted(by) == ["78704", "78745"]
-    assert by["78704"]["properties"] == {
-        "geo_id": "78704", "name": "ZCTA5 78704", "value": 92150.0, "moe": 6420.0,
+    assert sorted(by) == [TRACT_A, TRACT_B]
+    assert by[TRACT_A]["properties"] == {
+        "geo_id": TRACT_A, "name": "Census Tract 11", "value": 92150.0, "moe": 6420.0,
         "suppressed": False, "suppress_reason": None, "band_ambiguous": False,
     }
-    assert by["78745"]["properties"]["suppressed"] is True and by["78745"]["properties"]["suppress_reason"] == "high_moe"
+    assert by[TRACT_B]["properties"]["suppressed"] is True and by[TRACT_B]["properties"]["suppress_reason"] == "high_moe"
     # A suppressed figure never reaches the wire: the polygon is greyed, and the number that was
     # too imprecise to publish is not smuggled out in the margin's company (§6).
-    assert by["78745"]["properties"]["value"] is None
+    assert by[TRACT_B]["properties"]["value"] is None
     # 4326, not geo_area's own 4269.
-    assert by["78704"]["geometry"]["type"] in ("Polygon", "MultiPolygon")
-    assert by["78704"]["geometry"]["coordinates"][0][0][0] == pytest.approx([-97.8, 30.2], abs=1e-4)
+    assert by[TRACT_A]["geometry"]["type"] in ("Polygon", "MultiPolygon")
+    assert by[TRACT_A]["geometry"]["coordinates"][0][0][0] == pytest.approx([-97.8, 30.2], abs=1e-4)
 
 
 async def test_a_polygon_with_no_row_at_all_is_returned_with_a_null_value_and_is_never_omitted(client, seeded, conn, H) -> None:  # noqa: F811
@@ -108,9 +116,9 @@ async def test_a_polygon_with_no_row_at_all_is_returned_with_a_null_value_and_is
     `value: null` with `suppressed: false`, which is NOT what a suppressed polygon carries, so a
     client that guards on `suppressed` alone would paint this one as measured."""
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM geo_metric WHERE geo_id = '78745'")
+        cur.execute(f"DELETE FROM geo_metric WHERE geo_id = '{TRACT_B}'")
     _r, body = await _body(client, H)
-    missing = next(f for f in body["features"] if f["id"] == "78745")
+    missing = next(f for f in body["features"] if f["id"] == TRACT_B)
     assert missing["properties"]["value"] is None
     assert missing["properties"]["suppressed"] is False
     assert missing["properties"]["suppress_reason"] is None
@@ -125,13 +133,13 @@ async def test_no_data_and_suppressed_are_two_distinguishable_states_in_one_payl
     things. The assertion is that the two property dicts DIFFER; collapsing them (dropping
     `suppress_reason`, or marking an absent row `suppressed`) makes this test fail."""
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM geo_metric WHERE geo_id = '78704'")
+        cur.execute(f"DELETE FROM geo_metric WHERE geo_id = '{TRACT_A}'")
     _r, body = await _body(client, H)
     by = {f["id"]: f["properties"] for f in body["features"]}
-    assert by["78704"]["value"] is None and by["78745"]["value"] is None
-    assert (by["78704"]["suppressed"], by["78704"]["suppress_reason"]) == (False, None)
-    assert (by["78745"]["suppressed"], by["78745"]["suppress_reason"]) == (True, "high_moe")
-    assert by["78704"] != by["78745"]
+    assert by[TRACT_A]["value"] is None and by[TRACT_B]["value"] is None
+    assert (by[TRACT_A]["suppressed"], by[TRACT_A]["suppress_reason"]) == (False, None)
+    assert (by[TRACT_B]["suppressed"], by[TRACT_B]["suppress_reason"]) == (True, "high_moe")
+    assert by[TRACT_A] != by[TRACT_B]
 
 
 async def test_a_value_with_no_geometry_is_dropped_and_counted(client, seeded, conn, H) -> None:  # noqa: F811
@@ -141,7 +149,7 @@ async def test_a_value_with_no_geometry_is_dropped_and_counted(client, seeded, c
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, source_dataset, computed_at) "
-            "VALUES ('99999','860','2019\u20132023','median_hh_income',50000,'usd','acs5',now())"
+            "VALUES ('99999','140','2019\u20132023','median_hh_income',50000,'usd','acs5',now())"
         )
     _r, body = await _body(client, H)
     assert body["values_without_geometry"] == 1
@@ -150,9 +158,9 @@ async def test_a_value_with_no_geometry_is_dropped_and_counted(client, seeded, c
 
 async def test_band_ambiguity_is_computed_server_side_from_the_designs_own_stops(client, seeded, conn, H) -> None:  # noqa: F811
     with conn.cursor() as cur:
-        cur.execute("UPDATE geo_metric SET moe = 9000 WHERE geo_id = '78704'")
+        cur.execute(f"UPDATE geo_metric SET moe = 9000 WHERE geo_id = '{TRACT_A}'")
     _r, body = await _body(client, H)
-    assert next(f for f in body["features"] if f["id"] == "78704")["properties"]["band_ambiguous"] is True
+    assert next(f for f in body["features"] if f["id"] == TRACT_A)["properties"]["band_ambiguous"] is True
 
 
 async def test_growth_is_served_at_its_own_geography_and_can_never_be_band_ambiguous(client, seeded, H) -> None:  # noqa: F811
@@ -293,15 +301,27 @@ async def test_gzip_is_applied_in_the_handler_and_the_identity_branch_serves_the
     assert json.loads(plain.content) == json.loads(zipped.content)
 
 
-def test_no_sql_string_in_this_module_simplifies_geometry_on_the_request_path() -> None:
-    """R7. ST_SimplifyPreserveTopology measured five to EIGHT times the cost of the query itself,
-    which makes it the dominant term of every request for a saving the response does not need.
-    Simplification belongs at write time or not at all: if a future geography needs it, the
-    simplified geometry is materialised into its own column by the nightly job, once per vintage."""
-    from pathlib import Path
+def test_the_first_delivery_tier_is_the_exact_outline_so_a_fitting_request_never_simplifies() -> None:
+    """R7, NARROWED rather than dropped, with its cost re-measured on real tract geometry.
 
-    source = Path(market.__file__).read_text(encoding="utf-8")
-    assert "ST_Simplify" not in source
+    R7's finding still holds: `ST_SimplifyPreserveTopology` measured **2.0x to 7.4x** the cost of
+    the query itself here (Austin 568 tracts 51.7 ms -> 385 ms at 7.4x; Dallas 1,410 83.3 ms ->
+    369 ms; New York 5,692 317.5 ms -> 746 ms), so it must never be the dominant term of an
+    ordinary request. What has changed is R7's other half -- "a saving the response does not
+    need". At tract scale the response DOES need it: Atlanta (2.912 MB), Dallas (2.159 MB) and New
+    York (5.079 MB) all exceed `MAX_BODY_BYTES` on the default whole-metro request and were
+    answered 422, which is a blank map in three of the six markets.
+
+    So the invariant is now the narrower and still-true one: tier 0 is the EXACT outline, it is
+    what every request that fits receives, and a coarser tier is reached only after a composed
+    body has been measured over the cap -- at which point the alternative is not a cheaper
+    response but no response at all. The result is cached for `BOUNDARY_TTL`, so the cost is paid
+    once per key per day. R7's preferred remedy -- materialising simplified geometry into its own
+    column at write time -- remains the better answer for a fixed tolerance and is NOT done here,
+    because the tolerance this ladder applies scales with the request's own span."""
+    assert SIMPLIFY_TIERS[0] == 0.0, "the first tier must cost nothing"
+    assert list(SIMPLIFY_TIERS) == sorted(SIMPLIFY_TIERS), "tiers coarsen monotonically"
+    assert len(set(SIMPLIFY_TIERS)) == len(SIMPLIFY_TIERS), "a repeated tier would re-run one query for nothing"
 
 
 async def test_the_endpoint_and_community_rows_agree_on_suppression(client, seeded, conn, H) -> None:  # noqa: F811
@@ -357,9 +377,93 @@ async def test_layers_gains_a_shading_member_on_the_three_fills_and_null_on_the_
     different questions about the same layer, and collapsing them is exactly the "silently promote
     a coarse figure into a fine slot" failure D-C35 forbids."""
     layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
-    assert layers["income"]["shading"] == {"summary_level": "860", "label": "ZIP Code Tabulation Area"}
+    assert layers["income"]["shading"] == {"summary_level": "140", "label": "Census tract"}
     assert layers["growth"]["shading"] == {"summary_level": "160", "label": "Place (city/town)"}
     assert layers["econ"]["shading"] == {"summary_level": "050", "label": "County"}
     for key in ("pets", "households", "competition", "practices", "drive_10", "drive_20"):
         assert layers[key]["shading"] is None, key
     assert layers["income"]["geo_level"] == "place|catchment", "the panel's geography must not move"
+
+
+def test_income_shades_at_census_tract_and_the_coarser_layers_say_so() -> None:
+    """The canonical granular unit is the Census tract, summary level 140, nationwide (controller
+    ruling 2026-09-12). `population_growth_pct` CANNOT follow it: the 2010->2020 tract boundary
+    change means a tract-level growth figure is not computable from what we hold (plan D12, a
+    registered Phase C deferral), so growth keeps place and payroll keeps county -- and each layer
+    carries its OWN label, which is how the map never presents a coarse figure as granular."""
+    assert market.SHADING["income"] == {"summary_level": "140", "label": "Census tract"}
+    assert market.SHADING["growth"] == {"summary_level": "160", "label": "Place (city/town)"}
+    assert market.SHADING["econ"] == {"summary_level": "050", "label": "County"}
+
+
+def test_the_two_layer_tables_agree_on_level_and_metric() -> None:
+    """The merge-time gap Task 8's report named and nothing pinned: `app.census.geo_metric.LAYERS`
+    WRITES the rows `app.api.market` SERVES, so a summary level that differs by one table serves a
+    map with no values at all -- every LEFT JOIN would miss. Two spellings of one truth, now
+    pinned both ways."""
+    written = {metric: (level, dataset) for metric, level, dataset, _extra in geo_metric.LAYERS}
+    served = {market.BOUNDARY_METRIC[layer][0]: (market.SHADING[layer]["summary_level"], market.BOUNDARY_METRIC[layer][1])
+              for layer in market.SHADING}
+    assert written == served
+
+
+async def test_a_body_over_the_cap_is_simplified_and_served_rather_than_refused(client, seeded, H, monkeypatch) -> None:  # noqa: F811
+    """The LIVE defect this closes, measured on real TIGER tract geometry rather than reasoned
+    about: on the default whole-metro request at tract scale, Atlanta (1,847 tracts, 2.912 MB),
+    Dallas (1,791, 2.159 MB) and New York (5,935, 5.079 MB) ALL exceed `MAX_BODY_BYTES` and were
+    answered 422 — a blank map in three of the six markets. Refusing to draw is worse than drawing
+    a slightly generalised outline, so a body over the cap is now SERVED at a coarser geometry and
+    the response states the tolerance it used. Polygons are never dropped to make room: dropping
+    one would leave a hole that reads as a boundary (§6)."""
+    with seeded.cursor() as cur:   # an ~800-vertex outline, so there is real detail to generalise
+        cur.execute(f"UPDATE geo_area SET geom = ST_Multi(ST_Buffer(ST_Point(-97.75,30.25,4269), 0.05, 200)) "
+                    f"WHERE geo_id = '{TRACT_A}' AND summary_level = '140'")
+    exact = json.loads((await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).content)
+    assert exact["simplified_deg"] == 0.0
+    # The cache key spans the vintages, the gate and the bbox — deliberately NOT the caps, which
+    # do not move in production. Monkeypatching one here therefore has to invalidate by hand.
+    sync_redis().flushdb()
+    cap = len(json.dumps(exact).encode()) - 1     # one byte under what the exact outline costs
+    monkeypatch.setattr(market, "MAX_BODY_BYTES", cap)
+    r, body = await _body(client, H)
+    assert r.status_code == 200, body
+    assert body["simplified_deg"] > 0, "the body was over the cap and should have been generalised"
+    assert len(body["features"]) == len(exact["features"]) == 2, "simplification drops vertices, never whole polygons"
+    assert len(json.dumps(body).encode()) <= cap
+
+
+async def test_a_body_that_fits_is_served_exact_with_no_simplification(client, seeded, H) -> None:  # noqa: F811
+    """The stakeholder's target view is a metro at ~1.2 degrees. Measured unsimplified on real
+    data: Austin 568 tracts / 0.949 MB, Dallas 1,410 / 1.303 MB, Atlanta 1,037 / 1.100 MB, SF
+    1,093 / 1.043 MB — every one inside the cap, and every one at **0.0000 % uncovered area**.
+    So the common case pays nothing for the escape hatch above and neighbours still share edges,
+    which is what keeps the shading gapless."""
+    r, body = await _body(client, H)
+    assert r.status_code == 200
+    assert body["simplified_deg"] == 0.0
+
+
+async def test_the_delivery_tolerance_actually_reaches_postgis(client, seeded, H, monkeypatch) -> None:  # noqa: F811
+    """The trap this closes, measured rather than reasoned about: an UNTYPED bound parameter
+    inside a `CASE WHEN` silently takes the ELSE branch under asyncpg. `CASE WHEN 0.01 > 0 THEN
+    ST_SimplifyPreserveTopology(geom, 0.01) ELSE geom END` returns 17 points; the identical
+    expression with `:tol` bound to 0.01 returns 460 -- the UNSIMPLIFIED count -- and raises
+    nothing at all. The ladder above would then run its four rungs, re-query four times, report a
+    non-zero `simplified_deg` and serve the exact geometry every time.
+
+    So this asserts the VERTEX COUNT actually falls, which body bytes could not distinguish from
+    a tier that merely relabelled itself."""
+    with seeded.cursor() as cur:
+        cur.execute(f"UPDATE geo_area SET geom = ST_Multi(ST_Buffer(ST_Point(-97.75,30.25,4269), 0.05, 200)) "
+                    f"WHERE geo_id = '{TRACT_A}' AND summary_level = '140'")
+    exact = json.loads((await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).content)
+    sync_redis().flushdb()
+    monkeypatch.setattr(market, "MAX_BODY_BYTES", len(json.dumps(exact).encode()) - 1)
+    _r, body = await _body(client, H)
+
+    def vertices(collection: dict) -> int:
+        feature = next(f for f in collection["features"] if f["id"] == TRACT_A)
+        return sum(len(ring) for poly in feature["geometry"]["coordinates"] for ring in poly)
+
+    assert vertices(exact) > 700, "the fixture must carry real detail for this to mean anything"
+    assert vertices(body) < vertices(exact) / 2, "the tolerance never reached PostGIS"

@@ -61,10 +61,29 @@ import psycopg2.extensions
 
 # Austin-Round Rock-San Marcos: the design's own metro, and `MARKETS`'s default (`logic.js`).
 DESIGN_CBSA = "12420"
-# D-C35's three, in the order the fixture lists them: ZCTA (income), place (growth), county (econ).
-LEVELS: tuple[str, ...] = ("860", "160", "050")
-SIMPLIFY_DEG = 0.010
-MAX_FIXTURE_BYTES = 120_000
+# D-C35's three, in the order the fixture lists them: TRACT (income), place (growth), county
+# (econ). `income` moved 860 -> 140 on 2026-09-12 (controller ruling): the canonical granular unit
+# is the Census tract, nationwide. `growth` and `econ` did NOT move -- growth cannot be computed at
+# tract level across the 2010->2020 boundary change (plan D12) -- so this fixture deliberately
+# mixes geographies, exactly as the map does.
+LEVELS: tuple[str, ...] = ("140", "160", "050")
+# 0.005, not 0.010, and the CAP moved with it -- both MEASURED, and the reason is that the Austin
+# metro holds 503 TRACTS where it held 88 ZCTAs. Module bytes at level 140, measured on real TIGER
+# geometry: 0.010 -> 220,905 · 0.005 -> 254,550 · 0.002 -> 348,023 · 0.001 -> 455,750 · 0.0005 ->
+# 579,736. Every one of those is over the old 120,000 cap, so the cap could not survive the ruling
+# in any case; 0.010 would also collapse a tract, which is typically 0.01-0.03 deg across, to a
+# triangle, where on a ZCTA it merely coarsened an outline.
+#
+# THE CAP IS A BUNDLE BUDGET, NOT AN AESTHETIC ONE, and that is why it is not simply removed: A24.1
+# interpolates this payload verbatim into the design's `state` literal, `frontend/src/logic.js`
+# carries the same bytes as the hand port, and logic.js SHIPS. Measured headroom at the time of
+# this change: the main bundle is 141.6 KB gzipped against `bundle-budget.test.ts`'s 220 KB, so
+# 78 KB gzipped is what the fixture may grow by. 0.005 is the finest tolerance that fits with room
+# to spare; the app itself never reads the fixture (with a `market` adapter present `loadAreas`
+# fetches real polygons and the fixture path never runs), so every one of these bytes is paid for
+# the REFERENCE's benefit alone. That is a real cost and it is recorded rather than hidden.
+SIMPLIFY_DEG = 0.005
+MAX_FIXTURE_BYTES = 280_000
 
 # Scoped by CENTROID-inside-the-metro, not by ST_Intersects: a place or a ZCTA that merely grazes
 # the metro boundary belongs to its neighbour, and an intersects test would drag a ring of
@@ -132,7 +151,7 @@ def module_text(fixture: dict[str, dict[str, Any]]) -> str:
         "//\n"
         "// The DESIGN's own boundary fixture (amendment A24.1, spec 2026-09-10 section 9.4):\n"
         "// real `geo_area` polygons for the design's own Austin metro, at D-C35's three\n"
-        "// geographies -- '860' ZCTA (income), '160' place (growth), '050' county (econ) --\n"
+        "// geographies -- '140' tract (income), '160' place (growth), '050' county (econ) --\n"
         # Interpolated, never retyped: a tolerance named in two places is one that goes stale in
         # one of them (Global Constraint (i)).
         f"// simplified at {SIMPLIFY_DEG} degrees, scoped to polygons whose centroid is in CBSA 12420.\n"

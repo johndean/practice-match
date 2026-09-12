@@ -4654,7 +4654,7 @@ describe('A24 — real boundary polygons', () => {
 
   it('areaSet gives every polygon the value of the NEAREST community, at the ruled geography', () => {
     const set = c.areaSet('income');
-    expect(set.features.length, 'the design fixture has no ZCTA features').toBeGreaterThan(0);
+    expect(set.features.length, 'the design fixture has no tract features').toBeGreaterThan(0);
     for (const f of set.features) {
       expect(f.properties.geo_id).toBe(f.id);
       expect(f.properties.moe).toBeNull();
@@ -4662,13 +4662,13 @@ describe('A24 — real boundary polygons', () => {
       expect(f.properties.band_ambiguous).toBe(false);
       expect(f.geometry).toBeTruthy();
     }
-    // Every design community carries an income, so no ZCTA comes out null on this layer.
+    // Every design community carries an income, so no tract comes out null on this layer.
     expect(set.features.every((f: any) => typeof f.properties.value === 'number')).toBe(true);
     // The three geographies are D-C35's, and each layer reads its OWN level — `growth` sees the
     // places and `econ` the counties, so a layer promoted into a finer slot fails here.
     expect(c.areaSet('growth').features.length).toBe(c.state.areas['160'].features.length);
     expect(c.areaSet('econ').features.length).toBe(c.state.areas['050'].features.length);
-    expect(set.features.length).toBe(c.state.areas['860'].features.length);
+    expect(set.features.length).toBe(c.state.areas['140'].features.length);
   });
 
   it('areaSet returns an empty collection for a layer with no geography — the three symbol layers', () => {
@@ -4747,7 +4747,7 @@ describe('A24 — real boundary polygons', () => {
   });
 
   it('the legend names the geography and gains a No data row, for the three fill layers only', () => {
-    for (const [layer, label] of [['income', 'ZIP Code Tabulation Area'], ['growth', 'Place (city/town)'], ['econ', 'County']] as const) {
+    for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County']] as const) {
       c.state.mdValue = layer;
       const active = c.marketVals(P).active;
       expect(active.hasGeo).toBe(true);
@@ -4772,7 +4772,7 @@ describe('A24 — real boundary polygons', () => {
     c.state.mdValue = 'income';
     const md = c.marketVals(P);
     expect(md.areas.type).toBe('FeatureCollection');
-    expect(md.areas.features.length).toBe(c.state.areas['860'].features.length);
+    expect(md.areas.features.length).toBe(c.state.areas['140'].features.length);
     for (const f of md.areas.features) {
       expect(typeof f.properties.color).toBe('string');
       expect(typeof f.properties.tip).toBe('string');

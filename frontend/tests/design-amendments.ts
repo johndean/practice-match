@@ -4921,6 +4921,36 @@ const A24_18: Amendment = {
   count: 1
 };
 
+/** A24.19-A24.20 -- the CENSUS TRACT ruling (controller, 2026-09-12). Both are CHAINED entries in
+ *  the A21.5c / A12.7 shape: each `find` is a string an EARLIER A24 amendment produced, so neither
+ *  occurs in the pristine bundle and both must run after the entry they read.
+ *
+ *  A24.19 reads A24.2's own output and A24.20 reads A24.7's. The ruling: the canonical granular
+ *  unit is the Census tract (summary level 140), nationwide. Tracts are designed as neighbourhood
+ *  approximations and ACS publishes the variable at tract level; calling a ZIP area a
+ *  neighbourhood is a named prohibition. `growth` and `econ` are UNCHANGED here and that is the
+ *  point -- growth cannot follow the tract (the 2010->2020 boundary change, plan D12), so each
+ *  layer keeps its own label and the legend prints the geography the figure is really measured at.
+ *  `tests/census/test_design_shading_labels.py` pins this half against `app.api.market.SHADING`,
+ *  so the design and the route cannot disagree about a geography. */
+const TRACT = { date: '2026-09-12', ruling: 'The canonical granular unit is the Census tract (summary level 140), nationwide. Not ZCTA. Census tract is an acceptable authoritative small-area geography, tracts are designed as neighbourhood approximations, and ACS publishes the needed variables at tract level. Calling a ZIP area a neighbourhood is a named prohibition. Exception, which must be labelled and never fabricated: population_growth_pct stays at place-or-county.' };
+
+const A24_19: Amendment = {
+  id: 'A24.19', ...TRACT,
+  find: 'const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };\n',
+  replace: 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };\n',
+  count: 1
+};
+
+const A24_20: Amendment = {
+  id: 'A24.20', ...TRACT,
+  find: 'Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.',
+  replace: 'Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5075,5 +5105,8 @@ export function amendments(): Amendment[] {
     // reads A24.4's, so they run after the family's first pass. Definition order in this file
     // matches this list (m8).
     A24_14, A24_15, A24_16, A24_17, A24_18,
+    // A24.19-A24.20 -- the Census tract ruling (2026-09-12). Both CHAINED: A24.19 reads A24.2's
+    // output and A24.20 reads A24.7's, so both must sit after those two.
+    A24_19, A24_20,
     A24_9, A24_10, A24_11, A24_12];
 }

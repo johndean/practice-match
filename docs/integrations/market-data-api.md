@@ -56,7 +56,7 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
   { "key": "income", "label": "Median Household Income", "dataset_key": "acs5",
     "source_label": "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",
     "vintage": "2019–2023", "geo_level": "place|catchment",
-    "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
+    "shading": { "summary_level": "140", "label": "Census tract" },
     "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "shading": null, "state": "enabled",
     "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
@@ -103,9 +103,14 @@ gate's own TTL.
 ## `GET /api/markets/{cbsa}/boundaries?layer=income|growth|econ[&bbox=minLng,minLat,maxLng,maxLat]`
 
 The shaded map layer: real Census boundary polygons joined to `geo_metric`, one geography per
-layer (John's rulings D-C34–D-C37, 2026-09-10). `income` draws ZIP Code Tabulation Areas
-(`"summary_level": "860"`), `growth` draws Place (city/town) (`"summary_level": "160"`), `econ`
-draws County (`"summary_level": "050"`). **No layer is ever painted at a geography finer than its
+layer (John's rulings D-C34–D-C37, 2026-09-10). `income` draws Census tracts
+(`"summary_level": "140"`), `growth` draws Place (city/town) (`"summary_level": "160"`), `econ`
+draws County (`"summary_level": "050"`). Income moved from the ZIP Code Tabulation Area to the
+Census tract on 2026-09-12 (controller ruling): the tract is the canonical granular unit,
+nationwide. `growth` **cannot** follow it -- the 2010→2020 tract boundary change means a
+tract-level growth figure is not computable from the data we hold (plan D12, a registered Phase C
+deferral) -- so it keeps Place, `econ` keeps County, and each layer's own `geo_label` is what the
+legend prints, which is how a coarser figure is never presented as a tract-level one. **No layer is ever painted at a geography finer than its
 figure is honest at** — spec §6's standing rule, "Never silently promote a county figure into a
 tract-labeled slot", applied to the map. The three graduated-symbol layers (`pets`, `households`,
 `competition`) are not shaded and are not served here; `/api/layers` names each layer's own
@@ -118,7 +123,7 @@ what it does not know):
 {
   "type": "FeatureCollection",
   "cbsa_geoid": "12420", "layer": "income", "metric_key": "median_hh_income",
-  "summary_level": "860", "geo_label": "ZIP Code Tabulation Area", "unit": "usd",
+  "summary_level": "140", "geo_label": "Census tract", "unit": "usd",
   "state": "enabled", "boundary_vintage": "2023", "value_vintage": "2019–2023",
   "source_dataset": "acs5",
   "attribution": ["Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023",

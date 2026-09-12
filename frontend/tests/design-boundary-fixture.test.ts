@@ -12,7 +12,7 @@ describe('the design boundary fixture (A24.1, spec §9.4)', () => {
   const fixture = JSON.parse(DESIGN_AREAS_LITERAL) as Record<string, { type: string; features: { type: string; id: string; properties: { geo_id: string; name: string; c: [number, number] }; geometry: { type: string; coordinates: unknown[] } }[] }>;
 
   it('carries one FeatureCollection per ruled geography, and nothing else (D-C35)', () => {
-    expect(Object.keys(fixture).sort()).toEqual(['050', '160', '860']);
+    expect(Object.keys(fixture).sort()).toEqual(['050', '140', '160']);
     for (const level of Object.keys(fixture)) expect(fixture[level].type).toBe('FeatureCollection');
   });
 
@@ -41,7 +41,7 @@ describe('the design boundary fixture (A24.1, spec §9.4)', () => {
       }
     }
     // No feature carries a figure: the design assigns those from its own communities (§9.4).
-    const props = fixture['860'].features.flatMap((f) => Object.keys(f.properties));
+    const props = fixture['140'].features.flatMap((f) => Object.keys(f.properties));
     expect([...new Set(props)].sort()).toEqual(['c', 'geo_id', 'name']);
   });
 
@@ -58,10 +58,13 @@ describe('the design boundary fixture (A24.1, spec §9.4)', () => {
   // RULED reason to regenerate it (a new vintage, a new metro, a new tolerance). If there was, the
   // baselines re-base under that ruling and the hash moves with them. If there was not, restore
   // the committed file (`git checkout -- frontend/tests/design-boundary-fixture.ts`) and leave
-  // this line alone. Regenerated 2026-09-11 under D-C49 (coarsen as committed, then repair).
+  // this line alone. Regenerated 2026-09-11 under D-C49 (coarsen as committed, then repair), and
+  // again on 2026-09-12 under the Census tract ruling: `income` draws level 140, so the fixture's
+  // own income collection had to become tracts. 503 of them for the Austin metro where there were
+  // 88 ZCTAs, which is why the tolerance and the cap moved with it -- see the generator's header.
   it('is the frozen artefact, byte for byte — the generator is not reproducible', () => {
     const source = readFileSync(fileURLToPath(new URL('design-boundary-fixture.ts', import.meta.url)));
-    expect(createHash('sha256').update(source).digest('hex')).toBe('9d5e9d9ba6f7519f65904e3a2b8579aead047d6555fce3ecac47dc80187e2102');
+    expect(createHash('sha256').update(source).digest('hex')).toBe('f80e780563c384984cb50970f2d55d10d41bfc86ae1b300848a8763a012c92c3');
   });
 
   // D-C49 (John, 2026-09-11): coarsen at the committed tolerance, then repair, so the fixture is
@@ -78,10 +81,15 @@ describe('the design boundary fixture (A24.1, spec §9.4)', () => {
     }
   });
 
-  it('is pure ASCII and inside the 120 KB cap the design file can carry', () => {
+  // The cap is 280 KB since the tract ruling, and it is a BUNDLE budget rather than an aesthetic
+  // one: A24.1 interpolates this payload into the design's `state` literal, `src/logic.js` carries
+  // the same bytes as the hand port, and logic.js ships. Measured after this change: the main
+  // bundle is 165.7 KB gzipped against `bundle-budget.test.ts`'s 220 KB, so the fixture's growth
+  // from 112 KB to 254 KB is paid for and there is still 54 KB of headroom.
+  it('is pure ASCII and inside the 280 KB cap the design file can carry', () => {
     const source = readFileSync(fileURLToPath(new URL('design-boundary-fixture.ts', import.meta.url)), 'utf8');
     expect(/^[\x00-\x7F]*$/.test(source), 'a non-ASCII byte reaches the design file through A24.1').toBe(true);
-    expect(Buffer.byteLength(source, 'utf8')).toBeLessThanOrEqual(120_000);
+    expect(Buffer.byteLength(source, 'utf8')).toBeLessThanOrEqual(280_000);
     expect(source, 'the generated file must name its generator').toContain('scripts/export_design_boundaries.py');
   });
 });
