@@ -38,7 +38,7 @@ REQUIRED_CI_COMMANDS = (
     # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
     # report predicted it would have to — the plan's own file list for this task names neither
     # file, which is why the note above is here rather than in the plan.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py tests/e2e/api_under_test.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
