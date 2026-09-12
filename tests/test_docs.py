@@ -556,6 +556,36 @@ def test_deploy_md_says_the_api_container_runs_migrations_at_start():
     assert "keeps serving" not in text
 
 
+def test_deploy_md_carries_the_national_census_loads_runbook():
+    """Fix round 2, F (re-review finding). The seven rules were drafted in the controller's own
+    workspace under `.superpowers/` — which is git-ignored — and the `zbp` reload they carry is a
+    PRECONDITION of the competition layer telling a withheld ZIP count from an uncovered one. A
+    precondition that lives only in a scratch directory can be forgotten by the next person, and
+    was: the re-review looked for the file in the repository and did not find it.
+
+    Every rule below was learned by breaking it, so each is named here rather than counted: a
+    renumbering that dropped one would otherwise pass."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## National Census loads and the `geo_metric` materialise" in text
+    for rule in (
+        "Rule 1 — a long load runs detached, or the ssh session kills it",
+        "Rule 2 — poll the LEDGER, not the process",
+        "Rule 3 — activation is usually not needed, and forcing it would be wrong",
+        "Rule 4 — growth needs BOTH vintages at the SAME level",
+        "Rule 5 — the national numbers, measured 2026-09-12",
+        "Rule 6 — do not redeploy the worker inside the five minutes before a beat entry fires",
+        "Rule 7 — a manual `geo_metric` materialise runs DETACHED on the worker",
+    ):
+        assert rule in text, f"DEPLOY.md has lost the runbook's {rule!r}"
+    # The precondition itself, verbatim: the loader gained a fourth NAICS key and the layer cannot
+    # tell a withheld count from an uncovered ZIP until those rows exist.
+    assert "`zbp` MUST BE RELOADED after `feat/layers` deploys" in text
+    # And the two forms that were MEASURED rather than reasoned about, which is why they are
+    # copied exactly: `nohup` inside a single-quoted `bash -c`, and the base64 launch.
+    assert "nohup env PYTHONPATH=/app python scripts/census_load.py zbp" in text
+    assert "base64" in text
+
+
 def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "first X-Forwarded-For hop" in text
