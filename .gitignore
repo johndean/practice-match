@@ -18,6 +18,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 .coverage.*
+coverage.xml
 
 # --- secrets & local env (never commit) ---
 .env
