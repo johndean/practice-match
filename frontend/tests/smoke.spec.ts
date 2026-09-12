@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
+import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -1131,9 +1132,11 @@ test.describe('A24 — the boundary route is absent, and the map degrades rather
     return n;
   });
 
-  /** The adapter asks for all three fill layers in one `Promise.all`, so a refused route logs
-   *  exactly three 4xx console lines and each one has to be armed. `prepare()`'s own gate still
-   *  fails the test on anything else — a page error, or a fourth request nobody expected. */
+  /** The adapter asks for every fill layer at once, so a refused route logs one 4xx console line
+   *  per layer and each one has to be armed. Counted from `FILL_LAYERS` rather than typed: the
+   *  list went from three to six on 2026-09-12 and a literal here would have made this case fail
+   *  for arithmetic rather than for behaviour. `prepare()`'s own gate still fails the test on
+   *  anything else — a page error, or a request nobody expected. */
   async function browseWith(page: Page, status: number): Promise<void> {
     await prepare(page);
     // The refusal is HELD until the allowances are armed, rather than raced against a timer:
@@ -1150,7 +1153,7 @@ test.describe('A24 — the boundary route is absent, and the map degrades rather
       }
     );
     await signInAs(page, 'design', '/browse');
-    for (let i = 0; i < 3; i++) expectApiStatus(page, status);
+    for (let i = 0; i < FILL_LAYERS.length; i++) expectApiStatus(page, status);
     release();
     await waitMap(page);
     await settleExpectedApiFailures(page);
