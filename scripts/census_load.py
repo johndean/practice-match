@@ -551,6 +551,8 @@ def cmd_geocode(args: argparse.Namespace) -> int:
     figures. Never touches the Census API (no key/contact gate, like `activate` and `materialize`),
     so it shares only the DATABASE_URL/unreachable/post-connect-database-error arms; it DOES need
     Redis, like `materialize`."""
+    import redis as redis_sync
+
     from app.cache import drop_list_cache, sync_redis
     from app.census import catchment, geocode, materialize
 
@@ -650,7 +652,20 @@ def cmd_geocode(args: argparse.Namespace) -> int:
                 # and the guard was also unreachable in one direction (a batch cannot enter this
                 # loop, geocode nothing and exit normally), which is a branch no test could ever
                 # cover. Once per batch, not once per listing, either way.
-                drop_list_cache(redis)
+                #
+                # And REPORTED-then-swallowed on a Redis failure (fix round 4). A `finally` runs
+                # on every exit, which is what makes it able to REPLACE one: a `RedisError` here
+                # turns a clean `return 0` — or, worse, the `return 5` that tells the operator
+                # WHICH listing failed to geocode — into a traceback about Redis, the wrong
+                # problem with the real one lost, on a command whose work has already committed.
+                # The cache drop is the least important thing this command does. Its type goes to
+                # stderr (this script's own warning channel; it has no logger) and never its text,
+                # which can carry a host and port, and the cache's 60 s TTL is the backstop.
+                try:
+                    drop_list_cache(redis)
+                except redis_sync.RedisError as exc:
+                    print(f"[census_load] warning: the Browse list cache was not dropped:"
+                          f" {type(exc).__name__}; it expires on its own within 60 s", file=sys.stderr)
 
         print(f"[census_load] {geocoded_count} listing(s) geocoded")
         return 0

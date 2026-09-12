@@ -1601,6 +1601,112 @@ def test_cmd_geocode_drops_the_cache_for_the_listings_it_did_geocode_before_it_e
     assert "geocoding failed" in capsys.readouterr().err
 
 
+def _seed_one_tract_world(conn):
+    """The minimum `cmd_geocode` needs to reach its loop: one tract for the mocked resolve to
+    point at, and the two active vintages the command and `materialize` check for."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                 ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+        )
+        cur.executemany(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+            [("tiger_cb", "2023", "test"), ("acs5", "2019\u20132023", "test")],
+        )
+
+
+def _resolve_writing(census_geocode):
+    """A `geocode.resolve` stand-in that writes the `practice_location` row and returns its
+    `Location`, so the command's own success path runs without a Census round trip."""
+    def _resolve(conn, gc, listing_id):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, geo_precision,"
+                " geocoded_at, geocoder_vintage) VALUES (%s, 'h', ST_SetSRID(ST_MakePoint(-97.8, 30.55), 4269),"
+                " '48491020355', 'rooftop', now(), 'Current_Current')", (listing_id,))
+        return census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", None, None, None, None)
+    return _resolve
+
+
+def test_a_redis_failure_in_the_batch_drop_does_not_change_a_clean_exit(scratch_dsn, redis, monkeypatch, capsys):
+    """Fix round 4. The drop lives in a `finally` (round 3), which is what makes it run on every
+    exit — and what makes it able to REPLACE that exit. A `RedisError` raised there turns a clean
+    `return 0` into an uncaught traceback out of an operator command whose work has already
+    committed, and the operator's next move is to re-run a batch that had nothing left to do.
+
+    The cache drop is the least important thing this command does. It is reported on stderr and
+    swallowed; the cache's own 60 s TTL is the backstop."""
+    import redis as redis_sync
+
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        _seed_one_tract_world(conn)
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(census_geocode, "resolve", _resolve_writing(census_geocode))
+    # Patched on `app.cache`, not on `census_load`: `cmd_geocode` imports the name inside the
+    # function, so it is resolved from `app.cache`'s namespace at call time.
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache",
+                        lambda cache: (_ for _ in ()).throw(redis_sync.exceptions.ConnectionError("redis://h:6379 down")))
+
+    assert census_load.main(["geocode", "--listing", lid]) == 0, "the batch's own outcome stands"
+
+    captured = capsys.readouterr()
+    assert "1 listing(s) geocoded" in captured.out
+    assert "ConnectionError" in captured.err
+    assert "6379" not in captured.err, "the type, never the text: it can carry a host"
+
+
+def test_a_redis_failure_in_the_batch_drop_does_not_replace_the_geocode_failure_exit(
+    scratch_dsn, redis, monkeypatch, capsys
+):
+    """The exit the `finally` is most able to swallow: `return 5` leaves from inside the loop, so
+    a raising drop replaces the operator's "geocoding failed" answer with a traceback about
+    Redis — the wrong problem, and the real one lost."""
+    import redis as redis_sync
+
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        make_listing(conn)
+        make_listing(conn)
+        _seed_one_tract_world(conn)
+    finally:
+        conn.close()
+
+    seen: list[str] = []
+    writing = _resolve_writing(census_geocode)
+
+    def _first_succeeds_then_fails(conn, gc, listing_id):
+        seen.append(listing_id)
+        if len(seen) > 1:
+            raise census_geocode.GeocodeFailed("nothing resolved for this one")
+        return writing(conn, gc, listing_id)
+
+    monkeypatch.setattr(census_geocode, "resolve", _first_succeeds_then_fails)
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache",
+                        lambda cache: (_ for _ in ()).throw(redis_sync.exceptions.ConnectionError("down")))
+
+    assert census_load.main(["geocode"]) == 5, "the geocode failure is still what the operator is told"
+
+    err = capsys.readouterr().err
+    assert "geocoding failed" in err, "...and it is still the first thing in the error output"
+    assert "ConnectionError" in err
+
+
 def test_cmd_geocode_skips_listing_with_practice_location_row(scratch_dsn, monkeypatch, capsys):
     """Task B9, case (b): a listing that already has a practice_location row is SKIPPED and
     the output says so."""

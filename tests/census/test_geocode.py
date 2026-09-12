@@ -842,18 +842,31 @@ def test_the_task_drops_the_browse_cache_only_after_the_backfill_is_enqueued(con
     assert order == ["enqueue:census.backfill_listing", "drop"]
 
 
-def test_a_failed_cache_drop_does_not_un_enqueue_the_backfill(conn, monkeypatch):
-    """The failure this whole move exists to bound. The drop raising is now the LAST thing the
-    task does, so the exception surfaces (Celery marks the task failed and a retry re-runs an
-    idempotent upsert) while the backfill is already queued — which is the difference between a
-    stale page and a listing with a pin and no figures."""
+def test_a_redis_failure_during_the_cache_drop_is_logged_and_never_replaces_the_result(conn, monkeypatch, caplog):
+    """The failure this whole move exists to bound, taken to its conclusion (fix round 4). The
+    ordering already meant a blip here could not cost the listing its backfill; what it still did
+    was replace the task's OUTCOME with an exception — the geocode succeeded, both point columns
+    are committed, the backfill is queued, and Celery would have recorded the task as FAILED and
+    retried a whole Census round trip to re-do work that was already done.
+
+    A cache drop is not the task's job. It is logged at WARNING and swallowed, the way
+    `app/api/admin_data_sources.py` already treats a gate invalidation that fails after its
+    decision has committed — and the cache's own 60 s TTL is the backstop. Only the exception's
+    TYPE is logged, never its text, which can carry a host and port.
+
+    `redis.exceptions.RedisError` specifically, never a bare `except`: a `TypeError` from this
+    module's own code is a defect and must still surface."""
+    import logging
+
+    import redis as redis_sync
+
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     _seed_geo(conn)
     lid = make_listing(conn)
     sent: list[str] = []
 
     def _boom(cache):
-        raise ConnectionError("redis is having a moment")
+        raise redis_sync.exceptions.ConnectionError("redis://someone:6379 is having a moment")
 
     gc = _geocoder(MATCH)
     monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
@@ -861,13 +874,39 @@ def test_a_failed_cache_drop_does_not_un_enqueue_the_backfill(conn, monkeypatch)
     from app import cache as cache_module
     monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
 
-    with pytest.raises(ConnectionError):
-        CT.geocode_listing(lid)
+    with caplog.at_level(logging.WARNING, logger="app.tasks.census"):
+        assert CT.geocode_listing(lid) == {"listing_id": lid, "precision": "rooftop"}
 
     assert sent == ["census.backfill_listing"]
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM practice_location WHERE listing_id=%s", (lid,))
         assert cur.fetchone()[0] == 1, "the durable write is committed either way"
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ConnectionError" in warnings[0].getMessage()
+    assert "6379" not in warnings[0].getMessage(), "the type, never the text: it can carry a host"
+
+
+def test_a_non_redis_error_from_the_cache_drop_still_surfaces(conn, monkeypatch):
+    """The other side of the narrow `except`. A `TypeError` (or anything else that is not a
+    `RedisError`) coming out of the drop is this codebase's own defect, not an infrastructure
+    blip, and swallowing it would hide it for as long as nobody reads the logs."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+
+    def _boom(cache):
+        raise TypeError("drop_list_cache() got an unexpected keyword argument")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: None)
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with pytest.raises(TypeError):
+        CT.geocode_listing(lid)
 
 
 def test_the_task_really_clears_a_planted_browse_page(conn, redis, monkeypatch):
