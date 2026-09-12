@@ -1438,12 +1438,12 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     }
     await page.waitForTimeout(REQUEST_SETTLE_MS);
 
+    // The last request the map made names ground entirely east of where it started — so a request
+    // WAS issued for the new box, and it is a box outside the metro. (There is no separate
+    // "≥ 1 request carries this box" assertion: `last` is parsed from that request, so such a
+    // line would match itself and measure nothing.)
     const last = new URL(urls.at(-1)!).searchParams.get('bbox')!.split(',').map(Number);
     expect(last[0], 'the map never left the ground it started on').toBeGreaterThan(first[2]);
-    // The requests were made — for the new ground, and still against the selected metro's geoid,
-    // which the route reads as a cache key and not as a filter.
-    expect(urls.filter((u) => new URL(u).searchParams.get('bbox') === last.join(',')).length)
-      .toBeGreaterThanOrEqual(1);
     // …and the answer is drawn. A client that refused to ask here would leave this at zero.
     expect(await paintedPixels(page), 'the map went blank once it left the metro').toBeGreaterThan(0);
   });

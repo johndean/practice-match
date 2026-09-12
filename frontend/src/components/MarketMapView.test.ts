@@ -931,6 +931,30 @@ describe('MarketMapView — the V3 map', () => {
       w.unmount();
     });
 
+    // …and a recentre that moves NOTHING publishes nothing new. `resetView` bumps `recenterKey`
+    // to re-apply the metro's own centre and zoom, which is the watcher's fourth dependency; if
+    // the flag were armed for the whole watcher, that bump on a map the member has not moved
+    // would force a notification for a box that is exactly where it already was — six redundant
+    // boundary requests, twelve on a wide screen, where before there were none. A bump AFTER a
+    // pan changes the box and notifies on its own merits; a bump after no pan has nothing to
+    // reload. So the flag follows the VIEW, not the watcher.
+    it('a recenterKey bump that moves nothing publishes nothing new', async () => {
+      installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      await settle();
+
+      const cb = vi.fn();
+      const off = viewport.subscribe(cb);
+      await w.setProps({ recenterKey: 1 });
+      await flushPromises();
+      await settle();
+      expect(cb, 'a recentre to the view the map is already on asked the API again').not.toHaveBeenCalled();
+
+      off();
+      w.unmount();
+    });
+
     it('a USER pan to the same box still says nothing — the flag belongs to the recentre path alone', async () => {
       const stub = installLeafletStub();
       const w = mount(MarketMapView, { props: v3Props() });

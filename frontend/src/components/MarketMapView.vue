@@ -121,7 +121,18 @@ onBeforeUnmount(() => {
 });
 
 watch([() => props.basemap, status], () => { if (engine) engine.setBase(props.basemap); });
-watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, () => props.recenterKey, status], () => { if (engine && props.center) { recentring = true; engine.setView(props.center, props.zoom, true); } });
+watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, () => props.recenterKey, status], (now, was) => {
+  if (!engine || !props.center) return;
+  // The flag follows the VIEW, not the watcher. `recenterKey` and `status` are dependencies too,
+  // and `resetView` bumps the key to re-apply the metro's own centre and zoom — on a map the
+  // member has not moved that is a setView to where the map already is, and forcing a
+  // notification for it would buy six boundary requests (twelve on a wide screen) for a box that
+  // has not changed. A bump AFTER a pan moves the box and notifies on its own merits; a bump
+  // after no pan has nothing to reload. `was` is only undefined if this ever became an immediate
+  // watcher, and not arming is the conservative answer there too.
+  if (was && (now[0] !== was[0] || now[1] !== was[1] || now[2] !== was[2])) recentring = true;
+  engine.setView(props.center, props.zoom, true);
+});
 watch(() => props.resizeKey, () => { if (engine) engine.show(); });
 
 // C7 drive-time ring + A24 community boundary shading.
