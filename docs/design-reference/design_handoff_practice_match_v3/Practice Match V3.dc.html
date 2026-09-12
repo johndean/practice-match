@@ -1915,13 +1915,19 @@ const SYMBOL_SCALE = {
 
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
-// by its caller - the map's own geography for the legend and the tip, the practice-area label
-// for the snapshot strip, whose figures are per-listing and are not measured at either. A
-// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,
-// which is true on both surfaces, and this returns it unchanged.
+// by its caller - the map's own geography for the legend and the tip, the map's community
+// notes, and the snapshot strip's AREA mode, which measures those same polygons. A layer
+// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on
+// every surface, and this returns it unchanged.
+//
+// A31.12b (fix round 1): a caller with NO geography to name gets the dataset alone. The
+// strip's LOCATION mode is one - the card's own note carries the geography there, and one
+// string per fact is this helper's whole reason for existing - and an empty basis would
+// otherwise leave a dangling " · " on the card.
 const metaSource = (k, basis) => {
   const m = LAYER_META[k] || {};
-  return m.dataset ? m.dataset + " · " + basis : (m.source || "");
+  if (!m.dataset) return m.source || "";
+  return basis ? m.dataset + " · " + basis : m.dataset;
 };
 
 // One catalogue per market layer: what it is, where it comes from, and how to read it.
@@ -2874,8 +2880,18 @@ class Component extends DCLogic {
           return {
             title: meta.title,
             value: (shown !== undefined) ? this.fmtMetric(k, shown) : undefined,
-            valueNote: sel ? locBasis : (sum ? "metro median · " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : "metro median"),
-            src: metaSource(k, sel ? locBasis : (AREA_LABEL[k] || "")),
+            // A31.12 (fix round 1): the caption over a figure is THAT FIGURE's own
+            // geography. `growth` is measured at place or county and the API names it
+            // (`growth_scope`); `econ` is the county CBP row everywhere and always. The
+            // other four ARE the ring the label describes. D-C48's ruling, one surface over.
+            valueNote: sel
+              ? (k === "growth" ? (sel.growthScope || "surrounding city or county")
+                : k === "econ" ? "surrounding county" : locBasis)
+              : (sum ? "metro median · " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : "metro median"),
+            // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
+            // this line carries the DATASET alone in LOCATION mode - measured, the basis
+            // printed ten times on one strip before this, four cards printing it twice.
+            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),
             bars: dist.map((t) => ({
               style: "flex: 1; height: " + Math.max(4, Math.round(6 + t * 24)) +
                 "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(t * 3))] + ";" +

@@ -6103,6 +6103,92 @@ const A31_11: Amendment = {
   count: 1
 };
 
+/** Fix round 1 of Task SNAP (2026-09-13), the controller's rulings on the review of
+ *  fb17325..19b26d7. Two entries, one ruling each, both CHAINED on A31.8 and A24.45. */
+const SNAP1 = {
+  date: '2026-09-13',
+  ruling: 'A31.12 (controller, 2026-09-13, fix round 1 of Task SNAP; D-C48 applied to this surface): LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s \u2014 growth is measured at place or county and carries its own `growth_scope`, payroll is the county CBP row everywhere and always \u2014 and in LOCATION mode the geography is named ONCE, on the card\u2019s own note, while the source line carries the dataset alone (A24.44\u2013A24.57\u2019s one-string-per-fact rule, measured on this surface: the basis printed TEN times on one strip).'
+};
+
+/** A31.12 \u2014 the caption over a figure is that figure's own. CHAINED on A31.8, whose two
+ *  adjacent lines this replaces.
+ *
+ *  MEASURED on the live path, which is the only place it can be seen: in LOCATION mode all six
+ *  cards read the listing's `communityLabel` ("Within about 5 miles of the practice"), while
+ *  `growth` is served at place-or-county with its own `growth_scope` (`app/census/serve.py`,
+ *  D12 \u2014 `materialize.py` computes it ONCE per listing outside the band loop) and `econ` is the
+ *  COUNTY CBP row everywhere and always (`serve.py`: "`econ_k` is county everywhere and always").
+ *  On 28 of 29 QA listings the ring sentence was therefore false on two of the six cards \u2014 the
+ *  exact defect D-C48 (John, 2026-09-11) removed from the docked panel's Population tile one day
+ *  earlier, one surface over. Growth's fallback is A24.20's OWN phrase for the same fact
+ *  ("the surrounding city or county"), which is what the reference and every approved state render:
+ *  the design's fixtures carry no `growthScope` and `load.ts` leaves the key OFF where the API
+ *  sends null.
+ *
+ *  And the `src` line drops the basis in LOCATION mode. One string per fact is A24.44\u2013A24.57's
+ *  own rule; measured here it was broken ten times over \u2014 the basis printed on the mode sub-line,
+ *  on each of the six `valueNote`s and on the three `src` lines that carry a `dataset`, four cards
+ *  printing it twice. The card's note says WHERE the figure is measured; the source line says
+ *  WHERE IT CAME FROM. AREA mode is untouched: there the card measures the map's own polygons and
+ *  names them, exactly as the legend and the tip do (A24.49/A24.50). */
+const A31_12: Amendment = {
+  id: 'A31.12', ...SNAP1,
+  find: "            valueNote: sel ? locBasis : (sum ? \"metro median \u00b7 \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
+    + "            src: metaSource(k, sel ? locBasis : (AREA_LABEL[k] || \"\")),\n",
+  replace: "            // A31.12 (fix round 1): the caption over a figure is THAT FIGURE's own\n"
+    + "            // geography. `growth` is measured at place or county and the API names it\n"
+    + "            // (`growth_scope`); `econ` is the county CBP row everywhere and always. The\n"
+    + "            // other four ARE the ring the label describes. D-C48's ruling, one surface over.\n"
+    + "            valueNote: sel\n"
+    + "              ? (k === \"growth\" ? (sel.growthScope || \"surrounding city or county\")\n"
+    + "                : k === \"econ\" ? \"surrounding county\" : locBasis)\n"
+    + "              : (sum ? \"metro median \u00b7 \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
+    + "            // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so\n"
+    + "            // this line carries the DATASET alone in LOCATION mode - measured, the basis\n"
+    + "            // printed ten times on one strip before this, four cards printing it twice.\n"
+    + "            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),\n",
+  count: 1
+};
+
+/** A31.12b \u2014 `metaSource` composes a line for a surface that has no geography to name.
+ *  CHAINED on A24.45, whose whole helper and comment this replaces.
+ *
+ *  A24.45 wrote it for two callers that both had a basis, so `dataset + " \u00b7 " + basis` was always
+ *  right. A31.12 adds a third that deliberately has none, and `"" ` there would leave a dangling
+ *  separator on the card. An empty basis now yields the dataset alone. The head comment's list of
+ *  layers that "name no geography" is corrected in the same edit: A31.12c gives `growth` a
+ *  `dataset`, so `econ` and `pets` are what is left. */
+const A31_12b: Amendment = {
+  id: 'A31.12b', ...SNAP1,
+  find: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + "// by its caller - the map's own geography for the legend and the tip, the practice-area label\n"
+    + '// for the snapshot strip, whose figures are per-listing and are not measured at either. A\n'
+    + '// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,\n'
+    + '// which is true on both surfaces, and this returns it unchanged.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  return m.dataset ? m.dataset + " \u00b7 " + basis : (m.source || "");\n'
+    + '};\n',
+  replace: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + "// by its caller - the map's own geography for the legend and the tip, the map's community\n"
+    + "// notes, and the snapshot strip's AREA mode, which measures those same polygons. A layer\n"
+    + '// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on\n'
+    + '// every surface, and this returns it unchanged.\n'
+    + '//\n'
+    + '// A31.12b (fix round 1): a caller with NO geography to name gets the dataset alone. The\n'
+    + "// strip's LOCATION mode is one - the card's own note carries the geography there, and one\n"
+    + '// string per fact is this helper\'s whole reason for existing - and an empty basis would\n'
+    + '// otherwise leave a dangling " \u00b7 " on the card.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  if (!m.dataset) return m.source || "";\n'
+    + '  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;\n'
+    + '};\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6249,5 +6335,8 @@ export function amendments(): Amendment[] {
     // A24.17's line, A31.8 the whole A24.53/A24.54/A24.55 block, A31.9 A24.44's and A31.11
     // A24.20's and A24.56's -- and A31.5 reads A32's OWN output, which is why this block runs
     // after A32 rather than beside it. Definition order in this file matches this list (m8).
-    A31_1, A31_2, A31_3, A31_4, A31_5, A31_6, A31_7, A31_8, A31_9, A31_10, A31_11];
+    A31_1, A31_2, A31_3, A31_4, A31_5, A31_6, A31_7, A31_8, A31_9, A31_10, A31_11,
+    // Fix round 1 (2026-09-13): A31.12 is CHAINED on A31.8's own two caption lines and
+    // A31.12b on A24.45's whole helper, so both run after the entries they read.
+    A31_12, A31_12b];
 }

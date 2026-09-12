@@ -1578,13 +1578,20 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
   //
   // The listings stub is written inline rather than reached for: `serveListings` is scoped to the
   // docked-panel suite above, and hoisting it would be a drive-by edit to a passing file.
-  test('LOCATION mode carries the practice’s own basis label on every card, as ruled', async ({ page }) => {
+  test('LOCATION mode names each figure’s own geography, once (A31.12)', async ({ page }) => {
+    // Fix round 1 (2026-09-13). Before it this case asserted every card's note WAS the ring label,
+    // which is what the task shipped and what D-C48 had already ruled against one surface over:
+    // `growth` is served at place-or-county with its own `growth_scope` and `econ` is the county
+    // CBP row everywhere and always, so the ring sentence was false on two of the six cards on 28
+    // of 29 QA listings. The LIVE path is what is measured — the API's own fields through
+    // `load.ts` onto the card — because that is the only place the defect was visible.
     await prepare(page);
     const LABEL = 'Within about 5 miles of the practice';
+    const SCOPE = 'Travis County';
     const stub = listingsStubUrl();
     expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
     const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
-    for (const item of body.items) item.community_label = LABEL;
+    for (const item of body.items) { item.community_label = LABEL; item.growth_scope = SCOPE; }
     await page.route(
       (url) => matchesListings(url.href, stub as string),
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
@@ -1596,17 +1603,24 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
 
     const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
     await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
-    // The sub-line beneath the mode is the label (A31.7), and every card's note is the label too
-    // (A31.8) — the ruling's own "LOCATION mode's value note is the practice's own basis label".
     const notes = await strip.locator('span[style*="font-size: 10.5px"]').allInnerTexts();
     expect(notes.length, 'the strip rendered no value notes at all').toBeGreaterThan(0);
-    expect(new Set(notes)).toEqual(new Set([LABEL]));
+    // Four of the six cards ARE the ring the label describes; growth names the geography the API
+    // served and payroll names the county it is always measured at.
+    expect(new Set(notes)).toEqual(new Set([LABEL, SCOPE, 'surrounding county']));
+    expect(notes.filter((n) => n === SCOPE).length, 'growth did not take its own `growth_scope`').toBe(1);
+    expect(notes.filter((n) => n === 'surrounding county').length, 'payroll did not name the county').toBe(1);
     expect(notes.some((n) => n.includes('metro median')), 'the AREA wording reached LOCATION mode').toBe(false);
-    // The measurement: how many lines that note takes on a card, so the cost of the repetition is
-    // a number in the record and not an impression. One line is 1.4 × 10.5 px ≈ 15 px.
-    const lines = await strip.locator('span[style*="font-size: 10.5px"]').first()
-      .evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).fontSize) / 1.4));
-    expect(lines, 'the note is rendered with no height at all').toBeGreaterThan(0);
-    console.log(`[A31] LOCATION value note "${LABEL}" renders on ${lines} line(s), on each of ${notes.length} cards`);
+    // ONE STRING PER FACT (A24.44–A24.57), measured on the rendered strip rather than asserted:
+    // the basis belongs to the mode sub-line and each card's own note, and to nothing else.
+    const sources = await strip.locator('div[style*="font-size: 10px"]').allInnerTexts();
+    expect(sources.length, 'the strip rendered no source lines at all').toBeGreaterThan(0);
+    for (const src of sources) {
+      expect(src, `a source line repeats the basis: "${src}"`).not.toContain(LABEL);
+      expect(src.trimEnd().endsWith('·'), `a source line ends in a dangling separator: "${src}"`).toBe(false);
+    }
+    const printed = (await strip.innerText()).split(LABEL).length - 1;
+    expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
+    console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
   });
 });

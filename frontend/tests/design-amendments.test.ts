@@ -365,6 +365,9 @@ describe('local design amendments (spec D15)', () => {
     // A24.44's and A31.11 A24.20's and A24.56's — and A31.5 reads A32's OWN output, which
     // is why this block sits after A32: ADAPT-STALE-3 replaced the line A31.5 used to read.
     'A31.1', 'A31.2', 'A31.3', 'A31.4', 'A31.5', 'A31.6', 'A31.7', 'A31.8', 'A31.9', 'A31.10', 'A31.11',
+    // Fix round 1 of Task SNAP (2026-09-13): A31.12 is CHAINED on A31.8's own two caption
+    // lines and A31.12b on A24.45's whole helper, so both run after the entries they read.
+    'A31.12', 'A31.12b',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -418,7 +421,11 @@ describe('local design amendments (spec D15)', () => {
     // and the tip ask it, and in LOCATION mode it is asked the selected practice's own label.
     // `stripBasis` — and with it `communities()`'s per-community `communityLabel`, A24.44 — is
     // gone under the bundle's own dead-code rule (A31.9).
-    expect(amended).toContain("            src: metaSource(k, sel ? locBasis : (AREA_LABEL[k] || \"\")),");
+    // …and A31.12 (fix round 1, 2026-09-13) takes the basis OFF the LOCATION arm: the card's
+    // own note carries the geography there, so the source line carries the dataset alone.
+    expect(amended).toContain("            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),");
+    expect(amended, 'metaSource still glues a separator onto an empty basis')
+      .toContain('  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;');
     expect(amended, 'the interim per-listing basis survived A31.8').not.toContain('stripBasis');
     expect(amended, "the community objects still carry a label nothing reads").not.toContain('communityLabel: p.communityLabel');
 
@@ -541,7 +548,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(298);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(300);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

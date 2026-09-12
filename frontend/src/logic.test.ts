@@ -3935,6 +3935,74 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     expect(dimmed('Median household income') + dimmed('Households')).toBeGreaterThan(0);
   });
 
+  // ---- A31.12 (fix round 1, 2026-09-13): the caption over a figure is that figure's own ------
+
+  it('LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s (A31.12)', () => {
+    // D-C48 (John, 2026-09-11), applied to this surface. In LOCATION mode every card read the
+    // listing's own `communityLabel` — "Within about 5 miles of the practice" — while `growth`
+    // is served at place-or-county with its own `growth_scope` and `econ` is the COUNTY CBP row
+    // everywhere and always (`app/census/serve.py`: "`econ_k` is county everywhere and always").
+    // On 28 of 29 QA listings that sentence was false on two of the six cards: the exact defect
+    // D-C48 removed from the docked panel's Population tile one day earlier.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { growthScope: string }).growthScope = 'Dallas';
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const note = (title: string) => c.renderVals().md.stripCards
+        .filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Population growth'), 'growth is measured at place or county, not at the ring').toBe('Dallas');
+      expect(note('Average practice payroll'), 'payroll is the county CBP row, everywhere and always').toBe('surrounding county');
+      // …and the four figures the ring DOES describe keep the ring's own label.
+      expect(note('Median household income')).toBe(ring);
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+      expect(note('Veterinary competition')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { growthScope?: string }).growthScope;
+    }
+  });
+
+  it('growth names the geography the API supplies, and A24.20\u2019s own phrase where it supplies none (A31.12)', () => {
+    // The design's own fixtures carry no `growth_scope` — `load.ts` leaves the key OFF the
+    // practice where the API sends null — so the fallback is what the reference and every
+    // approved state render, and it is A24.20's own wording for the same fact.
+    const p = austin()[0];
+    expect('growthScope' in (p as object), 'the fixture carries a scope, so this proves nothing').toBe(false);
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+    const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(card.valueNote).toBe('surrounding city or county');
+  });
+
+  it('in LOCATION mode the source line carries the DATASET alone \u2014 one string per fact (A31.12)', () => {
+    // A24.44–A24.57's own rule, measured on this surface: with the basis on both the mode
+    // sub-line and each card's own `valueNote`, the `src` line repeating it printed the
+    // geography TEN times on one strip, four cards printing it twice. The card's own note
+    // carries the geography; the source line carries where the number came from.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const src = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].src;
+      expect(src('Median household income')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Households')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Veterinary competition')).toBe('U.S. Census ZIP Code Business Patterns (2022), NAICS 541940');
+      for (const card of cards) {
+        expect(card.src.endsWith(' \u00b7 '), `${card.title}'s source line ends in a dangling separator`).toBe(false);
+        expect(card.src, `${card.title} prints the basis twice`).not.toContain(ring);
+      }
+      // AREA mode is untouched: there the card measures the MAP's polygons and names them,
+      // exactly as the legend and the tip do (A24.49/A24.50).
+      c.setState({ mdSel: null });
+      expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+        .toBe('U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract');
+    } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
+  });
+
   it('loadSummary discards an answer for a metro the member has already left', () => {
     let resolveIt: (v: unknown) => void = () => {};
     const adapter = {
@@ -5033,15 +5101,19 @@ describe('A24 — real boundary polygons', () => {
     try {
       c.setState({ mdSel: p.id });
       const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
-      expect(card.src).toBe(`U.S. Census ACS 5-year estimates (2023) · ${ring}`);
+      // A31.12 (fix round 1, 2026-09-13): the geography is named ONCE in LOCATION mode, on the
+      // card's own note; the source line carries the DATASET alone. One string per fact is
+      // A24.44–A24.57's own rule, and this surface was breaking it ten times over.
+      expect(card.src).toBe('U.S. Census ACS 5-year estimates (2023)');
       expect(card.valueNote).toBe(ring);
     } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
 
-    // …and the design's own wording where it does not, which is the reference path and every
-    // approved state — the design's fixtures carry no `communityLabel` at all.
+    // …and with no label served the note is still the design's own wording, which is the
+    // reference path and every approved state — the fixtures carry no `communityLabel` at all.
     c.setState({ mdSel: p.id });
     const bare = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
-    expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023) · community level');
+    expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023)');
+    expect(bare.valueNote).toBe('community level');
 
     // The LEGEND still names the map's own geography — that is what it describes, and it has not
     // moved: one string per fact, composed for the surface that prints it.
