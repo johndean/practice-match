@@ -2888,9 +2888,13 @@ class Component extends DCLogic {
             // geography. `growth` is measured at place or county and the API names it
             // (`growth_scope`); `econ` is the county CBP row everywhere and always. The
             // other four ARE the ring the label describes. D-C48's ruling, one surface over.
+            // D-C51: and the income card takes the API's own `income_note` where it is
+            // served - a catchment median is a household-weighted median of tract
+            // medians, never published, and the detail card has said so since A27.1.
             valueNote: sel
               ? (k === "growth" ? (sel.growthScope || "surrounding city or county")
-                : k === "econ" ? "surrounding county" : locBasis)
+                : k === "econ" ? "surrounding county"
+                : k === "income" ? (sel.incomeNote || locBasis) : locBasis)
               : (sum ? "metro median · " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : "metro median"),
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis

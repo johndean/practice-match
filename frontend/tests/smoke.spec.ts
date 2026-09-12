@@ -1591,7 +1591,12 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const stub = listingsStubUrl();
     expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
     const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
-    for (const item of body.items) { item.community_label = LABEL; item.growth_scope = SCOPE; }
+    const APPROX = `${LABEL} \u00b7 approximate`;
+    for (const item of body.items) {
+      item.community_label = LABEL;
+      item.growth_scope = SCOPE;
+      item.income_note = APPROX;   // D-C51: the API's own qualifier for a catchment median
+    }
     await page.route(
       (url) => matchesListings(url.href, stub as string),
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
@@ -1607,7 +1612,8 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     expect(notes.length, 'the strip rendered no value notes at all').toBeGreaterThan(0);
     // Four of the six cards ARE the ring the label describes; growth names the geography the API
     // served and payroll names the county it is always measured at.
-    expect(new Set(notes)).toEqual(new Set([LABEL, SCOPE, 'surrounding county']));
+    expect(new Set(notes)).toEqual(new Set([LABEL, APPROX, SCOPE, 'surrounding county']));
+    expect(notes.filter((n) => n === APPROX).length, 'the income card dropped the API\u2019s own qualifier (D-C51)').toBe(1);
     expect(notes.filter((n) => n === SCOPE).length, 'growth did not take its own `growth_scope`').toBe(1);
     expect(notes.filter((n) => n === 'surrounding county').length, 'payroll did not name the county').toBe(1);
     expect(notes.some((n) => n.includes('metro median')), 'the AREA wording reached LOCATION mode').toBe(false);

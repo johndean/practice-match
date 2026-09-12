@@ -6107,7 +6107,7 @@ const A31_11: Amendment = {
  *  fb17325..19b26d7. Two entries, one ruling each, both CHAINED on A31.8 and A24.45. */
 const SNAP1 = {
   date: '2026-09-13',
-  ruling: 'A31.12 (controller, 2026-09-13, fix round 1 of Task SNAP; D-C48 applied to this surface): LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s \u2014 growth is measured at place or county and carries its own `growth_scope`, payroll is the county CBP row everywhere and always \u2014 and in LOCATION mode the geography is named ONCE, on the card\u2019s own note, while the source line carries the dataset alone (A24.44\u2013A24.57\u2019s one-string-per-fact rule, measured on this surface: the basis printed TEN times on one strip).'
+  ruling: 'A31.12 (controller, 2026-09-13, fix round 1 of Task SNAP; D-C48 applied to this surface): LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s \u2014 growth is measured at place or county and carries its own `growth_scope`, payroll is the county CBP row everywhere and always \u2014 and in LOCATION mode the geography is named ONCE, on the card\u2019s own note, while the source line carries the dataset alone (A24.44\u2013A24.57\u2019s one-string-per-fact rule, measured on this surface: the basis printed TEN times on one strip). D-C51 (controller, 2026-09-13, the caption audit): the income card carries the API\u2019s own `income_note` where it serves one \u2014 a catchment median is a household-weighted median of tract medians, never published, and the detail card has qualified it since A27.1 while the strip printed the bare ring label beside the same number.'
 };
 
 /** A31.12 \u2014 the caption over a figure is that figure's own. CHAINED on A31.8, whose two
@@ -6139,9 +6139,13 @@ const A31_12: Amendment = {
     + "            // geography. `growth` is measured at place or county and the API names it\n"
     + "            // (`growth_scope`); `econ` is the county CBP row everywhere and always. The\n"
     + "            // other four ARE the ring the label describes. D-C48's ruling, one surface over.\n"
+    + "            // D-C51: and the income card takes the API's own `income_note` where it is\n"
+    + "            // served - a catchment median is a household-weighted median of tract\n"
+    + "            // medians, never published, and the detail card has said so since A27.1.\n"
     + "            valueNote: sel\n"
     + "              ? (k === \"growth\" ? (sel.growthScope || \"surrounding city or county\")\n"
-    + "                : k === \"econ\" ? \"surrounding county\" : locBasis)\n"
+    + "                : k === \"econ\" ? \"surrounding county\"\n"
+    + "                : k === \"income\" ? (sel.incomeNote || locBasis) : locBasis)\n"
     + "              : (sum ? \"metro median \u00b7 \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
     + "            // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so\n"
     + "            // this line carries the DATASET alone in LOCATION mode - measured, the basis\n"

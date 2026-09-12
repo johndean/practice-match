@@ -4009,6 +4009,36 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     }
   });
 
+  it('the income card carries the API\u2019s own approximate qualifier (A31.12, D-C51)', () => {
+    // The catchment median is a household-weighted median of tract medians — never published and
+    // never suppressible — so the API qualifies it with `income_note` ("Within about 5 miles of
+    // the practice · approximate", `app/census/serve.py`). The DETAIL card has rendered that since
+    // A27.1; the strip printed the bare ring label beside the same number, so one figure was
+    // qualified on one surface and not on the other.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { incomeNote: string }).incomeNote = `${ring} \u00b7 approximate`;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const note = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Median household income')).toBe(`${ring} \u00b7 approximate`);
+      // …and the other five are untouched by it: the qualifier belongs to the median alone.
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { incomeNote?: string }).incomeNote;
+    }
+    // With no note served — the reference path, and every approved state: the design's fixtures
+    // carry no `incomeNote` and `load.ts` leaves the key off where the API sends null.
+    expect('incomeNote' in (p as object), 'the fixture carries a note, so this proves nothing').toBe(false);
+    c.setState({ mdSel: p.id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0].valueNote)
+      .toBe('community level');
+  });
+
   it('growth names the geography the API supplies, and A24.20\u2019s own phrase where it supplies none (A31.12)', () => {
     // The design's own fixtures carry no `growth_scope` — `load.ts` leaves the key OFF the
     // practice where the API sends null — so the fallback is what the reference and every
