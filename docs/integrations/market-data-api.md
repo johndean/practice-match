@@ -231,6 +231,14 @@ both are served, the first at a delivery tolerance of 0.78 CSS px. A client shou
 viewport `bbox` rather than rely on the metro default: the metro envelope is a larger answer than
 any one screen needs.
 
+**The `bbox` is what selects rows; the `{cbsa}` is not.** The query filters on summary level,
+vintage and `ST_Intersects(geom, bbox)` and never on the CBSA — the path segment chooses the
+whole-metro box a request with no `bbox` falls back to, the cache key, and the `404` for a metro
+that does not exist, and nothing else. So a box is answered for the ground it names even when that
+ground is outside the metro it was asked under: a client whose map has panned off the selected
+metro keeps receiving real polygons under the view, and **a client must not decline to send a box
+on the grounds that it lies outside the metro** — doing so blanks exactly that case.
+
 **Licence.** A layer whose dataset is not `cleared` answers `200` with `"features": []` and
 `"state": "disabled"` or `"blocked"` (+ `blocked_reason`) — never a `403`, because `/api/layers`
 already lists a blocked layer so the UI can render it as unavailable, and a map that 403s cannot
