@@ -43,6 +43,7 @@ from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import vintage as census_vintage
 from app.census import zbp as census_zbp
+from app.census.states import STATES as _STATES
 from scripts import census_load
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,7 +69,7 @@ def test_cmd_tiger_queries_market_state_and_prints_row_counts(scratch_dsn, monke
     assert census_load.main(["tiger"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["vintage"] == "2023"
     out = capsys.readouterr().out
     assert "140:cb_2023_48_tract_500k.zip: 2 rows" in out
@@ -324,7 +325,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     assert census_load.main(["acs"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     # the default `--dataset` list is all three ACS datasets, in order.
     assert captured["dataset_keys"] == ["acs5", "acs5_subject", "acs5_prior"]
     out = capsys.readouterr().out
@@ -609,7 +610,7 @@ def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
     assert census_load.main(["cbp"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "cbp: 42 rows" in capsys.readouterr().out
 
 
@@ -714,7 +715,7 @@ def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
 
     assert census_load.main(["zbp"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "zbp: 18 rows" in capsys.readouterr().out
 
 
@@ -837,7 +838,7 @@ def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, 
 
     assert census_load.main(["bds", "--year", "2022"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2022
     assert "bds 2022: 6 rows" in capsys.readouterr().out
 
@@ -960,7 +961,7 @@ def test_cmd_qwi_loads_a_given_quarter_without_resolving_latest(scratch_dsn, mon
 
     assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert captured["trimmed_keep_default"] == 20
     out = capsys.readouterr().out
@@ -988,7 +989,7 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
 
     assert census_load.main(["qwi"]) == 0
 
-    assert captured["state"] == "06"  # states[0], market_state's first row
+    assert captured["state"] == _STATES[0][1] == "01"  # states[0], market_state's first row — Alabama since 065
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert "qwi 2024Q4: 6 rows (0 trimmed)" in capsys.readouterr().out
 

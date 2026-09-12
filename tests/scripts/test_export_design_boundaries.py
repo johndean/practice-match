@@ -36,8 +36,8 @@ def _geo(conn: psycopg2.extensions.connection, geo_id: str, level: str, name: st
 @pytest.fixture
 def world(conn: psycopg2.extensions.connection) -> psycopg2.extensions.connection:
     _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
-    _geo(conn, "78704", "860", "ZCTA5 78704", _INSIDE)
-    _geo(conn, "77001", "860", "ZCTA5 77001", _OUTSIDE)
+    _geo(conn, "48453001100", "140", "Census Tract 11", _INSIDE)
+    _geo(conn, "48201010100", "140", "Census Tract 101", _OUTSIDE)
     _geo(conn, "4805000", "160", "Austin", _INSIDE)
     _geo(conn, "48453", "050", "Travis County", _INSIDE)
     return conn
@@ -45,8 +45,8 @@ def world(conn: psycopg2.extensions.connection) -> psycopg2.extensions.connectio
 
 def test_export_returns_one_collection_per_ruled_level_scoped_to_the_metro(world: psycopg2.extensions.connection) -> None:
     fixture = EB.export(world, EB.DESIGN_CBSA, "2023")
-    assert sorted(fixture) == ["050", "160", "860"]
-    assert [f["id"] for f in fixture["860"]["features"]] == ["78704"], "a ZCTA outside the metro was exported"
+    assert sorted(fixture) == ["050", "140", "160"]
+    assert [f["id"] for f in fixture["140"]["features"]] == ["48453001100"], "a tract outside the metro was exported"
     assert [f["id"] for f in fixture["160"]["features"]] == ["4805000"]
     assert [f["id"] for f in fixture["050"]["features"]] == ["48453"]
     for collection in fixture.values():
@@ -54,10 +54,10 @@ def test_export_returns_one_collection_per_ruled_level_scoped_to_the_metro(world
 
 
 def test_every_feature_carries_a_geo_id_a_name_a_centroid_and_a_geometry(world: psycopg2.extensions.connection) -> None:
-    feature = EB.export(world, EB.DESIGN_CBSA, "2023")["860"]["features"][0]
-    assert feature["type"] == "Feature" and feature["id"] == "78704"
-    assert feature["properties"]["geo_id"] == "78704"
-    assert feature["properties"]["name"] == "ZCTA5 78704"
+    feature = EB.export(world, EB.DESIGN_CBSA, "2023")["140"]["features"][0]
+    assert feature["type"] == "Feature" and feature["id"] == "48453001100"
+    assert feature["properties"]["geo_id"] == "48453001100"
+    assert feature["properties"]["name"] == "Census Tract 11"
     lat, lng = feature["properties"]["c"]
     assert 30.2 < lat < 30.3 and -97.8 < lng < -97.7, "the centroid is not [lat, lng] in WGS84"
     assert feature["geometry"]["type"] in ("Polygon", "MultiPolygon")
@@ -85,7 +85,7 @@ def test_the_module_text_is_pure_ascii_one_line_and_names_its_generator(world: p
     assert len(body) == 1, "the literal must be exactly one line, so a diff on it is one line"
     literal = body[0].split(" = ", 1)[1].rstrip(";").strip()
     assert literal.startswith("'") and literal.endswith("'")
-    assert json.loads(literal[1:-1].replace("\\'", "'").replace("\\\\", "\\"))["860"]["features"][0]["id"] == "78704"
+    assert json.loads(literal[1:-1].replace("\\'", "'").replace("\\\\", "\\"))["140"]["features"][0]["id"] == "48453001100"
 
 
 def test_a_name_carrying_a_quote_or_a_backslash_survives_the_single_quoted_string(conn: psycopg2.extensions.connection) -> None:
@@ -102,7 +102,7 @@ def test_a_name_carrying_a_quote_or_a_backslash_survives_the_single_quoted_strin
     makes the escaping real rather than decorative."""
     _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
     nasty = "O'Brien \\ d'Alene"
-    _geo(conn, "78704", "860", nasty, _INSIDE)
+    _geo(conn, "48453001100", "140", nasty, _INSIDE)
 
     text = EB.module_text(EB.export(conn, EB.DESIGN_CBSA, "2023"))
     assert text.isascii()
@@ -113,7 +113,7 @@ def test_a_name_carrying_a_quote_or_a_backslash_survives_the_single_quoted_strin
     # Decode it the way a JavaScript engine decodes a single-quoted string literal, then parse.
     # If either escape were missing this raises rather than returning the name.
     decoded = payload[1:-1].replace("\\'", "'").replace("\\\\", "\\")
-    assert json.loads(decoded)["860"]["features"][0]["properties"]["name"] == nasty
+    assert json.loads(decoded)["140"]["features"][0]["properties"]["name"] == nasty
 
     # And the closing quote really is the LAST one: an unescaped apostrophe would put a bare `'`
     # inside the body and end the string early.
@@ -127,7 +127,7 @@ def test_main_writes_the_module_and_reports_the_counts(world: psycopg2.extension
     out = tmp_path / "design-boundary-fixture.ts"
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert EB.main(["--out", str(out), "--vintage", "2023"]) == 0
-    assert "860=1" in capsys.readouterr().out
+    assert "140=1" in capsys.readouterr().out
     assert out.read_text(encoding="utf-8").count("DESIGN_AREAS_LITERAL") == 1
 
 
@@ -193,9 +193,9 @@ def _postgis_verdict(conn: psycopg2.extensions.connection, geometry: dict[str, o
 
 def test_a_polygon_simplification_leaves_invalid_is_repaired_before_it_is_exported(conn: psycopg2.extensions.connection) -> None:
     _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
-    _geo(conn, "78704", "860", "ZCTA5 78704", _HOLE_OUTSIDE_SHELL)
+    _geo(conn, "48453001100", "140", "Census Tract 11", _HOLE_OUTSIDE_SHELL)
 
-    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["860"]["features"][0]
+    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["140"]["features"][0]
     valid, geom_type = _postgis_verdict(conn, feature["geometry"])
     assert valid, "an invalid polygon reached the fixture — D-C49 ruled the repair, not a tolerance change"
     assert geom_type == "MULTIPOLYGON", "repairing a hole that lies outside its shell splits it into parts"
@@ -206,9 +206,9 @@ def test_a_repair_that_yields_a_geometry_collection_exports_only_its_polygons(co
     A `GeometryCollection` is legal GeoJSON and `L.geoJSON` would draw the line as a stroke the
     design has no class for, so the areal parts are extracted explicitly rather than trusted."""
     _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
-    _geo(conn, "78704", "860", "ZCTA5 78704", _SPIKE)
+    _geo(conn, "48453001100", "140", "Census Tract 11", _SPIKE)
 
-    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["860"]["features"][0]
+    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["140"]["features"][0]
     valid, geom_type = _postgis_verdict(conn, feature["geometry"])
     assert valid
     assert geom_type == "MULTIPOLYGON", f"a {geom_type} reached the fixture"
