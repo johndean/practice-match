@@ -1501,3 +1501,138 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     expect(Number(after.at(-1)!.split(',')[0])).toBeGreaterThan(Number(before.at(-1)!.split(',')[0]));
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the Market snapshot's two modes, in a
+// real browser and through the real adapter.
+//
+// The two approved states photograph both modes, and pixels cannot say WHY a number is what it
+// is: the point of this ruling is that the AREA figure comes from `GET /api/markets/{cbsa}/summary`
+// — the polygons the map shades — and not from the listings, and those two can agree by accident
+// on a fixture. So this reads the ANSWER the page itself received and the STRING the card printed,
+// and checks that the second follows the first.
+//
+// The answer is taken off the page's own `response` event rather than re-fetched through
+// `page.request`: an APIRequestContext does not go through `page.route`, so a second fetch would
+// reach the real API and read a different body from the one the app rendered — which is exactly
+// what a test like this must not do.
+// ---------------------------------------------------------------------------------------
+interface SummaryRow { layer: string; median: number | null; with_value: number; geo_label: string }
+
+test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', () => {
+  test('the strip reads the metro summary in AREA mode, and the practice in LOCATION', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const asked: string[] = [];
+    const answers: Promise<{ layers: SummaryRow[] }>[] = [];
+    page.on('response', (r) => {
+      if (!r.url().includes('/summary')) return;
+      asked.push(r.url());
+      answers.push(r.json() as Promise<{ layers: SummaryRow[] }>);
+    });
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    // The route was actually called, for the METRO and with no bbox — "metro median" names the
+    // metro, and a median over whatever is on screen would move with every pan.
+    expect(asked.length, 'the app never asked for the metro summary').toBeGreaterThan(0);
+    expect(asked.at(-1)).toMatch(/\/api\/markets\/\d+\/summary$/);
+    const summary = await answers[answers.length - 1];
+    const income = summary.layers.find((l) => l.layer === 'income')!;
+    expect(income.median, 'the summary answered no median, so this case proves nothing').not.toBeNull();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // The figure the card prints IS the answered median, formatted by the design's own
+    // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(income.median! / 1000)}K`);
+    // …and it names the geography and the count it summarised, which is the whole correction: a
+    // number under a caption that does not describe it is the defect D-C50 removed. The count is
+    // grouped by the PAGE's own `toLocaleString`, evaluated in the page rather than here, so this
+    // assertion reads the same separator the design does on a browser in any locale.
+    const grouped = await page.evaluate((n: number) => n.toLocaleString(), income.with_value);
+    // Fix round 1's Addendum (2026-09-13): the caption states exactly what the number IS and the
+    // word "metro" is gone from it — the Census PUBLISHES a metro median at summary level 310
+    // (97,638 ± 1,163 for CBSA 12420) and this is the median OF the metro's valued areas (94,801
+    // on the same metro), so "metro median" beside a published figure gave a reader two different
+    // numbers under one name. The heading still says "AREA · … metro", which is true of the SCOPE.
+    await expect(card).toContainText(`median of ${grouped} ${income.geo_label}s`);
+    await expect(card, 'the caption still claims to be the metro’s own median').not.toContainText('metro median');
+
+    // LOCATION: selecting a practice switches the header and the figures, and the AREA caption
+    // leaves the card entirely — "median of N areas" is AREA mode's wording alone.
+    await page.getByText('Cedar Park').first().click();
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    await expect(strip.getByText(/^AREA · /)).toHaveCount(0);
+    await expect(card).not.toContainText('median of');
+    // Closing the docked panel returns to AREA — the ruling's own last sentence.
+    await page.getByRole('button', { name: 'Close panel' }).first().click();
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // The LIVE data path, which no fixture reaches: 28 of 29 QA listings carry a `community_label`
+  // (D-C38), and in LOCATION mode the ruling puts that label on every card as its value note. The
+  // design's own fixtures carry none, so the reference — and therefore both approved states —
+  // renders the short fallback "community level" and can never photograph this. This is the case
+  // that does, and it MEASURES the consequence rather than only asserting the string: the label is
+  // 38 characters at 10.5 px beside a 24 px figure in a 232 px card, so the note wraps, and the
+  // number recorded here is what a reader needs to judge whether the ruling wants revisiting.
+  //
+  // The listings stub is written inline rather than reached for: `serveListings` is scoped to the
+  // docked-panel suite above, and hoisting it would be a drive-by edit to a passing file.
+  test('LOCATION mode names each figure’s own geography, once (A31.12)', async ({ page }) => {
+    // Fix round 1 (2026-09-13). Before it this case asserted every card's note WAS the ring label,
+    // which is what the task shipped and what D-C48 had already ruled against one surface over:
+    // `growth` is served at place-or-county with its own `growth_scope` and `econ` is the county
+    // CBP row everywhere and always, so the ring sentence was false on two of the six cards on 28
+    // of 29 QA listings. The LIVE path is what is measured — the API's own fields through
+    // `load.ts` onto the card — because that is the only place the defect was visible.
+    await prepare(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    const SCOPE = 'Travis County';
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    const APPROX = `${LABEL} \u00b7 approximate`;
+    for (const item of body.items) {
+      item.community_label = LABEL;
+      item.growth_scope = SCOPE;
+      item.income_note = APPROX;   // D-C51: the API's own qualifier for a catchment median
+    }
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+    await page.getByText('Cedar Park').first().click();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    const notes = await strip.locator('span[style*="font-size: 10.5px"]').allInnerTexts();
+    expect(notes.length, 'the strip rendered no value notes at all').toBeGreaterThan(0);
+    // Four of the six cards ARE the ring the label describes; growth names the geography the API
+    // served and payroll names the county it is always measured at.
+    expect(new Set(notes)).toEqual(new Set([LABEL, APPROX, SCOPE, 'surrounding county']));
+    expect(notes.filter((n) => n === APPROX).length, 'the income card dropped the API\u2019s own qualifier (D-C51)').toBe(1);
+    expect(notes.filter((n) => n === SCOPE).length, 'growth did not take its own `growth_scope`').toBe(1);
+    expect(notes.filter((n) => n === 'surrounding county').length, 'payroll did not name the county').toBe(1);
+    expect(notes.some((n) => n.includes('metro median')), 'the AREA wording reached LOCATION mode').toBe(false);
+    // ONE STRING PER FACT (A24.44–A24.57), measured on the rendered strip rather than asserted:
+    // the basis belongs to the mode sub-line and each card's own note, and to nothing else.
+    const sources = await strip.locator('div[style*="font-size: 10px"]').allInnerTexts();
+    expect(sources.length, 'the strip rendered no source lines at all').toBeGreaterThan(0);
+    for (const src of sources) {
+      expect(src, `a source line repeats the basis: "${src}"`).not.toContain(LABEL);
+      expect(src.trimEnd().endsWith('·'), `a source line ends in a dangling separator: "${src}"`).toBe(false);
+    }
+    const printed = (await strip.innerText()).split(LABEL).length - 1;
+    expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
+    console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
+  });
+});

@@ -355,9 +355,21 @@ describe('local design amendments (spec D15)', () => {
     'A30',
     // A32 — the metro switch waits for the map to move before asking (Task ADAPT-STALE-3,
     // 2026-09-12). One literal edit, CHAINED on A24.18: its `find` is the `this.loadAreas(v);`
-    // line A24.18 put in `setMarket`, so it is appended after it. A31 belongs to the snapshot
-    // branch and is not in this list.
+    // line A24.18 put in `setMarket`, so it is appended after it.
     'A32',
+    // A31 — the Market snapshot has two modes, AREA and LOCATION (Task SNAP, ruling D-C50 as
+    // revised by the stakeholder, 2026-09-12: the strip described the LISTINGS' own
+    // five-mile rings while the map beside it painted Census geography, and a clicked
+    // practice changed nothing at all). Appended last, as every family is, and it has to
+    // be: A31.4 reads A24.17's line, A31.8 the whole A24.53/A24.54/A24.55 block, A31.9
+    // A24.44's and A31.11 A24.20's and A24.56's — and A31.5 reads A32's OWN output, which
+    // is why this block sits after A32: ADAPT-STALE-3 replaced the line A31.5 used to read.
+    'A31.1', 'A31.2', 'A31.3', 'A31.4', 'A31.5', 'A31.6', 'A31.7', 'A31.8', 'A31.9', 'A31.10', 'A31.11',
+    // Fix round 1 of Task SNAP (2026-09-13): A31.12 is CHAINED on A31.8's own two caption
+    // lines and A31.12b on A24.45's whole helper, so both run after the entries they read.
+    'A31.12', 'A31.12b', 'A31.12c',
+    // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
+    'A31.13', 'A31.13b',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -404,9 +416,30 @@ describe('local design amendments (spec D15)', () => {
     // carry the dataset alone, and `metaSource` composes the rest for the surface that prints it.
     expect(amended).toContain('const metaSource = (k, basis) => {');
     expect(amended).toContain('    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",');
+    // A31.12c (fix round 1, 2026-09-13, Minor 3): `growth` was the ONE layer A24.45's split
+    // left carrying a whole `source` sentence ending "\u00b7 community level", while its AREA card
+    // measures PLACE polygons and `AREA_LABEL.growth` is "Place (city/town)" — so the vaguer
+    // wording stood on the card AND on the map legend. It carries the dataset now.
+    expect(amended).toContain('    dataset: "U.S. Census ACS population estimates, 2015\u20132023",');
+    expect(amended, 'growth still bakes a geography into its own source line')
+      .not.toContain('population estimates, 2015\u20132023 \u00b7 community level');
+    // …and the footnote's growth caveat is untouched by it, which is what keeps the
+    // paragraph true of both modes (A31.11 / A24.20).
+    expect(amended).toContain('Population growth is measured for the surrounding city or county, not the tract.');
     expect(amended, 'a layer still carries the map geography baked into its source line')
       .not.toContain('estimates (2023) \u00b7 Census tract",');
-    expect(amended).toContain('            src: metaSource(k, stripBasis),');
+    // A31.8 (Task SNAP, D-C50 as revised) SUPERSEDES the interim basis: in AREA mode the card
+    // measures the MAP's own geography, so `metaSource` is asked the same question the legend
+    // and the tip ask it, and in LOCATION mode it is asked the selected practice's own label.
+    // `stripBasis` — and with it `communities()`'s per-community `communityLabel`, A24.44 — is
+    // gone under the bundle's own dead-code rule (A31.9).
+    // …and A31.12 (fix round 1, 2026-09-13) takes the basis OFF the LOCATION arm: the card's
+    // own note carries the geography there, so the source line carries the dataset alone.
+    expect(amended).toContain("            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),");
+    expect(amended, 'metaSource still glues a separator onto an empty basis')
+      .toContain('  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;');
+    expect(amended, 'the interim per-listing basis survived A31.8').not.toContain('stripBasis');
+    expect(amended, "the community objects still carry a label nothing reads").not.toContain('communityLabel: p.communityLabel');
 
     // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
     // the legend gains one row reading exactly "No data".
@@ -447,11 +480,15 @@ describe('local design amendments (spec D15)', () => {
     // the growth geography is exactly the fact the snapshot cannot state — its card still reads
     // "· community level" — so the paragraph carries BOTH sentences, in that order.
     const footnote = amended.split('<p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">')[1].split('</p>')[0];
-    expect(footnote).toContain('The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer\u2019s legend names; the snapshot\u2019s figures describe the area around each practice.');
+    // A31.11 (Task SNAP, D-C50 as revised) SUPERSEDES A24.56's sentence and the opening clause it
+    // restated: in AREA mode the figures describe the metro's Census areas and NO practice at all,
+    // so "Figures describe the area around each practice" became false by this release's own act
+    // (the A27.5 rule). The paragraph states both modes now, and A24.20's growth caveat still
+    // stands beside them byte for byte, because growth is measured at place or county in either.
+    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own community figure.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
-    // …and the opening clause is stated ONCE: A24.56's first draft ended on the same words the
-    // paragraph opens with.
-    expect(footnote.split('not the practice itself'), 'the paragraph repeats its own opening clause').toHaveLength(2);
+    // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
+    expect(footnote, 'the superseded per-practice sentence survives in the footnote').not.toContain('not the practice itself');
     expect(amended).not.toContain('production draws Census ZCTA boundaries');
 
     // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
@@ -523,7 +560,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(287);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(303);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

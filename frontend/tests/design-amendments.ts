@@ -5765,6 +5765,515 @@ const A24_12: Amendment = {
   count: 1
 };
 
+/** A31 — THE MARKET SNAPSHOT HAS TWO MODES (Task SNAP; ruling D-C50 as revised by the
+ *  stakeholder, 2026-09-12, in his own words: "if this needs 2 modes, for the 'AREA' / 'CITY' and
+ *  when a user clicks a specific location it must render that facility market information — it
+ *  should reflect boldly which is being viewed CITY/AREA vs LOCATION").
+ *
+ *  WHAT WAS WRONG. The Browse "Market snapshot" strip computed its "metro median" and its seven
+ *  bars from `communities()` — one row per LISTING, each hospital's own five-mile ring — while
+ *  the map beside it painted Census geography per layer. Audited on QA 304b80f, Dallas: the strip
+ *  said Households **162K** where the map's tracts hold 0–5,988, and Competition **41** where its
+ *  ZIP areas hold 3–16. The bars were the first seven hospitals in listing order
+ *  (`vals.slice(0, 7)`), which is not a distribution at all. In the design's fixture era the map
+ *  mosaic was built from those same listing figures, so both agreed by construction; the tract map
+ *  broke that identity and nobody noticed, because the two surfaces are read separately.
+ *  A24.44–A24.56 (D-C50's INTERIM) made the caption honest about that — "· community level", the
+ *  practice-area label — which was the right holding fix and is what this supersedes.
+ *
+ *  THE TWO MODES.
+ *    * **AREA** — nothing selected. Every card is the metro as the MAP paints it: the median and
+ *      the distribution over the polygons of that layer's own geography, from the new
+ *      `GET /api/markets/{cbsa}/summary`, with the geography and the count named ("metro median ·
+ *      1,791 Census tracts").
+ *    * **LOCATION** — a practice selected, its docked panel open. Every card is THAT practice's
+ *      own community figure — the same `comms` row the panel and the Community Context card
+ *      already read — and the bars stay the METRO's distribution with the class the practice
+ *      falls in kept at full strength and the rest dimmed, so the two modes read against each
+ *      other instead of the card repeating a number the panel already shows. Closing the panel
+ *      returns to AREA.
+ *  The mode is stated first and in the design's own 800-weight heading, and the two words are
+ *  never shown at once.
+ *
+ *  WHERE THE SUMMARY COMES FROM is A24.14's ternary exactly: the adapter's where there is one,
+ *  the design's own `summarySet()` where there is not. That is what keeps the reference and the
+ *  app on the same pixels — the oracle answers the app with the design's own distribution
+ *  (`frontend/tests/design-summary.mjs`, derived from `summarySet` as `design-boundaries.mjs` is
+ *  derived from `areaSet`) — and it is why `browse-market-strip` re-bases and a second state,
+ *  `browse-market-strip-location`, is appended: the AREA cards now read the fixture POLYGONS'
+ *  median rather than the LISTINGS', which is the whole point of the ruling, and LOCATION mode
+ *  had no approved state at all. */
+const SNAP = {
+  date: '2026-09-12',
+  ruling: "if this needs 2 modes, for the 'AREA' / 'CITY' and when a user clicks a specific location it must render that facility market information — it should reflect boldly which is being viewed CITY/AREA vs LOCATION (D-C50 as revised, Task SNAP)"
+};
+
+/** A31.1 — the geography's own plural, for the one place on the strip that COUNTS areas. Four
+ *  strings, the ruling's own words; a label this table does not carry is printed as it comes,
+ *  because a pluralisation RULE would invent "Place (city/town)s". Beside `AREA_LABEL`, whose
+ *  keys it answers. */
+const A31_1: Amendment = {
+  id: 'A31.1', ...SNAP,
+  find: 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };\n',
+  replace: 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };\n'
+    + '// A31 (D-C50 as revised): the same geographies in the plural, for the snapshot strip\'s own\n'
+    + '// "metro median · 1,791 Census tracts". A label absent from this table is printed as it\n'
+    + '// comes: a pluralisation RULE would produce "Place (city/town)s".\n'
+    + 'const AREA_PLURAL = { "Census tract": "Census tracts", "Place (city/town)": "places", "County": "counties", "ZIP Code Tabulation Area": "ZIP areas" };\n',
+  count: 1
+};
+
+/** A31.2 — the state key, beside A24.16's own `mdAreas`. `null` is "not asked yet"; `{}` is
+ *  "asked and refused", which is what the strip's own fallback reads. */
+const A31_2: Amendment = {
+  id: 'A31.2', ...SNAP,
+  find: '    mdAreas: null,\n',
+  replace: '    mdAreas: null,\n    mdSummary: null,\n',
+  count: 1
+};
+
+/** A31.3 — one loader, in `loadAreas`' own shape and beside it. Simpler than its twin in exactly
+ *  one way, and deliberately: there is no viewport term, because the summary describes the METRO
+ *  and a pan cannot change it — which is also why it is asked for once per metro rather than once
+ *  per settled view. The market guard is `loadAreas`' own: an answer for a metro the member has
+ *  left is discarded rather than painted over the one they are on. */
+const A31_3: Amendment = {
+  id: 'A31.3', ...SNAP,
+  find: '  loadAreas(market, keep) {\n',
+  replace: '  // A31 (D-C50 as revised): the metro-wide summary the snapshot strip\'s AREA mode reads.\n'
+    + '  // `loadAreas`\' own shape, minus the viewport: this describes the METRO, so a pan cannot\n'
+    + '  // change it and it is asked for once per metro. A refusal empties it rather than leaving\n'
+    + '  // the previous metro\'s figures up, and an answer for a metro the member has already left\n'
+    + '  // is discarded, which is the same rule for the same reason.\n'
+    + '  loadSummary(market) {\n'
+    + '    if (!this.props.market || !this.props.market.summary) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    this.setState({ mdSummary: null });\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked;\n'
+    + '    this.props.market.summary(asked).then(\n'
+    + '      (rows) => { if (mine()) this.setState({ mdSummary: rows }); },\n'
+    + '      () => { if (mine()) this.setState({ mdSummary: {} }); }\n'
+    + '    );\n'
+    + '  }\n'
+    + '\n'
+    + '  loadAreas(market, keep) {\n',
+  count: 1
+};
+
+/** A31.4 — the boot, one line after A24.17's own. CHAINED on A24.17. */
+const A31_4: Amendment = {
+  id: 'A31.4', ...SNAP,
+  find: '    this.loadAreas(this.state.market);\n',
+  replace: '    this.loadAreas(this.state.market);\n    this.loadSummary(this.state.market);\n',
+  count: 1
+};
+
+/** A31.5 — a metro change. CHAINED on **A32**, not on A24.18: ADAPT-STALE-3 replaced that line
+ *  with a branch, so A24.18's own bytes no longer occur in the file and this entry reads A32's
+ *  whole output instead.
+ *
+ *  The summary is asked AT ONCE, outside that branch, and deliberately: A32 waits because the box
+ *  `loadAreas` would send is the one the PREVIOUS metro is still settled on, and this question
+ *  carries no box at all — it is the METRO's own distribution, which the map moving cannot change.
+ *  Waiting would leave the strip on the old metro's figures until the map settled, which is the
+ *  stale-caption defect one surface over. Applied to the `setMarket` A13.1 wrote, whose
+ *  `mdSel: null` A30 added, so a metro change now closes the panel AND re-reads the new metro's
+ *  distribution — which is AREA mode arriving correct. */
+const A31_5: Amendment = {
+  id: 'A31.5', ...SNAP,
+  find: '    // A32: this runs BEFORE the map has moved, so the box the adapter would send is the one\n    // the PREVIOUS metro is still settled on -- a question about ground nobody is looking at,\n    // whose answer `loadAreas` own guard then discards. With a viewport-publishing adapter and\n    // a metro whose centre is somewhere else it is not asked: the shading goes PENDING and the\n    // settled-view listener asks once, with the box the new metro actually settles on. The same\n    // metro re-selected, a metro MARKETS no longer holds, and every path with no viewport\n    // adapter keep the immediate load -- there is no move to wait for.\n    const from = MARKETS[this.state.market || "Austin, TX"], to = MARKETS[v];\n    const willMove = !!(this.props.market && this.props.market.viewport && from && to\n      && (from.center[0] !== to.center[0] || from.center[1] !== to.center[1]));\n    if (willMove) this.setState({ mdAreas: null });\n    else this.loadAreas(v);\n',
+  replace: '    // A31: the summary is METRO-wide and carries no bbox, so a metro change asks for it at\n'
+    + "    // once -- A32's wait below is about the BOX the map has not moved to yet, and this\n"
+    + '    // question does not use one. Waiting would leave the strip on the previous metro.\n'
+    + '    this.loadSummary(v);\n'
+    + '    // A32: this runs BEFORE the map has moved, so the box the adapter would send is the one\n    // the PREVIOUS metro is still settled on -- a question about ground nobody is looking at,\n    // whose answer `loadAreas` own guard then discards. With a viewport-publishing adapter and\n    // a metro whose centre is somewhere else it is not asked: the shading goes PENDING and the\n    // settled-view listener asks once, with the box the new metro actually settles on. The same\n    // metro re-selected, a metro MARKETS no longer holds, and every path with no viewport\n    // adapter keep the immediate load -- there is no move to wait for.\n    const from = MARKETS[this.state.market || "Austin, TX"], to = MARKETS[v];\n    const willMove = !!(this.props.market && this.props.market.viewport && from && to\n      && (from.center[0] !== to.center[0] || from.center[1] !== to.center[1]));\n    if (willMove) this.setState({ mdAreas: null });\n    else this.loadAreas(v);\n',
+  count: 1
+};
+
+/** A31.6 — the design's OWN answer to the summary endpoint, and the reference path's only source
+ *  of one. It is to `summary()` exactly what `areaSet()` is to `boundaries()`: measured over the
+ *  polygons `areaSet` draws, in the endpoint's own shape, so the two targets describe ONE
+ *  distribution and `frontend/tests/design-summary.mjs` can hand the app the same numbers the
+ *  reference computes for itself.
+ *
+ *  The quantile is `percentile_cont`'s, which is what the route computes: the fraction lands at
+ *  `p * (n - 1)` and the answer is interpolated between the two values it falls between. A
+ *  nearest-rank would name five members of the set instead of describing its shape, and the two
+ *  sides would then disagree on real data. */
+const A31_6: Amendment = {
+  id: 'A31.6', ...SNAP,
+  find: '  areaSet(layer) {\n',
+  replace: '  // A31 (D-C50 as revised): the design\'s own metro summary - one row per shaded layer,\n'
+    + '  // measured over the polygons `areaSet` draws, in `GET /api/markets/{cbsa}/summary`\'s own\n'
+    + '  // shape. The reference and the Claude Design preview have no adapter, so this is what\n'
+    + '  // their snapshot strip describes; the app has one and describes what the API answered.\n'
+    + '  // `percentile_cont`\'s own rule, so both sides agree on real data as well as on fixtures:\n'
+    + '  // the fraction lands at `p * (n - 1)` and is interpolated between the two values around it.\n'
+    + '  summarySet() {\n'
+    + '    const out = {};\n'
+    + '    FILL_KEYS.forEach((k) => {\n'
+    + '      const vals = this.areaSet(k).features.map((f) => f.properties.value).filter((v) => v != null).sort((a, b) => a - b);\n'
+    + '      const at = (p) => {\n'
+    + '        const i = p * (vals.length - 1);\n'
+    + '        const lo = Math.floor(i);\n'
+    + '        return vals[lo] + (vals[Math.min(vals.length - 1, lo + 1)] - vals[lo]) * (i - lo);\n'
+    + '      };\n'
+    + '      const quantiles = vals.length ? [0.1, 0.25, 0.5, 0.75, 0.9].map(at) : null;\n'
+    + '      out[k] = {\n'
+    + '        layer: k, geo_label: AREA_LABEL[k] || "", with_value: vals.length,\n'
+    + '        median: quantiles ? quantiles[2] : null, quantiles: quantiles\n'
+    + '      };\n'
+    + '    });\n'
+    + '    return out;\n'
+    + '  }\n'
+    + '\n'
+    + '  areaSet(layer) {\n',
+  count: 1
+};
+
+/** A31.7 — the mode, stated first and in the design's own 800-weight heading. Composed from the
+ *  docked panel's own Insights heading and the `md.panel.place` sub-line beneath it — the one
+ *  heading-and-geography pair the design already has, and the same declaration A27.7 composed the
+ *  panel's own sub-line from. No new token, no new size, no new colour.
+ *
+ *  AREA names the metro in the design's own phrase (`mdSubline`'s "<market> metro"); LOCATION
+ *  names the practice through `practiceName`, which is what the docked panel's header reads. The
+ *  AREA sub-line is the ruling's own sentence; LOCATION's is the listing's `communityLabel`, and
+ *  `hasStripModeSub` is false where there is none — an absent element rather than an empty one,
+ *  A27.7's own rule. */
+const A31_7: Amendment = {
+  id: 'A31.7', ...SNAP,
+  find: '      stripOpen: !!s.mdStrip,\n',
+  replace: '      stripOpen: !!s.mdStrip,\n'
+    + '      // A31 (D-C50 as revised): which of the two modes the six cards are in, first and in\n'
+    + '      // the design\'s own display weight. AREA is the metro as the map paints it; LOCATION\n'
+    + '      // is the selected practice\'s own community. Both words are never shown at once.\n'
+    + '      stripMode: sel ? "LOCATION · " + this.practiceName(sel) : "AREA · " + market + " metro",\n'
+    + '      hasStripModeSub: sel ? !!sel.communityLabel : true,\n'
+    + '      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",\n',
+  count: 1
+};
+
+/** A31.8 — the strip's own cards, both modes. CHAINED on A24.53/A24.54/A24.55, whose whole block
+ *  this replaces.
+ *
+ *  `stripBasis` goes with it: in AREA mode the basis is the MAP's geography (which is what the
+ *  card now measures, so `metaSource` is asked the same question the legend and the tip ask it,
+ *  A24.49/A24.50) and in LOCATION mode it is the practice's own label. Nothing reads the
+ *  per-community `communityLabel` afterwards, which A31.9 then deletes under the bundle's own
+ *  dead-code rule.
+ *
+ *  FIVE bars, not the design's seven: five is what the endpoint publishes (p10/p25/p50/p75/p90)
+ *  and the bar row is `flex: 1` per bar, so it divides whatever space it has and neither count
+ *  changes the card's approved layout — measured at the card's own 232 px minimum, 26.6 px per
+ *  bar at seven and 38.4 px at five. p10/p90 rather than the extremes because one outlying tract
+ *  is not a class a summary should draw. The dimming is `opacity: .6`, the value the strip's own
+ *  caret already carries, applied to the classes the practice is NOT in: no colour is changed,
+ *  because the colour IS the class, and nothing moves, because opacity is not layout. */
+const A31_8: Amendment = {
+  id: 'A31.8', ...SNAP,
+  find: "      stripCards: (() => {\n"
+    + "        // What the snapshot's own figures describe: `comms` is one row per LISTING, so the\n"
+    + "        // basis is the practice-area label the API serves, and only where the whole metro\n"
+    + "        // agrees on one. Otherwise the design's own words, which is what the reference path\n"
+    + "        // and every approved state renders - the design's fixtures carry no label at all.\n"
+    + "        const labels = comms.map((c) => c.communityLabel).filter(Boolean);\n"
+    + "        const stripBasis = (labels.length === comms.length && labels.length > 0 && labels.every((l) => l === labels[0]))\n"
+    + "          ? labels[0] : \"community level\";\n"
+    + "        return [\"income\", \"pets\", \"competition\", \"growth\", \"households\", \"econ\"]\n"
+    + "        .filter((k) => enabled(k === \"competition\" ? \"vets\" : k))\n"
+    + "        .map((k) => {\n"
+    + "          const meta = LAYER_META[k];\n"
+    + "          const cfg = VALUE_LAYERS[k];\n"
+    + "          const on = valueLayer === k;\n"
+    + "          const vals = comms.map((c) => (k === \"households\" ? c.hh : k === \"competition\" ? c.vets : c[k]))\n"
+    + "            .filter((raw) => raw != null)\n"
+    + "            .map((raw) => ({ raw: num(raw), t: this.bucket(k, num(raw)).t }));\n"
+    + "          const mid = vals.length ? vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] : undefined;\n"
+    + "          return {\n"
+    + "            title: meta.title,\n"
+    + "            value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,\n"
+    + "            valueNote: \"metro median\",\n"
+    + "            src: metaSource(k, stripBasis),\n"
+    + "            bars: vals.slice(0, 7).map((v) => ({\n"
+    + "              style: \"flex: 1; height: \" + Math.max(4, Math.round(6 + v.t * 24)) +\n"
+    + "                \"px; border-radius: 2px 2px 0 0; background: \" + ramp(k)[Math.min(3, Math.round(v.t * 3))] + \";\"\n"
+    + "            })),\n",
+  replace: "      stripCards: (() => {\n"
+    + "        // TWO MODES (D-C50 as revised, 2026-09-12). AREA - nothing selected - is the metro\n"
+    + "        // as the MAP paints it: the median and the shape of the distribution over the\n"
+    + "        // polygons of each layer's own geography. LOCATION - a practice selected, its docked\n"
+    + "        // panel open - is that practice's own community figures, the same `comms` row the\n"
+    + "        // panel and the Community Context card already read, shown AGAINST the metro's\n"
+    + "        // distribution so the two modes read against each other.\n"
+    + "        //\n"
+    + "        // The summary is the adapter's where there is one and the design's own where there\n"
+    + "        // is not, which is A24.14's ternary exactly: with an adapter the strip describes what\n"
+    + "        // the API answered or nothing at all, and with none it describes the design's own\n"
+    + "        // polygons - never the median of the LISTINGS, which is the figure this ruling\n"
+    + "        // removed from the screen.\n"
+    + "        const summary = this.props.market ? (s.mdSummary || {}) : this.summarySet();\n"
+    + "        const locBasis = sel ? (sel.communityLabel || \"community level\") : \"\";\n"
+    + "        return [\"income\", \"pets\", \"competition\", \"growth\", \"households\", \"econ\"]\n"
+    + "        .filter((k) => enabled(k === \"competition\" ? \"vets\" : k))\n"
+    + "        .map((k) => {\n"
+    + "          const meta = LAYER_META[k];\n"
+    + "          const cfg = VALUE_LAYERS[k];\n"
+    + "          const on = valueLayer === k;\n"
+    + "          const sum = summary[k];\n"
+    + "          // The selected practice's own figure, through the design's own two field aliases.\n"
+    + "          const own = (sel && selComm) ? (k === \"households\" ? selComm.hh : k === \"competition\" ? selComm.vets : selComm[k]) : undefined;\n"
+    + "          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);\n"
+    + "          // The metro's shape, as five bars, classed on the MAP's OWN breaks - `bucket`'s\n"
+    + "          // third argument, which is what the choropleth asks for (A24.25). These are the\n"
+    + "          // map's polygons, so they take the map's classes: the strip and the legend then\n"
+    + "          // agree about what colour a tract's figure is. Measured, not preferred - a Census\n"
+    + "          // tract holds about 1,500 households and the community breaks start at 10,000, so\n"
+    + "          // the community scale puts ALL FIVE quantiles in one class and draws five identical\n"
+    + "          // 6 px stubs, which is the same collapse A24.25 was cut to remove on the map.\n"
+    + "          const cls = (v) => Math.min(3, Math.round(this.bucket(k, num(v), true).t * 3));\n"
+    + "          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q), true).t);\n"
+    + "          // …and in LOCATION mode the class the practice's own figure falls in keeps its\n"
+    + "          // colour while the rest take the caret's own .6, so the card says WHERE in the\n"
+    + "          // metro the practice sits rather than repeating its number. ONLY where the two are\n"
+    + "          // one measurement: the practice's figure is its five-mile ring's and the metro's is\n"
+    + "          // a tract's, a place's or a county's, and those are the same scale only for a RATE\n"
+    + "          // or a MEDIAN - exactly the layers `AREA_LAYERS` does not re-scale. Marking a ring's\n"
+    + "          // household COUNT inside a distribution of tract counts would be this ruling's own\n"
+    + "          // defect, one card over, so the three count layers carry the distribution undimmed.\n"
+    + "          const here = (sel && own != null && !AREA_LAYERS[k]) ? cls(own) : null;\n"
+    + "          return {\n"
+    + "            title: meta.title,\n"
+    + "            value: (shown !== undefined) ? this.fmtMetric(k, shown) : undefined,\n"
+    + "            valueNote: sel ? locBasis : (sum ? \"metro median · \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
+    + "            src: metaSource(k, sel ? locBasis : (AREA_LABEL[k] || \"\")),\n"
+    + "            bars: dist.map((t) => ({\n"
+    + "              style: \"flex: 1; height: \" + Math.max(4, Math.round(6 + t * 24)) +\n"
+    + "                \"px; border-radius: 2px 2px 0 0; background: \" + ramp(k)[Math.min(3, Math.round(t * 3))] + \";\" +\n"
+    + "                ((here !== null && Math.min(3, Math.round(t * 3)) !== here) ? \" opacity: .6;\" : \"\")\n"
+    + "            })),\n",
+  count: 1
+};
+
+/** A31.9 — the orphan A31.8 leaves: `communities()`'s own `communityLabel`, whose ONLY reader was
+ *  A24.44's `stripBasis`. Deleted under the bundle's own dead-code rule (spec D8/D12, as A2.2–A2.5,
+ *  A13.6/A13.7 and A28.2–A28.9 applied it), measured the same way — one declaration, zero readers
+ *  in `logic.js`, in the amended design and in `App.vue` after A31.8. The PRACTICE's own
+ *  `communityLabel` (`sel.communityLabel`, `p.communityLabel`) is a different field on a different
+ *  object and is read in four places; it is untouched, and A31.7 and A31.8 are two of its readers.
+ *  CHAINED on A24.44. */
+const A31_9: Amendment = {
+  id: 'A31.9', ...SNAP,
+  find: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng, communityLabel: p.communityLabel,\n',
+  replace: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n',
+  count: 1
+};
+
+/** A31.10 — the markup: the mode heading and its sub-line at the head of the strip's own body,
+ *  above the six cards, and the grid takes the 9 px the docked panel's own tile grid takes under
+ *  the same pair. Every declaration is copied from that pair (A27.7's own source), so the strip
+ *  gains no style the design does not already carry. It sits INSIDE `md.stripOpen`, which is what
+ *  keeps every Browse state but the two that open the strip on its own pixels. */
+const A31_10: Amendment = {
+  id: 'A31.10', ...SNAP,
+  find: '            <div class="rf-scroll" style="max-height: 40vh; overflow-y: auto; padding: 0 22px 16px;">\n'
+    + '              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px;">\n',
+  replace: '            <div class="rf-scroll" style="max-height: 40vh; overflow-y: auto; padding: 0 22px 16px;">\n'
+    + '              <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.stripMode }}</div>\n'
+    + '              <sc-if value="{{ md.hasStripModeSub }}" hint-placeholder-val="{{ true }}">\n'
+    + '                <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;">{{ md.stripModeSub }}</div>\n'
+    + '              </sc-if>\n'
+    + '              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px; margin-top: 9px;">\n',
+  count: 1
+};
+
+/** A31.11 — the footnote, made true of BOTH modes. CHAINED on A24.20 and A24.56, whose sentences
+ *  it replaces.
+ *
+ *  The sentence that goes is "Figures describe the area around each practice, not the practice
+ *  itself" and A24.56's own restatement of it: in AREA mode the figures describe the metro's
+ *  Census areas and no practice at all, so a release that moved them and left that sentence would
+ *  be making its own copy false by its own act — the A27.5 rule. A24.20's growth caveat STAYS
+ *  byte for byte: growth is still measured at place or county in both modes, and the paragraph is
+ *  where that is said. */
+const A31_11: Amendment = {
+  id: 'A31.11', ...SNAP,
+  find: 'Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** Fix round 1 of Task SNAP (2026-09-13), the controller's rulings on the review of
+ *  fb17325..19b26d7. Two entries, one ruling each, both CHAINED on A31.8 and A24.45. */
+const SNAP1 = {
+  date: '2026-09-13',
+  ruling: 'A31.12 (controller, 2026-09-13, fix round 1 of Task SNAP; D-C48 applied to this surface): LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s \u2014 growth is measured at place or county and carries its own `growth_scope`, payroll is the county CBP row everywhere and always \u2014 and in LOCATION mode the geography is named ONCE, on the card\u2019s own note, while the source line carries the dataset alone (A24.44\u2013A24.57\u2019s one-string-per-fact rule, measured on this surface: the basis printed TEN times on one strip). D-C51 (controller, 2026-09-13, the caption audit): the income card carries the API\u2019s own `income_note` where it serves one \u2014 a catchment median is a household-weighted median of tract medians, never published, and the detail card has qualified it since A27.1 while the strip printed the bare ring label beside the same number.'
+};
+
+/** A31.12 \u2014 the caption over a figure is that figure's own. CHAINED on A31.8, whose two
+ *  adjacent lines this replaces.
+ *
+ *  MEASURED on the live path, which is the only place it can be seen: in LOCATION mode all six
+ *  cards read the listing's `communityLabel` ("Within about 5 miles of the practice"), while
+ *  `growth` is served at place-or-county with its own `growth_scope` (`app/census/serve.py`,
+ *  D12 \u2014 `materialize.py` computes it ONCE per listing outside the band loop) and `econ` is the
+ *  COUNTY CBP row everywhere and always (`serve.py`: "`econ_k` is county everywhere and always").
+ *  On 28 of 29 QA listings the ring sentence was therefore false on two of the six cards \u2014 the
+ *  exact defect D-C48 (John, 2026-09-11) removed from the docked panel's Population tile one day
+ *  earlier, one surface over. Growth's fallback is A24.20's OWN phrase for the same fact
+ *  ("the surrounding city or county"), which is what the reference and every approved state render:
+ *  the design's fixtures carry no `growthScope` and `load.ts` leaves the key OFF where the API
+ *  sends null.
+ *
+ *  And the `src` line drops the basis in LOCATION mode. One string per fact is A24.44\u2013A24.57's
+ *  own rule; measured here it was broken ten times over \u2014 the basis printed on the mode sub-line,
+ *  on each of the six `valueNote`s and on the three `src` lines that carry a `dataset`, four cards
+ *  printing it twice. The card's note says WHERE the figure is measured; the source line says
+ *  WHERE IT CAME FROM. AREA mode is untouched: there the card measures the map's own polygons and
+ *  names them, exactly as the legend and the tip do (A24.49/A24.50). */
+const A31_12: Amendment = {
+  id: 'A31.12', ...SNAP1,
+  find: "            valueNote: sel ? locBasis : (sum ? \"metro median \u00b7 \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : \"metro median\"),\n"
+    + "            src: metaSource(k, sel ? locBasis : (AREA_LABEL[k] || \"\")),\n",
+  replace: "            // A31.12 (fix round 1): the caption over a figure is THAT FIGURE's own\n"
+    + "            // geography. `growth` is measured at place or county and the API names it\n"
+    + "            // (`growth_scope`); `econ` is the county CBP row everywhere and always. The\n"
+    + "            // other four ARE the ring the label describes. D-C48's ruling, one surface over.\n"
+    + "            // D-C51: and the income card takes the API's own `income_note` where it is\n"
+    + "            // served - a catchment median is a household-weighted median of tract\n"
+    + "            // medians, never published, and the detail card has said so since A27.1.\n"
+    + "            valueNote: sel\n"
+    + "              ? (k === \"growth\" ? (sel.growthScope || \"surrounding city or county\")\n"
+    + "                : k === \"econ\" ? \"surrounding county\"\n"
+    + "                : k === \"income\" ? (sel.incomeNote || locBasis) : locBasis)\n"
+    + "              // In AREA mode the caption states exactly what the number IS. Not \"metro\n"
+    + "              // median\": the Census PUBLISHES a metro median (summary level 310) and this\n"
+    + "              // is the median OF the metro's valued areas, which is a different figure -\n"
+    + "              // measured on CBSA 12420, 94,801 against the published 97,638. And a card\n"
+    + "              // with no figure carries NO caption: absent beats faked, for a caption as\n"
+    + "              // much as for a value.\n"
+    + "              : ((sum && sum.with_value) ? \"median of \" + Math.round(sum.with_value).toLocaleString() + \" \" + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n"
+    + "            // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so\n"
+    + "            // this line carries the DATASET alone in LOCATION mode - measured, the basis\n"
+    + "            // printed ten times on one strip before this, four cards printing it twice.\n"
+    + "            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),\n",
+  count: 1
+};
+
+/** A31.12b \u2014 `metaSource` composes a line for a surface that has no geography to name.
+ *  CHAINED on A24.45, whose whole helper and comment this replaces.
+ *
+ *  A24.45 wrote it for two callers that both had a basis, so `dataset + " \u00b7 " + basis` was always
+ *  right. A31.12 adds a third that deliberately has none, and `"" ` there would leave a dangling
+ *  separator on the card. An empty basis now yields the dataset alone. The head comment's list of
+ *  layers that "name no geography" is corrected in the same edit: A31.12c gives `growth` a
+ *  `dataset`, so `econ` and `pets` are what is left. */
+const A31_12b: Amendment = {
+  id: 'A31.12b', ...SNAP1,
+  find: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + "// by its caller - the map's own geography for the legend and the tip, the practice-area label\n"
+    + '// for the snapshot strip, whose figures are per-listing and are not measured at either. A\n'
+    + '// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,\n'
+    + '// which is true on both surfaces, and this returns it unchanged.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  return m.dataset ? m.dataset + " \u00b7 " + basis : (m.source || "");\n'
+    + '};\n',
+  replace: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + "// by its caller - the map's own geography for the legend and the tip, the map's community\n"
+    + "// notes, and the snapshot strip's AREA mode, which measures those same polygons. A layer\n"
+    + '// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on\n'
+    + '// every surface, and this returns it unchanged.\n'
+    + '//\n'
+    + '// A31.12b (fix round 1): a caller with NO geography to name gets the dataset alone. The\n'
+    + "// strip's LOCATION mode is one - the card's own note carries the geography there, and one\n"
+    + '// string per fact is this helper\'s whole reason for existing - and an empty basis would\n'
+    + '// otherwise leave a dangling " \u00b7 " on the card.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  if (!m.dataset) return m.source || "";\n'
+    + '  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;\n'
+    + '};\n',
+  count: 1
+};
+
+/** Fix round 1's second ruling (2026-09-13). A31.8's comment claimed "the strip and the legend
+ *  then agree about what colour a tract's figure is"; it was false for `income`, whose ramp is the
+ *  one with FIVE colours. */
+const SNAP1B = {
+  date: '2026-09-13',
+  ruling: 'A31.13 (controller, 2026-09-13, fix round 1 of Task SNAP): a strip bar takes its colour from the SAME door the polygons do \u2014 `bucket(k, v, true)`\u2019s own `color`, never `ramp(k)[Math.round(t * 3)]`, which can address only four classes and so collapsed two of income\u2019s five onto one colour and could never draw its top one. The height keeps its `t`, and the LOCATION comparison is made on the class the bucket itself reports.'
+};
+
+/** A31.13 \u2014 the two lines that class a quantile. CHAINED on A31.8.
+ *
+ *  MEASURED: `ramp(k)[Math.min(3, Math.round(t * 3))]` is the DESIGN's own pre-A31 expression and
+ *  it is correct for a four-colour ramp, which five of the six are. `income`'s carries five
+ *  (`PALETTES.*.income`, "green, 5 classes"), so `bucket` returns `t = i / 4`: classes 2 and 3
+ *  (`t = .5`, `t = .75`) both round to index 2 and class 4 is unreachable. The approved
+ *  `browse-market-strip` therefore drew income's five bars in four colours, two of them the same,
+ *  beside a map painting five \u2014 the one thing A31.8's own comment said could not happen.
+ *
+ *  `cls` now returns the bucket itself rather than a re-derived index, so the colour and the class
+ *  come from one call and cannot disagree. `bucket()`'s return is UNCHANGED: `t = i / (ramp.length
+ *  - 1)` is injective in `i` within one ramp, so comparing two `t`s from the same layer IS
+ *  comparing their classes, and no index had to be added to it. The `here` line is untouched,
+ *  byte for byte \u2014 it already reads `cls(own)`. */
+const A31_13: Amendment = {
+  id: 'A31.13', ...SNAP1B,
+  find: "          const cls = (v) => Math.min(3, Math.round(this.bucket(k, num(v), true).t * 3));\n"
+    + "          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q), true).t);\n",
+  replace: "          // A31.13 (fix round 1): the bucket ITSELF, not a re-derived index. `income`'s ramp\n"
+    + "          // carries five colours, so `t` is i / 4 and `Math.round(t * 3)` collapsed classes 2\n"
+    + "          // and 3 onto one colour and could never reach class 4 - the strip drew five classes\n"
+    + "          // in four colours beside a map painting five. One call, one class, one colour.\n"
+    + "          const cls = (v) => this.bucket(k, num(v), true);\n"
+    + "          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => cls(q));\n",
+  count: 1
+};
+
+/** A31.13b \u2014 the bar's own style, reading that bucket. CHAINED on A31.8.
+ *
+ *  The colour is the bucket's `color`, which is the colour `areaVals` gives the polygon carrying
+ *  that value; the height keeps its `t`, which is what makes the row a distribution; and the
+ *  LOCATION comparison is `t` against `t` from the same ramp, which is class against class.
+ *  A31.8's sentence about the strip and the legend agreeing is true from here. */
+const A31_13b: Amendment = {
+  id: 'A31.13b', ...SNAP1B,
+  find: "            bars: dist.map((t) => ({\n"
+    + '              style: "flex: 1; height: " + Math.max(4, Math.round(6 + t * 24)) +\n'
+    + '                "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(t * 3))] + ";" +\n'
+    + '                ((here !== null && Math.min(3, Math.round(t * 3)) !== here) ? " opacity: .6;" : "")\n'
+    + "            })),\n",
+  replace: "            bars: dist.map((b) => ({\n"
+    + '              style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +\n'
+    + '                "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +\n'
+    + '                ((here !== null && b.t !== here.t) ? " opacity: .6;" : "")\n'
+    + "            })),\n",
+  count: 1
+};
+
+/** A31.12c \u2014 `growth` carries the DATASET, like the five layers A24.45's split already moved.
+ *  A24.46's own shape, applied to the one layer it left behind.
+ *
+ *  A24.44\u2013A24.48 converted `income`, `households` and `competition` because their `source` line
+ *  named the MAP's geography and the strip was borrowing it. `growth` was left with a whole
+ *  sentence ending "\u00b7 community level" on the grounds that it described place and county on both
+ *  surfaces \u2014 but its AREA card measures PLACE polygons now and `AREA_LABEL.growth` is "Place
+ *  (city/town)", so "community level" is vaguer than the truth on the card AND on the map legend,
+ *  which is the state Task SNAP's own report named and left. `metaSource` composes the rest for
+ *  the surface that prints it: the map's geography for the legend, the tip and the AREA card, and
+ *  the dataset alone in LOCATION mode (A31.12/A31.12b). The footnote's growth caveat is untouched
+ *  and stays true \u2014 growth is measured at the surrounding city or county in both modes. */
+const A31_12c: Amendment = {
+  id: 'A31.12c', ...SNAP1,
+  find: '    source: "U.S. Census ACS population estimates, 2015\u20132023 \u00b7 community level",\n',
+  replace: '    dataset: "U.S. Census ACS population estimates, 2015\u20132023",\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -5904,6 +6413,17 @@ export function amendments(): Amendment[] {
     A30,
     // A32 -- the metro switch waits for the map to move before asking (Task ADAPT-STALE-3,
     // 2026-09-12). CHAINED on A24.18, whose `this.loadAreas(v);` line is its whole `find`, so it
-    // runs after it. A31 is the snapshot branch's and is not in this list.
-    A32];
+    // runs after it.
+    A32,
+    // A31 -- the Market snapshot has two modes, AREA and LOCATION (Task SNAP, ruling D-C50 as
+    // revised, 2026-09-12). Appended last, as every family is, and it has to be: A31.4 reads
+    // A24.17's line, A31.8 the whole A24.53/A24.54/A24.55 block, A31.9 A24.44's and A31.11
+    // A24.20's and A24.56's -- and A31.5 reads A32's OWN output, which is why this block runs
+    // after A32 rather than beside it. Definition order in this file matches this list (m8).
+    A31_1, A31_2, A31_3, A31_4, A31_5, A31_6, A31_7, A31_8, A31_9, A31_10, A31_11,
+    // Fix round 1 (2026-09-13): A31.12 is CHAINED on A31.8's own two caption lines and
+    // A31.12b on A24.45's whole helper, so both run after the entries they read.
+    A31_12, A31_12b, A31_12c,
+    // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
+    A31_13, A31_13b];
 }

@@ -194,8 +194,32 @@ describe('the docked panel and the detail card say which area their figures desc
     // …and it is above the tiles it describes, not appended after the section.
     expect(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
       .toBeLessThan(insights.indexOf('v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)"'));
-    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Twice
-    // in the file and only twice: `md.panel.place` and this one.
-    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(2);
+    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Three
+    // times in the file and only three: `md.panel.place`, A27.7's own, and A31.10's snapshot-strip
+    // mode sub-line, which is composed from the SAME declaration for the same reason (Task SNAP).
+    // The count is what keeps that true: a fourth occurrence is either another composition — which
+    // belongs in this list — or a style someone typed by hand.
+    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(3);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the Market snapshot's two modes.
+  // ---------------------------------------------------------------------------------------
+  it('A31.10: the mode is the FIRST thing in the strip’s body, in the design’s own heading pair', () => {
+    const strip = appVue.slice(appVue.indexOf('v-if="v.md?.stripOpen"'), appVue.indexOf('Sources: U.S. Census Bureau (ACS, CBP)'));
+    expect(strip).toContain('{{ __s(v.md?.stripMode) }}');
+    expect(strip).toContain('v-if="v.md?.hasStripModeSub"');
+    expect(strip).toContain('{{ __s(v.md?.stripModeSub) }}');
+    // First: before the sub-line, and both before the first card.
+    expect(strip.indexOf('{{ __s(v.md?.stripMode) }}')).toBeLessThan(strip.indexOf('{{ __s(v.md?.stripModeSub) }}'));
+    expect(strip.indexOf('{{ __s(v.md?.stripModeSub) }}'))
+      .toBeLessThan(strip.indexOf('v-for="(c, $index) in __arr(v.md?.stripCards)"'));
+    // The heading is the docked panel's own Insights heading declaration, byte for byte — no new
+    // size, weight or colour reaches the strip.
+    expect(strip).toContain('style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"');
+    // …and it is INSIDE `stripOpen`, which is what keeps every Browse state but the two that open
+    // the strip on its own pixels: the collapsed header row is unchanged.
+    const header = appVue.slice(appVue.indexOf('Market snapshot'), appVue.indexOf('v-if="v.md?.stripOpen"'));
+    expect(header, 'the mode reached the always-visible header row').not.toContain('stripMode');
   });
 });

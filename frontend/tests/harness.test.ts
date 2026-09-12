@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
@@ -366,6 +367,45 @@ describe('the boundary stubs (A24.14-A24.18)', () => {
     expect(JSON.parse(designBoundariesBody('competition', '-84.9,33.3,-83.9,34.3')).features).toEqual([]);
     // …and a malformed box is the route's question, not this stub's: it answers as it always did.
     expect(designBoundariesBody('income', 'not,a,box')).toBe(designBoundariesBody('income'));
+  });
+
+  // A31 (Task SNAP, D-C50 as revised): the metro summary stub. Two approved states open the
+  // snapshot strip and the app prints what the API answered, so this is the answer — and it must
+  // be the DESIGN's own distribution, or the app and the reference would print different numbers
+  // at `maxDiffPixels: 0`.
+  it('answer the metro summary with the DESIGN\'s own distribution, in the route\'s own shape', () => {
+    const body = JSON.parse(designSummaryBody()) as {
+      cbsa_geoid: string; layers: { layer: string; with_value: number; count: number; suppressed: number; no_data: number; median: number | null; quantiles: number[] | null; geo_label: string }[];
+    };
+    const own = designSummarySet() as Record<string, { median: number | null; quantiles: number[] | null; with_value: number; geo_label: string }>;
+    // Every foreign member `app/api/market.summary` sends, and no other. `blocked_reason` is the
+    // one conditional member and is absent on an enabled layer.
+    expect(Object.keys(body).sort()).toEqual(['attribution', 'boundary_vintage', 'cbsa_geoid', 'layers']);
+    expect(Object.keys(body.layers[0]).sort()).toEqual([
+      'count', 'geo_label', 'layer', 'median', 'no_data', 'quantiles', 'source_dataset', 'state',
+      'summary_level', 'suppressed', 'unit', 'value_vintage', 'with_value'
+    ]);
+    // DERIVED, never retyped: every figure is `summarySet`'s own, which is what stops the stub
+    // and the reference describing two different distributions.
+    for (const row of body.layers) {
+      expect(row.median, row.layer).toBe(own[row.layer].median);
+      expect(row.quantiles, row.layer).toEqual(own[row.layer].quantiles);
+      expect(row.with_value, row.layer).toBe(own[row.layer].with_value);
+      expect(row.geo_label, row.layer).toBe(own[row.layer].geo_label);
+      // The route's own partition, which a client reading `with_value` as "how many areas this
+      // metro has" would get wrong — so the stub may not break it either.
+      expect(row.count, row.layer).toBe(row.with_value + row.suppressed + row.no_data);
+    }
+    // The design's fixture carries no ZCTAs at all, so `competition` answers with NOTHING — which
+    // is what puts A21.2n/o's "keeps its title and source, shows no value and no bars" posture
+    // inside an approved state rather than in a unit test alone.
+    const competition = body.layers.find((l) => l.layer === 'competition')!;
+    expect([competition.with_value, competition.median, competition.quantiles]).toEqual([0, null, null]);
+    // …and the three tract layers do carry one, or the AREA cards would photograph nothing.
+    expect(body.layers.find((l) => l.layer === 'income')!.quantiles).toHaveLength(5);
+    // The path segment the route is addressed by is carried through, so a second metro's stub is
+    // not silently labelled Austin's.
+    expect((JSON.parse(designSummaryBody('19100')) as { cbsa_geoid: string }).cbsa_geoid).toBe('19100');
   });
 
   it('answer a market catalogue the adapter can resolve the design\'s own metro by NAME in', () => {
