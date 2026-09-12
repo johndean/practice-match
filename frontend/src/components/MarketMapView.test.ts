@@ -994,8 +994,13 @@ describe('MarketMapView — the V3 map', () => {
       await flushPromises();
       const stale = stub.map.handlers.moveend!;
       w.unmount();
+      // Subscribed AFTER unmount, so unmount's own `publish(null)` cannot be what this counts —
+      // only the replayed handler's own call could reach it from here.
+      const cb = vi.fn();
+      const off = viewport.subscribe(cb);
       expect(() => stale(), 'a late event reaching a nulled engine should not throw').not.toThrow();
-      expect(viewport.current(), 'the guard returns before publishing anything new').toBeNull();
+      expect(cb, 'the guard must return before publishing anything, not merely avoid throwing').not.toHaveBeenCalled();
+      off();
     });
 
     // publishViewport()'s other guard, `if (!b) return;` (MarketMapView.vue:87).
