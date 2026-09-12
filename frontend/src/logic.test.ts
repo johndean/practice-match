@@ -4742,8 +4742,11 @@ describe('A24 — real boundary polygons', () => {
     expect(tip({ value: 1, suppressed: true, suppress_reason: 'high_moe' })).toContain('Estimate too imprecise to show at this geography');
     expect(tip({ value: 1, suppressed: true, suppress_reason: 'source_flag' })).toContain('Not published for this county');
     expect(tip({ value: null })).toContain('No data for this area');
-    expect(tip({ value: 92150, moe: 6420, band_ambiguous: true })).toContain('this margin spans two legend bands.');
-    expect(tip({ value: 92150, moe: 6420, band_ambiguous: false })).not.toContain('spans two legend bands');
+    // A33.2: ± 9,000 crosses the $100K stop and nothing else, which is the design's own two-band
+    // example and a state the endpoint can actually set the flag for; ± 6,420 spans ONE band
+    // (`tests/census/test_bands.py`), so the flag is false for it on the server too.
+    expect(tip({ value: 92150, moe: 9000, band_ambiguous: true })).toContain('this margin spans two legend bands.');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: false })).not.toContain('legend bands');
     expect(tip({ value: 12.4 }, 'growth')).toContain('No combined margin of error is published.');
     expect(tip({ value: 640000 }, 'econ')).toContain('a census of establishments, not a sample');
     // The tip's own shape, once: every line the reference's literal carries, in order, so a
@@ -5277,7 +5280,12 @@ describe('A24 — the market adapter', () => {
       { geo_id: 'highmoe', name: 'Wide margin', value: null, moe: 40000, suppressed: true, suppress_reason: 'high_moe', band_ambiguous: false },
       { geo_id: 'cascade', name: 'Cascaded', value: null, moe: null, suppressed: true, suppress_reason: 'input_suppressed', band_ambiguous: false },
       { geo_id: 'flag', name: 'Withheld', value: null, moe: null, suppressed: true, suppress_reason: 'source_flag', band_ambiguous: false },
-      { geo_id: 'amb', name: 'Ambiguous', value: 92150, moe: 6420, suppressed: false, suppress_reason: null, band_ambiguous: true },
+      // A33.2: the margin is 9,000 and not 6,420. `band_ambiguous(92150, 6420)` is FALSE against
+      // the income stops (`tests/census/test_bands.py` — 85,730…98,570 is one band), so the old
+      // fixture set the flag on an interval the endpoint would never set it for, and the caveat
+      // now counts the bands rather than asserting two. 9,000 crosses the $100K stop and nothing
+      // else, which is the design's own two-band example.
+      { geo_id: 'amb', name: 'Ambiguous', value: 92150, moe: 9000, suppressed: false, suppress_reason: null, band_ambiguous: true },
       { geo_id: 'plain', name: 'Measured', value: 92150, moe: 1200, suppressed: false, suppress_reason: null, band_ambiguous: false }
     ];
     const comp: any = new Component({});
@@ -5310,7 +5318,7 @@ describe('A24 — the market adapter', () => {
     expect(by.amb.color).toBe(by.plain.color);
     expect(by.amb.label).toBe('$92K');
     expect(by.amb.tip).toContain('this margin spans two legend bands');
-    expect(by.plain.tip).not.toContain('spans two legend bands');
+    expect(by.plain.tip).not.toContain('legend bands');
   });
 
   it("a blocked or disabled layer arrives with no features, so nothing of it is ever painted", async () => {
@@ -5537,5 +5545,66 @@ describe('A33.1 — the panel prefers the pipeline\'s own income index', () => {
       expect(panelFor(p).oppTiles[0].label).toBe('Median');
       expect(panelFor(p).oppTiles[0].labelStyle).toContain(OFF);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A33.2 — the margin caveat counts the legend bands it spans (Task SCREEN-LABELS,
+// 2026-09-13). Measured on QA 0.1.21: hovering Census Tract 303 on the income layer read
+// "± $22K — this margin spans two legend bands." The interval is 61,320–105,806, which spans
+// THREE of the income legend's five ($50–75K, $75–100K, $100–150K). The copy was FIXED, emitted
+// whenever the API's `band_ambiguous` is true, and `app/census/bands.py` only ever asks whether
+// the two ends land in DIFFERENT bands — it never counts them. The number is knowable on the
+// client from the layer's own stops, which is where the legend itself comes from.
+// ---------------------------------------------------------------------------------------
+describe('A33.2 — the margin caveat counts the bands', () => {
+  const feat = (props: Record<string, unknown>) => ({
+    type: 'Feature', geometry: null,
+    properties: { geo_id: 'g', name: 'Census Tract 303', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false, ...props }
+  });
+  const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
+  const tip = (props: Record<string, unknown>, layer = 'income') =>
+    c.areaVals(fc([feat(props)]), layer).features[0].properties.tip;
+
+  // QA's own Tract 303: 83,563 ± 22,243 → 61,320…105,806 across $50–75K, $75–100K, $100–150K.
+  it('says "three" for the tract that was measured saying "two"', () => {
+    expect(tip({ value: 83563, moe: 22243, band_ambiguous: true }))
+      .toContain('this margin spans three legend bands.');
+  });
+
+  it('still says "two" where two is the truth', () => {
+    // The design's own case, from `tests/census/test_bands.py`: 92,150 ± 9,000 → 83,150…101,150,
+    // which crosses the $100K stop and nothing else.
+    expect(tip({ value: 92150, moe: 9000, band_ambiguous: true }))
+      .toContain('this margin spans two legend bands.');
+  });
+
+  it('counts to the top of the ramp — five bands for a margin that spans the whole income legend', () => {
+    expect(tip({ value: 90000, moe: 80000, band_ambiguous: true }))
+      .toContain('this margin spans five legend bands.');
+  });
+
+  it('counts against the layer the polygon belongs to, not against income', () => {
+    // `households` shades at the CENSUS TRACT and has its OWN class breaks (A24.25's
+    // `AREA_LAYERS`, [1000, 1500, 2000]) — which is the table `app.api.market.BAND_STOPS` passes
+    // for this layer too. 1,400 ± 700 → 700…2,100: all four bands.
+    expect(tip({ value: 1400, moe: 700, band_ambiguous: true }, 'households'))
+      .toContain('this margin spans four legend bands.');
+  });
+
+  it('adds nothing where the API did not say the margin crosses a stop', () => {
+    const plain = tip({ value: 92150, moe: 6420, band_ambiguous: false });
+    expect(plain).toContain('± $6K');
+    expect(plain).not.toContain('legend bands');
+  });
+
+  it('says nothing about bands for a polygon with no value to count them around', () => {
+    // A suppressed polygon can arrive with a margin AND `band_ambiguous` true — the endpoint
+    // judges ambiguity on the RAW value and nulls the value separately — and its tip renders the
+    // suppression sentence, not the margin. The caveat needs a value, and with none it composes
+    // nothing rather than counting bands around zero.
+    const suppressed = tip({ value: null, moe: 22243, band_ambiguous: true });
+    expect(suppressed).toContain('No data for this area');
+    expect(suppressed).not.toContain('legend bands');
   });
 });

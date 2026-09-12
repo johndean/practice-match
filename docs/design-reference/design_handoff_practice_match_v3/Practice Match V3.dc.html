@@ -1889,6 +1889,11 @@ const AREA_LAYERS = {
   pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },
   competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }
 };
+// A33.2: how many legend bands a margin spans, spelled out. The domain is 2 to 5 and is
+// total: five is the widest ramp the design has (income's) and two is the floor whenever
+// the API sets `band_ambiguous`, which is judged against these same stops
+// (`app/census/bands.py`, pinned two ways by `tests/census/test_bands.py`).
+const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
 const SYMBOL_KEYS = ["pets", "households", "competition"];
@@ -2329,7 +2334,9 @@ class Component extends DCLogic {
         : "Estimate too imprecise to show at this geography")
       : "No data for this area";
     const margin = (p.moe !== null && p.moe !== undefined)
-      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")
+      ? "± " + this.fmtMetric(layer, p.moe) + ((p.band_ambiguous && p.value !== null && p.value !== undefined)
+          ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."
+          : "")
       : (layer === "growth"
           ? "Derived from two ACS 5-year periods. No combined margin of error is published."
           : layer === "econ"
@@ -2371,7 +2378,10 @@ class Component extends DCLogic {
     const ramp = pal[metric === "vets" ? "competition" : metric] || BRAND_RAMP;
     let i = 0;
     while (i < cfg.stops.length && v >= cfg.stops[i]) i++;
-    return { color: ramp[i], t: i / (ramp.length - 1) };
+    // `band` is the index the loop above already found. Returned rather than recomputed by a
+    // second copy of the same loop, so the caveat below and the fill colour cannot disagree
+    // about which band a value is in (spec 2.2, the one door every polygon enters by).
+    return { color: ramp[i], t: i / (ramp.length - 1), band: i };
   }
 
   fmtMetric(metric, v) {

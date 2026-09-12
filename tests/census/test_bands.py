@@ -150,3 +150,97 @@ def test_the_designs_bucket_rule_is_still_the_one_band_index_reimplements() -> N
     one drift the stop pin above cannot see."""
     logic = (ROOT / "frontend" / "src" / "logic.js").read_text(encoding="utf-8")
     assert logic.count("while (i < cfg.stops.length && v >= cfg.stops[i]) i++;") == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# A33.2 (Task SCREEN-LABELS, 2026-09-13) — THE CAVEAT COUNTS THE BANDS, AND BOTH SIDES COUNT THEM
+# THE SAME WAY.
+#
+# Measured on QA 0.1.21: the income layer's tip on Census Tract 303 read "± $22K — this margin
+# spans two legend bands" for an interval, 61,320…105,806, that spans THREE. The flag is not
+# wrong — `band_ambiguous` asks whether the band is CERTAIN, which is the right question and the
+# one the endpoint needs — it simply carries no number, and the copy hard-coded one.
+#
+# The number stays client-side: it is a statement about the legend the DESIGN draws, from the
+# stops the design already owns, and adding it to the payload would put a second author on one
+# sentence. What must not drift is the ARITHMETIC, so it is pinned here — the two cases below are
+# the two halves of that: the design's word table must cover every count the endpoint's own stops
+# can produce for an ambiguous margin, and the flag must be true exactly when the count is at
+# least two, on every layer the endpoint bands.
+# ---------------------------------------------------------------------------------------------
+
+
+def _band_words() -> dict[int, str]:
+    """The design's own `BAND_WORDS` literal (A33.2a), read rather than retyped."""
+    design = DESIGN.read_text(encoding="utf-8")
+    m = re.search(r"const BAND_WORDS = \{([^}]*)\};", design)
+    assert m, "the design no longer declares BAND_WORDS — A33.2's word table is gone"
+    return {int(k): v for k, v in re.findall(r'(\d+):\s*"([^"]*)"', m.group(1))}
+
+
+def test_the_designs_word_table_covers_every_count_the_endpoints_stops_can_produce() -> None:
+    """A count with no word is the string "undefined" in a hover tip on a real map. The domain is
+    derived from `BAND_STOPS` itself — n stops make n+1 bands, and an AMBIGUOUS margin spans at
+    least two of them — so a layer joining `BAND_STOPS` with a wider ramp fails here rather than
+    shipping a tip that reads "spans undefined legend bands"."""
+    from app.api.market import BAND_STOPS
+
+    reachable = {n for stops in BAND_STOPS.values() for n in range(2, len(stops) + 2)}
+    assert reachable, "BAND_STOPS is empty — this case would assert nothing"
+    assert set(_band_words()) == reachable, (
+        "the design's BAND_WORDS does not cover exactly the band counts the endpoint's own stops "
+        f"can produce ({sorted(reachable)})"
+    )
+
+
+def test_the_client_counts_the_bands_the_server_calls_ambiguous() -> None:
+    """The flag and the count are one statement made twice, in two languages, and they may never
+    disagree: `band_ambiguous` is true exactly when the count the design prints is at least two.
+
+    Swept over EVERY layer the endpoint bands and over margins that cross none, one and several
+    stops, including the two real cases this ruling came from — Tract 303's three, and the
+    design's own two-band example, which is the case `band_ambiguous` is defined by."""
+    from app.api.market import BAND_STOPS
+
+    def count(value: float, moe: float, stops: tuple[int, ...]) -> int:
+        """`areaTip`'s own arithmetic, in Python: the design reads the index off its own
+        `bucket()` at both ends of the interval and counts inclusively."""
+        return bands.band_index(value + moe, stops) - bands.band_index(value - moe, stops) + 1
+
+    checked = 0
+    for layer, stops in BAND_STOPS.items():
+        span = stops[-1]
+        for value in (stops[0] / 2, *stops, span * 1.5):
+            for moe in (0.0, 1.0, span * 0.05, span * 0.2, span * 0.6, span * 3):
+                n = count(value, moe, stops)
+                assert n >= 1, (layer, value, moe)
+                assert bands.band_ambiguous(value, moe, stops) is (n >= 2), (
+                    f"{layer}: band_ambiguous and the design's own band count disagree about "
+                    f"{value} ± {moe}"
+                )
+                checked += 1
+    assert checked > 50, "the sweep stopped covering anything"
+
+    # The two measured cases, named. QA's Census Tract 303 spans THREE bands and the tip said two;
+    # the design's own example (test_band_ambiguous_is_true_only_when_the_margin_crosses_a_stop)
+    # spans exactly two.
+    assert count(83563, 22243, bands.INCOME_STOPS) == 3
+    assert count(92150, 9000, bands.INCOME_STOPS) == 2
+    assert _band_words()[3] == "three"
+    assert _band_words()[2] == "two"
+
+
+def test_the_designs_caveat_reads_its_indices_off_the_designs_own_bucket() -> None:
+    """The stops are pinned above and the comparison in `band_index`'s own case; this pins the
+    third thing that can drift — WHERE the design gets its two indices. A hand-rolled second copy
+    of `bucket`'s loop inside `areaTip` would satisfy every other assertion in this module and
+    could still class a polygon into a band its own fill colour disagrees with (spec 2.2, the one
+    door). So the tip is required to read `bucket(...).band` at both ends, with the choropleth's
+    own breaks (`true`) rather than the community cards' — the legend a polygon's caveat is
+    about is the MAP's (A24.25)."""
+    design = DESIGN.read_text(encoding="utf-8")
+    assert design.count("this.bucket(layer, p.value + p.moe, true).band") == 1
+    assert design.count("this.bucket(layer, p.value - p.moe, true).band") == 1
+    assert "this margin spans two legend bands" not in design, "the fixed copy is still in the design"
+    assert design.count("BAND_WORDS[") == 1, "the word table is read in exactly one place"
+

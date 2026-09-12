@@ -361,6 +361,10 @@ describe('local design amendments (spec D15)', () => {
     // A33 — three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
     // 2026-09-13). A33.1b is CHAINED on A21.2d, whose `replace` its `find` is part of.
     'A33.1a', 'A33.1b',
+    // A33.2 — the margin caveat counts the bands it spans. A33.2a is CHAINED on A24.25/A24.37
+    // (the `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the
+    // margin expression it rewrites); A33.2b's `find` is the pristine bundle's own `bucket`.
+    'A33.2a', 'A33.2b', 'A33.2c',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -526,7 +530,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(289);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(292);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

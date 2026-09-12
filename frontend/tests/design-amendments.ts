@@ -5842,6 +5842,69 @@ const A33_1b: Amendment = {
   count: 1
 };
 
+/** A33.2 — THE CAVEAT COUNTS THE BANDS IT SPANS. Measured on QA 0.1.21: the income layer's
+ *  hover tip on Census Tract 303 read "± $22K — this margin spans two legend bands." The interval
+ *  is 61,320…105,806 and the income legend's stops are [50000, 75000, 100000, 150000], so it
+ *  spans THREE — $50–75K, $75–100K, $100–150K.
+ *
+ *  The copy was FIXED and the server's own flag carries no number: `app/census/bands.py`'s
+ *  `band_ambiguous` asks only whether the two ends land in DIFFERENT bands. Nothing was wrong
+ *  with the flag — it is the right question for "is this figure's band certain?" — and nothing
+ *  needs to be added to the payload for the answer, because the COUNT is a statement about the
+ *  legend the CLIENT draws, from the stops the client already owns. `bands.py`'s `band_index` is
+ *  the same arithmetic on the other side of the wire, and
+ *  `tests/census/test_bands.py::test_the_client_counts_the_bands_the_server_calls_ambiguous`
+ *  pins the two together on the case the flag itself is defined by.
+ *
+ *  Three literal edits. A33.2a declares the word table beside `AREA_LAYERS`, whose breaks the
+ *  count is taken against; A33.2b gives `bucket()` the index it already computes, so the count
+ *  and the fill come from ONE function (spec 2.2's "one door" — a second copy of the loop is how
+ *  the tip and the colour come to disagree about the same polygon); A33.2c is the sentence.
+ *
+ *  THE DOMAIN IS TOTAL, and the third term is what makes it so. `BAND_WORDS` covers 2…5: five is
+ *  the widest legend the design has (income's), and two is the floor whenever the server's flag
+ *  is true, because both sides read the same stops and `test_bands.py` pins both tables two ways.
+ *  The `p.value != null` term is not defensive decoration — a SUPPRESSED polygon really does
+ *  arrive with a margin and the flag set, the endpoint judging ambiguity on the raw value and
+ *  nulling the value separately, and `areaTip` composes `margin` before it knows whether the tip
+ *  will use it. Without the term that polygon would count bands around `null + moe`, reach
+ *  `BAND_WORDS[1]` and compose the word "undefined" into a string that is then discarded. It
+ *  renders NOTHING differently — such a tip shows the suppression sentence — which is why it is
+ *  a term and not a restructuring. */
+const A33_2a: Amendment = {
+  id: 'A33.2a', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (Task SCREEN-LABELS)',
+  find: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n};\n',
+  replace: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n};\n'
+    + '// A33.2: how many legend bands a margin spans, spelled out. The domain is 2 to 5 and is\n'
+    + '// total: five is the widest ramp the design has (income\'s) and two is the floor whenever\n'
+    + '// the API sets `band_ambiguous`, which is judged against these same stops\n'
+    + '// (`app/census/bands.py`, pinned two ways by `tests/census/test_bands.py`).\n'
+    + 'const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };\n',
+  count: 1
+};
+
+const A33_2b: Amendment = {
+  id: 'A33.2b', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (same ruling)',
+  find: '    return { color: ramp[i], t: i / (ramp.length - 1) };',
+  replace: '    // `band` is the index the loop above already found. Returned rather than recomputed by a\n'
+    + '    // second copy of the same loop, so the caveat below and the fill colour cannot disagree\n'
+    + '    // about which band a value is in (spec 2.2, the one door every polygon enters by).\n'
+    + '    return { color: ramp[i], t: i / (ramp.length - 1), band: i };',
+  count: 1
+};
+
+const A33_2c: Amendment = {
+  id: 'A33.2c', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (same ruling)',
+  find: '      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")',
+  replace: '      ? "± " + this.fmtMetric(layer, p.moe) + ((p.band_ambiguous && p.value !== null && p.value !== undefined)\n'
+    + '          ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."\n'
+    + '          : "")',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -5984,7 +6047,8 @@ export function amendments(): Amendment[] {
     // runs after it. A31 is the snapshot branch's and is not in this list.
     A32,
     // A33 -- three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
-    // 2026-09-13). A33.1b is CHAINED on A21.2d, whose `replace` its `find` is part of.
-    // Appended last, as every family is.
-    A33_1a, A33_1b];
+    // 2026-09-13). Three of them are CHAINED: A33.1b on A21.2d, A33.2a on A24.25/A24.37 (the
+    // `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the margin
+    // expression it rewrites). Appended last, as every family is.
+    A33_1a, A33_1b, A33_2a, A33_2b, A33_2c];
 }
