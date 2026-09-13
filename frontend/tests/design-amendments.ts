@@ -6734,7 +6734,13 @@ const A35_5: Amendment = {
  *  metro switch pulled the whole metro TWICE"), the reset is guarded on an actual change. The
  *  guard reads `_url` because `L.TileLayer` has no public reader for it and the LAYER is the only
  *  thing that knows which basemap it is currently showing — the same posture the design already
- *  takes one line below, where it calls `map.attributionControl._update`. */
+ *  takes one line below, where it calls `map.attributionControl._update`. THE TRIPWIRE FOR THAT
+ *  PRIVATE READ is `smoke.spec.ts`'s "a mount loads the basemap ONCE" (ESRI-ZOOM re-review): if a
+ *  Leaflet upgrade ever stops `_url` being the layer's current url, the comparison is false for
+ *  every call, the guard never returns, and the mount builds a second set of base tiles — the case
+ *  counts the `<img>` Leaflet actually builds and fails the moment the base layer's count leaves
+ *  the label layer's (12 against 12 today, 24 against 12 with the guard dead), which is the one
+ *  observable the coalesced request log cannot show. */
 const A35_6: Amendment = {
   id: 'A35.6', ...ESRI_ZOOM,
   find: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
@@ -6863,10 +6869,10 @@ const A40_3: Amendment = {
     + '  // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`\n'
     + '  // adapter, never a role list written here (`can()` answers the account STATE too, so the\n'
     + '  // `me.state === "active"` term A17.2 carried is not restated) -- and on each adapter\'s\n'
-    + '  // presence. One tab, one\n'
-    + '  // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each\n'
-    + '  // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the\n'
-    + '  // design\'s fixtures (A16.17\'s discipline, A17.1\'s rule for the render path).\n'
+    + '  // presence. One tab, one line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add\n'
+    + '  // theirs below, and each carries its own rejection arm, so a refusal leaves a tab EMPTY\n'
+    + '  // rather than back on the design\'s fixtures (A16.17\'s discipline, A17.1\'s rule for the\n'
+    + '  // render path).\n'
     + '  loadAdmin() {\n'
     + '    // Fails closed: no `perms` to ask, no load. Both arms answer a promise, so every caller\n'
     + '    // -- A40.5\'s `signIn` among them -- can await a settled screen whoever is signed in.\n'
