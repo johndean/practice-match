@@ -203,12 +203,23 @@ describe('the docked panel and the detail card say which area their figures desc
     // …and it is above the tiles it describes, not appended after the section.
     expect(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
       .toBeLessThan(insights.indexOf('v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)"'));
-    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Three
-    // times in the file and only three: `md.panel.place`, A27.7's own, and A31.10's snapshot-strip
-    // mode sub-line, which is composed from the SAME declaration for the same reason (Task SNAP).
-    // The count is what keeps that true: a fourth occurrence is either another composition — which
-    // belongs in this list — or a style someone typed by hand.
-    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(3);
+    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. FOUR
+    // times in the file and only four: `md.panel.place`, A27.7's own, A31.10's snapshot-strip mode
+    // sub-line (composed from the SAME declaration for the same reason, Task SNAP) and A34.6's
+    // Competitive Landscape sub-line (Task ONE-VOCABULARY, ruling D-C51 — that block sat under no
+    // scope line at all, so its three ring figures were captioned by the grid's line above them,
+    // audit R35–R37/collision C8). The count is what keeps that true: a fifth occurrence is either
+    // another composition — which belongs in this list — or a style someone typed by hand.
+    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(4);
+
+    // A34.6 — the same sub-line under the Competitive Landscape heading, element for element and
+    // gated the same way, so a listing with no served label renders no element in either place.
+    expect((insights.match(/\{\{ __s\(v\.md\?\.panel\?\.overviewScope\) \}\}/g) ?? []).length,
+      'the Competitive Landscape block does not carry the scope sub-line the overview grid does').toBe(2);
+    expect(insights.indexOf('Competitive Landscape'))
+      .toBeLessThan(insights.lastIndexOf('{{ __s(v.md?.panel?.overviewScope) }}'));
+    expect(insights.lastIndexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
+      .toBeLessThan(insights.indexOf('Veterinary Establishments'));
   });
 
   // ---------------------------------------------------------------------------------------
