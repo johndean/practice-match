@@ -243,6 +243,60 @@ export type CitationInput = {
   maxOccurrences: number;
 };
 
+/**
+ * THE OTHER PLACE A LINE NUMBER CAN GO STALE (Task HOUSEKEEPING-C item 4, ADMIN-GATE concern 5).
+ *
+ * `citationFindings` reads `LOCAL_AMENDMENTS.md`'s rows and nothing else, so the `V3:<line>`
+ * references that had accumulated in `design-amendments.ts`'s OWN doc comments were checked by
+ * nobody. Measured on 2026-09-13 there were 58 of them and NOT ONE resolved under the row rule:
+ * thirty landed on a blank line or a bare closing brace, and several still pointed into the
+ * PRISTINE file's numbering from before the first insertion. A pointer that is wrong more often
+ * than right is worse than no pointer.
+ *
+ * They are gone, and the rule that replaces them is this function: a line number belongs in a
+ * `LOCAL_AMENDMENTS.md` row, where the citation gate follows it and `npm run remap:citations`
+ * re-takes it. In the engine's own prose, name the entry (`A13.1`) or the thing (`the docked
+ * panel's Next arrow`) — neither can go stale.
+ *
+ * COMMENTS ONLY, and that is not a softening. One `V3:` reference in this file lives inside an
+ * amendment's `replace` string: the design's own comment on the filter chevron, which is DESIGN
+ * BYTES and cannot be edited without a ruling. So the scanner tracks string and template literals
+ * and reports only what a comment carries — which is exactly the set this rule governs.
+ */
+export function commentCitations(src: string): string[] {
+  const out: string[] = [];
+  const report = (text: string, at: number) => {
+    for (const m of text.matchAll(/V3:\d+/g)) out.push(`${src.slice(0, at).split('\n').length}: ${m[0]}`);
+  };
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const end = src.indexOf('\n', i);
+      const stop = end === -1 ? src.length : end;
+      report(src.slice(i, stop), i);
+      i = stop;
+      continue;
+    }
+    if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      report(src.slice(i, stop), i);
+      i = stop;
+      continue;
+    }
+    if (src[i] === '\'' || src[i] === '"' || src[i] === '`') {
+      const quote = src[i];
+      i++;
+      while (i < src.length && src[i] !== quote) i += src[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
 export function citationFindings({ rows, lines, outputFor, occurrences, maxOccurrences }: CitationInput): { findings: string[]; checked: number } {
   const findings: string[] = [];
   let checked = 0;

@@ -154,8 +154,8 @@ const A2_5: Amendment = {
 
 /** A3 — the Insights-tab primary button of the docked panel (spec D18, John: "update across the
  *  application 'view full market report' to 'View full listing'"). A literal template edit (a
- *  text node, V3:705): one occurrence in the pristine file. The other tabs' "Open full listing"
- *  (V3:717) was not part of John's instruction and was left as designed, flagged to him in the
+ *  text node): one occurrence in the pristine file. The other tabs' "Open full listing"
+ *  was not part of John's instruction and was left as designed, flagged to him in the
  *  V15 report for possible unification — A11, below, is that unification. */
 const A3: Amendment = {
   id: 'A3', date: '2026-09-07', ruling: 'update across the application "view full market report" to "View full listing"',
@@ -941,7 +941,7 @@ const A10: Amendment = {
 };
 
 /** A11 — the docked panel's other tabs take the Insights tab's wording (John, 2026-09-08: unify).
- *  A template text node, V3:717 — the only "Open full listing" in the pristine file. Same wiring
+ *  A template text node — the only "Open full listing" in the pristine file. Same wiring
  *  as A3's button (`md.panel.openListing`); only the label changes. */
 const A11: Amendment = {
   id: 'A11', date: '2026-09-08',
@@ -1114,24 +1114,24 @@ const A12_11: Amendment = {
  *
  *  `<select>` on macOS opens the OS popup menu — a large dark panel drawn over the page by the
  *  window server, which no page style reaches. The design already ships the alternative twice
- *  over: the Market data card's layer select (V3:431 trigger, V3:523 panel, script V3:2091–2122)
- *  and Compare's identical control (V3:477/482). A13 composes the metro picker from those
+ *  over: the Market data card's layer select (its trigger, its panel and `md.toggleLayerMenu`'s
+ *  own script) and Compare's identical control. A13 composes the metro picker from those
  *  elements — trigger + `aria-haspopup="listbox"` + rotating `sub-chevron.svg`, a
  *  `role="listbox"` panel of `role="option"` buttons with the tick glyph — reusing every inline
  *  style verbatim and taking the panel's anchoring (`top: 46px; z-index: 700`, the offset for a
- *  40 px control) from the "More filters" popover in the same toolbar row (V3:382).
+ *  40 px control) from the "More filters" popover in the same toolbar row.
  *
  *  `setMarket`'s state transition is unchanged, so filters, pins, the rail, `mapCenter`,
  *  `marketLabel`, `emptyNote` and the 320 ms loading skeleton behave exactly as before; it moves
- *  to a class property beside `setF` (V3:1906) so the option rows can call it, and takes `setF`'s
- *  own "an event OR a bare value" line (V3:1907) so the old contract still holds. Its orphaned
+ *  to a class property beside `setF` so the option rows can call it, and takes `setF`'s
+ *  own "an event OR a bare value" line so the old contract still holds. Its orphaned
  *  `renderVals()` key goes with the `<select>` that was its only reader, under the same dead-code
  *  rule A2.3/A2.5 applied to the `browseSel` helpers.
  *
  *  Two behaviours the design has NEVER had are added, because a dropdown a keyboard cannot drive
  *  and a click cannot dismiss is not "a normal dropdown": Arrow/Home/End/Enter on the trigger
  *  (A13.2's `marketMenuKeys`) and Escape + outside-click on `document` (A13.4's
- *  `trackMenuDismiss`, modelled line for line on `trackWidth`, V3:1864–1869, and torn down in the
+ *  `trackMenuDismiss`, modelled line for line on `trackWidth`, and torn down in the
  *  same `componentWillUnmount`). They live in the DESIGN's script, so the reference and the app
  *  get them together and the oracles stay comparable. Scope is the metro selector: the five
  *  filter selects, the sort select and the wizard's field selects stay native.
@@ -1143,8 +1143,8 @@ const A13 = {
 
 /** A13.1 — `setMarket` becomes a class property beside `setF`, so the option rows can call it and
  *  there is exactly one implementation of the transition. The first line is `setF`'s own
- *  event-or-value idiom (V3:1907), verbatim; the `setState` body is the old `setMarket`'s
- *  (V3:3173–3176), verbatim, plus the two keys that close the menu on a choice and the focus
+ *  event-or-value idiom, verbatim; the `setState` body is the old `setMarket`'s,
+ *  verbatim, plus the two keys that close the menu on a choice and the focus
  *  return that keeps the user on the control the choice was made from (round 4 ruling). */
 const A13_1: Amendment = {
   id: 'A13.1', ...A13,
@@ -1204,10 +1204,10 @@ const A13_1: Amendment = {
 
 /** A13.2 — `renderVals()`: the menu's open state, its trigger and caret styles, its keyboard
  *  handler, its callback ref, and the option rows. Modelled key for key on the layer menu
- *  (V3:2091–2122): `marketMenuOpen` ↔ `layerMenuOpen`, `toggleMarketMenu` ↔ `toggleLayerMenu`,
- *  `marketCaretStyle` ↔ `layerMenuCaretStyle`, `marketTriggerLabel` ↔ `compareTriggerLabel`
- *  (V3:2135), `marketMenuRef` ↔ `compareMenuRef` (V3:2137), `rowStyle`/`tickStyle` verbatim from
- *  V3:2112–2120 with the highlight taking the row's own hover grey (V3:525). The orphaned
+ *  and on Compare's: `marketMenuOpen` ↔ `layerMenuOpen`, `toggleMarketMenu` ↔ `toggleLayerMenu`,
+ *  `marketCaretStyle` ↔ `layerMenuCaretStyle`, `marketTriggerLabel` ↔ `compareTriggerLabel`,
+ *  `marketMenuRef` ↔ `compareMenuRef`, and `rowStyle`/`tickStyle` verbatim from the layer menu's
+ *  own rows, with the highlight taking the row's own hover grey. The orphaned
  *  `setMarket:` key is dropped — the `<select>` was its only reader (A2.3/A2.5's dead-code rule);
  *  the class property A13.1 added is what the rows call. */
 const A13_2: Amendment = {
@@ -1284,10 +1284,10 @@ const A13_2: Amendment = {
   count: 1
 };
 
-/** A13.3 — the markup. The field wrapper keeps its own declarations (V3:363) and gains
- *  `position: relative` so the panel can anchor to it, exactly as the "More filters" wrapper does
- *  (V3:379); the search glyph is untouched; the `<select>` becomes the layer menu's trigger
- *  (V3:431–434) and its panel (V3:523–534) with the chip swatch left out — markets have no colour
+/** A13.3 — the markup. The field wrapper keeps its own declarations and gains
+ *  `position: relative` so the panel can anchor to it, exactly as the "More filters" wrapper
+ *  does; the search glyph is untouched; the `<select>` becomes the layer menu's trigger
+ *  and its panel, with the chip swatch left out — markets have no colour
  *  ramp, and absent beats faked. Each row carries an `id` and the TRIGGER carries
  *  `aria-activedescendant` — the focused element is the only place a screen reader reads it, and
  *  focus stays on the trigger throughout (round 3 ruling; it sat on the panel, inert, in round 2).
@@ -1338,7 +1338,7 @@ const A13_3: Amendment = {
 };
 
 /** A13.4 — `trackMenuDismiss()`, and the two removals that pair with it. Modelled line for line
- *  on `trackWidth` (V3:1864–1869) / `componentWillUnmount` (V3:1871–1873), which is the design's
+ *  on `trackWidth` / `componentWillUnmount`, which is the design's
  *  only global listener and its only teardown. Escape and outside-click are the two dismissals a
  *  normal dropdown has and this design has never had; they live here, once, for the one menu the
  *  ruling names. */
@@ -1431,13 +1431,13 @@ const A13_7: Amendment = {
  *  under the SIL Open Font Licence, scoped to this control and its menu and to nothing else), and
  *  the live navy is #07386f where `--vf-navy` is #003a70 (Q2 → the live literal, because
  *  "pixel-by-pixel" names the live site). The light blue needed no decision — `--vf-accent`
- *  (V3:22) is already #339dde, the same hex as the live pill.
+ *  is already #339dde, the same hex as the live pill.
  *
  *  Structure. The live control is `li.give-button > a.elementor-item > span.sub-arrow` with a
  *  sibling `ul.sub-menu`, and the pill/typography split across the li and the a. A14 folds the two
  *  boxes into one <button> whose padding is the li's vertical and the a's horizontal (`2px 22px`),
  *  which reproduces the measured 28.30 px height and the same text baseline, and wraps it in the
- *  header's own `position: relative` div (V3:88) so the underline and the panel can anchor.
+ *  header's own `position: relative` div so the underline and the panel can anchor.
  *
  *  Three mechanisms have no counterpart anywhere in this design and are composed, not measured
  *  (John's ruling: click-to-open, keyboard navigation, Escape, outside-click dismissal): Escape
@@ -1463,7 +1463,7 @@ const A14 = {
 
 /** A14.1 — `giveFocus`, a class property beside the other class members, so the trigger's key
  *  handler and each row's key handler share one implementation. Anchored on `money(n) {`
- *  (script V3:1893, one occurrence), the first member after `componentDidMount`, so it does not
+ *  (one occurrence in the script), the first member after `componentDidMount`, so it does not
  *  collide with A13.1's `setF` anchor. Detached rows are filtered out: Vue calls a function ref
  *  with `null` on unmount, and the menu unmounts every time it closes. */
 const A14_1: Amendment = {
@@ -1569,14 +1569,14 @@ const A14_2: Amendment = {
   count: 1
 };
 
-/** A14.3 — the markup. The inert <button> at V3:104 becomes the header's own wrapper/trigger/
- *  sc-if/panel shape (V3:88-98) carrying the measured live values. The chevron is Font Awesome
+/** A14.3 — the markup. The header's inert Give <button> becomes the header's own wrapper/
+ *  trigger/sc-if/panel shape, carrying the measured live values. The chevron is Font Awesome
  *  Free 5.15.4's `solid/angle-down` inlined verbatim — the live glyph, at the live 11.25 x 18 px
  *  box (FA's .625em advance at 18px) — rather than a new icon file, so `icons.test.ts` and the
  *  bundle's asset folder are both untouched; inline <svg> with a camelCase viewBox is already a
- *  design idiom (V3:1416) and `parseDocument` runs with `lowerCaseAttributeNames: false`.
+ *  design idiom and `parseDocument` runs with `lowerCaseAttributeNames: false`.
  *  `text-decoration: none` appears in the row's hover as well as its base because the design's own
- *  `a:hover { text-decoration: underline }` (V3:54) would otherwise underline every row; a
+ *  `a:hover { text-decoration: underline }` would otherwise underline every row; a
  *  generated `.sch…:hover` (0,2,0) beats `a:hover` (0,1,1) on both targets. The panel is
  *  `width: max-content` because an absolutely positioned box shrink-to-fits inside its ~106px
  *  containing block otherwise — the live site reaches the same 264px through SmartMenus' inline
@@ -2610,15 +2610,15 @@ const A17_2: Amendment = {
  *  `navigate-arrow.svg` points LEFT unrotated — its path's apex is at x = 199 of a 640 viewBox
  *  and the shaft runs to x = 424 — and it is mirror-symmetric about its horizontal axis, which is
  *  why `transform: rotate(180deg)` is a horizontal flip and the design's own idiom for pointing
- *  it right (V3:724, the docked panel's Next arrow). The Insights-tab CTA carried it unrotated
+ *  it right (the docked panel's Next arrow). The Insights-tab CTA carried it unrotated
  *  AFTER its label, so it pointed back at the words; the detail's Back link carried it rotated
  *  BEFORE its label, so it pointed away from where the link goes. A18 swaps the two — the
- *  declaration order `transform` before `filter` copies V3:724.
+ *  declaration order `transform` before `filter` copies the Next arrow's.
  *
  *  Not touched, deliberately: the SVG files (flipping the glyph would reverse the correct
- *  prev/next pair at V3:721/724 and the two sign-out arrows, and the app serves its own public
- *  copy anyway — identical path, different C2PA metadata); V3:140 and V3:1434, the two unrotated
- *  sign-out arrows, which are John's question (D-A18) and not his two screenshots — V3:1434 is
+ *  prev/next pair and the two sign-out arrows, and the app serves its own public
+ *  copy anyway — identical path, different C2PA metadata); and the two unrotated
+ *  sign-out arrows, which are John's question (D-A18) and not his two screenshots — the second is
  *  inside the phone frame, on `mobile-list` and `mobile-detail`'s frozen pixels.
  *
  *  Line numbers in this family's comments name the amended file as it stood when A18 was written
@@ -2630,12 +2630,12 @@ const A18 = {
   ruling: 'the arrow icons are backwards on each location, reverse each'
 };
 
-/** A18.1 — the Insights-tab CTA (V3:819). Anchored on the bare `<img>` — the only 12 × 12
+/** A18.1 — the Insights-tab CTA. Anchored on the bare `<img>` — the only 12 × 12
  *  `navigate-arrow` carrying the whitening filter, unique in the pristine file and at application
  *  — and deliberately NOT on the button's "View full listing" label in front of it:
  *  design-amendments.test.ts's citation case chases a row's output forward through any LATER
  *  amendment whose `find` includes its `replace`, so a find that carried A3's text would make
- *  A3's checked output this `<img>` line and stale A3's own V3:831 citation (A11's site, where
+ *  A3's checked output this `<img>` line and stale A3's own citation (A11's site, where
  *  A3's text also stands). The bare anchor keeps A18 independent of A3's position in the list. */
 const A18_1: Amendment = {
   id: 'A18.1', ...A18,
@@ -2644,7 +2644,7 @@ const A18_1: Amendment = {
   count: 1
 };
 
-/** A18.2 — the detail's Back-to-results link (V3:895). The plain text "Back to results" occurs
+/** A18.2 — the detail's Back-to-results link. The plain text "Back to results" occurs
  *  twice (the mobile back button's `backLabel` in the script is the other); the `<img` prefix
  *  keeps this to the desktop link. */
 const A18_2: Amendment = {
@@ -2657,14 +2657,14 @@ const A18_2: Amendment = {
 /** A19 — the photo lightbox (John, 2026-09-09: "the images/photos should be clickable and they
  *  expand and have < > to view all images larger with simple X to close").
  *
- *  The design shows a photograph at 168 px (the detail grid's tiles, V3:914) and at 232 px (the
- *  Browse docked panel's carousel, V3:711) and enlarges neither; no `<img>` in the file has a
+ *  The design shows a photograph at 168 px (the detail grid's tiles) and at 232 px (the
+ *  Browse docked panel's carousel) and enlarges neither; no `<img>` in the file has a
  *  dynamic `src`, and no overlay but the interest modal's exists. The lightbox is composed from
- *  what the design already has — the modal's scrim (V3:1048), the tile's frame (V3:914), the
- *  panel's 34 px prev/next arrows (V3:720–725) verbatim, its 38 px close button (V3:707–709)
+ *  what the design already has — the modal's scrim, the tile's frame, the
+ *  panel's 34 px prev/next arrows verbatim, its 38 px close button
  *  with the glyph whitened by the design's own `brightness(0) invert(1)`, and its counter and
- *  caption pills (V3:729–731) verbatim — and it pages the SAME list the carousel counts
- *  (`photoSet(p).filter(hasSrc)`, V3:2595), so "N of M" equals the panel's counter and A15's
+ *  caption pills verbatim — and it pages the SAME list the carousel counts
+ *  (`photoSet(p).filter(hasSrc)`), so "N of M" equals the panel's counter and A15's
  *  extra tiles page too.
  *
  *  Four compositions have no counterpart and are asserted as exceptions in the test: the scrim's
@@ -2850,7 +2850,7 @@ const A19_6: Amendment = {
 };
 
 /** A19.7 — the docked panel's photograph: the same hit-target on a `hasAny` sc-if (the panel's
- *  own habit — it gates the pills the same way, V3:727), placed BEFORE the `multiple` arrows so
+ *  own habit — it gates the pills the same way), placed BEFORE the `multiple` arrows so
  *  the prev/next buttons, the pills and the dots — all later siblings, all absolutely positioned —
  *  keep painting above it and stay clickable. */
 const A19_7: Amendment = {
@@ -2876,12 +2876,12 @@ const A19_7: Amendment = {
 /** A19.8 — the overlay, ONCE, at the root after the `isMobile` block: two screens open it, it is
  *  `position: fixed` so its place in the tree affects no layout, and one block means one set of
  *  render values and one focus/keyboard implementation. The scrim is the interest modal's string
- *  (V3:1048) at `z-index: 1100`; the dialog takes the tile frame's declarations (V3:914) minus
- *  its fixed height plus the modal box's shadow and entrance (V3:1049) and `outline: none`; the
+ *  at `z-index: 1100`; the dialog takes the tile frame's declarations minus
+ *  its fixed height plus the modal box's shadow and entrance and `outline: none`; the
  *  image is natural size, never upscaled, bounded to the viewport minus the scrim's padding; the
- *  X is the panel's close button (V3:707–709) at the arrows' 10 px inset with the glyph
- *  whitened; the arrows are V3:720–725 verbatim, hidden when there is one photograph; the pills
- *  are V3:729–731 verbatim. Exactly one blank line before and after (the doubled-blank-line
+ *  X is the panel's close button at the arrows' 10 px inset with the glyph
+ *  whitened; the arrows are the panel's own verbatim, hidden when there is one photograph; the
+ *  pills are its own verbatim. Exactly one blank line before and after (the doubled-blank-line
  *  invariant). `aria-label="Close photo"` is new copy — the panel's says "Close panel". */
 const A19_8: Amendment = {
   id: 'A19.8', ...A19,
@@ -3260,7 +3260,7 @@ const A21_4b: Amendment = {
 };
 
 /** A21.4c — …and closes it before the CTA, with the design’s OWN unavailable card between. The
- *  markup is the detail’s, element for element (V3:884-888): no second card is invented. The
+ *  markup is the detail’s, element for element: no second card is invented. The
  *  "View full listing" button stays outside both branches, because navigation is not data. */
 const A21_4c: Amendment = {
   id: 'A21.4c', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
@@ -3551,7 +3551,7 @@ const A26 = {
  *  `openFilterMenu` is the family's ONE open path, and the only place it names the four overlay
  *  menus John's m7 ruling governs — the toggle and the arrow key both call it, so the six
  *  cross-close keys are written once rather than once per instance. `setFilter` is the choice:
- *  it calls the design's OWN `setF` (V3:1907), so the 320 ms loading settle and the filter
+ *  it calls the design's OWN `setF`, so the 320 ms loading settle and the filter
  *  transition are byte-for-byte the ones the `<select>`'s `onChange` had, and then shuts the
  *  panel and returns focus the way `setMarket` does. `scrollFilterOption` and
  *  `moveFilterHighlight` are A13.1's two, taking the instance's key as their first argument. */

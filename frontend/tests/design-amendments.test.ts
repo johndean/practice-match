@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
-import { DISTINCTIVENESS_K, citationFindings, ruledTextFindings } from './amend-guard';
+import { DISTINCTIVENESS_K, citationFindings, commentCitations, ruledTextFindings } from './amend-guard';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -1380,6 +1381,28 @@ describe('local design amendments (spec D15)', () => {
     expect(findings, `${findings.length} stale citation(s) found`).toEqual([]);
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(200);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // The OTHER place a line number could go stale (Task HOUSEKEEPING-C item 4, ADMIN-GATE's
+  // concern 5). The case above reads `LOCAL_AMENDMENTS.md`'s rows; nothing read the `V3:<line>`
+  // references that had accumulated in THIS file's own doc comments, and measured on 2026-09-13
+  // there were 58 of them and not one resolved — thirty landed on a blank line or a bare closing
+  // brace. They are gone, and this is the rule that keeps them gone: a line number belongs in a
+  // row, where the gate follows it and `npm run remap:citations` re-takes it; the engine's prose
+  // names the entry or the thing instead, neither of which can go stale.
+  // ---------------------------------------------------------------------------------------
+  it('design-amendments.ts names no design LINE in its own prose', () => {
+    const src = readFileSync(fileURLToPath(new URL('design-amendments.ts', import.meta.url)), 'utf8');
+    expect(
+      commentCitations(src),
+      'cite the line in your LOCAL_AMENDMENTS.md row (the gate follows it there); in this file name the entry id or the element'
+    ).toEqual([]);
+    // Not vacuous: the scanner must still be finding this file's comments at all, and it must
+    // still be skipping the one V3 reference that is DESIGN BYTES — the design's own comment on
+    // the filter chevron, carried inside an amendment's `replace`.
+    expect(commentCitations(`${src}\n// V3:1`)).toEqual([`${src.split('\n').length + 1}: V3:1`]);
+    expect(src).toContain("draw its own arrow (V3:382\\'s own trio)");
   });
 
   // K is a property of THIS ledger, not a constant, so it is re-derived rather than asserted from

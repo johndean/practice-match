@@ -15,8 +15,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Amendment } from './design-amendments';
 import {
-  citationFindings, consumerOf, declaresConsumption, declaresSupersededBy, declaresSupersession,
-  introducedLines, ruledSentences, ruledTextFindings,
+  citationFindings, commentCitations, consumerOf, declaresConsumption, declaresSupersededBy,
+  declaresSupersession, introducedLines, ruledSentences, ruledTextFindings,
 } from './amend-guard';
 
 const entry = (id: string, find: string, replace: string): Amendment =>
@@ -343,5 +343,37 @@ describe('the citation rule', () => {
 
   it('counts every citation it checked, so a pass cannot be vacuous', () => {
     expect(cite('| A99 | … | (V3:10) and (V3:10–11). |').checked).toBe(3);
+  });
+});
+
+/**
+ * `commentCitations` — the doc-comment half of the citation rule (Task HOUSEKEEPING-C item 4).
+ *
+ * The real file it guards carries NONE, which is again a gate that would pass with its detector
+ * deleted, so every shape it has to tell apart is here on a fixture: a line comment, a block
+ * comment, and the three kinds of string literal it must NOT read — one of which really does carry
+ * a `V3:` reference in the live file, because that string is design bytes.
+ */
+describe('commentCitations', () => {
+  it('reports a line number in a line comment and in a block comment, with its line', () => {
+    expect(commentCitations('const a = 1;\n// see V3:2408 for this\n')).toEqual(['2: V3:2408']);
+    expect(commentCitations('/** a\n *  b V3:10 and V3:20\n */')).toEqual(['1: V3:10', '1: V3:20']);
+  });
+
+  it('reads no string literal — the one live reference is an amendment\'s own design bytes', () => {
+    expect(commentCitations('const s = "// V3:1";')).toEqual([]);
+    expect(commentCitations("const s = '  // arrow (V3:382\\'s own trio).';")).toEqual([]);
+    expect(commentCitations('const s = `V3:1 ${x} V3:2`;')).toEqual([]);
+  });
+
+  it('does not run off the end of an unterminated comment or string', () => {
+    expect(commentCitations('// V3:7')).toEqual(['1: V3:7']);
+    expect(commentCitations('/* V3:7')).toEqual(['1: V3:7']);
+    expect(commentCitations('const s = "V3:7')).toEqual([]);
+  });
+
+  it('a division and a lone quote inside a comment are not comment openers', () => {
+    expect(commentCitations('const a = b / c; // V3:9')).toEqual(['1: V3:9']);
+    expect(commentCitations("// don't V3:9")).toEqual(['1: V3:9']);
   });
 });
