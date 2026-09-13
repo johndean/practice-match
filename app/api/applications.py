@@ -122,11 +122,12 @@ class AnswerState(AuthError):
 
 
 class NotABuyer(AuthError):
-    """Spec §4: `seller.apply` belongs to the `buyer` role alone — selling starts by being an
-    approved buyer."""
+    """Spec §4: `seller.apply` belongs to the `buyer` role, and — since ruling D-C54, 2026-09-13,
+    the admin role is a superset of the whole matrix — to `admin` as well; selling starts by being
+    an approved buyer, or by holding the role that holds every permission a buyer does."""
 
     code = "FORBIDDEN"
-    message = "Only approved buyers may apply to sell."
+    message = "Only approved buyers, or admins, may apply to sell."
 
 
 class ApplicationIn(BaseModel):

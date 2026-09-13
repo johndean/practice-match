@@ -2,7 +2,7 @@
 """The personas the approved design's screenshots are taken as, and the ones the visual harness
 reaches the gate screens with.
 
-Three MEMBER accounts, all named Dr. Rachel Mendes of the StartUp Club, differing only in what they
+Four MEMBER accounts, all named Dr. Rachel Mendes of the StartUp Club, differing only in what they
 are allowed to open — because since amendment A5.4 the account menu renders `/api/me`'s computed
 `role`, so the account decides what the header says (A-I8.2 / D-I8-8):
 
@@ -99,7 +99,7 @@ PERSONA_NAME = "Dr. Rachel Mendes"
 PERSONA_AFFILIATION = "StartUp Club"
 PERSONA_ROLES = ("buyer", "seller", "staff", "admin")
 DEFAULT_PASSWORD = "design-persona-quiet-lantern-42"
-# A-I8.2 / D-I8-8: the two member personas whose labels the design's own header shows. Same name and
+# A-I8.2 / D-I8-8: the three member personas whose labels the design's own header shows. Same name and
 # affiliation as `design@` — only the grants differ, so `name` and `initials` are constant across the
 # whole visual suite and only `role` varies with what the account may open.
 # `admin@` joins them under ruling D-C54 (John, 2026-09-13): the ONE grant `design@` cannot

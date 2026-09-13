@@ -117,6 +117,16 @@ A seller application is made from an account that is already `active`: approving
 Practice and the Admin screens, and granting it the other three buys it nothing.
 `staff` is a reviewer and not a superset: it holds neither `page.seller` nor `request.read_own`.
 
+Two consequences of the superset, recorded rather than surprised at later (Task ADMIN-SUPERSET fix
+round 1, review Informational 1/2): an `api_token` minted for the `admin` role now also carries the
+six member actions the superset added, exactly as a human admin's session does — `TOKEN_DENIED`
+(`tokens.manage`) is the only thing an `api_token` is refused regardless of role, unchanged by this
+ruling — so an automation token that only ever needed `page.admin`-family permissions is, from this
+release on, also able to reach `/api/seller/*` and `/api/requests/*`; and an admin who acts as a
+seller (creating or editing a listing) leaves no `roles.grant` audit row the way a deliberate
+self-grant of `seller` would have, because none is needed — the only trace an admin used member
+powers is the listing's own `listing.edit` audit trail, not an identity-side one.
+
 Two floors under removals: an `admin` grant is never removed from its own holder, and never when it
 is the last live one — `roles.grant` is admin-only, so zero admins is a state with no way back short
 of `bootstrap_admin.py` and database credentials.

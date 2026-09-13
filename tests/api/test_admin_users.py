@@ -440,8 +440,11 @@ def test_bootstrap_admin_is_idempotent_refuses_production_without_the_flag_and_i
     assert _run_cli(bootstrap_admin, ["--email", "founder@example.org", "--production"]).startswith(settings.link_base_url)
 
 
-def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_shows(conn, monkeypatch):
-    """A-I8.2 / D-I8-8: the visual oracle's personas.
+def test_seed_persona_seeds_the_three_oracle_personas_whose_labels_the_design_shows(conn, monkeypatch):
+    """A-I8.2 / D-I8-8: the visual oracle's personas. Renamed from "...the_two_..." under ruling
+    D-C54 (2026-09-13), which added `admin@practice-match.test` to `ORACLE_PERSONAS` beside
+    `buyer@` and `seller@` — the account whose only grant is `admin`, the shape `design@`'s four
+    roles cannot express.
 
     Once `logic.js` renders `/api/me`'s computed `role` (A5.4), the account menu shows the truth —
     so the account the screenshots are taken as decides what the design's own header must say. The
@@ -453,7 +456,7 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
     `design@` (all four roles) the four Admin states — those nine show their own account's label,
     which is why their baselines move once and are re-frozen (D-I8-8).
 
-    All three carry the SAME display name and affiliation, so `name` and `initials` are constant
+    All four carry the SAME display name and affiliation, so `name` and `initials` are constant
     across the whole suite and only `role` varies with what the account may actually open."""
     from app.auth import passwords as P
     from app.auth.labels import initials, role_label
