@@ -6324,6 +6324,87 @@ const A40_2: Amendment = {
   count: 1
 };
 
+const RULING_ADMIN_LOAD = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — the admin data loads whenever an account that may open the screen arrives, not only on a hard reload';
+
+/** A40.3–A40.6 — THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES (Task ADMIN-GATE, D-C53).
+ *
+ *  A defect independent of the router bypass A40.1/A40.2 sit beside, and of which persona is
+ *  signed in: the review queue was fetched in `componentDidMount` and NOWHERE else, while
+ *  `signIn` set `me` and loaded nothing — so a reviewer who signed in through the design's own
+ *  form saw an EMPTY Listings table under the design's literal badge "3" until they hard-reloaded
+ *  the page (`admin-tabs-audit.md`, "Second Listings load defect").
+ *
+ *  A40.3 gives the design ONE place where the admin screen's data is read, beside `reloadListings`
+ *  — the seller-side loader whose shape and rejection-arm discipline it copies (A16.17). It is
+ *  guarded on the PERMISSION, asked of the generated matrix through the `perms` adapter A40.1
+ *  introduced, which is what lets A40.4 retire `componentDidMount`'s own
+ *  `r === "staff" || r === "admin"` — a second copy of the matrix, and the only one left in the
+ *  design. Each tab's load is one line pushed onto `loads`, so A36 (Users), A37 (Requests) and A38
+ *  (Data Sources) each add one and nothing else; every load carries its own rejection arm, so a
+ *  refusal leaves a tab EMPTY rather than falling back to the design's fixture rows, which is
+ *  A17.1's rule for the render path applied to the load path.
+ *
+ *  A40.5 returns that promise from `signIn`'s fulfilled arm, so the design's own contract —
+ *  `signIn` answers a promise — still holds and a caller can await a settled screen. A40.6 loads
+ *  on the header nav's own door too, so a queue whose first load failed is not empty for the rest
+ *  of the session; `loadAdmin`'s own guards make it a no-op on every other door.
+ *
+ *  With no `perms` adapter and no `adminListings` adapter — the reference and the Claude Design
+ *  preview — nothing is asked and nothing is set, so the design's own five Listings fixtures
+ *  stand and every approved state keeps its pixels. */
+const A40_3: Amendment = {
+  id: 'A40.3', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n',
+  replace: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n'
+    + '\n'
+    + '  // A40.3 (D-C53): the ONE place the admin screen\'s data is read. Called on arrival\n'
+    + '  // (componentDidMount, A40.4), on an interactive sign-in by an account that may open the\n'
+    + '  // screen (A40.5) and on the header nav\'s own door (A40.6). Before this only the first\n'
+    + '  // existed, so a reviewer who signed in through the form saw an empty queue until a hard\n'
+    + '  // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`\n'
+    + '  // adapter, never a role list written here -- and on each adapter\'s presence. One tab, one\n'
+    + '  // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each\n'
+    + '  // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the\n'
+    + '  // design\'s fixtures (A16.17\'s discipline, A17.1\'s rule for the render path).\n'
+    + '  loadAdmin() {\n'
+    + '    if (this.props.perms && !this.props.perms.allowed("page.admin")) return;\n'
+    + '    const loads = [];\n'
+    + '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
+    + '    return Promise.all(loads);\n'
+    + '  }\n',
+  count: 1
+};
+
+const A40_4: Amendment = {
+  id: 'A40.4', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n',
+  replace: '    this.loadAdmin();\n',
+  count: 1
+};
+
+const A40_5: Amendment = {
+  id: 'A40.5', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '          (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),\n',
+  replace: '          (me) => { this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }); return this.loadAdmin(); },\n',
+  count: 1
+};
+
+const A40_6: Amendment = {
+  id: 'A40.6', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  replace: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n'
+    + '    if (screen === "admin") this.loadAdmin();\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6477,6 +6558,12 @@ export function amendments(): Amendment[] {
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     A31_13, A31_13b,
     // A40 -- the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every family
-    // is. Not chained: both `find` strings are the pristine bundle's own nav array.
-    A40_1, A40_2];
+    // is. A40.1/A40.2 are NOT chained: both `find` strings are the pristine bundle's own nav array.
+    A40_1, A40_2,
+    // A40.3-A40.6 -- the reload seam. Every one of these is CHAINED, on an earlier family's
+    // output: A40.3 reads A16.17's `reloadListings`, A40.4 replaces A17.2's own
+    // `componentDidMount` load outright, A40.5 reads A5.1's fulfilled `signIn` arm and A40.6
+    // A26.9a's `go` guard -- so all four must run after those, which appending the family last
+    // already guarantees.
+    A40_3, A40_4, A40_5, A40_6];
 }

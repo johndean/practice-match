@@ -5815,3 +5815,106 @@ describe("A30 — a metro change closes the docked panel (Task PANEL-STALE)", ()
     // and `marketVals` never resolves a `selComm` at all, let alone this mismatched one.
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-GATE (D-C53, 2026-09-13): THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES.
+//
+// The review queue was fetched in `componentDidMount` and nowhere else, so a reviewer who
+// signed in through the design's own form saw an EMPTY Listings tab under the design's literal
+// badge "3" until they hard-reloaded the page: `signIn` set `me` and loaded nothing
+// (`admin-tabs-audit.md`, "Second Listings load defect" — independent of the router bypass and
+// of which persona is signed in).
+//
+// `loadAdmin()` is the one place the admin screen's data is read, and the seam A36/A38/A37 each
+// add ONE line to. It is guarded on the permission — asked of the generated matrix through the
+// `perms` adapter, never a role list written here — and on the adapter's presence, and every
+// load carries A16.17's rejection arm, so a refusal leaves the tab EMPTY rather than falling
+// back to the design's five fixture rows.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
+  const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
+  const ROWS = [['a listing row'], ['another']];
+  const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+    const calls: string[] = [];
+    return { calls, list: () => { calls.push('list()'); return answer(); } };
+  };
+  const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
+
+  it('an interactive sign-in loads the review queue, with no hard reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'signIn set `me` and loaded nothing before this').toEqual(['list()']);
+    expect(c2.state.adminListingRows).toEqual(ROWS);
+    expect(c2.adminVals().rows.map((r: any) => r.cells), 'and the tab renders them, not the design\'s five fixtures').toEqual(ROWS);
+  });
+
+  it('a sign-in by an account that cannot open the screen spends no request at all', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.browse']) });
+    c2.setState({ email: 'buyer@practice-match.test', pw: 'a-password' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'the API would refuse it; the client does not ask').toEqual([]);
+    expect(c2.state.adminListingRows).toBeUndefined();
+  });
+
+  it('componentDidMount still loads on arrival — the reload path, which is all there was', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    expect(adapter.calls).toEqual(['list()']);
+
+    const buyer: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.browse']) });
+    buyer.componentDidMount();
+    expect(buyer.props.adminListings.calls, 'the permission, not a role list written into the design').toEqual([]);
+  });
+
+  it('go("admin") loads too, so a queue that failed on arrival is not empty for the rest of the session', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ auth: true, screen: 'browse' });
+
+    c2.go('admin')();
+    await Promise.resolve();
+
+    expect(c2.state.screen).toBe('admin');
+    expect(adapter.calls).toEqual(['list()']);
+
+    c2.go('browse')();
+    expect(adapter.calls, 'and only that door asks').toEqual(['list()']);
+  });
+
+  it('a refusal leaves the tab empty rather than falling back to the design\'s fixture rows (A16.17)', async () => {
+    const adapter = adminListings(() => Promise.reject(new Error('403')));
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.adminVals().rows).toEqual([]);
+  });
+
+  it('with no adapter nothing is asked and nothing is set — the reference and the Claude Design preview', async () => {
+    const c2: any = new Component({ auth: auth(STAFF), perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toBeUndefined();
+    expect(c2.adminVals().rows.length, 'the design\'s own five Listings fixtures stand').toBe(5);
+  });
+
+  it('with no perms adapter the design\'s own path runs — the reference, which has neither', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter });
+    c2.componentDidMount();
+    expect(adapter.calls).toEqual(['list()']);
+  });
+});

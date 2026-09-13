@@ -242,11 +242,19 @@ describe('the form sign-in tests turn their trace off on a live run (round 3, ru
     expect(spec).not.toMatch(/test\.skip\([^)]*PW_APP_URL/);
   });
 
-  it('holds the three tests I2 asked for, and nothing else', () => {
+  it('holds the four tests that type a password into the design\'s own form, and nothing else', () => {
     // `(?<![.\w])`, not `\b`: a dot is a word boundary, so `\btest\(` also counts the
     // `RegExp.prototype.test(e)` call inside the wrong-password case's console-error assertion.
+    //
+    // THREE until Task ADMIN-GATE (D-C53, 2026-09-13). The fourth is the reload seam's own case
+    // (A40.5): the admin queue was loaded in `componentDidMount` and nowhere else, and ONLY an
+    // interactive sign-in exercises that — every other test signs in out of band with `signInAs`,
+    // which sets cookies and reloads, which is precisely the path that hid the defect. It belongs
+    // in THIS file rather than smoke.spec.ts because it types a real password, which is exactly
+    // what the file-wide trace rule above exists for. The count is the scope statement: a fifth
+    // must be a deliberate act, and its own sign-in must be added to `harness.ts`'s traced budget.
     const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
-    expect((spec.match(/(?<![.\w])test\(/g) ?? []).length).toBe(3);
+    expect((spec.match(/(?<![.\w])test\(/g) ?? []).length).toBe(4);
   });
 
   it('is in the app project, or Playwright would never run it', () => {
