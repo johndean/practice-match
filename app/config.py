@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
 
+    # Test-only, and refused at boot everywhere else by the validator below (spec 2026-09-09 E).
+    # `tests/e2e/api_under_test.py` -- the Playwright launcher -- exports both so the upload's
+    # `send_task` runs `process_photo` inline with deterministic stub engines; no deployed service
+    # may, because a stubbed OCR would let a photograph reach READY_FOR_REVIEW unscanned.
+    privacy_engine_module: str | None = None
+    celery_task_always_eager: bool = False
+
     @field_validator("log_level")
     @classmethod
     def _log_level_known(cls, v: str) -> str:
@@ -113,6 +120,14 @@ class Settings(BaseSettings):
     def _qa_never_serves_the_coming_soon_page(self) -> Settings:
         if self.environment.lower() == "qa" and self.site_mode == "coming_soon":
             raise ValueError("SITE_MODE=coming_soon is never valid on QA (John, 2026-09-06)")
+        return self
+
+    @model_validator(mode="after")
+    def _test_only_settings_are_test_only(self) -> Settings:
+        if self.environment.lower() != "test":
+            for name in ("PRIVACY_ENGINE_MODULE", "CELERY_TASK_ALWAYS_EAGER"):
+                if getattr(self, name.lower()) not in (None, False):
+                    raise ValueError(f"{name} is only valid when ENVIRONMENT=test")
         return self
 
     @property

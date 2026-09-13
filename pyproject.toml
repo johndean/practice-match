@@ -35,6 +35,16 @@ dependencies = [
   "python-multipart>=0.0.20",
   "pyshp (>=3.1.6,<4.0.0)",
   "shapely (>=2.1.2,<3.0.0)",
+  # The image-identifiability pipeline's OCR (spec 2026-09-09 C.5 step 2, D-IDP-1a). Apache-2.0.
+  # The PP-OCR models are bundled in the wheel, so the worker downloads nothing at run time and a
+  # network-blocked test proves it. Requires the full `opencv-python`, hence the two apt packages
+  # the Dockerfile now installs. WORKER ONLY in practice -- `app/privacy/ocr.py` imports it lazily
+  # and the api never calls `read_text` -- but it is a main dependency because one image serves
+  # both roles.
+  "rapidocr-onnxruntime (>=1.4.4,<2.0.0)",
+  "onnxruntime (>=1.29,<2.0.0)",              # MIT -- the runtime rapidocr drives
+  # 2D symbols (spec C.5 step 2b, D-IDP-7). Apache-2.0, a pure wheel of about 1 MB.
+  "zxing-cpp (>=3.1.1,<4.0.0)",
 ]
 
 [tool.poetry]

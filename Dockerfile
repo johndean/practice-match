@@ -40,7 +40,7 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VIRTUALENVS_CREATE=false \
     PIP_NO_CACHE_DIR=1 \
     COMMIT_SHA=$COMMIT_SHA
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install "poetry==${POETRY_VERSION}"
 WORKDIR /app
