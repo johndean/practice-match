@@ -993,7 +993,9 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 10, f"expected the ten harness personas as one line each, read {sorted(found)}"
+    # Eleven since ruling D-C54 (2026-09-13) added `admin@practice-match.test`, the account whose
+    # only grant is `admin`.
+    assert len(found) == 11, f"expected the eleven harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -1262,6 +1264,31 @@ def test_deploy_md_documents_the_resend_dns_records():
     placeholder = "value from the Resend dashboard"
     assert text.count(placeholder) >= 5, f"every VALUE cell must read {placeholder!r} — DKIM x3, SPF, DMARC"
     assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
+
+
+def test_the_identity_runbook_states_the_admin_superset_rule():
+    """Ruling D-C54 (John, 2026-09-13): the `admin` role holds EVERY permission in the matrix.
+
+    The operator page is where the matrix is described to a human — `§0`'s "Who" row and `§4 Roles`
+    — and until this ruling both described `admin` as `staff` plus a few administrative extras,
+    which is exactly the belief that let the six member actions stay off it. Pinned against the
+    MATRIX itself and not only as prose: the sentence has to stay true, so if a future row ever
+    drops `admin`, this fails beside `tests/auth/test_matrix.py` rather than leaving the runbook
+    quietly lying to whoever is holding the pager.
+
+    `staff` is deliberately not widened, and the runbook has to say so too — "an admin is a
+    superset" read as "a privileged role is a superset" is the misreading that would put
+    `page.seller` on a reviewer."""
+    from app.auth import permissions as PM
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    sentence = "The `admin` role holds every permission in the matrix, the buyer's and the seller's included"
+    assert sentence in text, f"docs/RUNBOOK-identity.md does not state ruling D-C54: {sentence!r}"
+    assert "D-C54" in text, "the ruling is stated but not named, so nobody can find what decided it"
+    assert "`staff` is a reviewer and not a superset" in text, "the runbook must say the ruling names ONE role"
+    # ...and the sentence is true of the matrix the server is running.
+    assert [perm for perm, holders in PM.MATRIX.items() if "admin" not in holders] == []
+    assert "page.seller" not in PM.permissions_of(frozenset({"staff"}))
 
 
 def _runbook_decision_table() -> dict[str, dict[str, str]]:
@@ -1740,7 +1767,7 @@ def test_deploy_md_says_ten_test_accounts():
     six `.test` accounts" — stale since Task S3/S7 grew the seed to ten (three members, three
     applicants, four identity-screen accounts)."""
     text = (ROOT / "DEPLOY.md").read_text()
-    assert "seeds the ten `.test` accounts" in text, "DEPLOY.md does not say the seed produces ten accounts"
+    assert "seeds the eleven `.test` accounts" in text, "DEPLOY.md does not say the seed produces eleven accounts"
     assert "the six `.test` accounts" not in text
 
 
