@@ -390,7 +390,7 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
   <host>`, `scripts/seed_persona.py`).
 * QA's real sign-in rate limit stays real: fifteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
-  budget: 7 + 2 + 3 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
+  budget: 7 + 2 + 4 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
   quarter-hour boundary and re-run — never loosen the limit to make it pass.
 * Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
   `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the

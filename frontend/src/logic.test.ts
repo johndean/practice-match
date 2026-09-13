@@ -65,7 +65,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
   // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
   // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
-  // the filter moved 28 of the 54 approved states and seven of the thirteen frozen hashes. The
+  // the filter moved 28 of the 55 approved states and seven of the thirteen frozen hashes. The
   // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
   // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
   // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
