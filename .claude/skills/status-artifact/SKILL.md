@@ -18,6 +18,8 @@ Baseline failure this skill exists for (2026-09-13): a status rewrite replaced t
 4. **"Waiting on you."** Only decisions John alone can make, each with the recommendation. If none, the card stays and says one line: "Nothing — the last decisions landed <date>." No paragraph explaining why.
 5. **"Issues, and their state."** A two-column table: what was found (one sentence) → state in colour: `--ok` Fixed in <release>, `--accent` Fixing now (<task>) or Scheduled (<task>). No issue appears without a state.
 
+**Audit cards.** When the stakeholder asks a factual question whose answer is a table (which datasets are pulled, which screens are real), the answer is an AUDIT CARD appended after card 3 and before card 4: eyebrow = when and against what it was measured, h2 = the question in plain words, a table with a YES/NO/PARTIAL pill per row and one "shown as" column, then one bullet of what the audit found and where each finding went. It keeps its place on later updates until the question is closed.
+
 Nothing else. History, corrections, costs and rulings live in the ledger (`.superpowers/sdd/<plan>/progress.md`) and in the release notes; the artifact links to nothing and quotes nothing longer than one sentence.
 
 ## How to update
