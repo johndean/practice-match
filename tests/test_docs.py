@@ -2567,7 +2567,7 @@ A28_JSX_CLAIM = "the FIRST amendment in the programme\u2019s history to edit `Ma
 A28_JSX_SENTENCE = (
     "A28.1 is the FIRST amendment in the programme\u2019s history to edit `MarketMapV3.jsx` rather "
     "than the `.dc.html` (`file: 'jsx'`, the partition spec \u00a79.2 added for A24 \u2014 corrected "
-    "2026-09-12: A24.9\u2013A24.12 were first; A28.1 rides A24's `file: 'jsx'` partition)"
+    "2026-09-13: A24.9\u2013A24.12 were first; A28.1 rides A24's `file: 'jsx'` partition)"
 )
 
 
@@ -2582,7 +2582,7 @@ def test_claude_md_does_not_claim_a28_1_was_the_first_jsx_amendment():
         assert copy.count(A28_JSX_SENTENCE) == 1, (
             f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph does not carry the A28.1 "
             "jsx sentence with its dated correction clause "
-            "(corrected 2026-09-12: A24.9-A24.12 were first)"
+            "(corrected 2026-09-13: A24.9-A24.12 were first)"
         )
         assert copy.count(A28_JSX_CLAIM) == copy.count(A28_JSX_SENTENCE), (
             f"copy {i} of {len(copies)} claims A28.1 was the first `MarketMapV3.jsx` amendment "
@@ -2629,12 +2629,6 @@ def test_claude_md_frontend_gate_is_the_one_ci_runs_and_names_the_ci_check():
     assert GATE_CI_GREEN in gate, (
         "the verification gate does not require the Quality workflow green on the pushed SHA"
     )
-    # The four jobs the clause promises are the four `quality.yml` actually declares — a count
-    # nobody can read off the document alone, so it is measured against the workflow.
-    quality = cast(dict, yaml.safe_load((ROOT / ".github" / "workflows" / "quality.yml").read_text()))
-    assert len(quality["jobs"]) == 4, (
-        f"the gate says four Quality jobs; quality.yml declares {len(quality['jobs'])}"
-    )
     ops = [line for line in claude.splitlines() if "npm run typecheck && npm run build && npm test" in line
            and line.startswith("cd frontend")]
     assert len(ops) == 1, "CLAUDE.md's Common operations block has no single frontend gate line"
@@ -2642,6 +2636,17 @@ def test_claude_md_frontend_gate_is_the_one_ci_runs_and_names_the_ci_check():
         "the Common operations frontend gate line's comment does not say `npm test` runs coverage "
         "at 100 % on all four columns, exactly as CI"
     )
+
+
+def test_the_gates_four_quality_jobs_are_the_four_the_workflow_declares():
+    """Fix round 1 (review Minor: four behaviours in one case). The count the gate promises is the
+    one `quality.yml` actually declares — a number nobody can read off the document alone, so it is
+    measured against the workflow rather than asserted from the prose."""
+    quality = cast(dict, yaml.safe_load((ROOT / ".github" / "workflows" / "quality.yml").read_text()))
+    assert len(quality["jobs"]) == 4, (
+        f"the gate says four Quality jobs; quality.yml declares {len(quality['jobs'])}"
+    )
+    assert GATE_CI_GREEN in (ROOT / "CLAUDE.md").read_text()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2670,3 +2675,32 @@ def test_claude_md_common_operations_names_the_three_design_generators():
         assert name in scripts, f"frontend/package.json declares no {name}"
     # The one CLAUDE.md names as the reason it exists: the hand-port is generated, never typed.
     assert "logic.js" in line[0], "the line does not say which file gen:logic writes"
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, fix round 1 (Concern 1(d), controller, 2026-09-13). The amendment ledger
+# gained a gate that decides what may leave the design, and its vocabulary is not discoverable
+# from the ledger alone: a row must DECLARE a removal with a token, in one of two tiers. CLAUDE.md
+# is where an implementer learns that before writing a row the gate will refuse.
+# ---------------------------------------------------------------------------------------------
+AMEND_GUARD_TOKENS = ("**AMEND-GUARD**", "`consumes <id>`", "`supersedes <id>`", "`superseded by <id>`")
+
+
+def test_claude_md_amendment_paragraph_states_the_amend_guard_vocabulary():
+    """Both copies, per copy: the gate is named, its two tiers are named, and the three tokens a
+    row may use are spelled exactly as `frontend/tests/amend-guard.ts` reads them."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all"
+    for i, copy in enumerate(copies, start=1):
+        for token in AMEND_GUARD_TOKENS:
+            assert token in copy, (
+                f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph does not carry {token} "
+                "— the AMEND-GUARD vocabulary a ledger row must use"
+            )
+        for tier in ("LINE tier", "SENTENCE tier"):
+            assert tier in copy, f"copy {i} does not name the {tier}"
+    # The tokens are the ones the guard actually reads, not prose about them.
+    guard = (ROOT / "frontend" / "tests" / "amend-guard.ts").read_text()
+    for word in ("consumes", "supersedes", "superseded\\s+by"):
+        assert re.search(word, guard), f"amend-guard.ts does not read the {word} token"

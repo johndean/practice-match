@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * `npm run gen:logic` — regenerates `frontend/src/logic.js` from the approved design file.
+ * The transform `npm run gen:logic` applies — `scripts/gen-logic.mjs` is the command, this is the
+ * rule it runs — regenerating `frontend/src/logic.js` from the approved design file.
  *
  *   Practice Match V3.dc.html's <script data-dc-script> block
  *   + the provenance header and the DCLogic import
@@ -20,10 +21,6 @@
  * design's template -> App.vue + pseudo.css), this is the third leg: the design's script -> the
  * ported logic.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 /** The provenance header and the one import the port adds above the design's own bytes. */
 export const HEADER = "// Ported verbatim from the approved prototype 'Practice Match V3.dc.html'.\n"
   + '// Do not restyle or restructure: every value here is design-approved.\n'
@@ -52,11 +49,4 @@ export function designScript(html) {
 export function portLogic(html) {
   const body = designScript(html).replace(/"assets\//g, '"/assets/').replace(/\n+$/, '\n');
   return HEADER + body + FOOTER;
-}
-
-if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? '')) {
-  const [dc, out] = process.argv.slice(2);
-  const ported = portLogic(readFileSync(dc, 'utf8'));
-  writeFileSync(out, ported);
-  console.log(`wrote ${out} (${ported.length} bytes, ${ported.split('\n').length - 1} lines)`);
 }
