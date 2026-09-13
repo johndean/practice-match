@@ -466,6 +466,10 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
     expected = {
         "buyer@practice-match.test": ("buyer",),
         "seller@practice-match.test": ("buyer", "seller"),
+        # Ruling D-C54 (2026-09-13): the fourth member, whose ONLY grant is `admin`. Its computed
+        # label is `design@`'s own — `role_label` reads the grants it knows about and one `admin`
+        # is enough for it — which is part of why the defect hid behind a header that looked right.
+        "admin@practice-match.test": ("admin",),
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
     }
     with conn.cursor() as cur:
@@ -487,6 +491,7 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
             assert expected_label == {
                 "buyer@practice-match.test": "Approved buyer · StartUp Club",
                 "seller@practice-match.test": "Approved buyer and seller · StartUp Club",
+                "admin@practice-match.test": "VIN Foundation admin · StartUp Club",
                 seed_persona.PERSONA_EMAIL: "VIN Foundation admin · StartUp Club",
             }[email], (email, expected_label)
 

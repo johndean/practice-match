@@ -720,6 +720,63 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     expect(router.currentRoute.value.fullPath).toBe('/admin');
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
+  // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+  // need to see it all!!!"
+  //
+  // The defect ADMIN-GATE (D-C53, immediately above) surfaced rather than caused. `page.seller`
+  // was `["seller"]` and `request.read_own` was `["buyer","seller"]`, so an account holding
+  // `admin` ALONE held neither — and once the guard ran on the header-nav path, the two screens
+  // John reaches for daily answered with the unavailable gate. Every persona in this file holds
+  // four roles or one member role; THIS is the account nothing tested.
+  //
+  // Driven through the REAL `go()` for the same reason D-C53's case is: the header button is the
+  // path he clicked.
+  // ---------------------------------------------------------------------------------------
+  const ADMIN_ONLY: Me = { ...MEMBER, role: 'VIN Foundation admin', roles: ['admin'] };
+
+  it('lets an admin-only account through to My Requests and List a Practice (D-C54)', async () => {
+    const { c, router } = await setup('/browse', ADMIN_ONLY);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+
+    c.go('requests')();                               // the header's "My Requests" button
+    await flush(); await nextTick();
+    expect(c.state.screen, 'request.read_own carries admin since D-C54').toBe('requests');
+    expect(router.currentRoute.value.fullPath).toBe('/requests');
+
+    c.go('seller')();                                 // the header's "List a Practice" button
+    await flush(); await nextTick();
+    expect(c.state.screen, 'page.seller carries admin since D-C54').toBe('seller');
+    expect(router.currentRoute.value.fullPath).toBe('/seller');
+  });
+
+  it('honours the same two as deep links for an admin-only account', async () => {
+    const { c, router } = await setup('/requests', ADMIN_ONLY);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+    expect(c.state.screen).toBe('requests');
+
+    await router.push('/seller');
+    await flush(); await nextTick();
+    expect(c.state.screen).toBe('seller');
+    expect(c.state.gate, 'and never the unavailable gate').not.toBe('unavailable');
+  });
+
+  it('leaves the staff-only account refused exactly as before — D-C54 names one role', async () => {
+    const STAFF_ONLY: Me = { ...MEMBER, role: 'VIN Foundation staff', roles: ['staff'] };
+    const { c, router } = await setup('/browse', STAFF_ONLY);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+
+    c.go('seller')();
+    await flush(); await nextTick();
+    expect(c.state.screen).toBe('gate');
+    expect(c.state.gate, 'page.seller is ["admin","seller"]; staff is neither').toBe('unavailable');
+    expect(router.currentRoute.value.fullPath).toBe('/');
+  });
+
   it('still honours a remembered deep link the account DOES hold', async () => {
     const { c, router } = await setup('/browse', BUYER);
     expect(c.state.gate).toBe('signin');

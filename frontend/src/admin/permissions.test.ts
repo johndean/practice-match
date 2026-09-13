@@ -52,8 +52,12 @@ describe('toPermissionRows', () => {
     expect(rows.map((r) => r[0].main)).toEqual([...Object.keys(MATRIX)].sort());
     const gate = rows.find((r) => r[0].main === 'page.gate')!;
     expect(gate.slice(2).map((c) => c.main)).toEqual(['✓', '✓', '✓', '✓', '✓', '✓']);
+    // Columns are `ROLES` order: anonymous, applicant, buyer, seller, staff, admin. `admin` ticks
+    // every row since ruling D-C54 (2026-09-13) — the admin role is a superset of the whole matrix
+    // — which is exactly what the Permissions tab is for showing an operator.
     const own = rows.find((r) => r[0].main === 'listing.manage_own')!;
-    expect(own.slice(2).map((c) => c.main)).toEqual(['—', '—', '—', '✓', '—', '—']);
+    expect(own.slice(2).map((c) => c.main)).toEqual(['—', '—', '—', '✓', '—', '✓']);
+    for (const row of rows) expect(row[7].main, `${row[0].main} does not tick admin`).toBe('✓');
   });
 
   it('returns the design\'s row shape — an array of cells, with no pill and no actions', () => {

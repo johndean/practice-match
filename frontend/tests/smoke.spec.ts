@@ -80,6 +80,48 @@ test.describe('smoke', () => {
     await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
+  // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+  // need to see it all!!!"
+  //
+  // The defect ADMIN-GATE (D-C53, above) surfaced rather than caused: `page.seller` was
+  // `["seller"]` and `request.read_own` was `["buyer","seller"]`, so an account holding `admin`
+  // ALONE held neither, and once the guard ran on the header-nav path those two screens answered
+  // with the unavailable gate. Every persona this suite had held four roles or one member role —
+  // `design@` masked it everywhere — so `adminOnly` (`admin@practice-match.test`, seeded by
+  // `scripts/seed_persona.py` under this ruling) is the account with exactly John's grants.
+  //
+  // All THREE doors, in one test, because the point of the ruling is that an admin sees it all:
+  // the two he was locked out of and the one he was not.
+  // ---------------------------------------------------------------------------------------
+  test('an admin-only account opens My Requests, List a Practice and the Admin screens (D-C54)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'adminOnly', '/browse');
+    await expect(page).toHaveURL(/\/browse$/);
+
+    for (const [label, url] of [['My Requests', /\/requests$/], ['List a Practice', /\/seller$/],
+                                ['VIN Foundation Admin', /\/admin$/]] as const) {
+      await page.getByRole('button', { name: label, exact: true }).first().click();
+      await expect(page, `${label} must open, not answer with the unavailable gate`).toHaveURL(url);
+      await expect(page.getByText('This page is not available to your account')).toHaveCount(0);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  // The other half of the ruling, and the reason it is one role and not "privilege": D-C53's own
+  // case must stay green. A buyer is still refused the Admin screen — asserted above — and here a
+  // buyer is still refused nothing it used to hold, i.e. the ruling widened `admin` and nobody else.
+  test('and the buyer keeps exactly the doors it had — D-C54 widened one role', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/requests$/);
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+  });
+
   test('unknown routes redirect to /', async ({ page }) => {
     await page.goto('/definitely-not-a-route');
     await expect(page).toHaveURL(/\/$/);

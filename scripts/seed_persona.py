@@ -9,6 +9,7 @@ are allowed to open — because since amendment A5.4 the account menu renders `/
     buyer@   role buyer            → "Approved buyer · StartUp Club"            the design's own fixture text
     seller@  roles buyer + seller  → "Approved buyer and seller · StartUp Club"  the seller dashboard and wizard
     design@  all four roles        → "VIN Foundation admin · StartUp Club"       the VIN Foundation Admin screens
+    admin@   role admin ALONE      → "VIN Foundation admin · StartUp Club"       ruling D-C54, below
 
 `buyer@` is the oracle persona for the nineteen buyer-family states precisely because
 `labels.role_label({"buyer"}, "StartUp Club")` reproduces the design's fixture string letter for
@@ -35,9 +36,15 @@ harness to consume through the real endpoints. A-S5.2 adds a TENTH account, `ver
 own the verify tokens: consuming one flips its account to `verified` for good, and the oracle needs
 `unverified@` to still be unverified after every capture.
 
-TEN accounts in all: `design@`, `buyer@`, `seller@` (members); `pending@`, `needs-review@`,
-`declined@` (applicants with a state to render); `unverified@`, `verify-me@`, `verified@`,
-`invited@` (the identity screens).
+Ruling D-C54 (John, 2026-09-13) adds `admin@practice-match.test`, whose ONLY grant is `admin`.
+`design@` holds all four roles, so it could never have caught the defect that ruling fixes: the
+matrix gave six member actions to buyers/sellers and not to admins, and John — whose own account
+holds `admin` alone — was refused "My Requests" and "List a Practice" while every test passed. This
+account is that shape, and `frontend/tests/smoke.spec.ts` opens all three screens as it.
+
+ELEVEN accounts in all: `design@`, `buyer@`, `seller@`, `admin@` (members); `pending@`,
+`needs-review@`, `declined@` (applicants with a state to render); `unverified@`, `verify-me@`,
+`verified@`, `invited@` (the identity screens).
 
     ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
@@ -95,9 +102,14 @@ DEFAULT_PASSWORD = "design-persona-quiet-lantern-42"
 # A-I8.2 / D-I8-8: the two member personas whose labels the design's own header shows. Same name and
 # affiliation as `design@` — only the grants differ, so `name` and `initials` are constant across the
 # whole visual suite and only `role` varies with what the account may open.
+# `admin@` joins them under ruling D-C54 (John, 2026-09-13): the ONE grant `design@` cannot
+# express. It is a member like the other two — same name, same affiliation — and its computed label
+# is `design@`'s own, which is part of why nobody noticed: the header says "VIN Foundation admin"
+# either way, and only the matrix knows the two accounts open different doors.
 ORACLE_PERSONAS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("buyer@practice-match.test", ("buyer",)),
     ("seller@practice-match.test", ("buyer", "seller")),
+    ("admin@practice-match.test", ("admin",)),
 )
 # D-I8-4: one row per gate state the harness has to reach. No role grants and no `application`
 # row, deliberately: `can.effectiveRoles` makes any non-`active` account an `applicant` whatever it
