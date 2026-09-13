@@ -1426,13 +1426,65 @@ def test_the_identity_spec_permission_matrix_admin_column_matches_matrix_py():
 # constants it describes and the route family it names is checked against the app's own router
 # table, so a document and the code cannot drift apart in unison (Minor 5, the gap Minors 2 and 3
 # were the live instance of).
+#
+# Fix round 2 (re-review Minors 1-5). BOTH sentences are composed now, and neither types a number:
+# the member-action COUNT is derived from the matrix (re-review Minor 4), the `REAUTH` list is one
+# helper the §4 addendum and the spec's own §3 Automation-tokens paragraph share (re-review Minor
+# 1), and the audit sentence states the CONDITION under which the row it names is written, checked
+# against the routes themselves by
+# `tests/api/test_seller_listings.py::test_the_identity_documents_audit_sentence_is_what_the_seller_routes_write`
+# (re-review Minors 2 and 3, the controller's promoted ruling: an operator acts on this sentence).
 
-D_C54_AUDIT_CONSEQUENCE = (
-    "an admin who acts as a seller (creating or editing a listing) leaves no `roles.grant` audit "
-    "row the way a deliberate self-grant of `seller` would have, because none is needed — the "
-    "only trace an admin used member powers is the listing's own `listing.edit` audit trail, not "
-    "an identity-side one"
-)
+
+def reauth_actions() -> str:
+    """`REAUTH`'s own membership, spelled the way both identity paragraphs spell it.
+
+    Re-review Minor 1: the spec said the set two ways — §3's parenthetical listed FIVE human
+    phrases ("Revoke, licence decisions, engine activation, role grants, token creation") while §4's
+    addendum, composed from `PM.REAUTH`, listed six; `signups.notify` joined `REAUTH` at `0ebba68`
+    and §3 never followed. One helper, so the two paragraphs cannot count differently again."""
+    from app.auth import permissions as PM
+
+    return ", ".join(f"`{perm}`" for perm in sorted(PM.REAUTH))
+
+
+def member_actions() -> frozenset[str]:
+    """The permissions D-C54 added to `admin`: what a buyer or a seller holds and a reviewer does not.
+
+    Re-review Minor 4: the count was the one clause of the composed token sentence still TYPED, so a
+    seventh buyer/seller-only row would leave both identity documents saying "six" with the pin
+    green — the `_ADMIN` union at `app/auth/permissions.py` gives admin a new row automatically and
+    `tests/auth/test_matrix.py`'s superset assertion would not notice a stale word."""
+    from app.auth import permissions as PM
+
+    return PM.permissions_of(frozenset({"buyer", "seller"})) - PM.permissions_of(frozenset({"staff"}))
+
+
+def d_c54_audit_consequence() -> str:
+    """D-C54's audit-breadcrumb consequence, composed from the routes' own constants.
+
+    Re-review Minors 2 and 3, promoted by the controller because an operator ACTS on this sentence.
+    It used to read "an admin who acts as a seller (creating or editing a listing) … the only trace
+    an admin used member powers is the listing's own `listing.edit` audit trail", which is false for
+    the common case: `app/api/seller_listings.py`'s `create` writes NO audit row at all, and
+    `patch_step` writes `EDIT_ACTION` only inside `if re_entering:` — that is, only where the edit
+    moves a listing in `EDIT_REENTERS_REVIEW` back to `in_review`. An operator grepping `audit_log`
+    for `listing.edit` after reading runbook §4 would have found nothing for an admin who created a
+    listing and filled in its draft, and concluded no member powers were used.
+
+    Composed from `EDIT_ACTION` and `sorted(EDIT_REENTERS_REVIEW)` so the clause moves with the
+    condition rather than with the action's NAME alone — the name is what fix round 1 pinned, and a
+    name pin stays green while the sentence around it goes false."""
+    from app.api.seller_listings import EDIT_ACTION, EDIT_REENTERS_REVIEW
+
+    states = " or ".join(f"`{state}`" for state in sorted(EDIT_REENTERS_REVIEW))
+    return (
+        "an admin who acts as a seller leaves no `roles.grant` audit row the way a deliberate "
+        "self-grant of `seller` would have, because none is needed — and the trace is on the "
+        "listing side rather than the identity side: the listing's own `seller_id`, and the "
+        f"`listing.*` rows its own routes write, of which `{EDIT_ACTION}` lands only where an edit "
+        f"re-enters review from {states} (creating a listing and editing a draft write none)"
+    )
 
 
 def d_c54_token_consequence() -> str:
@@ -1453,14 +1505,14 @@ def d_c54_token_consequence() -> str:
     each other."""
     from app.auth import permissions as PM
 
-    reauth = ", ".join(f"`{perm}`" for perm in sorted(PM.REAUTH))
     denied = ", ".join(f"`{perm}`" for perm in sorted(PM.TOKEN_DENIED))
+    count = NUMBER_WORDS[len(member_actions())].lower()
     return (
-        "an `api_token` minted for the `admin` role now also carries the six member actions the "
-        "superset added, exactly as a human admin's session does — the two refusals a token meets "
-        f"whatever role it carries are unchanged by this ruling: {denied} (`TOKEN_DENIED`), and "
-        f"every step-up action (`REAUTH`: {reauth}), which a token has no password to "
-        "re-authenticate with — so an automation token that only ever needed `page.admin`-family "
+        f"an `api_token` minted for the `admin` role now also carries the {count} member actions "
+        "the superset added, exactly as a human admin's session does — the two refusals a token "
+        f"meets whatever role it carries are unchanged by this ruling: {denied} (`TOKEN_DENIED`), "
+        f"and every step-up action (`REAUTH`: {reauth_actions()}), which a token has no password "
+        "to re-authenticate with — so an automation token that only ever needed `page.admin`-family "
         "permissions is, from this release on, also able to reach `/api/seller/*`"
     )
 
@@ -1503,11 +1555,11 @@ def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documen
     against the app's own router table — so a change to a constant, an audit action or a route
     prefix fails HERE, beside the sentence that has to be rewritten, instead of leaving two
     identity documents lying in unison."""
-    from app.api.seller_listings import EDIT_ACTION
     from app.main import app
     from tests.conftest import walk_routes
 
     token_consequence = d_c54_token_consequence()
+    audit_consequence = d_c54_audit_consequence()
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
     spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
 
@@ -1527,7 +1579,7 @@ def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documen
             "in the words app/auth/permissions.py's REAUTH/TOKEN_DENIED compose (hotfix review "
             f"Informational 1): {token_consequence!r}"
         )
-        assert D_C54_AUDIT_CONSEQUENCE in flat, (
+        assert audit_consequence in flat, (
             f"{name}'s consequences paragraph does not state D-C54's accepted audit-breadcrumb "
             "consequence (hotfix review Informational 2)"
         )
@@ -1536,15 +1588,14 @@ def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documen
         )
 
     # Scoped to the addendum itself, never to the section around it (Minor 4): spec §4's own
-    # admin-column note already reads "(ruling D-C54, 2026-09-13, John: …)".
+    # admin-column note already reads "(ruling D-C54, 2026-09-13, John: …)". Matched on the
+    # COLLAPSED paragraph like every assertion above it (re-review Minor 5): the header sentence is
+    # 100 characters wide in a file soft-wrapped at 100, so a legitimate re-wrap that moves one line
+    # break used to fail this gate with the words unchanged.
     for token in ("ruling D-C54", "2026-09-13"):
-        assert token in spec_paragraph, f"the spec's §4 addendum does not carry {token!r}"
-
-    # The audit sentence names an audit action the code writes (Minor 5).
-    assert f"`{EDIT_ACTION}` audit trail" in D_C54_AUDIT_CONSEQUENCE, (
-        f"the audit consequence names an audit trail app/api/seller_listings.py does not write "
-        f"(EDIT_ACTION is {EDIT_ACTION!r})"
-    )
+        assert token in _collapse_whitespace(spec_paragraph), (
+            f"the spec's §4 addendum does not carry {token!r}"
+        )
 
     # ...and every route family it promises is one the app actually serves (Minor 3): the sentence
     # this replaces named `/api/requests/*`, which no router has ever mounted.
@@ -1555,6 +1606,24 @@ def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documen
         assert any(path.startswith(family) for path in templates), (
             f"the api_token consequence promises {family}* , which app.main serves no route under"
         )
+
+
+def test_the_identity_spec_names_one_reauth_refusal_set_in_section_3_and_section_4():
+    """Re-review Minor 1. §3's Automation-tokens paragraph said a token "never satisfies a re-auth
+    gate (Revoke, licence decisions, engine activation, role grants, token creation)" — FIVE items —
+    while the §4 addendum, composed from `PM.REAUTH`, lists six: `signups.notify` joined `REAUTH` at
+    `0ebba68` (Task I5d.1) and §3's parenthetical never followed.
+
+    An automation author reads §3, concludes an admin `api_token` can drive
+    `POST /api/admin/signups/*/notify`, and meets 403 `REAUTH_TOKEN` — contradicted by the same
+    document forty lines below. Both paragraphs now spell the set through one helper, so they cannot
+    count differently again; the human phrases stay beside it, which is what §3 is for."""
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    paragraph = _collapse_whitespace(_one_paragraph(spec, "**Automation tokens", "the identity spec §3"))
+    assert f"`REAUTH`: {reauth_actions()}" in paragraph, (
+        "the identity spec's Automation-tokens paragraph does not name the re-auth refusal set the "
+        f"way app/auth/permissions.py's REAUTH composes it: `REAUTH`: {reauth_actions()}"
+    )
 
 
 APPLICATIONS_PRE_D_C54_SELLER_RULE = "already `active` with the buyer role"
