@@ -9,9 +9,10 @@ Two directions have to be right at once. A matcher that fires on "Animal Hospita
 photograph of every listing and teaches sellers to remove masks; one that only fires on the exact
 registered name misses the sign, which is the whole point. Two rules hold the balance, and both are
 about the same thing -- a fragment has to be SPECIFIC before it counts. The distinctive-token rule:
-a name token of five characters or more, outside the generic set, is enough on its own. And
-`_informative`, which every substring match must pass: at least two tokens, at least one of them
-outside the generic set.
+a token of five characters or more, outside the generic set, is enough on its own -- from the NAME
+it is reported as `name` and from the seller's prose as `prose`, because the privacy row names a
+column to whoever reads it. And `_informative`, which every substring match must pass: at least two
+tokens, at least one of them outside the generic set.
 
 **The generic set is compared AFTER normalisation, and that is load-bearing.** `normalise` folds the
 scene-text confusions on both sides, so "animal" becomes "anlmal" and "hospital" becomes "hospltal";
@@ -27,8 +28,12 @@ from difflib import SequenceMatcher
 from typing import Any, NamedTuple
 
 #: Applied to BOTH sides before comparison, so "H0SPITAL" and "HOSPITAL" become the same string
-#: rather than a near-miss the fuzzy ratio has to rescue. Ordered longest-first so `rn` -> `m` runs
-#: before the single-character pairs.
+#: rather than a near-miss the fuzzy ratio has to rescue. Written longest-first for a reader; the
+#: ORDER is NOT load-bearing, and the comment used to claim it was (review I-2). No pair's OUTPUT
+#: character (`m w o l s b z`) is any pair's INPUT (`rn vv 0 1 i 5 8 2`), so the map reaches one
+#: fixed point whatever order it is applied in -- which is exactly what makes folding both sides of
+#: a comparison safe. `tests/privacy/test_identity.py` pins that property, and each of the eight
+#: pairs has one row of `HITS` that goes red when the pair is deleted.
 SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
     ("rn", "m"), ("vv", "w"), ("0", "o"), ("1", "l"), ("i", "l"), ("5", "s"), ("8", "b"), ("2", "z"),
 )
@@ -54,17 +59,43 @@ GENERIC = frozenset({"animal", "hospital", "veterinary", "vet", "clinic", "pet",
 #: import, because a set folded per call would be the same work in a loop.
 _GENERIC_N = frozenset(normalise(word) for word in GENERIC)
 
+#: The bare-domain TLDs `url` recognises with no scheme and no `www.` in front of them. Spec C.5
+#: step 2 asks for "a maintained TLD list" and this tuple IS that seam -- a TLD is added here and
+#: nowhere else, and `tests/privacy/test_identity.py` walks every entry of it, so an addition is
+#: proved to fire rather than merely declared. `.co`, `.us`, `.io`, `.info` and `.pet` were missing
+#: and a practice's bare domain on one of them was no region at all (review Minor 7). `example` is
+#: deliberately NOT here: it is RFC 2606's documentation TLD, belongs to no practice, and a
+#: production class that recognised it would be a class tuned to this repository's own fixtures.
+URL_TLDS: tuple[str, ...] = ("com", "net", "org", "co", "us", "io", "info", "pet", "vet",
+                             "clinic", "care", "health")
+
+#: Interpolated longest-first, so a shorter entry cannot be tried where a longer one that starts
+#: with the same letters is meant (`co` before `com`).
+_TLDS = "|".join(sorted(URL_TLDS, key=len, reverse=True))
+
 #: Each hit is an identifying region REGARDLESS of matching (spec C.5 step 2).
 REGEX_CLASSES: dict[str, re.Pattern[str]] = {
     "phone": re.compile(r"(?<!\d)(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"),
-    "url": re.compile(r"\b(https?://\S+|www\.\S+|[\w-]+\.(com|net|org|vet|clinic|care|health|example)\b)", re.IGNORECASE),
+    "url": re.compile(rf"\b(https?://\S+|www\.\S+|[\w-]+\.({_TLDS})\b)", re.IGNORECASE),
     "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
     #: Two arms, and the second is not decoration: a suite number can stand with no street number
     #: in front of it. The specification's inline pattern (C.5 step 2) stated only the first and so
     #: would have missed "Suite 210"; A-IDP-7 corrects it there and folds both arms in here, so
     #: this module defines each class exactly once.
+    #:
+    #: `dr` is split out of the street-type list and carries its own `(?!\s+[\w'-])` (review
+    #: Minor 8): "Dr" is the title as often as it is Drive, any digit on the line can stand in as
+    #: the house number, and so "Open 7 days with Dr Jones" and "24/7 Emergency Dr Smith" were both
+    #: `regex:address` -- a mask over every interior sign that names a veterinarian beside a number,
+    #: which is how a seller learns to remove masks. A street suffix ENDS its address ("... Creek
+    #: Dr", "... Creek Dr, Cedar Park"); a title is followed by a name. The cost is measured and
+    #: recorded rather than hidden: "1204 Cypress Creek Dr Cedar Park TX", with no comma, is no
+    #: longer an address region -- for the listing's own address the `street` term still matches the
+    #: line, and `drive`, `rd` and the other eleven suffixes are untouched.
     "address": re.compile(
-        r"(\b\d+\s+[\w'-]+(\s+[\w'-]+)*\s+(st|street|ave|avenue|rd|road|blvd|dr|drive|ln|lane|pkwy|parkway|hwy|highway)\b\.?"
+        r"(\b\d+\s+[\w'-]+(\s+[\w'-]+)*\s+(?:"
+        r"(?:st|street|ave|avenue|rd|road|blvd|drive|ln|lane|pkwy|parkway|hwy|highway)\b\.?"
+        r"|dr\b\.?(?!\s+[\w'-]))"
         r"|\b(suite|ste)\s*\.?\s*\w+\b)", re.IGNORECASE),
     #: A number worn as signage, alone on its own line: "4140" above a door. John's ruling of
     #: 2026-09-10 (A-IDP-7) -- an invented street number is part of the invented identity, so it
@@ -77,14 +108,30 @@ REGEX_CLASSES: dict[str, re.Pattern[str]] = {
     "zip": re.compile(r"(?<!\d)\d{5}(?!\d)"),
 }
 
-#: Below this a substring is a coincidence ("Rd" inside "Broadway").
+#: A floor UNDER `_informative`, and not a rule of its own: `_informative` already refuses a
+#: one-token fragment, so the "Rd inside Broadway" case this comment used to give could never reach
+#: the length test at all (review Minor 4). What the constant stops is a two-token fragment that is
+#: still only three characters -- "A B" standing in for "A B Veterinary". Spec C.5's "min 4 chars".
 MIN_SUBSTRING = 4
-#: `difflib` ratio at or above this is a match.
+#: `difflib` ratio at or above this is a match. Spec C.5 step 3's own number.
 FUZZY = 0.85
-#: Token-set overlap at or above this is a match, for lines of two tokens or more.
+#: Token-set overlap at or above this is a match, for lines of two tokens or more. Spec C.5's own.
 TOKEN_SET = 0.6
-#: A name token this long, outside GENERIC, identifies on its own.
+#: A token this long, outside GENERIC, identifies on its own. Spec C.5's own number. All four are
+#: pinned against the specification's four numbers by one test, because nothing else joined them
+#: and FUZZY could drift to 0.80 or 0.86 with the whole table green (review Minor 5).
 DISTINCTIVE = 5
+
+#: The two distinctive-token pools, and the `Match.field` each is reported under. A long word out of
+#: the seller's prose is not the practice's NAME: the privacy row's `identity_matches` names a
+#: COLUMN to whoever reads it, and the line "Dentistry" -- from `services` -- was recorded as `name`
+#: (review Minor 9). A word in BOTH pools belongs to the name, which is why `prose` is built as the
+#: difference and not the union.
+TOKEN_POOLS: tuple[tuple[str, str], ...] = (("tokens", "name"), ("prose", "prose"))
+
+#: The keys of `identity_terms` that are NOT whole-string terms: the two pools above and the
+#: abbreviation list, each of which has its own pass in `match_lines`.
+_NOT_TERMS = frozenset({"tokens", "prose", "abbreviation"})
 
 
 class Match(NamedTuple):
@@ -112,14 +159,25 @@ def _abbreviations(name: str) -> list[str]:
         return []
     full = "".join(w[0] for w in words)
     distinctive = "".join(w[0] for w in words if w not in _GENERIC_N)
-    return [a for a in {full, distinctive} if len(a) >= 2]
+    # `sorted`, not set order: a set of strings iterates in PYTHONHASHSEED order, and this list came
+    # back `['hc','hcah']` at seed 0 and `['hcah','hc']` at seeds 1 and 12345 (review Minor 10).
+    # `match_lines` only ever asks it for membership, so nothing was wrong on the day; an assertion
+    # on it, or a privacy row built from it, would have flaked between two runs of one commit.
+    return sorted(a for a in {full, distinctive} if len(a) >= 2)
+
+
+def _pool(text: str) -> set[str]:
+    """The distinctive tokens of a string: long enough to identify on their own, and outside the
+    generic veterinary vocabulary."""
+    return {t for t in normalise(text).split() if len(t) >= DISTINCTIVE and t not in _GENERIC_N}
 
 
 def identity_terms(listing: Mapping[str, Any], email: str | None) -> dict[str, list[str]]:
     """The listing's own identity, normalised, by field.
 
-    `tokens` is the distinctive-token pool: the name's own long words plus the long words of the
-    seller's prose fields. `email_domain` is the part after the @ and never the part before it."""
+    `tokens` is the NAME's own distinctive-token pool and `prose` is the seller's free-text one,
+    kept apart so a match can say which of the two it came from (review Minor 9).
+    `email_domain` is the part after the @ and never the part before it."""
     name = str(listing.get("name") or "")
     terms: dict[str, list[str]] = {
         field: [normalise(str(listing[field]))] if listing.get(field) else []
@@ -128,8 +186,9 @@ def identity_terms(listing: Mapping[str, Any], email: str | None) -> dict[str, l
     terms["email_domain"] = [normalise(email.split("@", 1)[1])] if email and "@" in email else []
     terms["abbreviation"] = _abbreviations(name)
     prose = " ".join(str(listing.get(f) or "") for f in ("facility", "services", "hours"))
-    pool = {t for t in normalise(f"{name} {prose}").split() if len(t) >= DISTINCTIVE and t not in _GENERIC_N}
-    terms["tokens"] = sorted(pool)
+    own = _pool(name)
+    terms["tokens"] = sorted(own)
+    terms["prose"] = sorted(_pool(prose) - own)
     return terms
 
 
@@ -166,7 +225,7 @@ def match_lines(lines: Sequence[str], terms: Mapping[str, list[str]]) -> list[Ma
     for index, raw in enumerate(lines):
         line = normalise(raw)
         for field, values in terms.items():
-            if field in ("tokens", "abbreviation"):
+            if field in _NOT_TERMS:
                 continue
             for term in values:
                 hit = _compare(field, term, line)
@@ -174,10 +233,11 @@ def match_lines(lines: Sequence[str], terms: Mapping[str, list[str]]) -> list[Ma
                     found.append(hit._replace(line=index))
                     break
         words = set(line.split())
-        for token in terms.get("tokens", ()):
-            if token in words:
-                found.append(Match("name", index, "distinctive", 0.8))
-                break
+        for pool, as_field in TOKEN_POOLS:
+            for token in terms.get(pool, ()):
+                if token in words:
+                    found.append(Match(as_field, index, "distinctive", 0.8))
+                    break
         upper = raw.strip()
         # One `if` and not two: the repository's ruff set carries SIM102, and `and` is the same
         # short-circuit the nested form was -- the cheap shape test still runs before `normalise`.
@@ -193,13 +253,32 @@ JOIN = " "
 
 
 def _spans(lines: Sequence[str]) -> tuple[str, list[tuple[int, int]]]:
-    """The lines as one string, and each line's `[start, end)` span within it."""
+    """The lines as one string, and each line's `[start, end)` span within it.
+
+    Every line is STRIPPED before it is joined, and a blank one contributes no separator at all
+    (review I-1). `app/privacy/ocr.py` takes the engine's `text` verbatim -- no strip, no filter --
+    so a wrapped sign arrives as `["(512) ", "555-0100"]` as readily as perfectly trimmed, and one
+    character of padding made the join `"(512)  555-0100"`: `phone`'s separator class is a SINGLE
+    optional character, so it could not cross the double space and the number was a region on
+    NEITHER line. That is under-redaction, in the exact case this pass exists for.
+
+    A blank line takes the impossible span `(-1, -1)`, so the index of a span is still the index of
+    its line -- `regex_hits` attributes by position -- while no match can ever be attributed to a
+    line that holds no text and therefore no pixels to fill."""
     spans: list[tuple[int, int]] = []
+    parts: list[str] = []
     at = 0
     for line in lines:
-        spans.append((at, at + len(line)))
-        at += len(line) + len(JOIN)
-    return JOIN.join(lines), spans
+        text = line.strip()
+        if not text:
+            spans.append((-1, -1))
+            continue
+        if parts:
+            at += len(JOIN)
+        parts.append(text)
+        spans.append((at, at + len(text)))
+        at += len(text)
+    return JOIN.join(parts), spans
 
 
 def regex_hits(lines: Sequence[str]) -> list[Match]:
