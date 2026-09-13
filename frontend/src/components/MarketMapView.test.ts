@@ -630,7 +630,9 @@ describe('MarketMapView — the V3 map', () => {
     const stub = installLeafletStub();
     mount(MarketMapView, { props: v3Props() });
     await flushPromises();
-    expect(stub.calls[0].args[1]).toEqual({ center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true });
+    // `maxZoom: 20` is A35.5 (ruling D-C52): the MAP carries the ceiling so the + button stops in
+    // the same place whichever basemap is on, instead of Leaflet deriving it from the layers.
+    expect(stub.calls[0].args[1]).toEqual({ center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true, maxZoom: 20 });
     expect(stub.calls.filter((c) => c.fn === 'control.scale')).toHaveLength(0);
     expect(stub.calls.filter((c) => c.fn === 'control.zoom')).toHaveLength(0);
   });
