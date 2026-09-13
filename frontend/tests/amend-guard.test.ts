@@ -425,6 +425,53 @@ describe('commentCitations', () => {
 // identity, not merely by behaviour, since two functions can behave alike and still be two
 // functions someone has to remember to change together.
 // ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// Round 2 (re-review, Minor, 2026-09-13): the first scan matched only `function outputOf(` /
+// `function entriesFor(`, so a copy re-introduced in ARROW form (`const outputOf = (a: Amendment):
+// string[] => …`) — or as a class/object METHOD — passed it silently: exactly the shape this
+// task deleted, and the one most likely to come back, since nothing else in the toolchain objects
+// to a second binding of the same name in a different file. Proved BEFORE the fix (the round's own
+// RED): a real file at this path, carrying nothing but the one line
+// `export const outputOf = (a: { replace: string }): string[] => a.replace.split('\n');`, left the
+// old scan green — the escape this widened one closes.
+//
+// `declaresIdentifier` recognises the three shapes a JS/TS BINDING is created by — a function
+// declaration, a const/let/var assignment (arrow or function expression), or a method (class or
+// object literal) — and none of a call, an import or a re-export: a call is never followed
+// immediately by `{` or `:` after its own closing paren, which is what keeps the method-shorthand
+// half of the pattern from matching one.
+// ---------------------------------------------------------------------------------------
+function declaresIdentifier(src: string, name: string): boolean {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\bfunction\\s+${n}\\s*\\(|\\b(?:const|let|var)\\s+${n}\\s*=|\\b${n}\\s*\\([^)]*\\)\\s*[:{]`).test(src);
+}
+
+describe('declaresIdentifier recognises every declaration shape, not just `function name(`', () => {
+  it('matches a function declaration, a const/let arrow or function expression, and a method shorthand', () => {
+    expect(declaresIdentifier('function outputOf(a) { return a; }', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('export function outputOf(a) { return a; }', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('const outputOf = (a: Amendment): string[] => a.replace.split("\\n");', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('export const outputOf = (a) => a;', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('let outputOf = (a) => a;', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('const outputOf = function (a) { return a; };', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('class X { outputOf(a) { return a; } }', 'outputOf')).toBe(true);
+  });
+
+  it('does not mistake a CALL, an IMPORT or a RE-EXPORT for a declaration', () => {
+    expect(declaresIdentifier('own.flatMap((a) => outputOf(a, list))', 'outputOf')).toBe(false);
+    expect(declaresIdentifier('export { entriesFor, outputOf };', 'outputOf')).toBe(false);
+    expect(declaresIdentifier("import { outputOf } from './amend-guard';", 'outputOf')).toBe(false);
+    expect(declaresIdentifier('const own = entriesFor(id, list);', 'entriesFor')).toBe(false);
+    expect(declaresIdentifier('if (entriesFor(id, input.list).length === 0) { return null; }', 'entriesFor')).toBe(false);
+  });
+
+  it('RED reproduced: the old function-only pattern missed exactly this arrow-form copy', () => {
+    const arrowCopy = 'const outputOf = (a: Amendment): string[] => a.replace.split("\\n");';
+    expect(/\bfunction outputOf\(/.test(arrowCopy), 'the old pattern (kept here as documentation of the defect) really did miss this').toBe(false);
+    expect(declaresIdentifier(arrowCopy, 'outputOf'), 'the widened scan catches it').toBe(true);
+  });
+});
+
 describe('entriesFor, outputOf and isDistinctivePiece are shared, not duplicated', () => {
   it('citation-remap.ts re-exports the SAME function objects, not a second copy', async () => {
     const guard = await import('./amend-guard');
@@ -433,18 +480,24 @@ describe('entriesFor, outputOf and isDistinctivePiece are shared, not duplicated
     expect(remap.outputOf).toBe(guard.outputOf);
   });
 
-  it('no other test file under frontend/tests declares its own entriesFor or outputOf', async () => {
+  it('no other test file under frontend/tests declares entriesFor, outputOf or isDistinctivePiece — in ANY form', async () => {
     const { readdirSync, readFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
+    const { join, basename } = await import('node:path');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('.', import.meta.url));
-    const files = readdirSync(dir).filter((f) => f.endsWith('.ts'));
-    const declares = (pattern: RegExp) => files.filter((f) => pattern.test(readFileSync(join(dir, f), 'utf8')));
-    expect(declares(/\bfunction entriesFor\(/).sort()).toEqual(['amend-guard.ts']);
-    expect(declares(/\bfunction outputOf\(/).sort()).toEqual(['amend-guard.ts']);
-    expect(declares(/\bfunction isDistinctivePiece\(/).sort()).toEqual(['amend-guard.ts']);
+    // This file itself is excluded: its own fixture strings above are EXAMPLES of the declaration
+    // shapes `declaresIdentifier` recognises, quoted as test data, not real bindings — a whole-file
+    // text scan cannot tell the two apart, and it is the one file guaranteed to carry both.
+    const self = basename(fileURLToPath(import.meta.url));
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && f !== self);
+    const contents = new Map(files.map((f) => [f, readFileSync(join(dir, f), 'utf8')]));
+    const declaresIn = (name: string) => files.filter((f) => declaresIdentifier(contents.get(f)!, name));
+    expect(declaresIn('entriesFor').sort()).toEqual(['amend-guard.ts']);
+    expect(declaresIn('outputOf').sort()).toEqual(['amend-guard.ts']);
+    expect(declaresIn('isDistinctivePiece').sort()).toEqual(['amend-guard.ts']);
     // The inline predicate itself is gone from everywhere but its one definition — a file could
     // still keep the OLD literal expression under a different name and pass the checks above.
-    expect(declares(/\[\^A-Za-z0-9\]\{2,\}|A-Za-z0-9\]\{2,\}/).sort()).toEqual(['amend-guard.ts']);
+    const declaresPattern = (pattern: RegExp) => files.filter((f) => pattern.test(contents.get(f)!));
+    expect(declaresPattern(/\[\^A-Za-z0-9\]\{2,\}|A-Za-z0-9\]\{2,\}/).sort()).toEqual(['amend-guard.ts']);
   });
 });
