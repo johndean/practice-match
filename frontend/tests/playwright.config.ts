@@ -19,11 +19,17 @@ export default defineConfig({
   testDir: '.',
   // A RUN-SCOPED artefact directory for a QA persona check (Task HOUSEKEEPING-C item 11, REL-0123
   // concern 3). Playwright CLEARS its output directory at the start of EVERY run, so a second run
-  // deletes the first one's screenshots, traces and the persona memo along with them — which cost
-  // the 0.1.23 release agent a third sign-in out of a budget of two, just to re-take two images.
-  // Point each run at its own directory (`PW_OUTPUT_DIR=../screenshots/qa-0124-buyer`, resolved
-  // against the CWD, which is `frontend/` in the runbook's own command) and nothing is lost.
-  // Unset — every local and CI run — keeps Playwright's own default, so nothing else changes.
+  // deletes the first one's screenshots and traces — which cost the 0.1.23 release agent a third
+  // sign-in out of a budget of two, just to re-take two images. Point each run at its own directory
+  // (`PW_OUTPUT_DIR=../screenshots/qa-0124-buyer`, resolved against the CWD, which is `frontend/`
+  // in the runbook's own command) and nothing is lost. Unset — every local and CI run — keeps
+  // Playwright's own default, so nothing else changes.
+  //
+  // This is NOT what protects the persona-session memo (review, HOUSEKEEPING-C fix round 1,
+  // Minor-3): `MEMO_FILE` (harness.ts) is hard-anchored to `test-results/.persona-sessions.json`
+  // and never moves, whatever this variable is set to — setting it only stops Playwright's own
+  // wipe from landing on `test-results/` at all. The memo's own staleness handling is
+  // global-setup.ts's job below, clearing it on a run-stamp mismatch.
   outputDir: process.env.PW_OUTPUT_DIR ? resolve(process.env.PW_OUTPUT_DIR) : undefined,
   fullyParallel: false,
   workers: 1,

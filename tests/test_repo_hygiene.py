@@ -69,3 +69,22 @@ def test_qa_clickthrough_screenshots_are_ignored():
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.split("\0")
     assert [name for name in tracked if name] == []
+
+
+def test_the_screenshots_ignore_is_anchored_to_the_repo_root():
+    """Review, HOUSEKEEPING-C fix round 1, Minor-2. `screenshots/` (no leading slash) ignores a
+    directory of that name at ANY depth — `frontend/tests/screenshots/`, `docs/screenshots/`, both
+    confirmed ignored — where the runbook's own recipe (`PW_OUTPUT_DIR=../screenshots/qa-<version>
+    -<persona>`, run from `frontend/`) only ever writes to the repository ROOT's `screenshots/`.
+    `/screenshots/` is the anchored form and matches the one path this rule is for."""
+    root_level = subprocess.run(
+        ["git", "check-ignore", "-q", "screenshots/qa-0124-browse.png"], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert root_level.returncode == 0, "the repo-root screenshots/ directory is not ignored"
+    nested = subprocess.run(
+        ["git", "check-ignore", "-q", "frontend/tests/screenshots/probe.png"], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert nested.returncode == 1, (
+        "screenshots/ is unanchored and reached a NESTED directory the runbook's recipe never "
+        "writes to — the ignore line should be /screenshots/"
+    )
