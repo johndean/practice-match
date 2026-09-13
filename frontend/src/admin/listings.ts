@@ -263,7 +263,13 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
       ];
     }
     const [pill, tone] = PILLS[item.status] ?? [item.status, 'mute'];
-    const title = item.city ? `${item.type || 'Small animal'} practice — ${item.city}` : 'Untitled listing';
+    // Fix round 1 (D-C53's "zero-fake data", the review's §7 first item): this read
+    // `${item.type || 'Small animal'} practice — ${item.city}`, so a listing whose `type` column
+    // is null was printed as a Small animal practice — a clinical category no seller had chosen
+    // and no column held, invented by the mapping on the one tab whose ruling forbids exactly
+    // that. The honest copy was already in this expression: "Untitled listing", what the seller's
+    // own dashboard shows a row that has nothing to name itself by.
+    const title = item.city && item.type ? `${item.type} practice — ${item.city}` : 'Untitled listing';
     const figures: string[] = [item.price != null ? `${money(item.price)} asking` : 'Asking price not set'];
     if (item.rev != null) figures.push(`${money(item.rev)} revenue`);
     if (item.docs != null) figures.push(`${item.docs} ${item.docs === 1 ? 'doctor' : 'doctors'}`);
@@ -302,10 +308,19 @@ async function send(method: string, path: string, body?: unknown): Promise<Respo
   return res;
 }
 
-/** What one read of the queue answers: the rows the design's own table renders, and the number
- *  its tab badges — keyed by the TAB the number belongs to, because `s.adminCounts` is one object
- *  the other three tabs put their own badge in beside this one. */
-export interface QueuePage { rows: Cell[][]; counts: { listings: number } }
+/** What one read of the queue answers: the rows the design's own table renders, and the number its
+ *  tab badges.
+ *
+ *  Fix round 1 (review Important-1, controller ruling of 2026-09-14): this said the count was
+ *  "keyed by the TAB the number belongs to, because `s.adminCounts` is one object the other three
+ *  tabs put their own badge in beside this one". That convention is retracted, and it was never
+ *  honourable: `setState` merges TOP-LEVEL keys, so two `loads.push` arms writing one shared
+ *  object inside the same `Promise.all` clobber each other — last writer wins and one tab's badge
+ *  blanks at random — and the siblings had already gone their own way (`adminUserCounts.open` on
+ *  the Users branch, a scalar `adminDataCount` on Data Sources). EACH TAB OWNS ITS OWN STATE KEY:
+ *  this one's is `adminListingCounts` (A39.2), and the member is named for what the number IS,
+ *  because the key already says which tab it belongs to. */
+export interface QueuePage { rows: Cell[][]; counts: { in_review: number } }
 
 /** What `logic.js` sees as `this.props.adminListings`. */
 export interface AdminListingsAdapter {
@@ -344,11 +359,21 @@ function windowUi(decided: () => Promise<void>): ListingsUi {
     decide: async (item, action, note, fields) => {
       const res = await send('POST', `/listings/${item.id}/decide`, { action, reason: note, ...(fields ?? {}) });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
         // SL9: was `'rejected'` here, doubling the suffix below into "rejecteded" — the ternary
         // gives the ROOT VERB the trailing "ed" attaches to (`publish`/`unpublish` already are one).
         window.alert(body?.error?.message ?? `That listing could not be ${action === 'decline' ? 'reject' : action}ed.`);
-        // Nothing moved, so there is nothing to re-read.
+        // Fix round 1, Important-2. The DECISION did not land, and for most refusals that is the
+        // end of it — a `422 NOTE_REQUIRED` means the reviewer left the reason blank and the
+        // listing is exactly where this row says it is. `STATE` is the exception and the reason
+        // this line exists: `decide_listing` answers it (409) precisely when the listing is NOT in
+        // the state this row was drawn from, which means ANOTHER reviewer has already moved it and
+        // the screen is now wrong — the pill still reads "In review", the Publish button is still
+        // offered, and it can be pressed again for ever. That is the pre-A39 condition reached by
+        // a second door, so the row the alert just contradicted is re-read, through the same one
+        // loader a successful decision goes through. Keyed on the SERVER's own code, never on
+        // "any refusal": a blanket reload would spend a request to learn nothing.
+        if (body?.error?.code === 'STATE') await decided();
         return;
       }
       await decided();
@@ -369,8 +394,11 @@ export function makeAdminListingsAdapter(): AdminListingsAdapter {
       // `toListingRows` reads either.
       const items: (ListingItem | DesignListingRow)[] = [];
       let cursor: string | null = null;
-      // Every page carries the same table-wide counts, so the last one read wins and the loop
-      // always makes at least one request — there is no "no page at all" to answer for.
+      // The badge comes off the FIRST page and only the first (fix round 1, review Minor-1): it is
+      // a fact about the whole table, an unindexed `count(*)` to compute, and it does not change
+      // between pages of one traversal — so the route stops paying for it on a continuation
+      // request and this stops asking for one. The loop always makes at least one request, so
+      // there is no "no page at all" to answer for.
       let badge = 0;
       for (let page = 0; page < MAX_PAGES; page++) {
         const query = `/listings?limit=${PAGE_LIMIT}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
@@ -379,14 +407,17 @@ export function makeAdminListingsAdapter(): AdminListingsAdapter {
         const body = (await res.json()) as QueueBody;
         if (!Array.isArray(body.items)) throw new Error('the review queue answered no items');
         // Refused rather than defaulted, for `items`' own reason: a badge that quietly reads 0 is
-        // indistinguishable from "no listing is waiting for a reviewer".
-        if (typeof body.counts?.in_review !== 'number') throw new Error('the review queue answered no counts');
-        badge = body.counts.in_review;
+        // indistinguishable from "no listing is waiting for a reviewer". Asked of the first page
+        // alone — a later page that carried one would be answering a question nobody asked.
+        if (page === 0) {
+          if (typeof body.counts?.in_review !== 'number') throw new Error('the review queue answered no counts');
+          badge = body.counts.in_review;
+        }
         items.push(...(body.items as (ListingItem | DesignListingRow)[]));
         cursor = body.next_cursor ?? null;
         if (cursor === null) break;
       }
-      return { rows: toListingRows(items, ui), counts: { listings: badge } };
+      return { rows: toListingRows(items, ui), counts: { in_review: badge } };
     },
     onDecision: (fn) => { reload = fn; }
   };

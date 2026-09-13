@@ -305,6 +305,75 @@ async def test_the_queue_counts_what_the_tab_badges(client: Any, conn: Any, memb
     assert draft in {row["id"] for row in (await client.get("/api/admin/listings", headers=staff)).json()["items"]}
 
 
+async def test_the_full_table_count_is_paid_once_per_traversal_and_not_once_per_page(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """Fix round 1, review Minor-1. `COUNTS_SQL` is an UNINDEXED `count(*)` over the whole `listing`
+    table, and `admin/listings.ts` walks up to `MAX_PAGES` pages per `list()` — so one Publish, which
+    re-reads the queue (A39.4), used to cost one full scan PER PAGE rather than one per refresh.
+
+    The badge is a fact about the table and the client reads it off the FIRST page (every later page
+    carried the same number), so a continuation request — one carrying a `cursor` — no longer pays
+    for it and no longer answers `counts` at all. What the client does with that is the mirror image:
+    the first page's `counts` is required, exactly as `items` is, and a continuation's absence is
+    fine (`admin/listings.ts`)."""
+    from app.api import admin_listings
+
+    scans: list[str] = []
+    real = admin_listings.queue_counts
+    monkeypatch.setattr(admin_listings, "queue_counts",
+                        lambda c: (scans.append("count"), real(c))[1])
+
+    _listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    # A second row, so there is a second PAGE to ask for at `limit=1`.
+    assert (await client.post("/api/seller/listings", headers=signed)).status_code == 201
+
+    first = (await client.get("/api/admin/listings?limit=1", headers=staff)).json()
+    assert first["counts"]["in_review"] >= 1 and first["next_cursor"] is not None
+    assert scans == ["count"], "the first page pays for the badge"
+
+    page2 = (await client.get(f"/api/admin/listings?limit=1&cursor={first['next_cursor']}", headers=staff)).json()
+    assert len(page2["items"]) == 1, "a continuation page still serves its rows"
+    assert "counts" not in page2, "and never re-counts a table the first page already counted"
+    assert scans == ["count"], "one scan for the whole traversal, not one per page"
+
+
+async def test_the_status_change_asks_the_audit_log_once_per_row_in_the_index_s_own_order(conn: Any) -> None:
+    """Fix round 1, review Minor-2, and the module's first query-plan pin.
+
+    `_STATUS_CHANGE` began as a faithful copy of `_COLUMNS`'s own `decline_reason` precedent: TWO
+    correlated subqueries with the same predicate, one for `at` and one for `actor_role`, so every
+    row cost 2 × the index probes it needs — and each probe SORTED, because it ordered by
+    `a.id DESC` while `audit_log_target_idx`'s trailing column is `at DESC`.
+
+    Both halves are pinned on the REAL plan of the REAL query, self-calibrating rather than
+    hand-counted: the status-change join must add exactly ONE audit_log access to the plan (it
+    added two), and the lateral's order must be PRESORTED by the index (it was a full sort).
+    `enable_seqscan` is off so the planner's choice is about the index and not about a test
+    table's size."""
+    from app.api.admin_listings import _STATUS_CHANGE
+    from app.api.seller_listings import _COLUMNS
+
+    tail = " WHERE TRUE ORDER BY updated_at DESC, id DESC LIMIT 50"
+
+    def plan(sql: str) -> str:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL enable_seqscan = off")
+            cur.execute("EXPLAIN " + sql)
+            return "\n".join(row[0] for row in cur.fetchall())
+
+    probes = "Index Scan using audit_log_target_idx"
+    without = plan(f"SELECT {_COLUMNS} FROM listing{tail}")
+    with_join = plan(f"SELECT {_COLUMNS}, listed_at, sc.at AS status_changed_at,"
+                     f" sc.actor_role AS status_changed_by FROM listing{_STATUS_CHANGE}{tail}")
+
+    assert with_join.count(probes) == without.count(probes) + 1, (
+        "the status change asks the audit log more than once per row:\n" + with_join)
+    assert "Presorted Key: a.at" in with_join, (
+        "audit_log_target_idx no longer supplies the lateral's order — it is sorting instead:\n" + with_join)
+
+
 async def test_publish_needs_state_and_market_on_the_first_publish_and_not_after(
     client: Any, conn: Any, member: Any
 ) -> None:

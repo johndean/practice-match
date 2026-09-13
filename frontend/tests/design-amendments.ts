@@ -6975,7 +6975,7 @@ const A39_1: Amendment = {
   id: 'A39.1', date: '2026-09-13',
   ruling: RULING_A39,
   find: '        { key: "listings", label: "Listings", count: "3" },\n',
-  replace: '        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminCounts ? String(s.adminCounts.listings) : "") : "3" },\n',
+  replace: '        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },\n',
   count: 1
 };
 
@@ -6985,12 +6985,20 @@ const A39_1: Amendment = {
  *  displayed beside the other's answer. The rejection arm clears BOTH (A16.17's discipline, A17.1's
  *  rule for the render path): a refusal leaves the tab empty, and a badge left standing over an
  *  empty table is the class of statement D-C53 exists to remove. `null` rather than `{}`, because
- *  A39.1 reads the object's presence. */
+ *  A39.1 reads the object's presence.
+ *
+ *  `adminListingCounts`, not `adminCounts` (fix round 1, review Important-1, controller ruling of
+ *  2026-09-14): EACH TAB OWNS ITS OWN KEY. `setState` merges TOP-LEVEL keys, so two `loads.push`
+ *  arms writing one shared object inside the same `Promise.all` would clobber each other — last
+ *  writer wins, one tab's badge blanks at random — and the siblings had already diverged
+ *  (`adminUserCounts.open` on the Users branch, a scalar `adminDataCount` on Data Sources). The
+ *  member is `in_review` for the same reason the Users tab's is `open`: the key says which tab,
+ *  so the member says what the number IS. */
 const A39_2: Amendment = {
   id: 'A39.2', date: '2026-09-13',
   ruling: RULING_A39,
   find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n',
-  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminCounts: page.counts }), () => this.setState({ adminListingRows: [], adminCounts: null })));\n',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }), () => this.setState({ adminListingRows: [], adminListingCounts: null })));\n',
   count: 1
 };
 
@@ -7039,6 +7047,31 @@ const A39_4: Amendment = {
   find: '    this.loadAdmin();\n',
   replace: '    this.loadAdmin();\n'
     + '    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());\n',
+  count: 1
+};
+
+/** A39.5 — the LAST question asked is the one answered (fix round 1, review Minor-3). CHAINED on
+ *  A39.2, whose whole `adminListings` line this rewrites — **consumes A39.2**.
+ *
+ *  A39.4 re-reads the queue on every decision, so a reviewer who presses Publish on two rows
+ *  inside one round trip has two `loadAdmin` calls outstanding at once; before this, whichever
+ *  ANSWER arrived last won, and the network does not promise that is the later question. The
+ *  older one could land on top of the newer and repaint the table as it was a moment ago — with
+ *  its badge — until something else reloaded it.
+ *
+ *  `A24.21`'s own idiom, which solved exactly this for the boundaries loader: read a token ONCE
+ *  when the load starts, re-check it on arrival, and let a superseded answer go. `_adminLoad` is
+ *  an instance field rather than state because it is not rendered and must not schedule a render;
+ *  the design's own `_offViewport` (A24.23) is the precedent for a plain underscore member. BOTH
+ *  arms are checked: a superseded REJECTION must not empty the table a later load just filled,
+ *  which is the same defect wearing A16.17's discipline as a disguise. The promise still settles
+ *  either way, so A40.5's "a caller can await a settled screen" is untouched. */
+const A39_5: Amendment = {
+  id: 'A39.5', date: '2026-09-14',
+  ruling: RULING_A39,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }), () => this.setState({ adminListingRows: [], adminListingCounts: null })));\n',
+  replace: '    const token = this._adminLoad = (this._adminLoad || 0) + 1;\n'
+    + '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n',
   count: 1
 };
 
@@ -7226,5 +7259,5 @@ export function amendments(): Amendment[] {
     // reads A40.4's `this.loadAdmin();` -- so the family has to run after the one it edits.
     // A39.1 and A39.3a/A39.3b address pristine lines. Definition order in this file matches this
     // list (m8).
-    A39_1, A39_2, A39_3a, A39_3b, A39_4];
+    A39_1, A39_2, A39_3a, A39_3b, A39_4, A39_5];
 }

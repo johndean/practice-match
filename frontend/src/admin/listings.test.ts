@@ -74,10 +74,22 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
     expect(row[0].main).toBe('Untitled listing');
   });
 
-  it('falls back to "Small animal" when the type is not yet set, and to "Asking price not set"', () => {
+  it('never calls a listing of unknown type a "Small animal practice" (fix round 1, D-C53)', () => {
+    // This was the one place left on the tab that FABRICATED a datum: a listing whose `type` is
+    // null rendered "Small animal practice — Bastrop", a clinical category no seller had chosen
+    // and no column held, on a screen whose whole ruling is "zero-fake data". The honest copy was
+    // already in the same expression — the seller dashboard's own "Untitled listing", which is
+    // what a row with nothing to name itself by has always read.
     const [row] = rowsFor([item({ type: null, price: null })]);
-    expect(row[0].main).toBe('Small animal practice — Bastrop');
+    expect(row[0].main).toBe('Untitled listing');
+    expect(row[0].main).not.toContain('Small animal');
+    // The absent price is still named as absent rather than omitted: a row with no asking price
+    // is a real state of a real draft, and "Asking price not set" states it.
     expect(row[1].sub.startsWith('Asking price not set')).toBe(true);
+  });
+
+  it('...and still names the practice when the type IS set', () => {
+    expect(rowsFor([item({ type: 'Mixed' })])[0][0].main).toBe('Mixed practice — Bastrop');
   });
 
   it('omits a figure the listing does not have, rather than inventing one', () => {
@@ -460,7 +472,7 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
 
   it('hands the tab its badge from the envelope, never a literal (ruling 1)', async () => {
     stubFetch({ status: 200, body: { counts: { in_review: 7, total: 41 }, items: [BASE], next_cursor: null } });
-    expect((await makeAdminListingsAdapter().list()).counts).toEqual({ listings: 7 });
+    expect((await makeAdminListingsAdapter().list()).counts).toEqual({ in_review: 7 });
   });
 
   it('refuses a queue that answers no counts, exactly as it refuses one that answers no items', async () => {
@@ -490,18 +502,45 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
     expect(reloads, 'the reload is asked for exactly once, after the POST').toEqual([2]);
   });
 
-  it('does not ask for a reload when the decision was refused', async () => {
+  it('RE-READS after a 409 STATE — the one refusal that means the row on screen is wrong (I-2)', async () => {
+    // Fix round 1, Important-2. `409 STATE` (`admin_listings.py`'s own code) is returned precisely
+    // when the listing is no longer in the state this row was drawn from — another reviewer moved
+    // it. The DECISION did not land, and that is what the earlier "nothing moved, so there is
+    // nothing to re-read" note was about; but the TABLE is stale, so the pill kept reading
+    // "In review" and the Publish button kept being offered, which is the pre-A39 condition
+    // reached by a second door. The alert still fires, and the row it contradicts is corrected.
     stubFetch(
       { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
       { status: 409, body: { error: { code: 'STATE', message: 'cannot unpublish a listing in state paused' } } }
     );
-    vi.stubGlobal('alert', vi.fn());
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
     const adapter = makeAdminListingsAdapter();
-    let reloaded = false;
-    adapter.onDecision(() => { reloaded = true; });
+    let reloaded = 0;
+    adapter.onDecision(() => { reloaded += 1; });
     const rows = (await adapter.list()).rows;
     await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
-    expect(reloaded, 'nothing moved, so there is nothing to re-read').toBe(false);
+    expect(alertSpy, 'the reviewer is still told why').toHaveBeenCalledWith('cannot unpublish a listing in state paused');
+    expect(reloaded, 'and the row the alert contradicts is re-read through the one loader').toBe(1);
+  });
+
+  it('does not ask for a reload for a refusal that moved nothing — a 422, or a body with no code', async () => {
+    // Keyed on the SERVER's own code, never on "any refusal": a `422 NOTE_REQUIRED` means the
+    // reviewer left the reason blank, the listing is exactly where the row says it is, and
+    // re-reading the whole queue would spend a request to learn nothing.
+    for (const answer of [
+      { status: 422, body: { error: { code: 'NOTE_REQUIRED', message: 'a reason is required.' } } },
+      { status: 502, body: {} }
+    ]) {
+      stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } }, answer);
+      vi.stubGlobal('alert', vi.fn());
+      const adapter = makeAdminListingsAdapter();
+      let reloaded = false;
+      adapter.onDecision(() => { reloaded = true; });
+      const rows = (await adapter.list()).rows;
+      await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+      expect(reloaded, `${answer.status}: nothing moved, so there is nothing to re-read`).toBe(false);
+    }
   });
 
   it('decides perfectly well for a host that registered nothing — the reference and the unit tests', async () => {

@@ -413,6 +413,8 @@ describe('local design amendments (spec D15)', () => {
     // `adminListings` line and A39.4 reads A40.4's, which is A24's own precedent for a family
     // whose id is lower than the one it chains on.
     'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
+    // Fix round 1 (review Minor-3, 2026-09-14): A39.5 is CHAINED on A39.2 and consumes it.
+    'A39.5',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -603,7 +605,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(333);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(334);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1436,10 +1438,12 @@ describe('local design amendments (spec D15)', () => {
     // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
     // left. Task A39 (2026-09-13) moves it once more, to { 1: 21, 2: 4, 3: 2, 4: 0 }: A39.4 adds
     // ONE line to `componentDidMount`, so 144 citations below it were re-mapped by one, and its
-    // own five rows cite lines whose output is distinctive at 1. What the case asserts is
-    // unchanged and is the whole point: 4 accepts every citation, and 3 does not, so 4 is the
-    // smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 21, 2: 4, 3: 2, 4: 0 });
+    // own five rows cite lines whose output is distinctive at 1. A39's FIX ROUND 1 (2026-09-14)
+    // moves it once more, to { 1: 22, 2: 3, 3: 2, 4: 0 }: A39.5 adds ONE line to `loadAdmin`, so
+    // every citation below V3:3246 shifted by one again and one row crossed from the 2-tier to
+    // the 1-tier. What the case asserts is unchanged and is the whole point: 4 accepts every
+    // citation, and 3 does not, so 4 is the smallest threshold that can ship.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 3, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

@@ -1496,7 +1496,8 @@ class Component extends DCLogic {
     // -- A40.5's `signIn` among them -- can await a settled screen whoever is signed in.
     if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
-    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminCounts: page.counts }), () => this.setState({ adminListingRows: [], adminCounts: null })));
+    const token = this._adminLoad = (this._adminLoad || 0) + 1;
+    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
     return Promise.all(loads);
   }
 
@@ -1661,7 +1662,7 @@ class Component extends DCLogic {
     return {
       tabs: [
         { key: "users", label: "Users", count: "3" },
-        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminCounts ? String(s.adminCounts.listings) : "") : "3" },
+        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },
         { key: "activity", label: "Requests", count: "2" },
         { key: "data", label: "Data Sources", count: "2" }
       ].map((t) => ({

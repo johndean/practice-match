@@ -6052,7 +6052,7 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
   // A39 (D-C53): `list()` answers a PAGE — the rows the table renders and the number its tab
   // badges — because both come from one request and neither may ever be shown beside the other's
   // answer. `onDecision` is the seam a decision re-reads the queue through (A39.4).
-  const PAGE = { rows: ROWS, counts: { listings: 2 } };
+  const PAGE = { rows: ROWS, counts: { in_review: 2 } };
   const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
   const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE)) => {
     const calls: string[] = [];
@@ -6174,7 +6174,7 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
     c2.componentDidMount();
     await Promise.resolve();
-    expect(c2.state.adminCounts).toEqual({ listings: 2 });
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 2 });
     expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
   });
 
@@ -6191,7 +6191,7 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     await Promise.resolve();
     await Promise.resolve();
     expect(c2.state.adminListingRows).toEqual([]);
-    expect(c2.state.adminCounts).toBeNull();
+    expect(c2.state.adminListingCounts).toBeNull();
     expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
   });
 
@@ -6219,6 +6219,73 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     const old: any = { list: () => Promise.resolve(PAGE) };
     const c2: any = new Component({ me: { ...STAFF }, adminListings: old, perms: perms(['page.admin']) });
     expect(() => c2.componentDidMount()).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 (controller ruling, 2026-09-14): EACH TAB OWNS ITS OWN STATE KEY.
+  // A39 first wrote `adminCounts`, described as "one object the other three tabs put their own
+  // badge in beside this one" — a convention `setState` cannot honour (it merges TOP-LEVEL keys,
+  // so two `loads.push` arms writing one object in the same `Promise.all` clobber each other, last
+  // writer wins, and a badge blanks at random) and one no sibling follows: `feat/admin-users`
+  // already writes `adminUserCounts.open` and `feat/admin-data-sources` a scalar `adminDataCount`.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.1/A39.2: the Listings count lives under its OWN key, so a sibling tab cannot clobber it', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminListingCounts, 'the key names the tab it belongs to').toEqual({ in_review: 2 });
+    expect(c2.state.adminCounts, 'and the shared object the comment described is gone').toBeUndefined();
+
+    // What a second tab's loader does in the same `Promise.all`: `setState` with ITS own key.
+    // Under the old shared object this same write blanked the Listings badge.
+    c2.setState({ adminUserCounts: { open: 4, total: 9 } });
+    expect(c2.state.adminListingCounts, 'untouched by the sibling write').toEqual({ in_review: 2 });
+    expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Minor-3: two reloads in flight, and the LATER one is the one that counts.
+  // A39.4 re-reads on every decision, so a reviewer who presses Publish on two rows inside one
+  // round trip has two `loadAdmin` calls outstanding; whichever ANSWER arrives last used to win,
+  // and the network does not promise that is the later question. A24.21's own idiom: read a token
+  // once when the load starts, re-check it on arrival, and let a superseded answer go.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.5: a superseded load is discarded — the last question asked is the one answered', async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminListingRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], counts: { in_review: 1 } });
+    await older;
+    expect(c2.state.adminListingRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
+  });
+
+  it('A39.5: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminListingRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
   });
 });
 
