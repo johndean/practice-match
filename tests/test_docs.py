@@ -2642,3 +2642,31 @@ def test_claude_md_frontend_gate_is_the_one_ci_runs_and_names_the_ci_check():
         "the Common operations frontend gate line's comment does not say `npm test` runs coverage "
         "at 100 % on all four columns, exactly as CI"
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, amendment (controller, 2026-09-13). Two implementers re-derived
+# `frontend/src/logic.js` on the same day with throwaway scripts copied out of
+# `app-generated.test.ts`'s transform, because the repository had `gen:design` and `gen:app` and
+# no `gen:logic`. The command exists now and CLAUDE.md is where an implementer finds it: the
+# three generators are one line, in the order the bundle flows through them.
+# ---------------------------------------------------------------------------------------------
+GENERATORS = ("gen:design", "gen:app", "gen:logic")
+
+
+def test_claude_md_common_operations_names_the_three_design_generators():
+    """The design bundle's own line: pristine + ruled amendments -> the amended design, the
+    design's template -> App.vue and pseudo.css, the design's script -> logic.js. Each is a real
+    `frontend/package.json` script, read from the file rather than assumed."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    line = [ln for ln in claude.splitlines() if all(g in ln for g in GENERATORS)]
+    assert len(line) == 1, (
+        "CLAUDE.md's Common operations block must carry exactly one line running all three design "
+        f"generators ({', '.join(GENERATORS)}) — found {len(line)}"
+    )
+    assert line[0].startswith("cd frontend && npm run gen:design"), line[0]
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    for name in GENERATORS:
+        assert name in scripts, f"frontend/package.json declares no {name}"
+    # The one CLAUDE.md names as the reason it exists: the hand-port is generated, never typed.
+    assert "logic.js" in line[0], "the line does not say which file gen:logic writes"

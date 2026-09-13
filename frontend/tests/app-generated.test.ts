@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildAppVue, convert, extractTemplate } from '../scripts/convert-dc.mjs';
+import { FOOTER as PORT_FOOTER, HEADER as PORT_HEADER, designScript, portLogic } from '../scripts/port-logic.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const DC = join(ROOT, '..', 'docs', 'design-reference', 'design_handoff_practice_match_v3', 'Practice Match V3.dc.html');
@@ -39,22 +40,18 @@ describe('App.vue is generated from the design', () => {
 // spec §3 rule-1 asset rewrite, and the trailing export. This test makes that transform
 // machine-checked, so "never hand-edit logic.js" is enforceable rather than aspirational.
 describe('logic.js is the design script block, ported verbatim', () => {
-  const HEADER = "// Ported verbatim from the approved prototype 'Practice Match V3.dc.html'.\n"
-    + '// Do not restyle or restructure: every value here is design-approved.\n'
-    + "import { DCLogic } from './dc-logic.js';\n";
+  // The transform is `scripts/port-logic.mjs` and ONLY that: the gate imports the same function
+  // `npm run gen:logic` runs, so there is one HEADER, one FOOTER and one asset rewrite in the
+  // tree. Two implementers re-derived this file on 2026-09-13 with throwaway scripts copied out
+  // of this test, which is the second copy that rule exists to prevent (Task HOUSEKEEPING-B).
+  const HEADER = PORT_HEADER;
   // The trailing export names the two fixture ARRAYS as well as the class (Seed Listings L6,
   // spec D6): `src/listings/load.ts` replaces `P` and `MARKETS` in place at start-up, which is
   // the one way to hand the API's listings to a script that is ported verbatim and never
   // restructured. It is still the same single accepted edit point — the last line — and the
   // ported body above it stays byte-identical. Listed in the Browse V3 spec §3 with the other
   // three normalisations.
-  const FOOTER = '\nexport { Component, MARKETS, P, VETS, ECON_K };\n';
-
-  function designScript(html: string): string {
-    const open = /<script type="text\/x-dc" data-dc-script[^>]*>/.exec(html)!;
-    const start = open.index + open[0].length;
-    return html.slice(start, html.indexOf('</script>', start));
-  }
+  const FOOTER = PORT_FOOTER;
 
   it('matches byte-for-byte, header and export aside, with only the documented asset rewrite', () => {
     // FOUR normalisations, and all four are now listed in the Browse V3 spec §3 (review M8):
@@ -62,6 +59,19 @@ describe('logic.js is the design script block, ported verbatim', () => {
     // block ends with two newlines and the ported file with one.
     const body = designScript(readFileSync(DC, 'utf8')).replace(/"assets\//g, '"/assets/').replace(/\n+$/, '\n');
     expect(readFileSync(join(ROOT, 'src/logic.js'), 'utf8')).toBe(HEADER + body + FOOTER);
+  });
+
+  // Task HOUSEKEEPING-B (controller amendment, 2026-09-13): the hand-port is GENERATED, not
+  // hand-typed. `npm run gen:logic` writes exactly the bytes that are committed, so a re-derivation
+  // is a command rather than a throwaway script somebody copies out of this file and gets subtly
+  // wrong. The command and this assertion call the SAME function, and the package.json entry is
+  // pinned too, so the CLI cannot drift away from the transform the gate measures.
+  it('npm run gen:logic reproduces the committed logic.js byte for byte', () => {
+    expect(portLogic(readFileSync(DC, 'utf8'))).toBe(readFileSync(join(ROOT, 'src/logic.js'), 'utf8'));
+    const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
+    expect(scripts['gen:logic'], 'package.json declares no gen:logic').toBeDefined();
+    expect(scripts['gen:logic']).toContain('scripts/port-logic.mjs');
+    expect(scripts['gen:logic']).toContain('src/logic.js');
   });
 
   it('carries V3\'s market-data shape and none of V2\'s Listings tab', () => {
