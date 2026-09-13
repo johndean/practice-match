@@ -6275,6 +6275,59 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
     }
   });
 
+  /** The tooltip's whole rendered text — every line `areaTip` writes, tags stripped. */
+  const tipText = (layer: string): string => {
+    const tip: string = c.areaTip({ name: 'n', value: 1, moe: null, suppressed: false }, layer, true);
+    return tip.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+
+  /** The two shapes the audit found a geography written in OUTSIDE §3.1's list, as patterns.
+   *  `<word> level` catches "market level", "community level" and "county level" and deliberately
+   *  does NOT catch the hyphenated "ZIP-level" in `THRESHOLD_RULE`, which is the Census's own
+   *  description of its own publication rule and names no area this product measures at. */
+  const UNRULED: Array<[RegExp, string]> = [
+    [/\b[a-z]+\s+level\b/, 'a "<word> level" geography — the shape "market level" and "county level" are written in'],
+    [/\bthe community\b/, 'the word "community" used as a geography — the shape A33.3 removed from the drawer rows']
+  ];
+
+  it('no surface qualifies a figure with a geography outside the list (the prose check)', () => {
+    // Fix round 1, Important 2. A34.2 gave `econ` a `dataset:` so its SOURCE line reads
+    // "· County", and its MARGIN sentence directly above went on reading "…, county level." —
+    // one tooltip, two vocabularies for one geography, which is the collision (C5) this family
+    // exists to close. The check walks every tooltip whole, and every caption on every surface
+    // beside it, because prose is where the second vocabulary survived.
+    const strings: Array<[string, string]> = [];
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      strings.push([`map tooltip (${layer})`, tipText(layer)]);
+      strings.push([`legend card (${layer})`, `${md.active.sourceLine} ${md.active.geoLine}`]);
+      for (const row of md.layerChoices) strings.push([`layers drawer/${row.title}`, row.sub]);
+      for (const card of md.stripCards) strings.push([`snapshot AREA/${card.title}`, `${card.valueNote ?? ''} ${card.src}`]);
+    }
+    withServedPractice((id) => {
+      for (const layer of LAYERS) {
+        browse(layer, id);
+        const md = c.marketVals(P);
+        // `valueNote` on BOTH arms here — the served-label arm, and (below) the fallback, which
+        // is ruled exempt and is the ONE place "community level" may still stand.
+        for (const card of md.stripCards) strings.push([`snapshot LOCATION/${card.title}`, `${card.valueNote ?? ''} ${card.src}`]);
+        for (const t of md.panel.overviewTiles) strings.push([`panel tile/${t.k}`, String(t.sub ?? '')]);
+        strings.push(['panel scope', md.panel.overviewScope]);
+      }
+      c.setState({ screen: 'detail', detailId: id });
+      const d = c.detail();
+      for (const tile of d.demo) strings.push([`detail tile/${tile.k}`, String(tile.sub ?? '')]);
+      strings.push(['detail scope paragraph', d.demoScope]);
+    });
+    for (const [surface, text] of strings) {
+      for (const [pattern, what] of UNRULED) {
+        const hit = pattern.exec(text);
+        expect(hit, `${surface} names ${what}: "${hit?.[0]}" in "${text}"`).toBeNull();
+      }
+    }
+  });
+
   it('a catalogue caption names the geography that layer is DRAWN at, and no other', () => {
     for (const layer of LAYERS) {
       browse(layer, null);
@@ -6313,6 +6366,48 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
         }
       }
     });
+  });
+
+  it('a served income note with no area of its own is given one — on both surfaces (A34.16/A34.17)', () => {
+    // Fix round 1, Important 3. `app/census/serve.py` serves `income_note` on two arms: with a
+    // band label it is `<label> · approximate`, and without one it is the basis word ALONE
+    // (`income_note_for`, pinned across the wire by
+    // `tests/census/test_design_shading_labels.py`). The design rendered whatever arrived, so the
+    // second arm produced a caption reading exactly "approximate" — a basis with NO geography,
+    // which is the defect class this ruling exists to remove. The client composes what the server
+    // cannot: its own fallback goes in front.
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    const incomeCard = () => c.marketVals(P).stripCards
+      .filter((x: { title: string }) => x.title === 'Median household income')[0].valueNote;
+    const incomeTile = () => c.detail().demo.filter((t: { k: string }) => t.k === 'Median income')[0].sub;
+
+    // ARM 1 — the note carries its own area: rendered whole, exactly as A31.12c/A27.1 have it.
+    Object.assign(p, { incomeNote: `${RING} · approximate` });
+    try {
+      browse('income', p.id as string);
+      expect(incomeCard()).toBe(`${RING} · approximate`);
+      c.setState({ screen: 'detail', detailId: p.id });
+      expect(incomeTile()).toBe(`${RING} · approximate`);
+    } finally { delete p.incomeNote; }
+
+    // ARM 2 — the note is the basis word alone: each surface puts its OWN fallback in front, so
+    // the caption names an area (or, on the detail card, the design's own vintage — A27.1's
+    // ruling, recorded and not widened here) and the basis keeps one spelling.
+    Object.assign(p, { incomeNote: 'approximate' });
+    try {
+      browse('income', p.id as string);
+      expect(incomeCard(), 'the strip rendered a basis word with nothing in front of it').toBe('community level · approximate');
+      c.setState({ screen: 'detail', detailId: p.id });
+      expect(incomeTile(), 'the detail tile rendered a basis word with nothing in front of it').toBe('Household, 2023 · approximate');
+    } finally { delete p.incomeNote; }
+
+    // ARM 3 — no note at all: the design's own fallbacks, byte for byte. This is the reference
+    // path and every approved state, and it is why no baseline moves for A34.16/A34.17.
+    browse('income', p.id as string);
+    expect(incomeCard()).toBe('community level');
+    c.setState({ screen: 'detail', detailId: p.id });
+    expect(incomeTile()).toBe('Household, 2023');
   });
 
   it('the panel Households tile names the statistic its number is, not only its dataset', () => {

@@ -21,8 +21,8 @@ have no geometry to serve whatever the design says.
 import re
 from pathlib import Path
 
-from app.api.market import SHADING, THRESHOLD_RULE
-from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL
+from app.api.market import BOUNDARY_METRIC, SHADING, THRESHOLD_RULE
+from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL, income_note_for
 from app.census.tiger import BOUNDARY_FILES
 
 # D-C35 (John, 2026-09-10): every layer at its own geography, and the legend names it. `income`
@@ -215,3 +215,95 @@ def test_the_designs_approximate_qualifier_is_the_word_the_api_composes() -> Non
         "the API's own qualifier is lower case; the design joins it after a middot and must not "
         "have to re-case it"
     )
+
+
+def test_both_arms_of_the_income_note_come_from_the_one_basis_word() -> None:
+    """Fix round 1, Important 3 (review of 9d16baf).
+
+    `APPROXIMATE_BASIS` named the word the LABEL-PRESENT arm joins, and the sibling arm went on
+    hard-coding a second spelling -- `"Approximate"`, capital A, a word §3.1 does not hold -- which
+    the design renders straight through on two surfaces (`stripCards`' `sel.incomeNote` and the
+    detail card's `p.incomeNote`). A listing on that arm therefore showed a caption that was a
+    basis with NO geography at all: the defect class D-C51 exists to remove, produced by the
+    change that was meant to close it.
+
+    The ruling: the no-label arm serves the SAME single-source word and nothing else, and the
+    CLIENT composes `<its own fallback> · approximate` there exactly as the served arm reads
+    `<label> · approximate` -- so the caption always names an area and the word has one spelling.
+    Pinned on BOTH arms, from one source, through the function the code itself calls."""
+    assert income_note_for(BAND_LABEL) == f"{BAND_LABEL} \u00b7 {APPROXIMATE_BASIS}"
+    assert income_note_for(None) == APPROXIMATE_BASIS
+    # The point of the pin, said as an invariant rather than as two literals: neither arm may
+    # introduce a spelling the other does not have.
+    for note in (income_note_for(BAND_LABEL), income_note_for(None)):
+        assert APPROXIMATE_BASIS in note, f"{note!r} does not carry the one basis word"
+        assert "Approximate" not in note, (
+            f"{note!r} carries a second, capitalised spelling of the basis word -- the design joins "
+            f"the lower-case one after a middot and must not have to re-case it"
+        )
+
+
+# ---------------------------------------------------------------------------------------------
+# A34.23 (fix round 1, the data-sources audit, 2026-09-13; the same D-C51 class) — A LAYER'S LABEL
+# NAMES THE DATASET IT IS ACTUALLY SERVED FROM.
+#
+# `VALUE_LAYERS.<layer>.label` is the design's display name for a shading layer and several carry a
+# DATASET parenthetical: "Median Household Income (ACS)", "Average Practice Payroll (CBP)". The
+# competition layer read "Veterinary Establishments (CBP)" while the fill is served from ZIP Code
+# Business Patterns -- `BOUNDARY_METRIC["competition"]` is `("establishments", "zbp")` -- so the
+# legend title named one dataset and the tooltip beside it another. A24.34 corrected
+# `LAYER_META.competition` (its `dataset:` and `source`) for exactly this reason and did not reach
+# this second copy of the same fact.
+#
+# Pinned across the wire, in `test_the_designs_geography_labels_are_the_ruled_ones`' own shape: the
+# parenthetical is derived from `BOUNDARY_METRIC`, never retyped here, so a layer re-sourced on the
+# server fails on both sides at once.
+# ---------------------------------------------------------------------------------------------
+#: How a dataset key is written when a LABEL names it. The design's own spelling, uppercased, and
+#: the mapping is total over `BOUNDARY_METRIC`'s second members so a new source cannot be silently
+#: unmapped.
+DATASET_WORD = {"acs5": "ACS", "cbp": "CBP", "zbp": "ZBP"}
+
+#: Layers whose label carries NO dataset parenthetical, declared rather than inferred. `pets` is a
+#: MODELLED estimate derived from ACS household counts (Census spec §9): its label says
+#: "Estimated", and stamping "(ACS)" on it would claim the Census published the figure.
+NO_DATASET_PARENTHETICAL = {"pets"}
+
+
+def _value_layer_labels() -> dict[str, str]:
+    """Each layer's `label` from the amended design's `VALUE_LAYERS`, read rather than retyped."""
+    design = DESIGN.read_text(encoding="utf-8")
+    start = design.index("const VALUE_LAYERS = {")
+    block = design[start:design.index("\n};", start)]
+    return dict(re.findall(r'^  (\w+): \{ label: "([^"]*)"', block, re.MULTILINE))
+
+
+def test_every_shading_layer_label_names_the_dataset_it_is_served_from() -> None:
+    """The pin, both ways round: every shading layer has a label, and a label that names a dataset
+    names its OWN. A layer declared exempt must carry no parenthetical at all, which is what stops
+    the exemption being used to hide a wrong one."""
+    labels = _value_layer_labels()
+    assert set(labels) == set(BOUNDARY_METRIC), (
+        f"the design's VALUE_LAYERS ({sorted(labels)}) are not the shading layers "
+        f"({sorted(BOUNDARY_METRIC)})"
+    )
+    assert set(DATASET_WORD) >= {source for _, source in BOUNDARY_METRIC.values()}, (
+        "a layer is served from a dataset this test has no word for"
+    )
+    for layer, label in labels.items():
+        source = BOUNDARY_METRIC[layer][1]
+        found = re.findall(r"\(([A-Z]+)\)", label)
+        if layer in NO_DATASET_PARENTHETICAL:
+            assert not found, (
+                f"VALUE_LAYERS.{layer}.label is declared to carry no dataset parenthetical and "
+                f"carries {found}: {label!r}"
+            )
+            continue
+        assert found, (
+            f"VALUE_LAYERS.{layer}.label names no dataset: {label!r}. Either it names the one "
+            f"{source!r} is served from, or {layer!r} belongs in NO_DATASET_PARENTHETICAL"
+        )
+        assert found == [DATASET_WORD[source]], (
+            f"VALUE_LAYERS.{layer}.label says {found} and the layer is served from "
+            f"{source!r} ({DATASET_WORD[source]}): {label!r}"
+        )

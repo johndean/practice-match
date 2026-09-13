@@ -1860,7 +1860,7 @@ const VALUE_LAYERS = {
   growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["Declining", "0–5%", "5–15%", "> 15%"], stops: [0, 5, 15] },
   households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–45K", "> 45K"], stops: [10000, 25000, 45000] },
   econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
-  competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
+  competition: { label: "Veterinary Establishments (ZBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
 };
 
 // Rates and medians belong to the area → choropleth fill (one at a time: two
@@ -2405,7 +2405,7 @@ class Component extends DCLogic {
       : (layer === "growth"
           ? "Derived from two ACS 5-year periods. No combined margin of error is published."
           : layer === "econ"
-            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
+            ? "Payroll per establishment (NAICS 541940), for the surrounding county. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
             : layer === "competition"
               ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
               : layer === "pets"
@@ -2880,7 +2880,7 @@ class Component extends DCLogic {
             valueNote: sel
               ? (k === "growth" ? (sel.growthScope || "surrounding city or county")
                 : k === "econ" ? "surrounding county"
-                : k === "income" ? (sel.incomeNote || locBasis) : locBasis)
+                : k === "income" ? (sel.incomeNote ? (sel.incomeNote.indexOf(" · ") > -1 ? sel.incomeNote : locBasis + " · " + sel.incomeNote) : locBasis) : locBasis)
               // In AREA mode the caption states exactly what the number IS. Not "metro
               // median": the Census PUBLISHES a metro median (summary level 310) and this
               // is the median OF the metro's valued areas, which is a different figure -
@@ -3591,7 +3591,7 @@ class Component extends DCLogic {
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
         { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },
-        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },
+        { k: "Median income", v: p.income, sub: p.incomeNote ? (p.incomeNote.indexOf(" · ") > -1 ? p.incomeNote : "Household, 2023 · " + p.incomeNote) : "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [

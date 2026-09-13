@@ -409,6 +409,14 @@ describe('local design amendments (spec D15)', () => {
     // object literal A34.13 has just shortened, which orders the two deletions.
     'A34.1', 'A34.2', 'A34.3', 'A34.4', 'A34.5', 'A34.6', 'A34.7', 'A34.8', 'A34.9', 'A34.10',
     'A34.11', 'A34.12', 'A34.13', 'A34.14',
+    // Fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). A34.15 takes the econ tooltip's
+    // margin sentence into the vocabulary (Important 2), and A34.16/A34.17 give the served
+    // `income_note` an area on BOTH of the server's arms (Important 3).
+    'A34.15', 'A34.16', 'A34.17',
+    // A34.23 — the data-sources audit's own finding: the competition layer's VALUE_LAYERS label
+    // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
+    // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
+    'A34.23',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -605,7 +613,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(341);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(345);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

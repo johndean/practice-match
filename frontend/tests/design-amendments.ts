@@ -7192,6 +7192,91 @@ const A34_14: Amendment = {
   count: 1
 };
 
+
+/** A34.15 (fix round 1, Important 2, 2026-09-13) — the econ map tooltip stops naming its
+ *  geography twice, in two vocabularies, on one tooltip. A34.2 gave `econ` a `dataset:` so its
+ *  SOURCE line reads "… · County", and the MARGIN sentence directly above it went on reading
+ *  "Payroll per establishment (NAICS 541940), county level." — the fourth of the four strings
+ *  collision C5 counted for one geography, and the one the round-1 implementer recorded as prose
+ *  rather than a caption. The controller ruled otherwise: a visible geography phrase takes the
+ *  closed vocabulary wherever it stands, so it becomes "for the surrounding county", §3.1's own
+ *  words and the same phrase the snapshot's LOCATION payroll card already carries (A31.12).
+ *
+ *  CHAINED, and the design's one byte-identical-line case: A24.3 introduced this line and A24.30b
+ *  carried it forward unchanged, so BOTH entries' introduced copies leave here. Supersedes A24.3
+ *  and supersedes A24.30b — the sentence tier, because "Payroll per establishment (NAICS 541940),
+ *  county level." is a ruled sentence. The tooltip is in no approved state (it opens on hover), so
+ *  its oracle is Gate 2's prose check and Gate 1's own read of a hovered `rf-tip`; no approved
+ *  state re-bases. */
+const A34_15: Amendment = {
+  id: 'A34.15', ...ONEVOCAB,
+  find: '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n',
+  replace: '            ? "Payroll per establishment (NAICS 541940), for the surrounding county. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n',
+  count: 1
+};
+
+/** A34.16 (fix round 1, Important 3, 2026-09-13) — the snapshot's income caption always names an
+ *  area, whichever arm the API answered on. `serve.py` serves `income_note` as
+ *  `<label> · approximate` where it has a band label and, on its other arm, the basis word ALONE;
+ *  A31.12c rendered whatever arrived, so a listing on that arm showed a caption reading exactly
+ *  "approximate" — a basis with NO geography, which is the defect class D-C51 exists to remove.
+ *
+ *  The client composes what the server cannot: where the note carries no area of its own (no
+ *  ` · ` join), the card's own fallback goes in front of it, so the caption reads
+ *  `<fallback> · approximate` exactly as the served arm reads `<label> · approximate`. One
+ *  spelling, one join, an area on every path. CHAINED on A31.12; consumes A31.12, whose own
+ *  `k === "income"` line this rewrites. The design's fixtures carry no `incomeNote` at all, so
+ *  the expression is falsey on the reference path and every approved state keeps its pixels. */
+const A34_16: Amendment = {
+  id: 'A34.16', ...ONEVOCAB,
+  find: '                : k === "income" ? (sel.incomeNote || locBasis) : locBasis)\n',
+  replace: '                : k === "income" ? (sel.incomeNote ? (sel.incomeNote.indexOf(" · ") > -1 ? sel.incomeNote : locBasis + " · " + sel.incomeNote) : locBasis) : locBasis)\n',
+  count: 1
+};
+
+/** A34.17 (fix round 1, Important 3) — the detail card's Median income tile, A34.16's twin and the
+ *  other surface that renders `income_note` straight through (A27.1). Same composition, same
+ *  reason: a note carrying no area of its own is the BASIS alone, and the tile's own fallback goes
+ *  in front of it. The fallback here is the design's own "Household, 2023", which is a vintage
+ *  rather than a geography — A27.1's ruling, untouched by this one and recorded rather than
+ *  widened. CHAINED on A27.1; consumes A27.1, whose whole introduced line this rewrites. */
+const A34_17: Amendment = {
+  id: 'A34.17', ...ONEVOCAB,
+  find: '        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },\n',
+  replace: '        { k: "Median income", v: p.income, sub: p.incomeNote ? (p.incomeNote.indexOf(" · ") > -1 ? p.incomeNote : "Household, 2023 · " + p.incomeNote) : "Household, 2023" },\n',
+  count: 1
+};
+
+/** A34.23 (fix round 1, the data-sources audit, 2026-09-13 — the same D-C51 class) — the
+ *  competition layer's own label names the dataset it is actually served from. `VALUE_LAYERS`
+ *  carries the design's display name for each shading layer and several name a DATASET in
+ *  parentheses; competition read "Veterinary Establishments (CBP)" while the fill is served from
+ *  ZIP Code Business Patterns — `app.api.market.BOUNDARY_METRIC["competition"]` is
+ *  `("establishments", "zbp")` — so one screen named two datasets for one number. A24.34 corrected
+ *  `LAYER_META.competition` for exactly this reason (its `dataset:` and its "community level"
+ *  source) and did not reach this SECOND copy of the same fact; the audit found it a day later.
+ *
+ *  Pinned across the wire from this release on, in the shading-labels pin's own shape:
+ *  `tests/census/test_design_shading_labels.py::test_every_shading_layer_label_names_the_dataset_it_is_served_from`
+ *  derives the parenthetical from `BOUNDARY_METRIC` rather than retyping it, so a layer re-sourced
+ *  on the server fails on both sides at once. `pets` is DECLARED exempt there and carries no
+ *  parenthetical at all: it is a modelled estimate (Census spec §9) and stamping "(ACS)" on it
+ *  would claim the Census published the figure.
+ *
+ *  MEASURED, and stated rather than softened: on this branch `VALUE_LAYERS.*.label` has NO reader
+ *  at all — A34.11 deleted `md.legend`, whose `title: VALUE_LAYERS[valueLayer].label` was its only
+ *  one — so NO approved state re-bases for this edit. It is corrected anyway because it is data the
+ *  design ships and the next reader would render it, and because a wrong dataset name is the
+ *  defect D-C51 names whether or not a surface is currently pointed at it. Not deleted: `label` is
+ *  one member of a literal whose `buckets`, `stops`, `unit` and `short` are all read, and deleting
+ *  it is not this ruling. */
+const A34_23: Amendment = {
+  id: 'A34.23', ...ONEVOCAB,
+  find: '  competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1\u20132", "3\u20135", "6\u20139", "10+"], stops: [3, 6, 10] }\n',
+  replace: '  competition: { label: "Veterinary Establishments (ZBP)", short: "Vet establishments", unit: "count", buckets: ["1\u20132", "3\u20135", "6\u20139", "10+"], stops: [3, 6, 10] }\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7377,5 +7462,14 @@ export function amendments(): Amendment[] {
     // A34.14 also reads the object literal A34.13 has just shortened, which is why the two
     // deletions are ordered. Definition order in this file matches this list (m8).
     A34_1, A34_2, A34_3, A34_4, A34_5, A34_6, A34_7, A34_8, A34_9, A34_10,
-    A34_11, A34_12, A34_13, A34_14];
+    A34_11, A34_12, A34_13, A34_14,
+    // A34.15-A34.17 -- fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). Every one is
+    // CHAINED on an earlier entry's output: A34.15 on A24.3/A24.30b (the econ margin line both
+    // introduced), A34.16 on A31.12 and A34.17 on A27.1, so each runs after the entry it reads.
+    // Definition order in this file matches this list (m8).
+    A34_15, A34_16, A34_17,
+    // A34.23 -- the data-sources audit's own finding (2026-09-13): the competition layer's
+    // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
+    // pristine bundle's own declaration.
+    A34_23];
 }
