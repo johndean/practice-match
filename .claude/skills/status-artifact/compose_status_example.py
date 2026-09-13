@@ -2,7 +2,18 @@ import base64
 import re
 import sys
 
+# Incident, HOUSEKEEPING-C fix round 1 (2026-09-13): the artifact path used to be hard-coded to
+# /tmp/pm-artifact-v4.html, so running this script AT ALL — including to check that a ruff fix
+# changed no output — overwrote the controller's LIVE published artifact with whatever fixture was
+# lying around. There is no default that points at a real file: both the screenshot directory and
+# the artifact path are required arguments, and a run with the wrong count prints usage and exits
+# non-zero rather than guessing. A test of this script must work on a temp copy IT creates itself,
+# never this path or the real one.
+if len(sys.argv) != 3:
+    print(f"usage: {sys.argv[0]} <screenshot-dir> <artifact-html-path>", file=sys.stderr)
+    sys.exit(2)
 SP=sys.argv[1]
+ARTIFACT=sys.argv[2]
 def img(name, alt):
     with open(f"{SP}/shots/{name}.jpg","rb") as f:
         b=base64.b64encode(f.read()).decode()
@@ -78,11 +89,11 @@ for found,color,state in rows:
 v8 += '</tbody></table></div></div>\n</section>'
 with open(f"{SP}/status-v8.html","w") as f:
     f.write(v8)
-with open('/tmp/pm-artifact-v4.html') as f:
+with open(ARTIFACT) as f:
     art=f.read()
 pat=re.compile(r'<section class="status" data-doc="status">.*?</section>', re.DOTALL)
 assert len(pat.findall(art))==1
 new=pat.sub(lambda _: v8, art)
-with open('/tmp/pm-artifact-v4.html','w') as f:
+with open(ARTIFACT,'w') as f:
     f.write(new)
 print("v8 bytes:",len(v8),"| artifact bytes:",len(new))
