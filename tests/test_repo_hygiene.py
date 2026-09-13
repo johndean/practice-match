@@ -12,8 +12,19 @@ def test_playwright_mcp_scratch_is_not_tracked():
         ["git", "ls-files", "-z", ".playwright-mcp"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.split("\0")
-    tracked = [name for name in tracked if name]
-    assert tracked == []
+    assert [name for name in tracked if name] == []
+
+
+def test_playwright_mcp_scratch_is_ignored():
+    """HOUSEKEEPING-A review (Minor), 2026-09-13 — the BELT the buckle needed, as its own case
+    (fix round 1: the test above states ONE behaviour and was asserting two).
+
+    "Not tracked" is true of a directory nobody has created yet, so that assertion passes on a
+    machine that has never run the Playwright MCP tooling and would go on passing if the ignore
+    line were deleted: the next run would write the scratch back into `git status`, and the next
+    `git add -A` would commit it. The rule itself is the subject here."""
+    lines = (ROOT / ".gitignore").read_text().splitlines()
+    assert ".playwright-mcp/" in lines, ".gitignore no longer carries the `.playwright-mcp/` line"
 
 
 def test_the_coverage_report_is_ignored_and_untracked():
