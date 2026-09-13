@@ -2548,3 +2548,97 @@ def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
     # ran, and `geocode` will not retry it — that listing HAS a location.
     assert "pin present but no card" in flat
     assert "`census_load.py materialize --listing <id>`" in flat
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, item 1 (controller, 2026-09-13). CLAUDE.md's A28 clause states a piece of
+# history that is false: A28.1 was NOT the first amendment to edit `MarketMapV3.jsx`. A24.9-A24.12
+# (2026-09-10) edited it first, and A28.1 rides the `file: 'jsx'` partition A24 introduced
+# (spec section 9.2) - the A24 prose in the same paragraph says as much ("A28.1 reached that file first,
+# by merging first"), so the document contradicted itself. It is corrected as a DATED CLAUSE
+# rather than a silent rewrite, which is this ledger's own convention for a fact that changed
+# (A21.2's revert, A-S6.1's supersession, the gate's own "corrected 2026-09-12" note).
+#
+# The claim and its correction are pinned TOGETHER, as one sentence, and per COPY: CLAUDE.md
+# carries the amendment paragraph twice, and every other whole-file check in this module reads
+# the union of the two (I1, the byte-identity case above is what makes the union honest).
+# ---------------------------------------------------------------------------------------------
+A28_JSX_CLAIM = "the FIRST amendment in the programme\u2019s history to edit `MarketMapV3.jsx`"
+A28_JSX_SENTENCE = (
+    "A28.1 is the FIRST amendment in the programme\u2019s history to edit `MarketMapV3.jsx` rather "
+    "than the `.dc.html` (`file: 'jsx'`, the partition spec \u00a79.2 added for A24 \u2014 corrected "
+    "2026-09-12: A24.9\u2013A24.12 were first; A28.1 rides A24's `file: 'jsx'` partition)"
+)
+
+
+def test_claude_md_does_not_claim_a28_1_was_the_first_jsx_amendment():
+    """The A28 clause carries its dated correction, in both copies, and carries it wherever the
+    claim appears — a second, uncorrected occurrence would be the same falsehood one sentence
+    over, which is exactly how the two copies drifted before I1."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all (no **A<n>** marker anywhere)"
+    for i, copy in enumerate(copies, start=1):
+        assert copy.count(A28_JSX_SENTENCE) == 1, (
+            f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph does not carry the A28.1 "
+            "jsx sentence with its dated correction clause "
+            "(corrected 2026-09-12: A24.9-A24.12 were first)"
+        )
+        assert copy.count(A28_JSX_CLAIM) == copy.count(A28_JSX_SENTENCE), (
+            f"copy {i} of {len(copies)} claims A28.1 was the first `MarketMapV3.jsx` amendment "
+            "somewhere that carries no correction clause"
+        )
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, amendment (controller, 2026-09-13). Release 0.1.21 deployed with the
+# Quality workflow RED: the documented local frontend gate was weaker than the one CI runs
+# (`npm test` had been a plain `vitest run` when the line was written and is
+# `vitest run --coverage` since COVERAGE-HOTFIX), and nothing in the document said "CI green
+# before deploy" at all. Both halves are pinned verbatim so neither can quietly weaken again.
+# ---------------------------------------------------------------------------------------------
+GATE_COVERAGE_NOTE = (
+    "(`npm test` is `vitest run --coverage`, the exact step CI runs — a local gate weaker than "
+    "CI let 0.1.21 ship with the Quality workflow red, 2026-09-13)"
+)
+GATE_CI_GREEN = (
+    "and the Quality workflow green on the pushed SHA (`gh run list --branch main --commit <sha>`) "
+    "— four jobs `success`, read, not assumed"
+)
+FRONTEND_GATE_COMMENT = (
+    "# frontend gates — BUILD FIRST: vue-only and bundle-budget read dist/_app; "
+    "npm test runs coverage at 100 % all four, exactly as CI"
+)
+
+
+def test_claude_md_frontend_gate_is_the_one_ci_runs_and_names_the_ci_check():
+    """The two sentences the 0.1.21 root cause produced, each in its own section: the coverage
+    note and the CI-green requirement inside the Non-negotiables verification gate, and the
+    "Common operations" frontend line's comment saying the same thing where the command is."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    gate = next(
+        (line for line in claude.splitlines()
+         if line.startswith("- **Verification gate before every production deploy")),
+        None,
+    )
+    assert gate is not None, "CLAUDE.md has no Non-negotiables verification-gate bullet"
+    assert GATE_COVERAGE_NOTE in gate, (
+        "the verification gate does not say `npm test` is `vitest run --coverage` — the gap that "
+        "let 0.1.21 ship with CI red"
+    )
+    assert GATE_CI_GREEN in gate, (
+        "the verification gate does not require the Quality workflow green on the pushed SHA"
+    )
+    # The four jobs the clause promises are the four `quality.yml` actually declares — a count
+    # nobody can read off the document alone, so it is measured against the workflow.
+    quality = cast(dict, yaml.safe_load((ROOT / ".github" / "workflows" / "quality.yml").read_text()))
+    assert len(quality["jobs"]) == 4, (
+        f"the gate says four Quality jobs; quality.yml declares {len(quality['jobs'])}"
+    )
+    ops = [line for line in claude.splitlines() if "npm run typecheck && npm run build && npm test" in line
+           and line.startswith("cd frontend")]
+    assert len(ops) == 1, "CLAUDE.md's Common operations block has no single frontend gate line"
+    assert ops[0].endswith(FRONTEND_GATE_COMMENT), (
+        "the Common operations frontend gate line's comment does not say `npm test` runs coverage "
+        "at 100 % on all four columns, exactly as CI"
+    )

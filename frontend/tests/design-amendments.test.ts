@@ -1390,10 +1390,12 @@ describe('local design amendments (spec D15)', () => {
     // `showDrive` (in the .dc.html, not here), are untouched.
     expect(jsx).toContain('fill: false, interactive: false');
     expect(jsx.split('L.circle(').length - 1, 'A28.1 added or removed a circle').toBe(pristineJsx.split('L.circle(').length - 1);
-    // A28.1 was the only jsx entry when this case was written, and the first the programme ever
-    // had; the A24 merge (real Census boundary polygons, 2026-09-11) added the four the partition
-    // was built for, and they are appended after it because A24 is appended after A28 in
-    // `amendments()`. The list is spelled out rather than counted so an entry that silently
+    // A28.1 was the only jsx entry when this case was written, and the first to REACH the file on
+    // `main`, by merging first — corrected 2026-09-12: A24.9-A24.12 (2026-09-10) were WRITTEN
+    // first and A28.1 rides the `file: 'jsx'` partition A24 introduced (spec §9.2), which is the
+    // same clause CLAUDE.md's A28 paragraph carries. The A24 merge (real Census boundary
+    // polygons, 2026-09-11) added the four the partition was built for, and they are appended
+    // after it because A24 is appended after A28 in `amendments()`. The list is spelled out rather than counted so an entry that silently
     // changes file still fails here.
     expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12']);
   });
