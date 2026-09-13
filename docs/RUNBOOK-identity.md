@@ -231,7 +231,7 @@ request path talks to Resend, so a missing email is one of five things — check
 
    | Template | How to cause it again |
    |---|---|
-   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup` — or, if they are already signed in on the unverified account, presses **Send it again** on the "Check your email" card, which is `POST /api/auth/verify/resend` (session-authenticated, `unverified` only, A-S4.1) and needs no password. Either way, while the account is still `unverified` a fresh 24 h `verify` token is issued and `verify_email` queued again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`, SHARED by both routes — they count into one bucket keyed on the address): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a fixed 24 h bucket, not a rolling one, so it clears at the boundary and `Retry-After` reports the whole 24 h as an upper bound rather than the real wait. There is no operator override, and the bucket is keyed on the address, so nothing done on another one shortens it. |
+   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup` — or, if they are already signed in on the unverified account, presses **Send it again** on the "Check your email" card, which is `POST /api/auth/verify/resend` (session-authenticated, `unverified` only, A-S4.1) and needs no password. Either way, while the account is still `unverified` a fresh 24 h `verify` token is issued and `verify_email` queued again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`, SHARED by both routes — they count into one bucket keyed on the address): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a rolling 24 hours, so the first of the three attempts falls out of it 24 h after it was made and `Retry-After` reports the whole 24 h as an upper bound rather than the real wait. There is no operator override, and the bucket is keyed on the address, so nothing done on another one shortens it. |
    | `password_reset` | The person uses **Forgot password** — `POST /api/auth/password/forgot` — which always issues a fresh 1 h token and retires the previous one. Works from `verified` and `active` only. |
    | `account_exists` | Nothing to do: it is a notice to the address's owner that somebody tried to sign up as them, not something they act on. |
    | `application_received`, `application_info_requested` | The applicant re-submits: `POST /api/applications/{application_id}/answer` from `needs_review`, or a fresh `POST /api/applications` after a decline. |
@@ -275,9 +275,13 @@ which looks exactly like "the link doesn't work".
 
 ## 9. A locked-out member
 
-Sign-in counts **failures only** (`app/auth/limits.py`), so a busy day cannot lock anyone out:
+Sign-in counts **failures only** (`app/auth/limits.py`), so a busy day cannot lock anyone out.
+Every window below is **sliding**: the count is the attempts inside the last N minutes, wherever
+they fall on the clock, so ten failures two seconds apart lock the address whether or not they
+straddle a quarter-hour (Task RATE-LIMIT-WINDOW; they were fixed calendar windows before that, and
+nine failures before a boundary plus one after counted as one).
 
-| Bucket | Limit | Window |
+| Counter | Limit | Sliding window |
 |---|---|---|
 | failures per address (`SIGNIN_EMAIL`) | 10 | 15 min |
 | requests per client IP (`SIGNIN_IP`) | 30 | 15 min |
@@ -287,10 +291,11 @@ Sign-in counts **failures only** (`app/auth/limits.py`), so a busy day cannot lo
 
 * A successful sign-in clears the address's failure count. **A lockout therefore expires on its
   own, within 15 minutes** — that is the answer nine times in ten, and there is no unlock endpoint.
+  It expires 15 minutes after the OLDEST of the ten failures, so in practice sooner than that.
 * A fifth failure writes `signin.failure_burst` to the audit trail. Several of those against one
   address from different IPs is worth a look; one is somebody's caps lock.
-* Both refusals answer `429` with `Retry-After` set to the whole window (an upper bound — the bucket
-  rolls over sooner).
+* Both refusals answer `429` with `Retry-After` set to the whole window (an upper bound — the
+  oldest attempt inside it ages out sooner).
 * **A correct password that still fails** is the interesting case: `suspended` and `revoked`
   accounts get the same generic `401` as a wrong password, and write `signin.refused_state`. Check
   the audit trail and the account's state before believing a password report.
@@ -404,10 +409,11 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
   (`frontend/tests/global-setup.ts`) and the run never starts. When it DOES run, the seed itself
   prints the target database name and host, never the DSN (`[seed_persona] target database <db> on
   <host>`, `scripts/seed_persona.py`).
-* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per SLIDING
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
-  budget: 7 + 2 + 4 + 2 + 1), so budget **one run per window**. A `429` mid-run means wait for the
-  quarter-hour boundary and re-run — never loosen the limit to make it pass.
+  budget: 7 + 2 + 4 + 2 + 1), so budget **one run per window**. A `429` mid-run means wait fifteen
+  minutes from the run's FIRST sign-in — there is no quarter-hour boundary to wait for any more —
+  and re-run; never loosen the limit to make it pass.
 * **Give every persona check its own `PW_OUTPUT_DIR`.** Playwright clears its output directory at
   the start of every run, so a second run deletes the first one's screenshots and traces — which
   cost the 0.1.23 release agent a third sign-in out of a budget of two, just to re-take two images.

@@ -132,7 +132,7 @@ class TokenCannotManageTokens(AuthError):
 
 
 class RateLimited(AuthError):
-    """A fixed-window counter in `app.auth.limits` said no. Defined here, with the rest of the
+    """A sliding-window counter in `app.auth.limits` said no. Defined here, with the rest of the
     hierarchy, so `install()`'s single handler renders its A5 body and its `Retry-After` too."""
 
     status = 429

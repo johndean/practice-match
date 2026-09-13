@@ -1691,6 +1691,56 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     )
 
 
+def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
+    """Task RATE-LIMIT-WINDOW. §9's table is the page an operator reads when somebody cannot sign
+    in, and until this pin NOTHING watched it: the limits were transcribed by hand from
+    `app/auth/limits.py`, and the WINDOW semantics were stated in prose three sections apart — §7
+    said "a fixed 24 h bucket", §9 said the counter "rolls over", §12 said to wait for the
+    quarter-hour boundary — all three of them descriptions of a mechanism, and all three wrong the
+    moment the mechanism changed.
+
+    So two things are pinned. The numbers, against the module the server actually runs, which is
+    what stops a row drifting the way the QA parity budget did. And the WORD: every one of these
+    is a sliding window now, and an operator told to wait for a boundary that does not exist has
+    been given an instruction that cannot be followed."""
+    from app.auth import limits as L
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = text.split("## 9. A locked-out member")[1].split("\n## ")[0]
+
+    assert "sliding" in section.lower(), (
+        "docs/RUNBOOK-identity.md §9 no longer tells an operator the windows are sliding"
+    )
+    assert "| Counter | Limit | Sliding window |" in section, "§9's limiter table lost its header"
+
+    rows = re.findall(r"^\| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|$", section, re.MULTILINE)
+    assert len(rows) >= 6, f"§9's limiter table has {len(rows)} rows"
+    windows = {900: "15 min", 3600: "1 h", 86_400: "24 h"}
+
+    for constant, label in (("SIGNIN_EMAIL", "failures per address"),
+                            ("SIGNIN_IP", "requests per client IP"),
+                            ("SIGNUP_IP", "sign-ups per IP"),
+                            ("SIGNUP_EMAIL", "sign-ups per IP"),
+                            ("FORGOT_EMAIL", "password-reset requests"),
+                            ("FORGOT_IP", "password-reset requests"),
+                            ("TOKEN_IP", "verify + reset token attempts")):
+        row = next((r for r in rows if r[0].startswith(label)), None)
+        assert row is not None, f"docs/RUNBOOK-identity.md §9 has no row for {constant} ({label})"
+        limit, window_s = getattr(L, constant)
+        assert str(limit) in row[1], (
+            f"§9's {label!r} row states a limit of {row[1].strip()!r}; app/auth/limits.py says "
+            f"{constant} == {limit}"
+        )
+        assert windows[window_s] in row[2], (
+            f"§9's {label!r} row states a window of {row[2].strip()!r}; app/auth/limits.py says "
+            f"{constant}'s window is {window_s} s"
+        )
+
+    # And the three sentences elsewhere in the page that described the OLD mechanism.
+    for gone in ("fixed 24 h bucket", "the bucket\n  rolls over sooner", "per FIXED"):
+        assert gone not in text, f"docs/RUNBOOK-identity.md still describes a fixed window: {gone!r}"
+
+
 def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
     as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
@@ -1709,7 +1759,7 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     assert harness_match, f"could not read the traced sign-in count out of: {budget_line!r}"
 
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
-    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per FIXED", runbook)
+    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per SLIDING", runbook)
     assert runbook_match, "docs/RUNBOOK-identity.md no longer states the QA parity sign-in budget this way"
 
     assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (

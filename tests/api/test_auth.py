@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport
 
 from app.api import auth as A
+from app.auth import limits
 from app.auth import passwords as P
 from app.auth import sessions as S
 from app.auth import tokens as T
@@ -18,6 +19,7 @@ from app.config import settings
 from app.mail.outbox import enqueue
 from app.main import create_app
 from tests.api.conftest import ORIGIN, PW, auth_headers
+from tests.conftest import WINDOW_EDGE
 
 
 async def _outbox(conn):
@@ -110,6 +112,52 @@ async def test_lockout_after_ten_failures_per_email(client, member):
         assert (await client.post("/api/auth/signin", json={"email": "lock@example.org", "password": "bad-bad-bad-bad"})).status_code == 401
     r = await client.post("/api/auth/signin", json={"email": "lock@example.org", "password": PW})
     assert r.status_code == 429 and "retry-after" in r.headers
+
+
+async def test_ten_failures_that_straddle_a_window_edge_still_lock_the_address(client, member, rate_limit_clock):
+    """Task RATE-LIMIT-WINDOW. Spec §3's endpoint row states the lockout as a RATE — "10
+    failures/email/15 min" — and the limiter counted a FIXED window, `int(time.time()) // 900`, so
+    the ten failures that lock an address had to land in one calendar quarter-hour. Nine at
+    14:59:59 and one at 15:00:01 are ten failures inside two seconds and left the live bucket at
+    ONE: the account stayed open and the correct password came back 200.
+
+    That is what `test_lockout_after_ten_failures_per_email` above hit on CI 34757098782 attempt 1
+    — it passes or fails on where in the quarter-hour the run happens to start, which is a coin
+    toss no amount of re-running settles. Here the edge is placed deliberately, so this asserts the
+    contract rather than the schedule."""
+    member(("buyer",), email="straddle@example.org")
+    limit = limits.SIGNIN_EMAIL[0]
+
+    rate_limit_clock.move_to(WINDOW_EDGE - 1)
+    for i in range(limit - 1):
+        r = await client.post("/api/auth/signin", json={"email": "straddle@example.org", "password": "bad-bad-bad-bad"})
+        assert r.status_code == 401, i
+
+    rate_limit_clock.move_to(WINDOW_EDGE + 1)
+    assert (await client.post("/api/auth/signin", json={"email": "straddle@example.org", "password": "bad-bad-bad-bad"})).status_code == 401
+
+    r = await client.post("/api/auth/signin", json={"email": "straddle@example.org", "password": PW})
+    assert r.status_code == 429 and "retry-after" in r.headers, (
+        "ten failures two seconds apart must lock the address, whichever side of a window edge they fell"
+    )
+
+
+async def test_a_failure_that_has_aged_out_of_the_window_no_longer_counts(client, member, rate_limit_clock):
+    """The other half of the same contract, and the reason a sliding window is not simply a
+    tighter one: the tenth failure locks only while the first NINE are still inside the window. An
+    attempt that is a full `window_s` old has left it, so ten failures spread over sixteen minutes
+    lock nobody — and a lockout expires on its own, which is what the runbook tells an operator."""
+    member(("buyer",), email="ageout@example.org")
+    limit, window = limits.SIGNIN_EMAIL
+
+    rate_limit_clock.move_to(WINDOW_EDGE)
+    for i in range(limit - 1):
+        assert (await client.post("/api/auth/signin", json={"email": "ageout@example.org", "password": "bad-bad-bad-bad"})).status_code == 401, i
+
+    # One window later those nine have aged out; the tenth failure is the only one left inside it.
+    rate_limit_clock.move_to(WINDOW_EDGE + window)
+    assert (await client.post("/api/auth/signin", json={"email": "ageout@example.org", "password": "bad-bad-bad-bad"})).status_code == 401
+    assert (await client.post("/api/auth/signin", json={"email": "ageout@example.org", "password": PW})).status_code == 200
 
 
 async def test_signout_all_revokes_on_next_request(client, member):

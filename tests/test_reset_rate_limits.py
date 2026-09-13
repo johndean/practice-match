@@ -9,7 +9,7 @@ the API serves, and consecutive runs are independent.
 Everything the script may do is fenced by two conditions it checks itself, because a script whose
 only safety is where it happens to be called from is one edit away from running somewhere else:
 `ENVIRONMENT` must be exactly `test`, and the Redis host must be loopback. It deletes only keys
-under `app.ratelimit.bucket_key`'s own `rl:` prefix, by SCAN + DEL — never `FLUSHDB`, which would
+under `app.ratelimit.subject_key`'s own `rl:` prefix, by SCAN + DEL — never `FLUSHDB`, which would
 also take the session cache and the outbox locks that share the database.
 """
 from __future__ import annotations
@@ -17,15 +17,15 @@ from __future__ import annotations
 import pytest
 
 from app import cache
-from app.ratelimit import bucket_key
+from app.ratelimit import subject_key
 from scripts import reset_rate_limits
 
 
 def _limits(r) -> None:
-    """A handful of real rate-limit buckets, keyed exactly as the app keys them."""
-    r.set(bucket_key("signin:ip", "203.0.113.7", 900), 3)
-    r.set(bucket_key("forgot:email", "someone@example.org", 3600), 2)
-    r.set(bucket_key("signup:ip", "203.0.113.7", 3600), 1)
+    """A handful of real rate-limit counters, keyed exactly as the app keys them."""
+    r.zadd(subject_key("signin:ip", "203.0.113.7"), {"a": 1, "b": 2, "c": 3})
+    r.zadd(subject_key("forgot:email", "someone@example.org"), {"a": 1, "b": 2})
+    r.zadd(subject_key("signup:ip", "203.0.113.7"), {"a": 1})
 
 
 def test_it_deletes_every_rate_limit_bucket_and_prints_how_many(redis, monkeypatch, capsys):
@@ -39,7 +39,7 @@ def test_it_deletes_every_rate_limit_bucket_and_prints_how_many(redis, monkeypat
     assert redis.keys("rl:*") == []
     out = capsys.readouterr().out
     assert "3" in out, out
-    # Only the count (review round 1, M6). A subject enters a bucket key as a truncated SHA-256
+    # Only the count (review round 1, M6). A subject enters a counter key as a truncated SHA-256
     # pseudonym, which is not an anonymisation (app/ratelimit.py says so), and a CI log is not the
     # place for either — so the line names no subject, no URL, and no environment.
     assert "203.0.113.7" not in out
