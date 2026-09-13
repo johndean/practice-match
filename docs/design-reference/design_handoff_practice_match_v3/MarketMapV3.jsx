@@ -45,7 +45,7 @@ const BASEMAPS = {
   satellite: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     maxNativeZoom: 19,
-    attribution: "Imagery \u00a9 Esri, Maxar, Earthstar Geographics"
+    attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"
   }
 };
 const LABEL_TILES =

@@ -20,7 +20,8 @@ export function loadLeaflet() {
 // cached to, not a display limit. Esri publishes the gray Canvas basemaps to Level 16 in North
 // America and answers HTTP 200 with a 2,521-byte "Map data not yet available" JPEG past it;
 // World_Imagery is real to z19 everywhere probed (0.3 m, Esri's published US floor) and deeper in
-// some metros, which is not knowable client-side.
+// some metros, which is not knowable client-side. The satellite credit is the service's own
+// current `copyrightText`, taken verbatim — it names Vantor where this file used to say Maxar.
 export const BASEMAPS = {
   map: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
@@ -30,7 +31,7 @@ export const BASEMAPS = {
   satellite: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     maxNativeZoom: 19,
-    attribution: "Imagery \u00a9 Esri, Maxar, Earthstar Geographics"
+    attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"
   }
 };
 

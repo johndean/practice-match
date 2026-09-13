@@ -6313,7 +6313,7 @@ const A31_12c: Amendment = {
  *  basemap is on. `detectRetina` stays unset, deliberately: it adds a zoomOffset WITHOUT touching
  *  `maxNativeZoom`, which is z17 requests and the placeholder again by another door.
  *
- *  Six literal edits, all in `MarketMapV3.jsx` (`file: 'jsx'`, A28.1's precedent), none chained:
+ *  Seven literal edits, all in `MarketMapV3.jsx` (`file: 'jsx'`, A28.1's precedent), none chained:
  *  every `find` occurs exactly once in the pristine twin, measured before writing. The port
  *  mirrors them literal for literal in `frontend/src/lib/leaflet.js` and
  *  `frontend/src/map/engines/leaflet.ts` (spec §3), and `frontend/tests/smoke.spec.ts` walks real
@@ -6407,6 +6407,27 @@ const A35_6: Amendment = {
     + '    tileRef.current.setUrl(cfg.url, true);\n'
     + '    tileRef.current.remove();\n'
     + '    tileRef.current.addTo(map);\n',
+  count: 1
+};
+
+/** A35.7 — the satellite attribution is Esri's own CURRENT credit line.
+ *
+ *  Attribution is legally load-bearing on this project (CLAUDE.md, "Legally load-bearing"), and
+ *  `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer?f=pjson` carries
+ *  `"copyrightText": "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"` —
+ *  fetched 2026-09-13. The design and the port both said "Imagery © Esri, Maxar, Earthstar
+ *  Geographics": Maxar is the vendor's FORMER name and the service's own description now credits
+ *  "Vantor imagery at 0.3m resolution". It is taken VERBATIM rather than composed from, which is
+ *  the rule `dataset_registry.attribution_text` already follows for every Census dataset.
+ *
+ *  The gray canvas's "Tiles © Esri" is untouched: it is the approved design's own string, it is
+ *  what CLAUDE.md names, and D-C52 reaches the satellite line alone. No approved state selects
+ *  Satellite, so this moves no pixel. */
+const A35_7: Amendment = {
+  id: 'A35.7', ...ESRI_ZOOM,
+  ruling: 'the satellite credit is the service\'s own current copyrightText, which names Vantor where the design said Maxar (D-C52)',
+  find: '    attribution: "Imagery \\u00a9 Esri, Maxar, Earthstar Geographics"\n',
+  replace: '    attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"\n',
   count: 1
 };
 
@@ -6566,5 +6587,5 @@ export function amendments(): Amendment[] {
     // (John's ruling D-C52, 2026-09-13). Seven literal edits, all `file: 'jsx'` (A28.1's
     // precedent) and none chained: every `find` occurs exactly once in the pristine twin.
     // Appended last, as every family is. Definition order in this file matches this list (m8).
-    A35_1, A35_2, A35_3, A35_4, A35_5, A35_6];
+    A35_1, A35_2, A35_3, A35_4, A35_5, A35_6, A35_7];
 }

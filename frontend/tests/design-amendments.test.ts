@@ -371,10 +371,10 @@ describe('local design amendments (spec D15)', () => {
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     'A31.13', 'A31.13b',
     // A35 — the basemap never requests a tile Esri does not have, and the member zooms past it
-    // (John's ruling D-C52, 2026-09-13). Six literal edits, all in `MarketMapV3.jsx` (`file:
+    // (John's ruling D-C52, 2026-09-13). Seven literal edits, all in `MarketMapV3.jsx` (`file:
     // 'jsx'`, A28.1's precedent), none chained: every `find` occurs exactly once in the pristine
     // twin. Appended last, as every family is.
-    'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6',
+    'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -565,7 +565,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(309);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(310);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1402,7 +1402,7 @@ describe('local design amendments (spec D15)', () => {
     // changes file still fails here.
     expect(amendmentsFor('jsx').map((a) => a.id)).toEqual([
       'A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12',
-      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6'
+      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7'
     ]);
   });
 
@@ -1475,10 +1475,21 @@ describe('local design amendments (spec D15)', () => {
     expect(jsx, 'a tile layer is still created with no native cap').not.toContain('maxZoom: 18\n        }');
     // `detectRetina` would re-open the hole it just closed — a zoomOffset with no native cap.
     expect(jsx, 'detectRetina requests one level deeper than the map is on').not.toContain('detectRetina');
-    // The approved design's own attribution strings are untouched by the zoom work.
-    expect(jsx).toContain('attribution: "Tiles \\u00a9 Esri"');
   });
 
+  it('A35.7 credits the satellite imagery with the service\'s own current copyrightText', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+    // World_Imagery's `copyrightText`, fetched from the service on 2026-09-13. Attribution is
+    // legally load-bearing here, so it is Esri's own credit line verbatim rather than one composed
+    // from it — the rule `dataset_registry.attribution_text` already follows for Census datasets.
+    expect(jsx).toContain('attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"');
+    expect(pristineJsx, 'the pristine bundle no longer names Maxar').toContain('Maxar');
+    expect(jsx, 'Maxar is the vendor\'s former name and the service no longer credits it').not.toContain('Maxar');
+    // The gray canvas keeps the approved design's own string — D-C52 reaches the satellite line
+    // alone, and "Tiles © Esri" is what CLAUDE.md marks legally load-bearing today.
+    expect(jsx).toContain('attribution: "Tiles \\u00a9 Esri"');
+  });
 
   it('A28.2-A28.4 delete the legacy panel\'s orphans, and the last "drive time" strings with them', () => {
     const amended = readFileSync(AMENDED, 'utf8');
