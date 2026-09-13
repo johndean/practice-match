@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from app.api.market import SHADING, THRESHOLD_RULE
+from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL
 from app.census.tiger import BOUNDARY_FILES
 
 # D-C35 (John, 2026-09-10): every layer at its own geography, and the legend names it. `income`
@@ -162,3 +163,55 @@ def test_every_layer_row_follows_the_one_ruled_grammar() -> None:
         )
         assert dataset, f"{layer}: the dataset half is empty: {sub!r}"
 
+
+
+# ---------------------------------------------------------------------------------------------
+# A34 / GATE 3 (Task ONE-VOCABULARY, 2026-09-13; ruling D-C51, John: "WE MUST COMMUNICATE THE
+# EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING
+# DIFFERENT THINGS ... RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY ARE
+# SAME") — THE VOCABULARY IS THE SAME ON BOTH SIDES OF THE WIRE.
+#
+# The tests above pin the four MAP geographies. Two more words in the audit's closed list (§3.1)
+# are the SERVER'S and the design has no way to invent them: the catchment phrase the API serves
+# as `community_label` / the head of `income_note`, and the basis word `approximate` the API
+# appends to it. The design composes both -- the docked panel joins its own " · approximate"
+# to the served index (A33.1b/A33.1c.2), and its prose describes the catchment in its own words
+# (A27.4, A34.7/A34.8) -- so a change to either on the server leaves the client saying something
+# the server no longer says. Pinned here, in the shape the geography tests above established.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_designs_catchment_prose_states_the_distance_the_api_serves() -> None:
+    """`BAND_LABEL` carries a distance and the design's own prose repeats it in words.
+
+    D-C39: the band is a straight-line buffer (spec §8) and the label says how far it reaches, so
+    a change to the radius has to reach the sentences that describe it. The design never receives
+    `BAND_LABEL` itself -- it renders whatever the payload carries -- but it DOES state the
+    distance in its own copy, and that copy is what goes stale in silence."""
+    miles = re.search(r"about (\d+) miles", BAND_LABEL)
+    assert miles, f"BAND_LABEL no longer states a distance: {BAND_LABEL!r}"
+    design = DESIGN.read_text(encoding="utf-8")
+    stated = set(re.findall(r"about (\d+) miles", design))
+    assert stated, "no sentence in the design describes the catchment at all"
+    assert stated == {miles.group(1)}, (
+        f"the design describes the catchment as {sorted(stated)} miles; the API serves "
+        f"{miles.group(1)} ({BAND_LABEL!r})"
+    )
+
+
+def test_the_designs_approximate_qualifier_is_the_word_the_api_composes() -> None:
+    """One basis word, one spelling, both sides.
+
+    `serve.py` composes `income_note` as `<label> · <APPROXIMATE_BASIS>` and the docked panel
+    composes its own sub-line as `<index> · <the same word>` (A33.1b). Two spellings of one
+    basis is how the detail card and the panel come to qualify the same median differently, which
+    is the collision (C1) the audit found and this ruling closes."""
+    design = DESIGN.read_text(encoding="utf-8")
+    joined = f" · {APPROXIMATE_BASIS}"
+    assert joined in design, (
+        f"the design no longer joins the qualifier the way the API does ({joined!r})"
+    )
+    assert APPROXIMATE_BASIS == APPROXIMATE_BASIS.lower(), (
+        "the API's own qualifier is lower case; the design joins it after a middot and must not "
+        "have to re-case it"
+    )

@@ -196,6 +196,13 @@ def _figures(
 # (`App.vue`'s Insights heading and its footnote) are corrected in the same release.
 BAND_LABEL = "Within about 5 miles of the practice"
 
+# A34 (ruling D-C51, 2026-09-13): the one BASIS word the API appends to a figure it derived
+# rather than read. `income_note` joins it to `BAND_LABEL` below, and the docked panel joins the
+# same word to its own index (A33.1b) -- two surfaces, one spelling, pinned across the wire by
+# `tests/census/test_design_shading_labels.py`. The audit found the median qualified
+# "approximate" on the detail card and not on the snapshot strip beside it, which is collision C1.
+APPROXIMATE_BASIS = "approximate"
+
 # The area figures move as ONE GROUP (D-C38). `label` describes all of them at once, so a group
 # drawn half from the ring and half from the city would put a city figure under a ring caption —
 # the very defect D-C38 exists to remove. A figure the chosen band does not have is null, which is
@@ -453,7 +460,7 @@ def community_rows(
         if area["income"] is not None:
             income_approximate = bool(area_metrics["median_hh_income"]["is_derived"])
             if income_approximate:
-                income_note = f"{label} · approximate" if label is not None else "Approximate"
+                income_note = f"{label} · {APPROXIMATE_BASIS}" if label is not None else "Approximate"
 
         # A33.1 — the index the pipeline already stores, from the band the median came from.
         # `materialize.py:294` writes `income_index_vs_us` in every band it computes, against
