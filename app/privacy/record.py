@@ -8,6 +8,17 @@ place that owns the claim statement, the confirmation-reset rule and the CHECK-s
 
 No engine, no Pillow and no boto import ever enters this module: the api imports it on the upload
 path, and the worker imports it beside the engines, so it is the one file both sides share.
+
+Every writer carries a state predicate and NONE of them raises: a transition the table does not
+name matches no row, writes nothing and reports that it did (0, or None where 0 would read as a
+count), which is what makes `media.process_photo`'s "never raises" (spec C.5) a property of these
+statements rather than of the order its caller happens to try them in.
+
+The confirmation-reset rule ships as TWO constants, `RESET_COLUMNS` and `RESET_COLUMNS_EDITED`,
+rather than the plan's single `RESET_COLUMNS` -- PostgreSQL refuses two assignments to the same
+column in one UPDATE, so the plan's own `{RESET_COLUMNS}, seller_review_status = 'edited'` is not a
+statement that runs -- and the controller ratified that split on the P3 review (fix round 1,
+review Minor-2); P10's `apply_visibility_change` and P12's mask routes name the second one.
 """
 from __future__ import annotations
 
@@ -67,6 +78,19 @@ MAX_ATTEMPTS = 3
 #: raised bound. Pinned by a test, so that no docstring or runbook can describe a rung that never
 #: runs.
 BACKOFF = (30, 120, 600)
+
+#: Spec C.4 pairs each failure state with ONE source: `PROCESSING -> PROCESSING_FAILED` (a decode,
+#: OCR or vision error) and `SCANNED -> REDACTION_FAILED` (the fill or the re-encode). `fail` routes
+#: by the state it is ASKED to write rather than admitting the union, so a re-encode error cannot
+#: move a PROCESSING row and a decode error cannot move a SCANNED one -- neither of which is a row
+#: of the table. A state this map does not hold answers the empty tuple, which matches nothing.
+FAIL_SOURCES: dict[str, tuple[str, ...]] = {
+    "PROCESSING_FAILED": ("PROCESSING",),
+    "REDACTION_FAILED": ("SCANNED",),
+}
+#: Spec C.4's two `-> REVIEW_REQUIRED` rows: the failure that spends the third attempt
+#: (`PROCESSING | SCANNED`) and the third failed IN-PLACE re-run (the three ready states).
+EXHAUST_SOURCES = ("PROCESSING", "SCANNED", *READY_STATES)
 
 
 def _reset_columns(review_status: str) -> str:
@@ -214,26 +238,47 @@ def mark_ready(conn: Any, asset_id: UUID, *, visible: bool, version: int) -> Non
 
 def fail(conn: Any, asset_id: UUID, *, state: str, code: str) -> int:
     """PROCESSING_FAILED or REDACTION_FAILED with a reason CODE, never bytes and never response
-    text. Returns the attempts spent, which is what decides between a re-enqueue and `exhaust`."""
+    text. Returns the attempts spent -- which is what decides between a re-enqueue and `exhaust` --
+    or 0 when the row's state is not the one spec C.4 pairs with this failure, in which case
+    NOTHING was written.
+
+    0 is unambiguous rather than overloaded: a row this function can legitimately move is
+    PROCESSING or SCANNED, and both were reached through `claim`'s own `attempts = attempts + 1`,
+    so a real row's count here is never 0.
+
+    The predicate is the whole of the "never raises" contract (spec C.5). Without it,
+    `fail(..., state="PROCESSING_FAILED")` on a confirmed row moved it out of its ready state
+    WITHOUT the reset rule; the row was then a `buyer_visible` non-ready row, `lap_visible_ready_ck`
+    refused the statement, and psycopg2 raised a CheckViolation from inside a task contracted never
+    to raise. `bump_attempt` is the in-place re-run's counter, and it is not this."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE listing_asset_privacy SET processing_status = %s, last_error = %s,"
-            " updated_at = now() WHERE asset_id = %s RETURNING attempts",
-            (state, code, asset_id),
+            " updated_at = now() WHERE asset_id = %s AND processing_status = ANY(%s)"
+            " RETURNING attempts",
+            (state, code, asset_id, list(FAIL_SOURCES.get(state, ()))),
         )
-        return int(cur.fetchone()[0])
+        found = cur.fetchone()
+    return 0 if found is None else int(found[0])
 
 
-def exhaust(conn: Any, asset_id: UUID, *, code: str) -> None:
+def exhaust(conn: Any, asset_id: UUID, *, code: str) -> int:
     """The failure that spends the third attempt: REVIEW_REQUIRED, the reset rule applied,
     `buyer_visible` false -- a fail-closed null slot, on a published listing too. Never the
-    original (directive 19)."""
+    original (directive 19).
+
+    Returns the number of rows moved: 0 when the state is not one of `EXHAUST_SOURCES`, in which
+    case nothing was written. It fails closed either way -- its own statement applies the reset
+    rule, so every state it admits lands unconfirmed and invisible -- but a state spec C.4 does not
+    name is still a transition this module does not perform (review Minor-1)."""
     with conn.cursor() as cur:
         cur.execute(
             f"UPDATE listing_asset_privacy SET processing_status = 'REVIEW_REQUIRED',"
-            f" last_error = %s, {RESET_COLUMNS}, updated_at = now() WHERE asset_id = %s",
-            (code, asset_id),
+            f" last_error = %s, {RESET_COLUMNS}, updated_at = now()"
+            f" WHERE asset_id = %s AND processing_status = ANY(%s)",
+            (code, asset_id, list(EXHAUST_SOURCES)),
         )
+        return int(cur.rowcount)
 
 
 def confirm(conn: Any, asset_id: UUID, *, account_id: UUID, visibility: str, edited: bool) -> bool:
@@ -319,21 +364,55 @@ def flag_stale(conn: Any, *, listing_id: UUID, reason: str) -> list[UUID]:
 
 
 def advance_in_place(conn: Any, asset_id: UUID, *, sha256: str, version: int,
-                     regions: list[dict[str, Any]]) -> None:
+                     regions: list[dict[str, Any]]) -> int:
     """The one derivative write that does not reset (spec C.5). The re-run's region set is the OLD
     set unioned with the new on a confirmed row, so the fresh derivative hides a superset of what
     the seller confirmed -- which is what makes advancing `confirmed_sha256` with `redacted_sha256`
     honest rather than a silent re-confirmation. The state, `buyer_visible` and
-    `lap_visible_ready_ck` are untouched, so a version bump darkens no listing."""
+    `lap_visible_ready_ck` are untouched, so a version bump darkens no listing.
+
+    **Guarded by the three READY states**, because the in-place re-run is a ready row's re-run and
+    nothing else (D-IDP-16): unguarded it set a derivative hash and cleared the stale flag from ANY
+    state, including `UPLOADED` and `REVIEW_REQUIRED`, where it wrote a `redacted_sha256` beside a
+    NULL `redacted_storage_key` -- a shape `lap_ready_has_derivative_ck` does not constrain outside
+    the ready states, so nothing in the database refused it. Returns the number of rows moved: 0
+    when the state forbids it and nothing was written."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE listing_asset_privacy SET redacted_sha256 = %s,"
             " confirmed_sha256 = CASE WHEN seller_confirmed THEN %s ELSE confirmed_sha256 END,"
             " redaction_regions = %s::jsonb, processing_version = %s, reprocessed_at = now(),"
             " reprocess_reason = NULL, reprocess_requested_at = NULL, attempts = 0,"
-            " updated_at = now() WHERE asset_id = %s",
-            (sha256, sha256, json.dumps(regions), version, asset_id),
+            " updated_at = now() WHERE asset_id = %s AND processing_status = ANY(%s)",
+            (sha256, sha256, json.dumps(regions), version, asset_id, list(READY_STATES)),
         )
+        return int(cur.rowcount)
+
+
+def bump_attempt(conn: Any, asset_id: UUID) -> int | None:
+    """The in-place re-run's FAILURE arm: "a failed in-place run counts an attempt and re-enqueues"
+    (spec C.5). Returns the NEW count, or None when the row's state forbids it.
+
+    Guarded by the three READY states, because that is where an in-place re-run happens -- the row
+    never leaves its state (D-IDP-16) and `buyer_visible` is untouched, so counting a failure
+    darkens no listing. `claim` deliberately refuses those three, so this is the only way a flagged
+    ready row's attempt is counted; and it refuses everything `claim` DOES take, because the claim
+    counts that attempt in its own statement and a second count would spend the ladder twice as
+    fast.
+
+    None and not 0: a caller that read a 0 as "the first attempt" would index `BACKOFF[-1]` -- the
+    10-minute rung the bound never reaches -- for a row it never touched. The caller spends
+    `BACKOFF[n - 1]` while `n < MAX_ATTEMPTS` and calls `exhaust` at `n == MAX_ATTEMPTS`; the chain
+    that does that is P8's, not this module's, and `last_error` is written there, by `exhaust`,
+    because a re-enqueued attempt is not yet an outcome anyone reads."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE listing_asset_privacy SET attempts = attempts + 1, updated_at = now()"
+            " WHERE asset_id = %s AND processing_status = ANY(%s) RETURNING attempts",
+            (asset_id, list(READY_STATES)),
+        )
+        found = cur.fetchone()
+    return None if found is None else int(found[0])
 
 
 def mark_published(conn: Any, listing_id: UUID) -> None:

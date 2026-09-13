@@ -52,6 +52,34 @@ TRANSITIONS = (
 UNCLAIMABLE = ("PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
                "SELLER_CONFIRMED", "PUBLISHED", "REVIEW_REQUIRED")
 
+#: Every state migration 041's CHECK permits, written out here because a `parametrize` argument is
+#: read at COLLECTION time and cannot come from a database fixture. It is pinned against
+#: `pg_constraint` itself, both ways, by
+#: `test_the_state_tuples_are_the_states_the_column_check_permits` -- so a state added to the table
+#: without a dead end being ruled for it fails here rather than going unnoticed.
+ALL_STATES = ("UPLOADED", "PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
+              "SELLER_CONFIRMED", "PUBLISHED", "PROCESSING_FAILED", "REDACTION_FAILED",
+              "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
+
+#: Spec C.4 names ONE source per failure state: `PROCESSING -> PROCESSING_FAILED` (a decode,
+#: OCR or vision error) and `SCANNED -> REDACTION_FAILED` (the fill or the re-encode). Written as
+#: the table's own pairs so the dead ends below are the complement of what the spec names rather
+#: than a list somebody typed.
+FAIL_TABLE = (("PROCESSING_FAILED", "PROCESSING"), ("REDACTION_FAILED", "SCANNED"))
+
+#: Spec C.4's two `-> REVIEW_REQUIRED` rows: the failure that spends the third attempt
+#: (`PROCESSING | SCANNED`) and the third failed IN-PLACE re-run (the three ready states).
+EXHAUST_SOURCES = ("PROCESSING", "SCANNED", *record.READY_STATES)
+
+
+def _forbidden(*sources: str) -> tuple[str, ...]:
+    """The complement of a writer's source states, in the CHECK's own order."""
+    return tuple(state for state in ALL_STATES if state not in sources)
+
+
+#: (the state asked for, the state the row is in) for every pair spec C.4 does NOT name.
+FAIL_DEAD_ENDS = tuple((state, start) for state, source in FAIL_TABLE for start in _forbidden(source))
+
 
 def _read(conn: Any, asset_id: UUID) -> record.PrivacyRow:
     """`record.read` answers `PrivacyRow | None`; every call in this file has just written the row
@@ -59,6 +87,21 @@ def _read(conn: Any, asset_id: UUID) -> record.PrivacyRow:
     found = record.read(conn, asset_id)
     assert found is not None, f"the privacy row for {asset_id} vanished"
     return found
+
+
+def _all_columns(conn: Any, asset_id: UUID) -> dict[str, Any]:
+    """EVERY column of the privacy row, by name -- what a "writes nothing" case must compare.
+
+    `PrivacyRow` is a sixteen-field projection and carries none of `ocr`, `identity_matches`,
+    `vision`, `detected_regions`, `last_error`, `seller_review_status`, `detection_at` or
+    `updated_at`. A dead-end case that compared the projection would still pass if a guard stopped
+    protecting the four `jsonb` columns a late scan must not overwrite and kept protecting the
+    status column -- which is precisely the subject of those cases (review Minor-6)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM listing_asset_privacy WHERE asset_id = %s", (asset_id,))
+        found = cur.fetchone()
+        assert found is not None, f"the privacy row for {asset_id} vanished"
+        return dict(zip([d.name for d in cur.description], found, strict=True))
 
 
 def _perform(conn: Any, call: str, asset_id: UUID, listing_id: UUID) -> None:
@@ -517,3 +560,135 @@ def _review_status(conn: Any, asset_id: UUID) -> str:
     with conn.cursor() as cur:
         cur.execute("SELECT seller_review_status FROM listing_asset_privacy WHERE asset_id = %s", (asset_id,))
         return str(cur.fetchone()[0])
+
+
+def test_the_failure_states_and_their_sources_are_the_tables_own() -> None:
+    """Spec C.4 pairs each failure state with ONE source, and `fail` routes by the state it is
+    asked to write rather than admitting the union of the two -- otherwise a re-encode error could
+    move a PROCESSING row and a decode error a SCANNED one, neither of which is a row of the
+    table."""
+    assert record.FAIL_SOURCES == {state: (source,) for state, source in FAIL_TABLE}
+    assert record.EXHAUST_SOURCES == EXHAUST_SOURCES
+
+
+@pytest.mark.parametrize(("state", "start"), FAIL_DEAD_ENDS)
+def test_the_failure_writes_nothing_from_a_state_the_table_does_not_pair_it_with(
+    conn: Any, state: str, start: str
+) -> None:
+    """The dead ends `fail` had none of. Unguarded, `fail(..., state="PROCESSING_FAILED")` on a
+    ready row moved it out of its ready state WITHOUT the reset rule, and the row is then a
+    `buyer_visible` non-ready row -- which `lap_visible_ready_ck` refuses, so psycopg2 raised a
+    CheckViolation from inside a task spec C.5 contracts never to raise."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=2)
+    before = _all_columns(conn, asset_id)
+    assert record.fail(conn, asset_id, state=state, code="UNDECODABLE") == 0
+    assert _all_columns(conn, asset_id) == before
+
+
+def test_the_failure_refuses_a_buyer_visible_row_rather_than_raising(conn: Any) -> None:
+    """The hazard in its own case, on the shape that produced it: a confirmed, buyer-visible row.
+    `media.process_photo` "never raises" (spec C.5) -- every outcome is a state write plus a
+    returned summary -- so a failure the state forbids is a refused no-op and not an exception
+    escaping the task."""
+    asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True,
+                       buyer_visible=True, attempts=2)
+    before = _all_columns(conn, asset_id)
+    assert record.fail(conn, asset_id, state="PROCESSING_FAILED", code="UNDECODABLE") == 0
+    assert _all_columns(conn, asset_id) == before
+
+
+def test_a_failure_state_the_table_does_not_name_at_all_writes_nothing(conn: Any) -> None:
+    """`FAIL_SOURCES` is asked for the state's sources and answers the empty tuple for one it does
+    not hold, which matches no row: fail-closed, and never a KeyError inside the task."""
+    asset_id, _ = _row(conn, processing_status="PROCESSING", attempts=2)
+    before = _all_columns(conn, asset_id)
+    assert record.fail(conn, asset_id, state="REVIEW_REQUIRED", code="OCR_ERROR") == 0
+    assert _all_columns(conn, asset_id) == before
+
+
+@pytest.mark.parametrize("start", _forbidden(*EXHAUST_SOURCES))
+def test_the_exhaustion_writes_nothing_from_a_state_the_table_does_not_name(
+    conn: Any, start: str
+) -> None:
+    """Review Minor-1. Unguarded, `exhaust` admitted `UPLOADED`, `REDACTION_GENERATED`,
+    `PROCESSING_FAILED`, `REDACTION_FAILED`, `REVIEW_REQUIRED` and `REPROCESS_REQUIRED` ->
+    `REVIEW_REQUIRED`, none of which is a row of spec C.4. It fails closed, so nothing could raise
+    -- but a transition the table does not name is still a transition the table does not name."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=3)
+    before = _all_columns(conn, asset_id)
+    assert record.exhaust(conn, asset_id, code="OCR_ERROR") == 0
+    assert _all_columns(conn, asset_id) == before
+
+
+@pytest.mark.parametrize("start", EXHAUST_SOURCES)
+def test_the_exhaustion_reports_the_one_row_it_moved(conn: Any, start: str) -> None:
+    asset_id, _ = _row(conn, processing_status=start, buyer_visible=start in record.READY_STATES,
+                       attempts=3)
+    assert record.exhaust(conn, asset_id, code="OCR_ERROR") == 1
+    assert _read(conn, asset_id).processing_status == "REVIEW_REQUIRED"
+
+
+@pytest.mark.parametrize("start", _forbidden(*record.READY_STATES))
+def test_the_in_place_advance_writes_nothing_from_a_state_that_is_not_ready(
+    conn: Any, start: str
+) -> None:
+    """The in-place re-run is a READY row's re-run and nothing else (spec C.5, D-IDP-16).
+    Unguarded, `advance_in_place` set a derivative hash and cleared the stale flag from ANY state,
+    including `UPLOADED` and `REVIEW_REQUIRED`, where it wrote a `redacted_sha256` beside a NULL
+    `redacted_storage_key` -- a shape `lap_ready_has_derivative_ck` does not constrain outside the
+    ready states, so nothing in the database refused it."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=2)
+    before = _all_columns(conn, asset_id)
+    assert record.advance_in_place(conn, asset_id, sha256="e" * 64, version=9, regions=[]) == 0
+    assert _all_columns(conn, asset_id) == before
+
+
+def test_the_in_place_advance_reports_the_one_row_it_moved(conn: Any) -> None:
+    asset_id, _ = _row(conn, processing_status="PUBLISHED", confirmed=True, buyer_visible=True,
+                       reprocess_reason="VERSION")
+    assert record.advance_in_place(conn, asset_id, sha256="e" * 64, version=2, regions=[]) == 1
+
+
+def test_the_in_place_re_runs_failure_counts_an_attempt_without_leaving_the_ready_state(
+    conn: Any,
+) -> None:
+    """Spec C.5: "A failed in-place run counts an attempt and re-enqueues". `claim` refuses the
+    three ready states by design, so a flagged ready row's re-run has no other way to count one --
+    and `fail` is the wrong instrument, because it would move a PUBLISHED row out of its ready
+    state and darken a live listing, which D-IDP-16 forbids ("a version bump darkens no
+    listing")."""
+    for start in record.READY_STATES:
+        asset_id, _ = _row(conn, processing_status=start, confirmed=start == "SELLER_CONFIRMED",
+                           buyer_visible=True, reprocess_reason="VERSION")
+        assert record.bump_attempt(conn, asset_id) == 1
+        after = _read(conn, asset_id)
+        assert (after.processing_status, after.attempts) == (start, 1)
+        assert after.buyer_visible, "a counted attempt darkens no listing"
+        assert after.reprocess_reason == "VERSION", "the flag survives; only the re-run clears it"
+        assert record.bump_attempt(conn, asset_id) == 2
+
+
+def test_the_counted_attempt_indexes_the_ladder_the_caller_spends(conn: Any) -> None:
+    """`bump_attempt` returns the NEW count, which is what P8 reads against `MAX_ATTEMPTS` and what
+    indexes `BACKOFF`: the first failure spends `BACKOFF[0]`, the second `BACKOFF[1]`, and the
+    third does not re-enqueue at all -- it exhausts. The ladder is read from the module here rather
+    than re-typed, so a changed rung moves this case with it."""
+    asset_id, _ = _row(conn, processing_status="PUBLISHED", buyer_visible=True,
+                       reprocess_reason="OPERATOR")
+    counted = [record.bump_attempt(conn, asset_id) for _ in range(record.MAX_ATTEMPTS)]
+    assert counted == [1, 2, 3]
+    spent = [record.BACKOFF[n - 1] for n in counted if n < record.MAX_ATTEMPTS]
+    assert spent == [30, 120]
+    assert counted[-1] == record.MAX_ATTEMPTS, "the third failure exhausts rather than re-enqueueing"
+
+
+@pytest.mark.parametrize("start", _forbidden(*record.READY_STATES))
+def test_no_attempt_is_counted_from_a_state_no_in_place_re_run_owns(conn: Any, start: str) -> None:
+    """None, not 0: a row whose state forbids the count wrote nothing, and a caller that read a 0
+    as "the first attempt" would spend `BACKOFF[-1]` -- the 10-minute rung the bound never reaches
+    -- on a row it never touched. Every claimable state is here too, because the CLAIM counts that
+    attempt itself and a second count would spend the ladder twice as fast."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=1)
+    before = _all_columns(conn, asset_id)
+    assert record.bump_attempt(conn, asset_id) is None
+    assert _all_columns(conn, asset_id) == before
