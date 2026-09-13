@@ -1387,15 +1387,22 @@ describe('local design amendments (spec D15)', () => {
   });
 
   // K is a property of THIS ledger, not a constant, so it is re-derived rather than asserted from
-  // a comment: the case runs the same rule at every threshold below the shipped one and pins how
-  // many correct citations each would reject. Run it alone with
+  // a comment: the case runs the same rule at every threshold up to the shipped one and reads the
+  // answer off the measurement. Run it alone with
   //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
-  // The residue below 4 is text the design genuinely repeats. RE-MEASURED after A33 (fix round 2,
-  // 2026-09-13): the family's insertions moved every line below V3:1892, so 132 citations were
-  // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-  // left — which is why the residue FELL from {1: 28, 2: 7, 3: 4} to {1: 21, 2: 4, 3: 2} without
-  // any threshold being relaxed. What is left at 3 is A26.10 and A26.11, the two filter popover
-  // panels whose `panelStyle` string A26.16 unified, so the design carries it four times.
+  // The residue below K is text the design genuinely repeats — at the time of writing, A26.10 and
+  // A26.11, the two filter popover panels whose `panelStyle` string A26.16 unified, so the design
+  // carries it four times.
+  //
+  // THE TABLE IS NO LONGER PINNED (Task HOUSEKEEPING-C item 8, 2026-09-13). It was
+  // `{ 1: …, 2: …, 3: …, 4: 0 }`, and the exact counts move whenever ANY branch adds a row or
+  // shifts a line: SCREEN-LABELS round 2 re-took that literal three times in one day, and each
+  // re-take is a merge conflict on a file three branches are editing at once. Worse, a conflict
+  // resolved by taking one side's numbers says nothing about the merged ledger, so the pin was
+  // costing more than it guarded. What it was really there to prove is the PROPERTY in this
+  // case's own name — K accepts every correct citation and K‑1 does not — and that is what is
+  // asserted now, with the measured distribution PRINTED so a reviewer still sees the shape of
+  // the residue without a literal that has to be merged.
   it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
@@ -1415,17 +1422,20 @@ describe('local design amendments (spec D15)', () => {
       occurrences: (piece) => design.split(piece).length - 1,
       maxOccurrences: k,
     }).findings.filter((f) => f.includes('is stale')).length;
-    // RE-TAKEN whenever the ledger grows — this is a measurement of THIS ledger, not a
-    // constant. Task ADMIN-GATE (2026-09-13) added four rows and moved it from
-    // { 1: 28, 2: 7, 3: 4, 4: 0 } to { 1: 29, 2: 8, 3: 4, 4: 0 }: A40.4's own output is the line
-    // `this.loadAdmin();`, which A40.6 also writes inside its own line, so that citation is
-    // distinctive at 2 and not at 1. Task SCREEN-LABELS (A33, 2026-09-13) moves it again, and
-    // DOWNWARD: its insertions shifted every design line below V3:1892, so 136 citations were
-    // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-    // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
-    // and 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
-    expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
+    // The measurement, printed rather than pinned: a reviewer reads the residue off the run.
+    const distribution = Object.fromEntries(
+      Array.from({ length: DISTINCTIVENESS_K }, (_, i) => [i + 1, staleAt(i + 1)])
+    );
+    console.log(`distinctiveness residue by threshold: ${JSON.stringify(distribution)}`);
+    // THE PROPERTY, both halves. K accepts every correct citation…
+    expect(staleAt(DISTINCTIVENESS_K), `K=${DISTINCTIVENESS_K} rejects a correct citation`).toBe(0);
+    // …and nothing smaller does, so K is the SMALLEST that can ship. No guard is needed for a
+    // hypothetical K of 1: `maxOccurrences: 0` makes no piece distinctive at all, so every
+    // citation is rejected and the clause holds, which is the right answer for that K.
+    expect(
+      staleAt(DISTINCTIVENESS_K - 1),
+      `K=${DISTINCTIVENESS_K - 1} also accepts every citation, so the shipped K is not the smallest`
+    ).toBeGreaterThan(0);
   });
 
   // ---------------------------------------------------------------------------------------
