@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { PERSONAS, isExpectedSignInFailure401, personaCredentials, prepare } from './harness';
+import { PERSONAS, allowAnonymousBootRefusal, isExpectedSignInFailure401, personaCredentials, prepare } from './harness';
 
 // ---------------------------------------------------------------------------------------
 // The trace goes off on a LIVE run and nowhere else (round 3, ruling 1).
@@ -73,6 +73,10 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
 
   test('buyer credentials sign the member in, the header shows who they are, and a member route opens', async ({ page }) => {
     await prepare(page);
+    // A LIVE target answers the anonymous boot's `/api/listings` with a real 401 — the D6 stub
+    // is disarmed there by design — and `prepare()`'s console gate would otherwise throw before
+    // a key is typed (REL-0123 concern 2). A no-op locally and in CI.
+    allowAnonymousBootRefusal(page);
     await page.goto('/');
     await expect(page.getByText('Approved members only')).toBeVisible();
 
@@ -120,6 +124,10 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
 
   test('signing out from the account menu returns to the gate, and a member route no longer opens', async ({ page }) => {
     await prepare(page);
+    // A LIVE target answers the anonymous boot's `/api/listings` with a real 401 — the D6 stub
+    // is disarmed there by design — and `prepare()`'s console gate would otherwise throw before
+    // a key is typed (REL-0123 concern 2). A no-op locally and in CI.
+    allowAnonymousBootRefusal(page);
     await page.goto('/');
     await typeCredentials(page, 'buyer', personaCredentials('buyer').password);
     await expect(page).toHaveURL(/\/browse$/);
@@ -157,6 +165,10 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
     page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/listings') asked.push(r.method()); });
 
     await prepare(page);
+    // A LIVE target answers the anonymous boot's `/api/listings` with a real 401 — the D6 stub
+    // is disarmed there by design — and `prepare()`'s console gate would otherwise throw before
+    // a key is typed (REL-0123 concern 2). A no-op locally and in CI.
+    allowAnonymousBootRefusal(page);
     await page.goto('/');
     await typeCredentials(page, 'design', personaCredentials('design').password);
     await expect(page).toHaveURL(/\/browse$/);

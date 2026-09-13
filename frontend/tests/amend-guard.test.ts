@@ -15,8 +15,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Amendment } from './design-amendments';
 import {
-  citationFindings, consumerOf, declaresConsumption, declaresSupersededBy, declaresSupersession,
-  introducedLines, ruledSentences, ruledTextFindings,
+  citationFindings, commentCitations, consumerOf, declaresConsumption, declaresSupersededBy,
+  declaresSupersession, introducedLines, ruledSentences, ruledTextFindings,
 } from './amend-guard';
 
 const entry = (id: string, find: string, replace: string): Amendment =>
@@ -343,5 +343,161 @@ describe('the citation rule', () => {
 
   it('counts every citation it checked, so a pass cannot be vacuous', () => {
     expect(cite('| A99 | … | (V3:10) and (V3:10–11). |').checked).toBe(3);
+  });
+});
+
+/**
+ * `commentCitations` — the doc-comment half of the citation rule (Task HOUSEKEEPING-C item 4).
+ *
+ * The real file it guards carries NONE, which is again a gate that would pass with its detector
+ * deleted, so every shape it has to tell apart is here on a fixture: a line comment, a block
+ * comment, and the three kinds of string literal it must NOT read — one of which really does carry
+ * a `V3:` reference in the live file, because that string is design bytes.
+ */
+describe('commentCitations', () => {
+  it('reports a line number in a line comment and in a block comment, with its line', () => {
+    expect(commentCitations('const a = 1;\n// see V3:2408 for this\n')).toEqual(['2: V3:2408']);
+    expect(commentCitations('/** a\n *  b V3:10 and V3:20\n */')).toEqual(['1: V3:10', '1: V3:20']);
+  });
+
+  it('reads no string literal — the one live reference is an amendment\'s own design bytes', () => {
+    expect(commentCitations('const s = "// V3:1";')).toEqual([]);
+    expect(commentCitations("const s = '  // arrow (V3:382\\'s own trio).';")).toEqual([]);
+    expect(commentCitations('const s = `V3:1 ${x} V3:2`;')).toEqual([]);
+  });
+
+  it('does not run off the end of an unterminated comment or string', () => {
+    expect(commentCitations('// V3:7')).toEqual(['1: V3:7']);
+    expect(commentCitations('/* V3:7')).toEqual(['1: V3:7']);
+    expect(commentCitations('const s = "V3:7')).toEqual([]);
+  });
+
+  it('a division and a lone quote inside a comment are not comment openers', () => {
+    expect(commentCitations('const a = b / c; // V3:9')).toEqual(['1: V3:9']);
+    expect(commentCitations("// don't V3:9")).toEqual(['1: V3:9']);
+  });
+
+  // Review, HOUSEKEEPING-C fix round 1, Minor-1: `design-amendments.ts:34`'s own STYLED regex,
+  // `/<(\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g`, carries THREE `"` characters — one
+  // in `style="`, one inside the character class `[^"]`, one closing it — and the scanner treats
+  // every `"` as a string delimiter with no notion of a regex literal at all. The first pair reads
+  // as a two-character "string" (`[^`) and is harmless; the THIRD `"` then opens a string with no
+  // partner on the rest of the line, so the scanner hunts forward for the next literal `"`
+  // anywhere in the file — past every `//` and `/*` it crosses on the way — and silently drops
+  // every `V3:` a comment in between carries. Measured against the real file: lines 34-58.
+  it('a regex literal carrying an odd number of quote characters does not desynchronise the scanner', () => {
+    const styled = 'const STYLED = /<(\\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g;';
+    expect(commentCitations(`${styled}\n// V3:999\n`)).toEqual(['2: V3:999']);
+  });
+
+  it('a bare division is still not mistaken for the start of a regex literal', () => {
+    // `/` after an identifier or a closing paren is division, not a regex — a scanner that opens a
+    // regex here would swallow the rest of the line (and beyond) looking for a closing `/`.
+    expect(commentCitations('const half = total / 2; // V3:1\n')).toEqual(['1: V3:1']);
+  });
+
+  it('division after a closing paren is not mistaken for a regex either', () => {
+    // Neither an operator/bracket nor a word character precedes this `/` — a scanner that only
+    // checked "is it a word character" would wrongly open a regex here, consume the FIRST `/` of
+    // the following `//` comment as this "regex"'s own closing delimiter, and the comment (and its
+    // V3:) would never be recognised as a comment at all.
+    expect(commentCitations('const x = (a + b) / 2; // V3:2\n')).toEqual(['1: V3:2']);
+  });
+
+  it('a regex literal at the very start of the file is still recognised as one', () => {
+    // Nothing precedes this `/` at all — the "walked back past the start of the file" case.
+    expect(commentCitations('/^x$/.test(1);\n// V3:3\n')).toEqual(['2: V3:3']);
+  });
+
+  it('a `/` that opens a regex context but never closes before the line ends falls back to an ordinary character', () => {
+    // `=` puts this `/` in regex context, but the line ends with no closing `/` — malformed, or a
+    // division whose left-hand side just happens to be spelled like a pattern start. Either way
+    // the scanner must not treat it as an unterminated regex and skip past everything after it.
+    expect(commentCitations('const s = /never closes\n// V3:5\n')).toEqual(['2: V3:5']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// ONE DEFINITION (review, HOUSEKEEPING-C fix round 1, Important-4). `entriesFor`, `outputOf` and
+// the distinctiveness predicate used to be a second copy in `citation-remap.ts` and a third in two
+// closures inside `design-amendments.test.ts`'s own citation cases. They live here now, and
+// `citation-remap.ts` imports and re-exports them rather than re-deriving its own — proved by
+// identity, not merely by behaviour, since two functions can behave alike and still be two
+// functions someone has to remember to change together.
+// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// Round 2 (re-review, Minor, 2026-09-13): the first scan matched only `function outputOf(` /
+// `function entriesFor(`, so a copy re-introduced in ARROW form (`const outputOf = (a: Amendment):
+// string[] => …`) — or as a class/object METHOD — passed it silently: exactly the shape this
+// task deleted, and the one most likely to come back, since nothing else in the toolchain objects
+// to a second binding of the same name in a different file. Proved BEFORE the fix (the round's own
+// RED): a real file at this path, carrying nothing but the one line
+// `export const outputOf = (a: { replace: string }): string[] => a.replace.split('\n');`, left the
+// old scan green — the escape this widened one closes.
+//
+// `declaresIdentifier` recognises the three shapes a JS/TS BINDING is created by — a function
+// declaration, a const/let/var assignment (arrow or function expression), or a method (class or
+// object literal) — and none of a call, an import or a re-export: a call is never followed
+// immediately by `{` or `:` after its own closing paren, which is what keeps the method-shorthand
+// half of the pattern from matching one.
+// ---------------------------------------------------------------------------------------
+function declaresIdentifier(src: string, name: string): boolean {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\bfunction\\s+${n}\\s*\\(|\\b(?:const|let|var)\\s+${n}\\s*=|\\b${n}\\s*\\([^)]*\\)\\s*[:{]`).test(src);
+}
+
+describe('declaresIdentifier recognises every declaration shape, not just `function name(`', () => {
+  it('matches a function declaration, a const/let arrow or function expression, and a method shorthand', () => {
+    expect(declaresIdentifier('function outputOf(a) { return a; }', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('export function outputOf(a) { return a; }', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('const outputOf = (a: Amendment): string[] => a.replace.split("\\n");', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('export const outputOf = (a) => a;', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('let outputOf = (a) => a;', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('const outputOf = function (a) { return a; };', 'outputOf')).toBe(true);
+    expect(declaresIdentifier('class X { outputOf(a) { return a; } }', 'outputOf')).toBe(true);
+  });
+
+  it('does not mistake a CALL, an IMPORT or a RE-EXPORT for a declaration', () => {
+    expect(declaresIdentifier('own.flatMap((a) => outputOf(a, list))', 'outputOf')).toBe(false);
+    expect(declaresIdentifier('export { entriesFor, outputOf };', 'outputOf')).toBe(false);
+    expect(declaresIdentifier("import { outputOf } from './amend-guard';", 'outputOf')).toBe(false);
+    expect(declaresIdentifier('const own = entriesFor(id, list);', 'entriesFor')).toBe(false);
+    expect(declaresIdentifier('if (entriesFor(id, input.list).length === 0) { return null; }', 'entriesFor')).toBe(false);
+  });
+
+  it('RED reproduced: the old function-only pattern missed exactly this arrow-form copy', () => {
+    const arrowCopy = 'const outputOf = (a: Amendment): string[] => a.replace.split("\\n");';
+    expect(/\bfunction outputOf\(/.test(arrowCopy), 'the old pattern (kept here as documentation of the defect) really did miss this').toBe(false);
+    expect(declaresIdentifier(arrowCopy, 'outputOf'), 'the widened scan catches it').toBe(true);
+  });
+});
+
+describe('entriesFor, outputOf and isDistinctivePiece are shared, not duplicated', () => {
+  it('citation-remap.ts re-exports the SAME function objects, not a second copy', async () => {
+    const guard = await import('./amend-guard');
+    const remap = await import('./citation-remap');
+    expect(remap.entriesFor).toBe(guard.entriesFor);
+    expect(remap.outputOf).toBe(guard.outputOf);
+  });
+
+  it('no other test file under frontend/tests declares entriesFor, outputOf or isDistinctivePiece — in ANY form', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { join, basename } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const dir = fileURLToPath(new URL('.', import.meta.url));
+    // This file itself is excluded: its own fixture strings above are EXAMPLES of the declaration
+    // shapes `declaresIdentifier` recognises, quoted as test data, not real bindings — a whole-file
+    // text scan cannot tell the two apart, and it is the one file guaranteed to carry both.
+    const self = basename(fileURLToPath(import.meta.url));
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && f !== self);
+    const contents = new Map(files.map((f) => [f, readFileSync(join(dir, f), 'utf8')]));
+    const declaresIn = (name: string) => files.filter((f) => declaresIdentifier(contents.get(f)!, name));
+    expect(declaresIn('entriesFor').sort()).toEqual(['amend-guard.ts']);
+    expect(declaresIn('outputOf').sort()).toEqual(['amend-guard.ts']);
+    expect(declaresIn('isDistinctivePiece').sort()).toEqual(['amend-guard.ts']);
+    // The inline predicate itself is gone from everywhere but its one definition — a file could
+    // still keep the OLD literal expression under a different name and pass the checks above.
+    const declaresPattern = (pattern: RegExp) => files.filter((f) => pattern.test(contents.get(f)!));
+    expect(declaresPattern(/\[\^A-Za-z0-9\]\{2,\}|A-Za-z0-9\]\{2,\}/).sort()).toEqual(['amend-guard.ts']);
   });
 });

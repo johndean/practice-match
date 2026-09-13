@@ -24,7 +24,7 @@ Nothing else. History, corrections, costs and rulings live in the ledger (`.supe
 
 ## How to update
 1. Read the CSS class vocabulary from the artifact head (`.brow`, `.bdot.past/.now`, `.bfill`, `.rnode.done/.active/.blocked`, `.rstate`, `.rfrac`, `.rblurb`, `.tid`, `.board`, `.card`, `.card-h`, `.eyebrow`, `.lead`, `.mono`, `.table-wrap`, `ul.plain`) — do not invent classes.
-2. Regenerate the section with a script like `compose_status_example.py` (this directory; it built the 2026-09-13 06:45 UTC board): edit the data at the top, run it, it splices the single `<section class="status" data-doc="status">…</section>`.
+2. Regenerate the section with a script like `compose_status_example.py` (this directory; it built the 2026-09-13 06:45 UTC board): edit the data at the top, run it, it splices the single `<section class="status" data-doc="status">…</section>`. The compose script is run with explicit paths (`compose_status_example.py <screenshot-dir> <artifact-html-path>`, no defaults); never point a test at the live file.
 3. Every number on the board is one you measured (`/api/healthz`, `gh run view`, the browser) or one a reviewer reproduced. The eyebrow of the hero names when and from what.
 4. Publish to the SAME file path (`/tmp/pm-artifact-v4.html`) so the URL holds; label the version.
 
