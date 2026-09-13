@@ -61,8 +61,48 @@ export function guard(page: Page): void {
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     if (consumeExpectedApiFailure(page, m.text())) return;
+    if (allowsAnonymousBootRefusal(page, m.text())) return;
     throw new Error(`console.error: ${m.text()}`);
   });
+}
+
+// ---------------------------------------------------------------------------------------
+// THE ANONYMOUS BOOT'S OWN REFUSAL, on a LIVE target only (Task HOUSEKEEPING-C item 9,
+// REL-0123 concern 2).
+//
+// `signin-form.spec.ts` is the repository's own check that the design's sign-in card works, and it
+// is the one check a QA hand-back most wants to run. It CANNOT run against `PW_APP_URL`: the tests
+// load `/` anonymously, `src/main.ts` asks `GET /api/listings` before it mounts, a real deployment
+// answers 401 to an anonymous visitor, Chromium logs every 4xx subresource as a console error that
+// cannot be suppressed, and `guard()` throws at 1.3 s before a key is typed. Locally and in CI the
+// endpoint is stubbed (`listingsStubUrl` returns `null` under `PW_APP_URL` BY DESIGN, so the QA
+// parity run measures the real seeded API), which is exactly why nothing saw it until the 0.1.23
+// release agent ran the suite at QA and had to re-create the check as a throwaway spec.
+//
+// The allowance is shaped like `expectApiStatus` and is deliberately narrower in two ways and
+// wider in one:
+//
+//   * LIVE ONLY. It is a no-op wherever the D6 stub is armed — the same `listingsStubUrl` decision,
+//     read once, so the local and CI runs keep the gate they have always had and a 401 there still
+//     fails the test at its cause.
+//   * ONE STATUS. 401 and nothing else: a 500 from the boot is a real failure and still throws.
+//   * STANDING, not one-shot, which is the one way it is weaker than `expectApiStatus`. An
+//     anonymous boot happens on every anonymous load and these tests load more than once, so a
+//     counted arming would have to guess a number that depends on how many endpoints the boot
+//     asks for — and a wrong guess fails the run for the wrong reason. It is armed per PAGE from
+//     the test's own body, so nothing else in the suite is exempted from anything.
+// ---------------------------------------------------------------------------------------
+const anonymousBootAllowance = new WeakSet<Page>();
+
+/** Tolerates the anonymous boot's own 401 on this page, on a LIVE target. A no-op locally. */
+export function allowAnonymousBootRefusal(page: Page, env: NodeJS.ProcessEnv = process.env): void {
+  if (listingsStubUrl(env) !== null) return;
+  anonymousBootAllowance.add(page);
+}
+
+/** Whether this console line is that refusal on a page that armed the allowance. */
+export function allowsAnonymousBootRefusal(page: Page, message: string): boolean {
+  return anonymousBootAllowance.has(page) && isExpectedApiFailure(401, message);
 }
 
 export async function prepare(page: Page): Promise<void> {
