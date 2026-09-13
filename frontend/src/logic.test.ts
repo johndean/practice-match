@@ -5886,10 +5886,34 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     expect(c2.adminVals().rows.length, 'the design\'s own five Listings fixtures stand').toBe(5);
   });
 
-  it('with no perms adapter the design\'s own path runs — the reference, which has neither', () => {
+  // Fix round 1 (2026-09-13, review Minor 6). The guard was `perms && !allowed(...)`, so a host
+  // that passed `adminListings` and no `perms` loaded the queue for WHOEVER was signed in — the
+  // permission being checked only when something was there to check it with. The line A40.4 retired
+  // was unconditional (it also required `me.state === "active"`), and the entry's own prose says
+  // "guarded on the PERMISSION" without qualification, so the guard is made to match the sentence:
+  // no `perms`, no load. Nothing in the tree is that host — both ports default the adapter and the
+  // reference passes neither — which is exactly why it has to be a test and not an observation.
+  it('A40.3 fails closed: an adapter with no perms to check against loads NOTHING', () => {
     const adapter = adminListings();
     const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter });
     c2.componentDidMount();
-    expect(adapter.calls).toEqual(['list()']);
+    expect(adapter.calls, 'the queue is not asked for by an unidentified caller').toEqual([]);
+    expect(c2.state.adminListingRows, 'and nothing is set, so the design\'s own fixtures stand').toBeUndefined();
+  });
+
+  // Fix round 1 (2026-09-13, review Minor 5). A40.5 returns `loadAdmin()` from `signIn`'s fulfilled
+  // arm so "signIn answers a promise" still holds and a caller can await a settled screen — which
+  // was true only for an account that may open the screen: the refusal arm returned `undefined`, so
+  // `await` on the sign-in of a buyer resolved to it and any `.then` on the loader itself threw.
+  // Both arms settle now.
+  it('A40.3 always answers a settled promise, for every account and every host', async () => {
+    const allowed: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    const refused: any = new Component({ adminListings: adminListings(), perms: perms(['page.browse']) });
+    const hostless: any = new Component({ perms: perms(['page.admin']) });
+    for (const [name, c2] of [['allowed', allowed], ['refused', refused], ['no adapter', hostless]] as const) {
+      const answer = c2.loadAdmin();
+      expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
+      await expect(answer).resolves.toBeInstanceOf(Array);
+    }
   });
 });

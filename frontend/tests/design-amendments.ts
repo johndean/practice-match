@@ -6317,13 +6317,29 @@ const RULING_ADMIN_LOAD = 'all the admin tabs must be factual and fully function
  *
  *  A40.3 gives the design ONE place where the admin screen's data is read, beside `reloadListings`
  *  — the seller-side loader whose shape and rejection-arm discipline it copies (A16.17). It is
- *  guarded on the PERMISSION, asked of the generated matrix through the `perms` adapter A40.1
- *  introduced, which is what lets A40.4 retire `componentDidMount`'s own
+ *  guarded on the PERMISSION, asked of the generated matrix through the `perms` adapter —
+ *  introduced by `frontend/src/app.setup.js` (and so by the generated `App.vue`), built by
+ *  `frontend/src/auth/perms.ts` over `can()`, and NOT by A40.1, which was never written (fix round
+ *  1, review Minor 4: the first draft of this paragraph credited an amendment this same block says
+ *  does not exist). That adapter is what lets A40.4 retire `componentDidMount`'s own
  *  `r === "staff" || r === "admin"` — a second copy of the matrix, and the only one left in the
  *  design. Each tab's load is one line pushed onto `loads`, so A36 (Users), A37 (Requests) and A38
  *  (Data Sources) each add one and nothing else; every load carries its own rejection arm, so a
  *  refusal leaves a tab EMPTY rather than falling back to the design's fixture rows, which is
  *  A17.1's rule for the render path applied to the load path.
+ *
+ *  IT FAILS CLOSED, and it always settles (fix round 1, review Minors 5 and 6). The guard was
+ *  `this.props.perms && !allowed(...)`, which asks the permission only when something is there to
+ *  ask — so a host with `adminListings` and no `perms` would load the queue for whoever was signed
+ *  in. No such host exists (both ports default the adapter; the reference passes neither), and the
+ *  API refuses the request anyway, but "guarded on the PERMISSION" is unconditional prose and the
+ *  guard now matches it: no `perms`, no load. THE RETIRED LINE'S OTHER TERM IS NOT NEEDED — A17.2
+ *  also required `me.state === "active"`, and `can()` already answers that: `effectiveRoles`
+ *  returns `['applicant']` for every state but `active`, so a suspended admin holds `page.admin`
+ *  nowhere. Re-stating it here would be the second copy of the matrix this entry exists to remove.
+ *  And BOTH arms return a promise — `Promise.resolve([])` on the refusal — so A40.5's "signIn
+ *  answers a promise, and a caller can await a settled screen" is true for every account, not only
+ *  for one that may open the screen.
  *
  *  A40.5 returns that promise from `signIn`'s fulfilled arm, so the design's own contract —
  *  `signIn` answers a promise — still holds and a caller can await a settled screen. A40.6 loads
@@ -6348,12 +6364,16 @@ const A40_3: Amendment = {
     + '  // screen (A40.5) and on the header nav\'s own door (A40.6). Before this only the first\n'
     + '  // existed, so a reviewer who signed in through the form saw an empty queue until a hard\n'
     + '  // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`\n'
-    + '  // adapter, never a role list written here -- and on each adapter\'s presence. One tab, one\n'
+    + '  // adapter, never a role list written here (`can()` answers the account STATE too, so the\n'
+    + '  // `me.state === "active"` term A17.2 carried is not restated) -- and on each adapter\'s\n'
+    + '  // presence. One tab, one\n'
     + '  // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each\n'
     + '  // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the\n'
     + '  // design\'s fixtures (A16.17\'s discipline, A17.1\'s rule for the render path).\n'
     + '  loadAdmin() {\n'
-    + '    if (this.props.perms && !this.props.perms.allowed("page.admin")) return;\n'
+    + '    // Fails closed: no `perms` to ask, no load. Both arms answer a promise, so every caller\n'
+    + '    // -- A40.5\'s `signIn` among them -- can await a settled screen whoever is signed in.\n'
+    + '    if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);\n'
     + '    const loads = [];\n'
     + '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
     + '    return Promise.all(loads);\n'

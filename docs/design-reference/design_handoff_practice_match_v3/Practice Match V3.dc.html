@@ -3213,12 +3213,16 @@ class Component extends DCLogic {
   // screen (A40.5) and on the header nav's own door (A40.6). Before this only the first
   // existed, so a reviewer who signed in through the form saw an empty queue until a hard
   // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`
-  // adapter, never a role list written here -- and on each adapter's presence. One tab, one
+  // adapter, never a role list written here (`can()` answers the account STATE too, so the
+  // `me.state === "active"` term A17.2 carried is not restated) -- and on each adapter's
+  // presence. One tab, one
   // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each
   // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the
   // design's fixtures (A16.17's discipline, A17.1's rule for the render path).
   loadAdmin() {
-    if (this.props.perms && !this.props.perms.allowed("page.admin")) return;
+    // Fails closed: no `perms` to ask, no load. Both arms answer a promise, so every caller
+    // -- A40.5's `signIn` among them -- can await a settled screen whoever is signed in.
+    if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
     if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));
     return Promise.all(loads);
