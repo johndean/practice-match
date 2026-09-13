@@ -12,7 +12,12 @@ describe('generated permission twin', () => {
   it('carries the spec §4 rows the server enforces', () => {
     expect(MATRIX['engine.activate']).toEqual(['admin']);
     expect(MATRIX['users.decide']).toEqual(['admin', 'staff']);
-    expect(MATRIX['seller.apply']).toEqual(['buyer']);
+    // `seller.apply` and `page.seller` carry `admin` since ruling D-C54 (2026-09-13) — the admin
+    // role is a superset of the whole table, applied structurally in `app/auth/permissions.py`.
+    // The same two rows are pinned on the Python side (`tests/auth/test_permissions.py`), so a
+    // stale regeneration still fails here.
+    expect(MATRIX['seller.apply']).toEqual(['admin', 'buyer']);
+    expect(MATRIX['page.seller']).toEqual(['admin', 'seller']);
     expect([...MATRIX['page.gate']].sort()).toEqual([...ROLES].sort());
   });
 

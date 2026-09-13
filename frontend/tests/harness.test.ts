@@ -581,8 +581,10 @@ describe('firstMapPaintBudgetMs (controller ruling 2026-09-08 — the QA proof m
 // browser: which target a page is on, what URL the reference needs, and what the app needs.
 // ---------------------------------------------------------------------------------------
 describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
-  it('are the ten accounts scripts/seed_persona.py writes', () => {
-    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe']);
+  it('are the eleven accounts scripts/seed_persona.py writes', () => {
+    // `adminOnly` joins them under ruling D-C54 (John, 2026-09-13): the account holding `admin`
+    // and nothing else, which `design@`'s four roles cannot express.
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'adminOnly', 'pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe']);
   });
 
   it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
@@ -602,9 +604,14 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     expect(PERSONAS.buyer.role).toBe('Approved buyer · StartUp Club');
     expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
     expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
+    // D-C54: `admin@` computes the SAME label as `design@` — `labels.role_label` reads the grants
+    // it knows about and one `admin` is enough for it. The two accounts differ only in the matrix,
+    // which is exactly why a header-shaped test could never have found the defect.
+    expect(PERSONAS.adminOnly.role).toBe('VIN Foundation admin · StartUp Club');
+    expect(PERSONAS.adminOnly.roles, 'one grant, and it is the whole account').toEqual(['admin']);
     // One name and one set of initials across the whole suite: only `role` varies with what the
     // account may actually open.
-    for (const key of ['design', 'buyer', 'seller'] as const) {
+    for (const key of ['design', 'buyer', 'seller', 'adminOnly'] as const) {
       expect(PERSONAS[key].name).toBe('Dr. Rachel Mendes');
       expect(PERSONAS[key].initials).toBe('RM');
       expect(PERSONAS[key].state).toBe('active');
@@ -642,7 +649,7 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     }
   });
 
-  it('memoise one session EACH, so ten personas spend at most ten of SIGNIN_IP\'s thirty attempts', () => {
+  it('memoise one session EACH, so eleven personas spend at most eleven of SIGNIN_IP\'s thirty attempts', () => {
     expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
     expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
   });

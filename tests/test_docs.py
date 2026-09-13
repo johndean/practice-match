@@ -1009,7 +1009,9 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 10, f"expected the ten harness personas as one line each, read {sorted(found)}"
+    # Eleven since ruling D-C54 (2026-09-13) added `admin@practice-match.test`, the account whose
+    # only grant is `admin`.
+    assert len(found) == 11, f"expected the eleven harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -1280,6 +1282,31 @@ def test_deploy_md_documents_the_resend_dns_records():
     assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
 
 
+def test_the_identity_runbook_states_the_admin_superset_rule():
+    """Ruling D-C54 (John, 2026-09-13): the `admin` role holds EVERY permission in the matrix.
+
+    The operator page is where the matrix is described to a human — `§0`'s "Who" row and `§4 Roles`
+    — and until this ruling both described `admin` as `staff` plus a few administrative extras,
+    which is exactly the belief that let the six member actions stay off it. Pinned against the
+    MATRIX itself and not only as prose: the sentence has to stay true, so if a future row ever
+    drops `admin`, this fails beside `tests/auth/test_matrix.py` rather than leaving the runbook
+    quietly lying to whoever is holding the pager.
+
+    `staff` is deliberately not widened, and the runbook has to say so too — "an admin is a
+    superset" read as "a privileged role is a superset" is the misreading that would put
+    `page.seller` on a reviewer."""
+    from app.auth import permissions as PM
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    sentence = "The `admin` role holds every permission in the matrix, the buyer's and the seller's included"
+    assert sentence in text, f"docs/RUNBOOK-identity.md does not state ruling D-C54: {sentence!r}"
+    assert "D-C54" in text, "the ruling is stated but not named, so nobody can find what decided it"
+    assert "`staff` is a reviewer and not a superset" in text, "the runbook must say the ruling names ONE role"
+    # ...and the sentence is true of the matrix the server is running.
+    assert [perm for perm, holders in PM.MATRIX.items() if "admin" not in holders] == []
+    assert "page.seller" not in PM.permissions_of(frozenset({"staff"}))
+
+
 def _runbook_decision_table() -> dict[str, dict[str, str]]:
     """`docs/RUNBOOK-identity.md` §3's decision table, keyed by action.
 
@@ -1346,6 +1373,50 @@ def test_the_identity_spec_states_the_unverified_re_issue_rule():
         "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
     )
     assert "amended 2026-09-07" in default, "the amendment is undated"
+
+
+def test_the_identity_spec_permission_matrix_admin_column_matches_matrix_py():
+    """Task ADMIN-SUPERSET fix round 1, review Important-2. Spec §4's own table — "Source of
+    truth: `app/auth/permissions.py`" — is the most detailed WRITTEN description of the matrix, and
+    ruling D-C54 (the admin role is a superset of every permission) landed in the code, in
+    `docs/RUNBOOK-identity.md` and in this file's own test suite without reaching this table: the
+    `admin` column still printed `—` for `request.create`/`request.read_own`, `seller.apply` and
+    `page.seller`/`listing.manage_own`/`request.answer_own` — the exact six actions D-C54 widened —
+    so the spec contradicted the runbook sentence this same branch had just added.
+
+    Derived from the live `MATRIX` rather than hand-checked row by row, so a permission the matrix
+    changes tomorrow fails here too instead of leaving this table quietly wrong again."""
+    from app.auth import permissions as PM
+
+    spec_path = ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md"
+    spec = spec_path.read_text()
+    assert "## 4. Permission matrix" in spec, "spec §4 'Permission matrix' section is missing or retitled"
+    section = spec.split("## 4. Permission matrix", 1)[1].split("\n## ", 1)[0]
+
+    rows = [line for line in section.splitlines() if line.startswith("| `")]
+    assert len(rows) >= 15, f"spec §4's permission-matrix table reads as only {len(rows)} rows — the table may have reshaped"
+
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        assert len(cells) == 8, f"a §4 row does not have the header's 8 columns: {row!r}"
+        perm_ids = re.findall(r"`([\w.]+)`", cells[0])
+        assert perm_ids, f"a §4 row's first cell names no backtick permission id: {row!r}"
+        admin_cell = cells[-1]
+        assert admin_cell in ("✅", "—"), f"a §4 row's admin cell is neither ✅ nor —: {admin_cell!r}"
+
+        holds_admin = []
+        for perm in perm_ids:
+            assert perm in PM.MATRIX, f"spec §4 names {perm!r}, which app/auth/permissions.py's MATRIX does not declare"
+            holds_admin.append("admin" in PM.MATRIX[perm])
+        assert len(set(holds_admin)) == 1, f"a §4 row names permissions that disagree about admin: {row!r}"
+
+        want = "✅" if holds_admin[0] else "—"
+        assert admin_cell == want, (
+            f"spec §4's admin column for {perm_ids} reads {admin_cell!r}; app/auth/permissions.py's "
+            f"MATRIX says it should read {want!r} (ruling D-C54, 2026-09-13)"
+        )
+
+    assert "D-C54, 2026-09-13" in section, "spec §4 does not date the admin-column correction to ruling D-C54"
 
 
 def test_deploy_md_documents_how_to_seed_qa():
@@ -1678,6 +1749,21 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
         f"({' + '.join(map(str, harness_terms))}) adds up to {sum(harness_terms)}"
     )
 
+    # Task ADMIN-SUPERSET fix round 1 (review Minor 1). A THIRD copy of the same claim,
+    # `frontend/tests/targets.ts`'s own comment on why `reset_rate_limits.py` runs before every
+    # local suite — it cites this exact arithmetic ("the arithmetic is in `harness.ts`'s
+    # `personaSessionMemos` docstring") and is pinned nowhere, so it kept reading "fifteen
+    # sign-ins" after D-C54's `adminOnly` persona moved the traced number to sixteen. The runbook
+    # and the harness were caught by the two assertions above; this is the one the controller
+    # named that was not.
+    targets = (ROOT / "frontend" / "tests" / "targets.ts").read_text()
+    targets_match = re.search(r"spends (\w+) sign-ins", targets)
+    assert targets_match, "frontend/tests/targets.ts no longer states 'spends N sign-ins'"
+    assert word_to_number[targets_match.group(1).lower()] == stated, (
+        f"frontend/tests/targets.ts says it spends {targets_match.group(1)!r} sign-ins; "
+        f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
+    )
+
 
 # --- S6 fix round 2: every stale statement the final review and its docs-drift sweep found ---------
 
@@ -1751,12 +1837,14 @@ def test_runbook_qa_parity_command_pins_the_playwright_config_flag():
     assert "cd frontend" in section_12, "docs/RUNBOOK-identity.md §12's command no longer cds into frontend/ first"
 
 
-def test_deploy_md_says_ten_test_accounts():
+def test_deploy_md_says_eleven_test_accounts():
     """Final-review docs-drift sweep, item 11. `DEPLOY.md`'s QA persona accounts bullet said "the
     six `.test` accounts" — stale since Task S3/S7 grew the seed to ten (three members, three
-    applicants, four identity-screen accounts)."""
+    applicants, four identity-screen accounts). Renamed from "...says_ten_..." under ruling D-C54
+    (2026-09-13), which grew the seed to eleven: a fourth member, `admin@practice-match.test`,
+    holding `admin` alone — the shape `design@`'s four roles cannot express."""
     text = (ROOT / "DEPLOY.md").read_text()
-    assert "seeds the ten `.test` accounts" in text, "DEPLOY.md does not say the seed produces ten accounts"
+    assert "seeds the eleven `.test` accounts" in text, "DEPLOY.md does not say the seed produces eleven accounts"
     assert "the six `.test` accounts" not in text
 
 

@@ -16,7 +16,7 @@ is the plan they were built from. `tests/test_docs.py::test_identity_runbook_end
 | | |
 |---|---|
 | **Host** | QA `https://qa.foundation.vin` · production `https://foundation.vin`. Everything below is rehearsed on QA first. |
-| **Who** | `staff` reviews and decides; `admin` also grants roles and mints tokens (`app/auth/permissions.py` is the matrix — `GET /api/admin/permissions` prints the copy the server is actually running). |
+| **Who** | `staff` reviews and decides; `admin` also grants roles and mints tokens (`app/auth/permissions.py` is the matrix — `GET /api/admin/permissions` prints the copy the server is actually running). **The `admin` role holds EVERY permission in that matrix, the buyer's and the seller's included (ruling D-C54, 2026-09-13)** — it is built as a superset in one statement at the foot of `permissions.py`, so a permission added later cannot forget it; `staff` is not widened, and re-auth still gates the six step-up actions for an admin like anybody else. |
 | **Re-auth** | Revoke, role grants and token minting need a password confirmation from the last 10 minutes: `POST /api/auth/reauth` with `{"password": "…"}`, then the action. Past `deps.REAUTH_WINDOW` (10 min) the answer is `403 REAUTH_REQUIRED` — re-confirm and repeat. |
 | **CSRF** | Every state change made with a session cookie must send `X-CSRF-Token` equal to the `pm_csrf` cookie and an `Origin` of the site, or the answer is `403 CSRF` / `403 ORIGIN`. Bearer (`api_token`) callers send neither. |
 | **Tokens** | An `api_token` can never re-authenticate (`403 REAUTH_TOKEN`) and can never manage tokens (`403 TOKEN_SCOPE`), whatever role it carries — so Revoke, grants and minting are always a human with a session. See [DEPLOY.md → Automation tokens](../DEPLOY.md#automation-tokens). |
@@ -111,6 +111,21 @@ A seller application is made from an account that is already `active`: approving
 `POST /api/admin/users/{account_id}/grants` with `{"role": "staff", "grant": true, "reason": "…"}`.
 `admin` only, in re-auth, audited with the roles before and after. Roles: `buyer`, `seller`, `staff`,
 `admin`.
+
+**The `admin` role holds every permission in the matrix, the buyer's and the seller's included**
+(ruling D-C54, 2026-09-13) — so an account granted `admin` alone opens Browse, My Requests, List a
+Practice and the Admin screens, and granting it the other three buys it nothing.
+`staff` is a reviewer and not a superset: it holds neither `page.seller` nor `request.read_own`.
+
+Two consequences of the superset, recorded rather than surprised at later (Task ADMIN-SUPERSET fix
+round 1, review Informational 1/2): an `api_token` minted for the `admin` role now also carries the
+six member actions the superset added, exactly as a human admin's session does — `TOKEN_DENIED`
+(`tokens.manage`) is the only thing an `api_token` is refused regardless of role, unchanged by this
+ruling — so an automation token that only ever needed `page.admin`-family permissions is, from this
+release on, also able to reach `/api/seller/*` and `/api/requests/*`; and an admin who acts as a
+seller (creating or editing a listing) leaves no `roles.grant` audit row the way a deliberate
+self-grant of `seller` would have, because none is needed — the only trace an admin used member
+powers is the listing's own `listing.edit` audit trail, not an identity-side one.
 
 Two floors under removals: an `admin` grant is never removed from its own holder, and never when it
 is the last live one — `roles.grant` is admin-only, so zero admins is a state with no way back short
@@ -306,9 +321,10 @@ While it is mismatched the webhook answers `401`, so bounces are not recorded �
 
 ## 11. Test and QA accounts
 
-`scripts/seed_persona.py` seeds the ten accounts the visual suite and a QA click-through need — three
-members (`buyer@`, `seller@`, `design@practice-match.test`, all "Dr. Rachel Mendes of the StartUp
-Club", differing only in grants), three applicants (`pending@`, `needs-review@`,
+`scripts/seed_persona.py` seeds the eleven accounts the visual suite and a QA click-through need — four
+members (`buyer@`, `seller@`, `design@`, `admin@practice-match.test`, all "Dr. Rachel Mendes of the
+StartUp Club", differing only in grants — `admin@` holds `admin` and nothing else, the shape ruling
+D-C54 exists for), three applicants (`pending@`, `needs-review@`,
 `declined@practice-match.test`, one per gate state — only `needs-review@` and `declined@` carry a
 real application row; `pending@` has none) and four identity-screen accounts (`unverified@`,
 `verify-me@`, `verified@`, `invited@practice-match.test`) covering the two states the
@@ -388,9 +404,9 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
   (`frontend/tests/global-setup.ts`) and the run never starts. When it DOES run, the seed itself
   prints the target database name and host, never the DSN (`[seed_persona] target database <db> on
   <host>`, `scripts/seed_persona.py`).
-* QA's real sign-in rate limit stays real: fifteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
-  budget: 7 + 2 + 4 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
+  budget: 7 + 2 + 4 + 2 + 1), so budget **one run per window**. A `429` mid-run means wait for the
   quarter-hour boundary and re-run — never loosen the limit to make it pass.
 * **Give every persona check its own `PW_OUTPUT_DIR`.** Playwright clears its output directory at
   the start of every run, so a second run deletes the first one's screenshots and traces — which
