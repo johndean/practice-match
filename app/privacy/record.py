@@ -117,12 +117,17 @@ RESET_COLUMNS = _reset_columns("pending")
 #: later "Looks good" erases, which `confirm`'s CASE is the other half of.
 RESET_COLUMNS_EDITED = _reset_columns("edited")
 
-_READ = """
-SELECT p.asset_id, p.listing_id, p.processing_status, p.processing_version, p.attempts,
+#: `PrivacyRow`'s sixteen fields in the dataclass's own order, as SQL. ONE list, read by the SELECT
+#: below and by `claim`'s own `RETURNING`, so the compare-and-set and the read can never answer
+#: with different shapes.
+_COLUMNS = """p.asset_id, p.listing_id, p.processing_status, p.processing_version, p.attempts,
        p.original_storage_key, p.redacted_storage_key, p.redacted_sha256, p.confirmed_sha256,
        p.seller_confirmed, p.buyer_visible, p.redaction_regions, p.reprocess_reason,
        p.final_privacy_state,
-       a.storage_key AS display_storage_key, a.sha256 AS display_sha256
+       a.storage_key AS display_storage_key, a.sha256 AS display_sha256"""
+
+_READ = f"""
+SELECT {_COLUMNS}
   FROM listing_asset_privacy p JOIN listing_asset a ON a.id = p.asset_id
 """
 
@@ -178,20 +183,28 @@ def claim(conn: Any, asset_id: UUID, version: int) -> PrivacyRow | None:
     message harmless, a redelivered task a no-op and a late retry unable to clobber a confirmation:
     a ready row is never claimed by this path. The reset rule is applied in the SAME statement, so
     a fresh run can never inherit a confirmation, and a version below the current one claims
-    nothing at all (a stale enqueue)."""
+    nothing at all (a stale enqueue).
+
+    ONE statement, and the row it answers with is the row IT wrote. `app/db.py`'s `sync_conn()` is
+    autocommit, so an UPDATE followed by a separate `read()` commits between the two and hands the
+    caller a second snapshot -- one another connection may already have moved on (review Minor-4).
+    The `FROM listing_asset` join is what lets `RETURNING` carry the display key and hash
+    `PrivacyRow` joins off that table, so the whole record comes back from the claiming statement
+    itself."""
     with conn.cursor() as cur:
         cur.execute(
-            f"UPDATE listing_asset_privacy SET processing_status = 'PROCESSING',"
+            f"UPDATE listing_asset_privacy p SET processing_status = 'PROCESSING',"
             f" attempts = attempts + 1, last_error = NULL, {RESET_COLUMNS}, updated_at = now()"
-            f" WHERE asset_id = %s AND processing_version <= %s"
-            f"   AND (processing_status = ANY(%s)"
-            f"        OR (processing_status = 'PROCESSING' AND updated_at < now() - interval '{LOST_AFTER}'))"
-            f" RETURNING asset_id",
+            f" FROM listing_asset a"
+            f" WHERE a.id = p.asset_id AND p.asset_id = %s AND p.processing_version <= %s"
+            f"   AND (p.processing_status = ANY(%s)"
+            f"        OR (p.processing_status = 'PROCESSING'"
+            f"            AND p.updated_at < now() - interval '{LOST_AFTER}'))"
+            f" RETURNING {_COLUMNS}",
             (asset_id, version, list(CLAIMABLE_STATES)),
         )
-        if cur.fetchone() is None:
-            return None
-    return read(conn, asset_id)
+        found = cur.fetchone()
+    return None if found is None else _built(found)
 
 
 def record_scan(conn: Any, asset_id: UUID, *, ocr: dict[str, Any], identity_matches: list[dict[str, Any]],

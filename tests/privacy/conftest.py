@@ -58,14 +58,29 @@ def make_listing(conn: Any, slug: str, *, status: str = "draft", visibility: str
 
 def make_row(conn: Any, *, listing_id: UUID | None = None, processing_status: str = "UPLOADED",
              processing_version: int = 1, attempts: int = 0, confirmed: bool = False,
-             buyer_visible: bool = False, reprocess_reason: str | None = None,
+             final_privacy_state: str = "NOT_SHOW", buyer_visible: bool = False,
+             reprocess_reason: str | None = None,
              redaction_regions: list[dict[str, Any]] | None = None) -> tuple[UUID, UUID]:
-    """(asset_id, listing_id). The asset row, its entry in `listing.photos` and its privacy row."""
+    """(asset_id, listing_id). The asset row, its entry in `listing.photos` and its privacy row.
+
+    `final_privacy_state` is the SIDE of a confirmation -- the listing's own setting at the moment
+    the seller confirmed -- and is written only when the row is confirmed. It is a parameter (P3
+    review Minor-7) because P10's SHOW -> NOT_SHOW flip compares exactly that column
+    (`seller_confirmed AND final_privacy_state = 'NOT_SHOW'`), and a builder that could only make
+    the NOT_SHOW side gave that predicate no way to build its own other half.
+
+    A confirmed row always carries the derivative its confirmation covers, whatever state it is in:
+    `lap_confirmed_ck` is `confirmed_sha256 = redacted_sha256`, and a confirmation beside a NULL
+    `redacted_sha256` passes it only through three-valued logic (`NULL = NULL` is NULL, and a CHECK
+    passes on NULL) -- a shape no real row ever has, because `confirm` itself carries
+    `redacted_sha256 IS NOT NULL`. A case that wants that shape asks for it explicitly by poking
+    the column, as `test_confirm_refuses_a_ready_row_that_has_no_derivative_hash` does."""
     listing = listing_id if listing_id is not None else make_listing(conn, f"idp-{uuid4().hex[:8]}")
     asset_id = uuid4()
     now = datetime.now(UTC)
-    ready = processing_status in HAS_DERIVATIVE
     confirmed = confirmed or processing_status in CONFIRMED_STATES
+    has_derivative = processing_status in HAS_DERIVATIVE or confirmed
+    derivative = "b" * 64 if has_derivative else None
     with conn.cursor() as cur:
         cur.execute("INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size,"
                     " sha256, storage_key) VALUES (%s,%s,'photo','a.webp','image/webp',10,%s,%s)",
@@ -75,11 +90,11 @@ def make_row(conn: Any, *, listing_id: UUID | None = None, processing_status: st
         cur.execute(_INSERT, (
             asset_id, listing, processing_status, processing_version, attempts,
             original_key(listing, asset_id, ".jpg"),
-            redacted_key(listing, asset_id) if ready else None,
-            "b" * 64 if ready else None,
-            "b" * 64 if confirmed else None,
+            redacted_key(listing, asset_id) if has_derivative else None,
+            derivative,
+            derivative if confirmed else None,
             confirmed, now if confirmed else None,
-            "NOT_SHOW" if confirmed else None,
+            final_privacy_state if confirmed else None,
             buyer_visible, reprocess_reason, now if reprocess_reason else None,
             json.dumps(redaction_regions or []), "looks_good" if confirmed else "pending",
         ))

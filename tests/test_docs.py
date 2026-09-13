@@ -1470,6 +1470,67 @@ def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
         assert len(disposition) > 40, f"{path}'s disposition says nothing useful"
 
 
+#: Every file that WRITES `listing_asset_privacy`, and what it writes there. The P3 review's
+#: Minor-3: `listing` has had a two-way enumeration since P2 (`LISTING_WRITERS` above) and the
+#: privacy row — the table this whole sub-project's fail-closed argument rests on — had none, so
+#: nothing would have said so the day `app/tasks/media.py` or an admin route started writing the
+#: state column directly. The property pinned below is spec C.4's own: `app/privacy/record.py` is
+#: the ONE writer of this table in `app/` and `scripts/`, so every transition goes through a
+#: function there and carries that function's state predicate.
+PRIVACY_WRITERS = {
+    "app/privacy/record.py":
+        "the state machine itself (Task P3) — the one production writer. One function per "
+        "transition of spec C.4, each carrying the predicate that names its own source states, so "
+        "a transition the table does not hold matches no row and writes nothing.",
+    "tests/api/test_listing_assets.py":
+        "P2's own upload and delivery suite. Two `_SEED_INSERT`s build the privacy rows a "
+        "published seed listing needs for migration `042`'s gate to pass; neither moves a row "
+        "through a transition, they insert the end state directly.",
+    "tests/privacy/conftest.py":
+        "the privacy suites' shared builder (Task P3) — one INSERT that makes a row in any state "
+        "with whatever `041`'s CHECKs require of that state already true, so a CHECK that changes "
+        "fails in one place rather than in every suite.",
+    "tests/privacy/test_record.py":
+        "the state machine's own suite. Two deliberate column pokes, each in a case whose "
+        "docstring says why: the `updated_at` back-date that opens the six-minute lost-child "
+        "window, and the `redacted_sha256 := NULL` that builds the ready-row-with-no-derivative "
+        "shape `lap_ready_has_derivative_ck` permits and `confirm` must refuse.",
+    "tests/test_listing_privacy_schema.py":
+        "`041`/`042`'s own column, CHECK and trigger contract (Task P1). It inserts rows column by "
+        "column to drive each CHECK from both sides, and its one UPDATE sets the stale flag on a "
+        "ready row to prove staleness is a flag and not a state.",
+}
+
+
+def test_every_writer_of_the_privacy_row_is_declared_and_only_one_is_production():
+    """P3 review Minor-3, in `LISTING_WRITERS`' own shape and for the same reason.
+
+    Pinned BOTH ways — a file that starts writing `listing_asset_privacy` has to say here what it
+    writes, and one that stops has to leave — plus the property the sub-project's whole fail-closed
+    argument rests on: under `app/` and `scripts/` there is exactly ONE writer, so there is exactly
+    one place a state transition can happen and every one of them carries a state predicate. Task
+    P8's sweeper adds its `REPROCESS_REQUIRED` rule to `app/privacy/record.py` as a transition
+    function for this reason; putting it in `app/tasks/media.py` would fail here."""
+    write = re.compile(r"INSERT INTO listing_asset_privacy[ (\n]|UPDATE listing_asset_privacy\s+SET")
+    found = {
+        str(path.relative_to(ROOT))
+        for root in ("app", "scripts", "tests")
+        for path in (ROOT / root).rglob("*.py")
+        if path != Path(__file__).resolve() and write.search(path.read_text())
+    }
+    assert found == set(PRIVACY_WRITERS), (
+        f"undeclared writers of the privacy row: {sorted(found - set(PRIVACY_WRITERS))}; "
+        f"declared but no longer writing it: {sorted(set(PRIVACY_WRITERS) - found)}"
+    )
+    production = sorted(path for path in found if path.startswith(("app/", "scripts/")))
+    assert production == ["app/privacy/record.py"], (
+        f"the privacy row has more than one production writer: {production}; every transition "
+        "belongs in app/privacy/record.py, where it carries its own state predicate"
+    )
+    for path, disposition in PRIVACY_WRITERS.items():
+        assert len(disposition) > 40, f"{path}'s disposition says nothing useful"
+
+
 def test_deploy_md_documents_the_object_storage_layout():
     """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
     the bucket holds. An operator diagnosing a photo or a document that failed to load needs the

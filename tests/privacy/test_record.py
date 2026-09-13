@@ -5,10 +5,14 @@ transition that is not in this table has no function to perform it, and every fu
 a state the table does not name."""
 from __future__ import annotations
 
+import re
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg2
 import pytest
 
 from app.privacy import record
@@ -146,9 +150,9 @@ def test_the_claim_writes_nothing_from_a_state_it_does_not_own(conn: Any, start:
     """The dead ends. A duplicate message, a late retry and a redelivered task all land here, and
     what makes them harmless is that the claim is ONE conditional UPDATE that matches no row."""
     asset_id, _ = _row(conn, processing_status=start)
-    before = _read(conn, asset_id)
+    before = _all_columns(conn, asset_id)
     assert record.claim(conn, asset_id, 1) is None
-    assert _read(conn, asset_id) == before
+    assert _all_columns(conn, asset_id) == before
 
 
 def test_a_lost_processing_row_is_claimable_after_six_minutes(conn: Any) -> None:
@@ -259,10 +263,10 @@ def test_record_scan_writes_nothing_from_a_state_that_is_not_processing(conn: An
     on -- a lost child's late return, a duplicated chain -- must not overwrite a newer record."""
     for start in ("UPLOADED", "SCANNED", "READY_FOR_REVIEW", "REVIEW_REQUIRED"):
         asset_id, _ = _row(conn, processing_status=start)
-        before = _read(conn, asset_id)
+        before = _all_columns(conn, asset_id)
         record.record_scan(conn, asset_id, ocr={"size": [1, 1], "lines": []}, identity_matches=[],
                            vision={"status": "ok"}, detected_regions=[{"box": [0, 0, 1, 1]}])
-        assert _read(conn, asset_id) == before
+        assert _all_columns(conn, asset_id) == before
 
 
 def test_record_derivative_writes_nothing_from_a_state_that_is_not_scanned(conn: Any) -> None:
@@ -270,10 +274,10 @@ def test_record_derivative_writes_nothing_from_a_state_that_is_not_scanned(conn:
     write from READY_FOR_REVIEW would replace a confirmed row's derivative without the reset."""
     for start in ("UPLOADED", "PROCESSING", "REDACTION_GENERATED", "SELLER_CONFIRMED"):
         asset_id, listing_id = _row(conn, processing_status=start)
-        before = _read(conn, asset_id)
+        before = _all_columns(conn, asset_id)
         record.record_derivative(conn, asset_id, key=f"listings/{listing_id}/photos/{uuid4()}/redacted.webp",
                                  sha256="f" * 64, regions=[{"source": "auto"}])
-        assert _read(conn, asset_id) == before
+        assert _all_columns(conn, asset_id) == before
 
 
 def test_mark_ready_writes_nothing_from_a_state_without_a_fresh_derivative(conn: Any) -> None:
@@ -282,9 +286,9 @@ def test_mark_ready_writes_nothing_from_a_state_without_a_fresh_derivative(conn:
     a run that no longer owns it."""
     for start in ("UPLOADED", "PROCESSING", "SCANNED", "SELLER_CONFIRMED", "REVIEW_REQUIRED"):
         asset_id, _ = _row(conn, processing_status=start)
-        before = _read(conn, asset_id)
+        before = _all_columns(conn, asset_id)
         record.mark_ready(conn, asset_id, visible=True, version=9)
-        assert _read(conn, asset_id) == before
+        assert _all_columns(conn, asset_id) == before
 
 
 def test_mark_ready_makes_a_show_listings_photograph_visible_without_a_confirmation(conn: Any) -> None:
@@ -313,26 +317,80 @@ def test_publishing_advances_only_the_gated_rows_and_never_reverts(conn: Any) ->
     assert _read(conn, confirmed).processing_status == "PUBLISHED"
 
 
-def _executed_sql(module: Any) -> list[str]:
-    """Every `cur.execute(...)` call's SQL in `module`, one string per CALL.
+def _executed_sql(module: Any) -> dict[str, list[str]]:
+    """Every `cur.execute(...)` call's SQL in `module`, one string per CALL, keyed by the top-level
+    FUNCTION that owns it.
 
     An AST walk and not a regex over the source: a regex that ends a "statement" at a blank line or
     a docstring quote can span two `execute` calls, and one that contains `updated_at = now()`
-    would then hide a neighbour that does not. `ast` gives the call boundary exactly. The literal
-    parts of an f-string are Constants inside the JoinedStr, so `{RESET_COLUMNS}` contributes
-    nothing -- which is right: every statement writes `updated_at = now()` in its own text,
-    outside that fragment."""
+    would then hide a neighbour that does not. `ast` gives the call boundary exactly -- and the
+    function boundary with it, which is what lets the count below be EXACT per writer instead of a
+    floor over the whole module. The literal parts of an f-string are Constants inside the
+    JoinedStr, so `{RESET_COLUMNS}` contributes nothing -- which is right: every statement writes
+    `updated_at = now()` in its own text, outside that fragment."""
     import ast
     import inspect
 
-    found: list[str] = []
-    for node in ast.walk(ast.parse(inspect.getsource(module))):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "execute" and node.args):
+    found: dict[str, list[str]] = {}
+    for top in ast.parse(inspect.getsource(module)).body:
+        if not isinstance(top, ast.FunctionDef):
             continue
-        found.append(" ".join(piece.value for piece in ast.walk(node.args[0])
-                              if isinstance(piece, ast.Constant) and isinstance(piece.value, str)))
+        for node in ast.walk(top):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "execute" and node.args):
+                continue
+            found.setdefault(top.name, []).append(
+                " ".join(piece.value for piece in ast.walk(node.args[0])
+                         if isinstance(piece, ast.Constant) and isinstance(piece.value, str)))
     return found
+
+
+def _plain_calls(module: Any, function: str) -> set[str]:
+    """The names of the plain-function calls one top-level function of `module` makes -- a
+    `read(...)` but not a `cur.execute(...)`, and never a word that only appears in a docstring,
+    which is why this is an AST walk and not a substring search over the source."""
+    import ast
+    import inspect
+
+    for top in ast.parse(inspect.getsource(module)).body:
+        if isinstance(top, ast.FunctionDef) and top.name == function:
+            return {node.func.id for node in ast.walk(top)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    pytest.fail(f"{module.__name__} has no top-level function {function}")
+
+
+def _privacy_updates(module: Any) -> dict[str, list[str]]:
+    """`_executed_sql`, narrowed to the statements that UPDATE the privacy row."""
+    narrowed = {name: [sql for sql in sqls if "UPDATE listing_asset_privacy" in sql]
+                for name, sqls in _executed_sql(module).items()}
+    return {name: sqls for name, sqls in narrowed.items() if sqls}
+
+
+#: Every function of `app/privacy/record.py` that UPDATEs the privacy row, and how many statements
+#: it owns -- `reset_confirmation` has two because the seller's own region set is written in the
+#: SAME statement as the transition, so the arm that carries regions is a second statement rather
+#: than a second write.
+#:
+#: Review Minor-8: the count was `assert len(updates) >= 8` where the module had fourteen, a floor
+#: loose enough that six statements could be lost without the sanity check noticing. This is exact
+#: and pinned BOTH ways against the walk, so a writer added without a row here -- or a writer lost
+#: -- fails rather than passing quietly.
+PRIVACY_UPDATES = {
+    "claim": 1,
+    "record_scan": 1,
+    "record_derivative": 1,
+    "mark_ready": 1,
+    "fail": 1,
+    "exhaust": 1,
+    "confirm": 1,
+    "reset_confirmation": 2,
+    "reset_for_retry": 1,
+    "flag_stale": 1,
+    "advance_in_place": 1,
+    "bump_attempt": 1,
+    "mark_published": 1,
+    "set_visibility": 1,
+}
 
 
 def test_every_update_in_the_module_sets_updated_at() -> None:
@@ -340,9 +398,10 @@ def test_every_update_in_the_module_sets_updated_at() -> None:
     is no trigger precedent in `migrations/` -- `listing.updated_at` is maintained the same way, by
     hand, in `app/api/seller_listings.py`. A statement that forgets it makes a row invisible to the
     sweeper for ever, so the rule is checked rather than trusted (spec C.3)."""
-    updates = [sql for sql in _executed_sql(record) if "UPDATE listing_asset_privacy" in sql]
-    assert len(updates) >= 8, "far fewer UPDATEs than this module has -- the walk found the wrong calls"
-    missing = [sql[:120] for sql in updates if "updated_at = now()" not in sql]
+    by_function = _privacy_updates(record)
+    assert {name: len(sqls) for name, sqls in by_function.items()} == PRIVACY_UPDATES
+    missing = [sql[:120] for sqls in by_function.values() for sql in sqls
+               if "updated_at = now()" not in sql]
     assert missing == [], missing
 
 
@@ -534,11 +593,47 @@ def test_only_the_rungs_the_bound_can_spend_are_ever_spent() -> None:
     assert len(record.BACKOFF) >= record.MAX_ATTEMPTS - 1
 
 
-def test_the_state_tuples_are_the_states_the_column_check_permits() -> None:
+def _permitted_states(conn: Any) -> set[str]:
+    """The states migration 041's own CHECK on `processing_status` permits, read from
+    `pg_constraint`.
+
+    Selected by its COLUMN -- a `conkey` of length one naming `processing_status` -- and never by
+    name: three other CHECKs on this table mention the column (`lap_status_confirmed_ck`,
+    `lap_visible_ready_ck`, `lap_ready_has_derivative_ck`), and the column check itself is unnamed
+    in `041` and carries whatever name PostgreSQL gave it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c"
+            "  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]"
+            " WHERE c.conrelid = 'listing_asset_privacy'::regclass AND c.contype = 'c'"
+            "   AND array_length(c.conkey, 1) = 1 AND a.attname = 'processing_status'"
+        )
+        found = cur.fetchall()
+    assert len(found) == 1, f"expected one column CHECK on processing_status, found {found}"
+    return set(re.findall(r"'([A-Z_]+)'::text", str(found[0][0])))
+
+
+def test_the_state_tuples_are_the_states_the_column_check_permits(conn: Any) -> None:
     """Every name in READY_STATES, ERROR_STATES and CLAIMABLE_STATES is one migration 041's CHECK
     accepts, and the three sets say what spec C.4 says about each other: nothing claimable is
     ready, and REVIEW_REQUIRED is an error state the claim may NOT take (its retries are spent and
-    only the seller's "Try again" moves it)."""
+    only the seller's "Try again" moves it).
+
+    Review Minor-5: the first sentence of that promise used to be performed by nothing -- the body
+    asserted set relations among the tuples and read no CHECK at all, so "one migration 041's CHECK
+    accepts" was true by inspection rather than by test. The CHECK is read here, and pinned BOTH
+    ways: `ALL_STATES`, which every dead-end parametrisation above is the complement of, IS the
+    CHECK's own list, and every state the CHECK permits is one this module names -- so a state
+    added to `041` without a transition or a dead end ruled for it fails here."""
+    import inspect
+
+    permitted = _permitted_states(conn)
+    assert set(ALL_STATES) == permitted
+    named = set(record.READY_STATES) | set(record.ERROR_STATES) | set(record.CLAIMABLE_STATES)
+    assert named <= permitted, sorted(named - permitted)
+    source = inspect.getsource(record)
+    unnamed = sorted(state for state in permitted if state not in source)
+    assert unnamed == [], f"041 permits states app/privacy/record.py never names: {unnamed}"
     assert set(record.READY_STATES).isdisjoint(record.ERROR_STATES)
     assert set(record.CLAIMABLE_STATES).isdisjoint(record.READY_STATES)
     assert set(record.CLAIMABLE_STATES) == set(record.ERROR_STATES) - {"REVIEW_REQUIRED"} | {"UPLOADED"}
@@ -692,3 +787,112 @@ def test_no_attempt_is_counted_from_a_state_no_in_place_re_run_owns(conn: Any, s
     before = _all_columns(conn, asset_id)
     assert record.bump_attempt(conn, asset_id) is None
     assert _all_columns(conn, asset_id) == before
+
+
+def test_the_claim_is_one_statement_that_returns_the_row_it_claimed() -> None:
+    """Review Minor-4. `app/db.py:239`'s `sync_conn()` is AUTOCOMMIT, so a claim that is an UPDATE
+    followed by a separate `read()` COMMITS between the two and hands the caller a second snapshot
+    -- one another connection may already have moved on -- rather than the row it claimed. The
+    whole point of a compare-and-set is that what it returns is what it wrote, so the claim is ONE
+    `UPDATE ... RETURNING` over the read's own column list and calls `read` not at all.
+
+    Structural, because the window it closes is between two statements and cannot be driven shut
+    from outside: what is asserted is that there is no second statement to have a window with."""
+    statements = _executed_sql(record)["claim"]
+    assert len(statements) == 1, statements
+    sql = statements[0]
+    assert sql.startswith("UPDATE listing_asset_privacy"), sql[:80]
+    assert "RETURNING" in sql, "the claim answers with nothing of its own"
+    assert "read" not in _plain_calls(record, "claim"), "the claim re-reads instead of returning"
+
+
+def test_the_claimed_row_is_the_full_record_and_not_a_narrower_one(conn: Any) -> None:
+    """The other half of the case above: one statement is only worth having if it answers with the
+    WHOLE row. The claim's `RETURNING` is the read's own column list, which this proves by
+    comparing the claimed row with a read of it -- every field, through `PrivacyRow`'s equality,
+    including the two joined off `listing_asset` that a bare `RETURNING` could not reach at all."""
+    asset_id, _ = _row(conn, processing_status="UPLOADED")
+    claimed = record.claim(conn, asset_id, 1)
+    assert claimed is not None
+    assert claimed == _read(conn, asset_id)
+    assert (claimed.processing_status, claimed.attempts) == ("PROCESSING", 1)
+    assert claimed.display_storage_key is not None and claimed.display_sha256 == "d" * 64
+
+
+def _wait_for_a_blocked_backend(conn: Any, seconds: float = 20.0) -> None:
+    """Block until another backend on this database is waiting on a lock.
+
+    Without it the racing thread might not have issued its UPDATE before the holder claims and
+    commits, and the case would pass having proved nothing about concurrency -- the same outcome
+    reached sequentially."""
+    until = time.monotonic() + seconds
+    while time.monotonic() < until:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                        " AND wait_event_type = 'Lock'")
+            if int(cur.fetchone()[0]) >= 1:
+                return
+        time.sleep(0.02)
+    pytest.fail("the racing claim never reached the row lock; the race was not driven")
+
+
+def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, scratch_dsn: str) -> None:
+    """The compare-and-set as a RACE and not only as a predicate (review §3): two connections with
+    their statements in flight at the same instant, and exactly one of them claims.
+
+    The interleaving is forced rather than hoped for -- the holder takes the row with
+    `SELECT ... FOR UPDATE`, the racer's UPDATE then blocks on that lock, and the holder claims and
+    commits underneath it. When the lock is released PostgreSQL re-evaluates the racer's WHERE
+    against the row as it now is (READ COMMITTED), finds it PROCESSING with a fresh `updated_at`,
+    and matches nothing. That is exactly what a duplicate message and a redelivered task do."""
+    asset_id, _ = _row(conn, processing_status="UPLOADED")
+    holder = psycopg2.connect(scratch_dsn)   # NOT autocommit: it holds the row while the racer waits
+    racer = psycopg2.connect(scratch_dsn)
+    racer.autocommit = True
+    answers: dict[str, record.PrivacyRow | None] = {}
+    try:
+        with holder.cursor() as cur:
+            cur.execute("SELECT attempts FROM listing_asset_privacy WHERE asset_id = %s FOR UPDATE",
+                        (asset_id,))
+        thread = threading.Thread(
+            target=lambda: answers.__setitem__("racer", record.claim(racer, asset_id, 1)))
+        thread.start()
+        _wait_for_a_blocked_backend(conn)
+        answers["holder"] = record.claim(holder, asset_id, 1)
+        holder.commit()
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "the racing claim never returned"
+    finally:
+        holder.close()
+        racer.close()
+    assert set(answers) == {"holder", "racer"}, answers
+    won = [row for row in answers.values() if row is not None]
+    assert len(won) == 1, f"both connections claimed the same row: {answers}"
+    assert (won[0].processing_status, won[0].attempts) == ("PROCESSING", 1)
+    assert _read(conn, asset_id).attempts == 1, "the loser counted an attempt it never made"
+
+
+def test_the_builder_makes_both_confirmation_sides_against_the_derivative_it_serves(conn: Any) -> None:
+    """Review Minor-7, on the shared builder P7-P13 all import.
+
+    Two shapes it could not make. A confirmation is always recorded as NOT_SHOW, so P10's flip --
+    whose predicate is `seller_confirmed AND final_privacy_state = 'NOT_SHOW'` -- had no way to
+    build the OTHER side of it; and `confirmed=True` on a state outside the four derivative states
+    wrote `confirmed_sha256` beside a NULL `redacted_sha256`, a shape `lap_confirmed_ck` admits
+    only through three-valued logic (`NULL = NULL` is NULL, and a CHECK passes on NULL) and which
+    no real row ever has. A confirmed row now carries the derivative its confirmation covers,
+    whatever state it is in, which is what `lap_confirmed_ck` says a confirmation IS; a case that
+    wants the other shape asks for it explicitly, by poking the column, as
+    `test_confirm_refuses_a_ready_row_that_has_no_derivative_hash` does."""
+    for side in ("NOT_SHOW", "SHOW"):
+        asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True,
+                           buyer_visible=True, final_privacy_state=side)
+        after = _read(conn, asset_id)
+        assert after.final_privacy_state == side
+        assert after.seller_confirmed and after.confirmed_sha256 is not None
+        assert after.confirmed_sha256 == after.redacted_sha256
+    failed, _ = _row(conn, processing_status="REDACTION_FAILED", confirmed=True)
+    stale = _read(conn, failed)
+    assert stale.confirmed_sha256 is not None
+    assert stale.confirmed_sha256 == stale.redacted_sha256
+    assert stale.redacted_storage_key is not None
