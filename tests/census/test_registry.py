@@ -199,9 +199,9 @@ def test_every_registry_row_fits_the_design_s_dataset_column(conn):
 
     RED before this round: fix round 1's M6 pushed `Declared vintage <v>` on EVERY row --
     `dataset_registry.vintage` is NOT NULL -- so `acs5` composed
-    `Annual (Dec) · Declared vintage 2019–2023 · Terms verified never`, and on a loaded row (QA has
+    `Annual (Dec) · Declared vintage 2019\u20132023 · Terms verified never`, and on a loaded row (QA has
     a completed run and a live vintage for every Census dataset) `Annual (Dec) · Loaded September
-    2026 (85,381 rows) · Declared vintage 2019–2023 · Terms verified never` -- 102 characters,
+    2026 (85,381 rows) · Declared vintage 2019\u20132023 · Terms verified never` -- 102 characters,
     THREE lines, 112 px against the design's tallest 94, and four lines at 131 px with an
     activation note. The ruling names the live vintage only, the declared one only where it
     differs, and never a placeholder.
@@ -244,13 +244,13 @@ def test_a_loaded_row_is_the_one_measured_exception_on_the_dataset_column(conn):
     exactly what review F4 caught in the drift clause.
 
     RED before the ruling: `Annual (Dec) · Loaded September 2026 (85,381 rows) · Declared vintage
-    2019–2023 · Terms verified never`, 102 characters."""
+    2019\u20132023 · Terms verified never`, 102 characters."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO ingest_run (dataset_key, vintage, status, started_at, finished_at, rows_written) "
-            "VALUES ('acs5', '2019–2023', 'succeeded', now(), timestamptz '2026-09-20 00:00+00', 85381)"
+            "VALUES ('acs5', '2019\u20132023', 'succeeded', now(), timestamptz '2026-09-20 00:00+00', 85381)"
         )
-        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) VALUES ('acs5', '2019–2023', now(), 'census_load', NULL)")
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) VALUES ('acs5', '2019\u20132023', now(), 'census_load', NULL)")
     key, _source, dataset, run = next(r for r in _sublines(conn) if r[0] == "acs5")
     assert key == "acs5" and run is not None and run["status"] == "succeeded"
     # The tab composes the load clause between the cadence and the vintage
@@ -260,7 +260,7 @@ def test_a_loaded_row_is_the_one_measured_exception_on_the_dataset_column(conn):
         "Annual (Dec) · ", f"Annual (Dec) · Loaded September 2026 ({run['rows_written']:,} rows) · ", 1
     )
     assert "Declared vintage" not in loaded
-    assert loaded == "Annual (Dec) · Loaded September 2026 (85,381 rows) · Live vintage 2019–2023 · Terms verified never"
+    assert loaded == "Annual (Dec) · Loaded September 2026 (85,381 rows) · Live vintage 2019\u20132023 · Terms verified never"
     assert len(loaded) == LOADED_ACS5_DATASET_SUBLINE, (
         f"the loaded Dataset sub-line is {len(loaded)} characters against the recorded "
         f"{LOADED_ACS5_DATASET_SUBLINE}; it is already past the {reg.DATASET_SUBLINE_CAP}-character "

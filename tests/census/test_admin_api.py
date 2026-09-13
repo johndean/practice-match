@@ -21,9 +21,9 @@ import redis as redis_sync
 from httpx import ASGITransport
 
 from app.api import admin_data_sources
-from app.census.registry import SOURCE_SUBLINE_CAP
 from app.auth import deps
 from app.census import gate, license
+from app.census.registry import SOURCE_SUBLINE_CAP
 from app.config import settings
 from app.db import sync_dsn
 from app.main import create_app
