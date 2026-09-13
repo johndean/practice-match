@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext, type Locator, type Page } from '@pla
 import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, guard, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
+import { designSummaryBody } from './design-summary.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
 
@@ -1776,7 +1777,10 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
 
     const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
     await expect(strip.getByText(/^AREA · /)).toBeVisible();
-    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // A31.14e (Task SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the
+    // AREA headline is the Census's own PUBLISHED metro figure wherever the Census publishes one,
+    // so the Census areas describe the BARS and the sub-line names both halves.
+    await expect(strip.getByText('The metro\u2019s own figures, with the Census areas the map shades beneath them')).toBeVisible();
     // The figure the card prints IS the answered median, formatted by the design's own
     // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
     const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
@@ -1866,6 +1870,60 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const printed = (await strip.innerText()).split(LABEL).length - 1;
     expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
     console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
+  });
+
+  // A31.14 (Task SNAP-METRO, 2026-09-14) — THE SERVED-FIGURE ARM, which no approved state reaches.
+  //
+  // The design's own fixtures carry no `metro` key: `summarySet()` computes none and
+  // `design-summary.mjs` sends none, which is precisely why every one of the 55 approved states
+  // keeps A31.12's "median of N Census tracts" caption and only ONE of them re-bases at all (the
+  // footnote's, which is prose). So the PUBLISHED path — the whole point of the ruling — has no
+  // pixel oracle and this is the case that carries it: a real browser, the real adapter, the real
+  // route wiring, and a summary body carrying exactly what `app.api.market._metro_figure` serves
+  // for CBSA 12420 (`acs_measure` summary level 310, B19013_001E = 97,638 ± 1,163 against the
+  // 94,801 median of the same metro's valued tracts). The two numbers DISCRIMINATE: a card that
+  // went on printing the median would print $95K here and this fails.
+  test('the AREA headline is the Census’s own published metro figure where one is served (A31.14)', async ({ page }) => {
+    const PUBLISHED = 97638;      // the Census's own metro median for CBSA 12420, ACS 2019–2023
+    const BASIS = 'Census published for the metro';   // `app.api.market.METRO_BASIS['published']`
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The DESIGN's own distribution — the same body `harness.ts` answers this route with, so the
+    // bars, the counts and the geography label are the ones every other case reads — plus the
+    // `metro` object the real route serves for `income` and nothing else. Composed here rather
+    // than fetched through `route.fetch()`, which bypasses `page.route` and would reach the real
+    // API for a CBSA it has never heard of.
+    const body = JSON.parse(designSummaryBody('12420')) as { layers: Record<string, unknown>[] };
+    const median = body.layers.find((l) => l.layer === 'income')!.median as number;
+    for (const layer of body.layers) {
+      if (layer.layer === 'income') layer.metro = { value: PUBLISHED, moe: 1163, kind: 'published', basis: BASIS };
+    }
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/summary'),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(PUBLISHED / 1000)}K`);
+    await expect(card).toContainText(BASIS);
+    // …and the DERIVED figure it replaced is gone from the card, caption and all. Read off the
+    // body the page was actually answered with rather than retyped, so the case cannot drift.
+    expect(Math.round(median / 1000), 'the fixture median equals the published figure, so this case proves nothing')
+      .not.toBe(Math.round(PUBLISHED / 1000));
+    await expect(card, 'the card still prints the median of the metro’s tracts').not.toContainText(`$${Math.round(median / 1000)}K`);
+    await expect(card, 'the derived caption survives beside a published figure').not.toContainText('median of');
+    // The layers the route serves no metro figure for are UNTOUCHED — `econ` and `competition` are
+    // Business Patterns, which publishes nothing at summary level 310, so those cards keep the
+    // median of their own counties or ZIP areas and say so.
+    const households = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Households' }).first();
+    await expect(households).toContainText('median of');
+    console.log(`[A31.14] the income card reads "$${Math.round(PUBLISHED / 1000)}K · ${BASIS}" where the derived figure was $${Math.round(median / 1000)}K`);
+    expect(errors).toEqual([]);
   });
 });
 

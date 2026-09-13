@@ -3840,7 +3840,10 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const md = c.renderVals().md;
     expect(md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
     expect(md.hasStripModeSub).toBe(true);
-    expect(md.stripModeSub).toBe('Census areas across the metro, as the map shades them');
+    // A31.14e (SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the AREA
+    // headline is the Census's own PUBLISHED metro figure wherever the Census publishes one, so
+    // the Census areas describe the BARS and the sub-line names both halves.
+    expect(md.stripModeSub).toBe('The metro\u2019s own figures, with the Census areas the map shades beneath them');
     // Every card names the MAP's geography, which is what it now measures — the interim
     // per-listing basis (A24.53's `stripBasis`) is gone with the figures it described.
     const income = md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0];
@@ -6535,5 +6538,112 @@ describe('logic.js — an admin-only account reaches its own listings on boot (A
     const c2: any = new Component({ me: { ...ADMIN_ONLY }, perms: perms(['page.seller']) });
     expect(() => c2.componentDidMount()).not.toThrow();
     expect(c2.state.myListings).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the METRO's own figure where the Census
+// publishes one (ruling D-C50's own deferral, the ONE-VOCABULARY audit's collision C2).
+//
+// Measured on QA, the income card read "$95K · median of 541 Census tracts" — `percentile_cont`
+// over the metro's valued tracts, 94,801 on CBSA 12420 — while the Census publishes 97,638 ±
+// 1,163 for that same CBSA at the same release. Two "metro" numbers, one metro, and the one the
+// member could check was the one the screen did not show.
+describe('the Market snapshot AREA card prefers the metro’s own published figure (A31.14)', () => {
+  const AUSTIN = 'Austin, TX';
+  const adapter = () => ({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+  const QUANTILES = [48200, 67400, 92150, 121300, 158900];
+  const row = (metro: unknown) => ({
+    income: {
+      layer: 'income', geo_label: 'Census tract', with_value: 541,
+      median: 94801, quantiles: QUANTILES, metro
+    }
+  });
+  const card = (c: any, title = 'Median household income') =>
+    c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === title)[0];
+
+  it('the published metro figure is the headline and its own caption is the one the route sent', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    const income = card(c);
+    expect(income.value, 'the card still prints the median of the metro’s tracts').toBe(c.fmtMetric('income', 97638));
+    expect(income.value).not.toBe(c.fmtMetric('income', 94801));
+    expect(income.valueNote).toBe('Census published for the metro');
+    // The BARS are untouched: they are the polygons the map shades, which is the shape this
+    // figure sits in, and they are the whole reason the distribution is still fetched.
+    expect(income.bars).toHaveLength(5);
+    expect(income.bars.map((b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1]))
+      .toEqual(QUANTILES.map((v) => c.bucket('income', v, true).color));
+  });
+
+  it('a derived metro figure carries the route’s own word for it, not the published one', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 806400, moe: null, kind: 'derived', basis: 'derived estimate for the metro' })
+    });
+    expect(card(c).valueNote, 'the design composed a caption of its own').toBe('derived estimate for the metro');
+  });
+
+  it('no metro figure keeps A31.12’s "median of N Census tracts" caption, byte for byte', () => {
+    // `econ` and `competition` are Business Patterns, which publishes nothing at summary level
+    // 310, so those two cards live on this arm for ever — and so does every fixture path.
+    const c: any = new Component(adapter());
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: row(null) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+    // …and a metro object whose own value is null is the same absence, not a headline of nothing.
+    c.setState({ mdSummary: row({ value: null, moe: null, kind: 'published', basis: 'Census published for the metro' }) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+  });
+
+  it('a card with no figure at all still carries NO caption — A31.12’s rule survives', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { income: { layer: 'income', geo_label: 'Census tract', with_value: 0, median: null, quantiles: null, metro: null } }
+    });
+    expect(card(c).value).toBeUndefined();
+    expect(card(c).valueNote).toBeUndefined();
+  });
+
+  it('LOCATION mode is untouched: the practice’s own figure, never the metro’s', () => {
+    // The ternary's LOCATION arm never read this endpoint and must not start: a metro median is
+    // not a statement about the practice a member has just clicked.
+    const c: any = new Component(adapter());
+    const p = (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    expect(card(c).value).not.toBe(c.fmtMetric('income', 97638));
+    expect(card(c).valueNote).not.toBe('Census published for the metro');
+  });
+
+  it('the reference path — no adapter — never sees a metro figure and never can', () => {
+    // `summarySet()` is the design's own answer to the endpoint and it computes no `metro` key,
+    // so the reference, the Claude Design preview and every approved state stay on A31.12's
+    // caption whatever this family does.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    for (const layer of Object.keys(c.summarySet())) {
+      expect(c.summarySet()[layer].metro, `summarySet() invented a metro figure for ${layer}`).toBeUndefined();
+    }
+    for (const s of c.renderVals().md.stripCards) {
+      if (s.valueNote !== undefined) expect(s.valueNote).toMatch(/^median of /);
+    }
+  });
+
+  it('the mode sub-line and both footnotes say what a metro figure is', () => {
+    // The three prose strings this family corrects — A31.7's sub-line and A34.7/A34.8's shared
+    // definition sentence — all of which claimed a metro figure is always a median of areas.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    expect(c.renderVals().md.stripModeSub)
+      .toBe('The metro’s own figures, with the Census areas the map shades beneath them');
   });
 });

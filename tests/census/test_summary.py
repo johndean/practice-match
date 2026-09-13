@@ -363,3 +363,147 @@ async def test_a_cache_miss_logs_its_cost_once_and_a_hit_logs_nothing(client, se
     again, _ = await _body(client, H)
     assert again.headers["x-cache"] == "hit"
     assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("summary miss ")] == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Task SNAP-METRO (family A31.14, 2026-09-14): the Census's OWN published figure for the metro.
+#
+# The AREA card read "median of 541 Census tracts" — `percentile_cont(0.5)` over the metro's
+# valued tracts, 94,801 on CBSA 12420 — while the Census PUBLISHES a metro median household
+# income for that same CBSA at summary level 310 (`acs_measure`, B19013_001E = 97,638 ± 1,163,
+# 2019-2023). A stakeholder who knows the published figure read two "metro" numbers for one
+# metro, which is D-C51's own defect one surface over.
+#
+# Every fixture below DISCRIMINATES: the published metro figure is nowhere near the median of the
+# seeded tracts (97,638 against 50,000), so a route that went on serving the median would fail
+# rather than pass by coincidence.
+PUBLISHED_INCOME, PUBLISHED_INCOME_MOE = 97638, 1163
+PUBLISHED_HOUSEHOLDS, PUBLISHED_HOUSEHOLDS_MOE = 806400, 2100
+PUBLISHED_POP, PUBLISHED_POP_PRIOR = 2473275, 2168316
+
+
+@pytest.fixture
+def published(seeded, conn):
+    """`seeded` plus the four ACS rows the Census publishes for CBSA 12420 at summary level 310.
+
+    One `ingest_run` row, because `acs_measure.ingest_run_id` is `NOT NULL REFERENCES
+    ingest_run(id)` (`migrations/019_census_measures.sql`) — the same shape
+    `tests/census/test_geo_metric.py::_run` uses, for the same reason.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, started_at, status) "
+            "VALUES ('acs5', '2019\u20132023', now(), 'succeeded') RETURNING id")
+        run = cur.fetchone()[0]
+        for vintage, variable, estimate, moe in (
+            ("2019\u20132023", "B19013_001E", PUBLISHED_INCOME, PUBLISHED_INCOME_MOE),
+            ("2019\u20132023", "B11001_001E", PUBLISHED_HOUSEHOLDS, PUBLISHED_HOUSEHOLDS_MOE),
+            ("2019\u20132023", "B01003_001E", PUBLISHED_POP, 0),
+            ("2014\u20132018", "B01003_001E", PUBLISHED_POP_PRIOR, 0),
+        ):
+            cur.execute(
+                "INSERT INTO acs_measure (geo_id, summary_level, vintage, variable, estimate, moe, ingest_run_id) "
+                "VALUES ('12420','310',%s,%s,%s,%s,%s)", (vintage, variable, estimate, moe, run))
+    sync_redis().flushdb()
+    return conn
+
+
+async def test_the_published_metro_median_is_served_and_is_not_the_median_of_the_tracts(client, published, H) -> None:  # noqa: F811
+    """The ruling itself. `median` (the tract distribution's own p50) stays exactly where it was —
+    the bars are drawn from it — and `metro` carries the Census's own figure for the metro beside
+    it, with the margin the Census publishes with it."""
+    _r, body = await _body(client, H)
+    income = _layer(body, "income")
+    assert income["median"] == QUANTILES[2] == 50000.0, "the tract distribution must not move"
+    assert income["metro"] == {
+        "value": float(PUBLISHED_INCOME), "moe": float(PUBLISHED_INCOME_MOE),
+        "kind": "published", "basis": market.METRO_BASIS["published"],
+    }
+    households = _layer(body, "households")
+    assert households["metro"]["value"] == float(PUBLISHED_HOUSEHOLDS)
+    assert households["metro"]["kind"] == "published"
+
+
+async def test_a_metro_the_census_publishes_no_row_for_serves_no_metro_figure(client, seeded, H) -> None:  # noqa: F811
+    """`seeded` writes no `acs_measure` row at all: absent beats faked, so every layer answers
+    `metro: null` and the card falls back to its own "median of N Census tracts"."""
+    _r, body = await _body(client, H)
+    assert [row["metro"] for row in body["layers"]] == [None] * len(body["layers"])
+
+
+async def test_the_two_derived_metro_figures_are_built_from_the_published_ones(client, published, H) -> None:  # noqa: F811
+    """`pets` is the published metro households at the design's own documented rate and `growth`
+    is the two published metro populations through `materialize.py`'s own formula (D12) — both
+    `derived`, because the Census publishes neither, and both through `app.census.metrics` rather
+    than a second spelling of the arithmetic."""
+    from app.census import metrics as M
+
+    _r, body = await _body(client, H)
+    pets = _layer(body, "pets")
+    assert pets["metro"] == {
+        "value": float(M.pet_households_est(PUBLISHED_HOUSEHOLDS)), "moe": None,
+        "kind": "derived", "basis": market.METRO_BASIS["derived"],
+    }
+    growth = _layer(body, "growth")
+    assert growth["metro"]["value"] == M.population_growth_pct(PUBLISHED_POP, PUBLISHED_POP_PRIOR)
+    assert (growth["metro"]["kind"], growth["metro"]["moe"]) == ("derived", None)
+
+
+async def test_the_two_layers_the_census_publishes_no_metro_row_for_serve_none(client, published, H) -> None:  # noqa: F811
+    """`econ` and `competition` are Business Patterns, which publishes nothing at summary level
+    310 in this database — and a SUM over the metro's counties or ZIP areas is not available
+    either, because this route's population is the metro's ENVELOPE and a sum over an envelope
+    counts areas outside the metro. Both keep their own tract-distribution median and say so."""
+    _r, body = await _body(client, H)
+    assert _layer(body, "econ")["metro"] is None
+    assert _layer(body, "competition")["metro"] is None
+    assert _layer(body, "econ")["median"] == 818000.0, "the derived median stays where it was"
+
+
+async def test_a_published_figure_with_no_published_margin_is_not_served(client, published, conn, H) -> None:  # noqa: F811
+    """`materialize._suppression`'s own rule, applied to the metro row: a present estimate with no
+    margin is UNMEASURED, not certain. One decision about a margin, made in one place, so the
+    metro headline cannot claim a confidence the tract layer would refuse."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE acs_measure SET moe = NULL WHERE variable = 'B19013_001E'")
+        cur.execute("UPDATE acs_measure SET moe = 900000 WHERE variable = 'B11001_001E'")
+    sync_redis().flushdb()
+    _r, body = await _body(client, H)
+    assert _layer(body, "income")["metro"] is None, "no margin, no published metro figure"
+    assert _layer(body, "households")["metro"] is None, "a margin this wide is high_moe"
+
+
+async def test_a_layer_whose_licence_is_not_cleared_carries_no_metro_figure(client, published, conn, H) -> None:  # noqa: F811
+    """The gate reaches the metro figure exactly as it reaches every other figure on the row: an
+    uncleared dataset puts NOTHING of itself on the wire."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
+    gate.invalidate(sync_redis(), "acs5")
+    sync_redis().flushdb()
+    _r, body = await _body(client, H)
+    for key in ("income", "households", "pets", "growth"):
+        assert _layer(body, key)["state"] == "disabled", key
+        assert _layer(body, key)["metro"] is None, key
+
+
+async def test_growth_with_only_one_of_the_two_published_periods_serves_no_metro_figure(client, published, conn, H) -> None:  # noqa: F811
+    """`population_growth_pct` is `None` when either period is missing, and a rate built from one
+    period is not a rate at all."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM acs_measure WHERE vintage = '2014\u20132018'")
+    sync_redis().flushdb()
+    _r, body = await _body(client, H)
+    assert _layer(body, "growth")["metro"] is None
+    assert _layer(body, "income")["metro"] is not None, "income must not follow growth's own inputs"
+
+
+def test_the_metro_basis_phrases_are_drawn_from_the_designs_own_closed_word_list() -> None:
+    """A34/D-C51's rule, pinned rather than asserted in prose: the caption the design PRINTS is
+    this string, so a basis word invented on the server would be a seventh geography phrase on the
+    screen without a single design file changing. Both phrases name the metro and exactly one
+    basis word from the audit's §3.1 list (`Census published`, `derived estimate`)."""
+    assert set(market.METRO_BASIS) == {"published", "derived"}
+    for kind, phrase in market.METRO_BASIS.items():
+        assert phrase.endswith(" for the metro"), phrase
+        assert phrase[: -len(" for the metro")] in ("Census published", "derived estimate"), phrase
+        assert kind in phrase or kind == "published", phrase

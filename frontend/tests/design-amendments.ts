@@ -7402,6 +7402,141 @@ const A34_23: Amendment = {
   count: 1
 };
 
+/** A31.14 — SNAP-METRO (2026-09-14): the AREA card's headline is the METRO's own figure where
+ *  the Census publishes one, and the tract distribution beneath it is the SHAPE rather than the
+ *  number. Ruling D-C50's own deferral, recorded in the ONE-VOCABULARY audit as collision C2.
+ *
+ *  MEASURED on QA: the income card read "$95K · median of 541 Census tracts" — `percentile_cont`
+ *  over the metro's valued tracts, 94,801 on CBSA 12420 — while the Census publishes a metro
+ *  median household income for that same CBSA at the same release, 97,638 ± 1,163 (`acs_measure`,
+ *  summary level 310, B19013_001E). A stakeholder who knows the published figure was given two
+ *  "metro" numbers for one metro, and the one they could check was the one the screen did not
+ *  show. A31.12's own caption comment named this defect and left it to this task by name.
+ *
+ *  The ROUTE decides what a metro figure is and what to call it (`app/api/market.py`'s
+ *  `_metro_figure` and `METRO_BASIS`): `income` and `households` are ACS variables and the
+ *  Census publishes each for the metro itself; `pets` and `growth` are derived from published
+ *  metro figures; `econ` and `competition` are Business Patterns, which publishes nothing at
+ *  that level, so those two cards keep the median of their own counties or ZIP areas. The
+ *  DESIGN prints what it is handed and invents no word of its own, which is what keeps the
+ *  caption inside D-C51's closed vocabulary (A34 §3.1) with no second copy of it on this side.
+ *
+ *  The design's own fixtures carry no `metro` key — `summarySet()` computes none and
+ *  `design-summary.mjs` sends none — so the reference, the Claude Design preview and every
+ *  approved state take A31.12's own "median of N Census tracts" caption unchanged, and
+ *  A31.14a/A31.14b paint nothing new. The three PROSE entries DO move approved states, because a
+ *  footnote and a mode sub-line render whatever the data says: see their own rows. */
+const SNAPMETRO = {
+  date: '2026-09-14',
+  ruling: 'SNAP-METRO (controller, 2026-09-14, ruling D-C50\u2019s own deferral): the Census\u2019s PUBLISHED metro figure (summary level 310) becomes the Browse snapshot strip\u2019s AREA headline where one exists, with the derived \u201cmedian of N Census tracts\u201d figure kept where it is absent \u2014 so a stakeholder no longer reads \u201c$95K\u201d beside a published \u201c$98K\u201d for the same metro.'
+};
+
+/** A31.14a — the AREA headline prefers the metro's own figure. CHAINED on A31.8.
+ *
+ *  The ternary's LOCATION arm is byte for byte A31.8's: a practice's own figure has never come
+ *  from this endpoint. Only the AREA arm gains a term, and it is ordered so that `median` is what
+ *  answers whenever `metro` is absent or carries no value — which is every fixture path and, on a
+ *  real database, `econ` and `competition` for ever. */
+const A31_14a: Amendment = {
+  id: 'A31.14a', ...SNAPMETRO,
+  find: "          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);\n",
+  replace: "          // A31.14 (SNAP-METRO): in AREA mode the headline is the METRO's own figure where\n"
+    + "          // the route serves one - the Census publishes a metro median household income and\n"
+    + "          // a metro household total at summary level 310, and this card printed the median\n"
+    + "          // of the metro's TRACTS instead (94,801 against a published 97,638 on CBSA 12420).\n"
+    + "          // The distribution below is untouched: the bars are the polygons the map shades,\n"
+    + "          // which is the SHAPE this figure sits in, and `median` answers wherever the Census\n"
+    + "          // publishes nothing for the metro at all.\n"
+    + "          const metro = (sum && sum.metro && sum.metro.value != null) ? sum.metro : null;\n"
+    + "          const shown = sel ? (own != null ? num(own) : undefined) : (metro ? num(metro.value) : ((sum && sum.median != null) ? num(sum.median) : undefined));\n",
+  count: 1
+};
+
+/** A31.14b — the AREA caption, which the route composes. CHAINED on A31.12.
+ *
+ *  `metro.basis` is a caption phrase and the server is where it is written, for the reason
+ *  `metaSource`'s own rule states: one string per fact. The route knows whether the figure is the
+ *  Census's own estimate for the metro or something this pipeline derived from one, and the design
+ *  cannot know it — a client-side word would be a SECOND copy of that judgement, which is how
+ *  "market level" and "community level" reached the screen in the first place (A34/D-C51). Both
+ *  phrases the route can send are drawn from that ruling's closed list and pinned there by
+ *  `tests/census/test_summary.py`.
+ *
+ *  A31.12's own two arms are kept byte for byte beneath it, including "a card with no figure
+ *  carries NO caption": a metro figure the route did not send falls straight through to them. */
+const A31_14b: Amendment = {
+  id: 'A31.14b', ...SNAPMETRO,
+  find: '              : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n',
+  replace: "              // A31.14 (SNAP-METRO): where the route served the metro's own figure, the\n"
+    + "              // caption is the one IT composed - it is the side that knows whether the\n"
+    + "              // Census published this figure for this area or whether this pipeline derived\n"
+    + "              // it from one that was published. A word invented here would be a second copy\n"
+    + "              // of that judgement, which is how a geography the server never served reached\n"
+    + "              // the screen before (A34/D-C51). Both phrases it can send are in that\n"
+    + "              // ruling's own closed list.\n"
+    + "              : metro ? metro.basis\n"
+    + '              : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n',
+  count: 1
+};
+
+/** A31.14c — the snapshot strip's footnote. Supersedes A34.8, two of whose sentences this
+ *  release makes false by its own act (the A27.5 rule).
+ *
+ *  A34.8's §4 paragraph DEFINES what a metro figure is, and from here it is not always a median
+ *  of areas: on `income` and `households` it is the Census's own published estimate for the
+ *  metro. The next sentence goes with it — "In AREA mode each card is the median across the
+ *  metro's Census tracts, places, counties or ZIP areas" is the same claim one sentence later,
+ *  and the BARS still are that distribution, so the corrected sentence says which half is which.
+ *
+ *  Everything else in the paragraph is untouched, byte for byte: A34's own three-kinds opening,
+ *  the LOCATION half of the AREA/LOCATION sentence, the derived-estimates sentence and A24.20's
+ *  growth caveat. That is the fix-round-3 lesson `CLAUDE.md` records and the reason AMEND-GUARD
+ *  exists, so this `find` stops exactly where this entry's own text does.
+ *
+ *  Re-bases `browse-market-strip` and `browse-market-strip-location`: a footnote renders whatever
+ *  the data says, so it moves on the fixture path where A31.14a/A31.14b do not. */
+const A31_14c: Amendment = {
+  id: 'A31.14c', ...SNAPMETRO,
+  find: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says. In AREA mode each card is that metro figure and its own caption says which of the two it is, with the bars beneath it the distribution across the metro\u2019s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** A31.14d — the docked panel's footnote, which carries the SAME sentence. Supersedes A34.7.
+ *
+ *  A34.7 and A34.8 wrote one paragraph into two footnotes deliberately — "the same words, because
+ *  the same three kinds of figure appear on both surfaces and two wordings of one fact is how they
+ *  come to disagree" — so correcting one and leaving the other would produce exactly the
+ *  divergence that entry exists to prevent. One fact, one wording, both surfaces.
+ *
+ *  Re-bases the Browse states that render the docked panel. */
+const A31_14d: Amendment = {
+  id: 'A31.14d', ...SNAPMETRO,
+  find: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.</p>',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.</p>',
+  count: 1
+};
+
+/** A31.14e — the AREA mode's own sub-line. Supersedes A31.7's sentence.
+ *
+ *  This is the 12.5 px line directly under the 800-weight mode heading — the one line that says
+ *  what the member is looking at in this mode, and the most prominent of the three prose strings
+ *  this family touches. It named the Census areas alone, which from here describes the BARS and
+ *  not the figures above them on the layers the Census publishes a metro figure for. Naming the
+ *  wrong thing on the prominent line while correcting the 10.5 px grey footnote beneath it is the
+ *  D-C51 defect class exactly, so the sub-line names both halves in the footnote's own terms.
+ *
+ *  LOCATION mode's arm is untouched, byte for byte: it is the listing's own `communityLabel` and
+ *  has nothing to do with the metro. Re-bases `browse-market-strip` alone —
+ *  `browse-market-strip-location` renders the LOCATION arm, and the design's fixtures carry no
+ *  `communityLabel`, so `hasStripModeSub` is false there and no element is drawn. */
+const A31_14e: Amendment = {
+  id: 'A31.14e', ...SNAPMETRO,
+  find: '      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",\n',
+  replace: '      stripModeSub: sel ? (sel.communityLabel || "") : "The metro\u2019s own figures, with the Census areas the map shades beneath them",\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7599,5 +7734,12 @@ export function amendments(): Amendment[] {
     // A34.23 -- the data-sources audit's own finding (2026-09-13): the competition layer's
     // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
     // pristine bundle's own declaration.
-    A34_23];
+    A34_23,
+    // A31.14 -- SNAP-METRO (2026-09-14): the AREA headline is the metro's own published figure
+    // where the Census publishes one. Appended LAST, as every family is, and it has to be: all
+    // five are CHAINED -- A31.14a on A31.8, A31.14b on A31.12, A31.14c on A34.8, A31.14d on A34.7
+    // and A31.14e on A31.7 -- and two of those predecessors are A34's, which is why this block
+    // runs after A34 rather than beside A31.13b. Definition order in this file matches this list
+    // (m8).
+    A31_14a, A31_14b, A31_14c, A31_14d, A31_14e];
 }

@@ -861,7 +861,7 @@
                     View full listing<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census’s own published figure for the metro where it publishes one, and otherwise is built from the metro’s own Census areas, as the card says. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.</p>
                   </sc-if>
                 </div>
               </sc-if>
@@ -919,7 +919,7 @@
                   </div>
                 </sc-for>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census’s own published figure for the metro where it publishes one, and otherwise is built from the metro’s own Census areas, as the card says. In AREA mode each card is that metro figure and its own caption says which of the two it is, with the bars beneath it the distribution across the metro’s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </sc-if>
 
@@ -2509,7 +2509,7 @@ class Component extends DCLogic {
       // is the selected practice's own community. Both words are never shown at once.
       stripMode: sel ? "LOCATION · " + this.practiceName(sel) : "AREA · " + market + " metro",
       hasStripModeSub: sel ? !!sel.communityLabel : true,
-      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",
+      stripModeSub: sel ? (sel.communityLabel || "") : "The metro’s own figures, with the Census areas the map shades beneath them",
       toggleStrip: () => this.setState({ mdStrip: !s.mdStrip }),
       stripToggleLabel: s.mdStrip ? "Collapse" : "Expand all six layers",
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
@@ -2826,7 +2826,15 @@ class Component extends DCLogic {
           const sum = summary[k];
           // The selected practice's own figure, through the design's own two field aliases.
           const own = (sel && selComm) ? (k === "households" ? selComm.hh : k === "competition" ? selComm.vets : selComm[k]) : undefined;
-          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);
+          // A31.14 (SNAP-METRO): in AREA mode the headline is the METRO's own figure where
+          // the route serves one - the Census publishes a metro median household income and
+          // a metro household total at summary level 310, and this card printed the median
+          // of the metro's TRACTS instead (94,801 against a published 97,638 on CBSA 12420).
+          // The distribution below is untouched: the bars are the polygons the map shades,
+          // which is the SHAPE this figure sits in, and `median` answers wherever the Census
+          // publishes nothing for the metro at all.
+          const metro = (sum && sum.metro && sum.metro.value != null) ? sum.metro : null;
+          const shown = sel ? (own != null ? num(own) : undefined) : (metro ? num(metro.value) : ((sum && sum.median != null) ? num(sum.median) : undefined));
           // The metro's shape, as five bars, classed on the MAP's OWN breaks - `bucket`'s
           // third argument, which is what the choropleth asks for (A24.25). These are the
           // map's polygons, so they take the map's classes: the strip and the legend then
@@ -2869,6 +2877,14 @@ class Component extends DCLogic {
               // measured on CBSA 12420, 94,801 against the published 97,638. And a card
               // with no figure carries NO caption: absent beats faked, for a caption as
               // much as for a value.
+              // A31.14 (SNAP-METRO): where the route served the metro's own figure, the
+              // caption is the one IT composed - it is the side that knows whether the
+              // Census published this figure for this area or whether this pipeline derived
+              // it from one that was published. A word invented here would be a second copy
+              // of that judgement, which is how a geography the server never served reached
+              // the screen before (A34/D-C51). Both phrases it can send are in that
+              // ruling's own closed list.
+              : metro ? metro.basis
               : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis

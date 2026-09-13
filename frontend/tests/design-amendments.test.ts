@@ -422,6 +422,11 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the Census's own PUBLISHED metro
+    // figure where the Census publishes one (summary level 310), and the tract distribution is
+    // the shape beneath it. Appended after A34 because A31.14c and A31.14d take the definition
+    // sentence A34.8 and A34.7 wrote into the two footnotes.
+    'A31.14a', 'A31.14b', 'A31.14c', 'A31.14d', 'A31.14e',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -542,7 +547,15 @@ describe('local design amendments (spec D15)', () => {
     // figure" on their own captions since A31.12 gave them "surrounding city or county" and
     // "surrounding county", so the clause says what is true of all six. The AREA clause is
     // carried forward byte for byte, and A34.8's own three-kinds paragraph sits in front of it.
-    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    // A31.14c (Task SNAP-METRO, 2026-09-14) then SUPERSEDES A34.8's own definition sentence and
+    // the AREA clause beside it: from here the AREA headline is the Census's own PUBLISHED metro
+    // figure wherever the Census publishes one, so "each card is the median across the metro's
+    // Census tracts…" describes the BARS and not the figure above them. The LOCATION half of that
+    // sentence is carried forward byte for byte, and so are the two sentences below.
+    expect(footnote).toContain('A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says.');
+    expect(footnote).toContain('with the bars beneath it the distribution across the metro\u2019s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    expect(footnote, 'A34.8\'s superseded definition sentence survives in the footnote')
+      .not.toContain('A metro figure is the median across every area of that kind in the metro.');
     expect(footnote, 'the three kinds of figure are no longer distinguished on the strip').toContain('Three kinds of figure appear here and they measure different things.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
     // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
@@ -618,7 +631,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(351);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(356);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
