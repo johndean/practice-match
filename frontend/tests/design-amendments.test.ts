@@ -1358,10 +1358,19 @@ describe('local design amendments (spec D15)', () => {
       expect(own.length, `${id}: the row cites a V3 line but no amendment carries that id`).toBeGreaterThan(0);
       const output = own.flatMap(outputOf);
       expect(output.length, `${id}: a removal amendment puts nothing at a line, so its row may not cite one`).toBeGreaterThan(0);
+      // DISTINCTIVE, not merely present (controller amendment, 2026-09-13). `line.includes(piece)`
+      // matched a brace-only or two-character output line almost anywhere in a 5,000-line file,
+      // so a citation could be dozens of lines out and still pass: A19.2 pointed at a `stripCards`
+      // bar line instead of `openLightbox` and did so for days. Every candidate piece must now
+      // carry a word token of two or more characters — `}`, `});`, `},`, `);`, `: []` and `//` no
+      // longer anchor a citation, and 33 stale citations across 24 entries were re-mapped when the
+      // rule first ran. Equality (`line.trim() === piece`) was measured first and rejected: 47 of
+      // the 211 citations are to entries whose `replace` is a FRAGMENT of a line — A3's text node,
+      // A10's two string literals — whose output can never equal a whole line of the file.
       for (const n of cited) {
         const window = [n - 1, n, n + 1].map((k) => fileLines[k - 1] ?? '');
-        if (!window.some((line) => output.some((piece) => line.includes(piece)))) {
-          stale.push(`${id}: V3:${n} is stale — that line of the amended design holds none of this amendment's text`);
+        if (!window.some((line) => output.some((piece) => /[A-Za-z0-9]{2,}/.test(piece) && line.includes(piece)))) {
+          stale.push(`${id}: V3:${n} is stale — no line of the amended design there carries a distinctive line of this amendment's own output`);
         }
         checked++;
       }
