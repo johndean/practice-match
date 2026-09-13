@@ -14,6 +14,20 @@ import {
  * hand, each with a throwaway script nobody kept. These cases are what make it trustworthy enough
  * to run unattended: it changes NOTHING on a correct ledger, it moves exactly what an insertion
  * moved, and every number it writes is one the citation gate accepts.
+ *
+ * THE DESIGN LINE NUMBERS IN THESE FIXTURES ARE RE-TAKEN, NOT EDITED TO PASS (feat/one-vocabulary
+ * merging main, 2026-09-14). They are measured properties of the amended design — `areas: areaFc,`
+ * and A24.7's and A3's own anchors — and A34 (ruling D-C51) moved them: its five dead-value
+ * deletions took ten lines out above `areas: areaFc,` (V3:2542 -> 2532) while its earlier edits
+ * put three lines in above A24.7 (919 -> 922) and A3 (858/872 -> 861/875). Task A39's fix round 1
+ * (2026-09-14) then put A39.4's ONE line in at V3:2159, which is BELOW A24.7's anchor and ABOVE
+ * the `areas:`/`communities:` pair — so that pair moved once more (2532 -> 2533) and A24.7's 922
+ * did not, which is the whole reason each of these is measured rather than assumed to shift
+ * together. Each number below was
+ * re-derived from the merged design through `anchorLines` itself rather than read off a failure,
+ * and the relative offsets the fixtures feed in (anchor + 1, + 3, + 12) are unchanged, so every
+ * rung is still exercised on the same shape it was written for. This is the merge hazard
+ * HOUSEKEEPING-C item 8 un-pinned the distinctiveness table for, one file over.
  */
 describe('the citation re-mapper', () => {
   const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
@@ -45,22 +59,21 @@ describe('the citation re-mapper', () => {
   // A25.3's line survives — which is why both rows cited one line and why every renumbering moved
   // them together. Pinned, they move independently and by exactly the insertion.
   //
-  // The three line numbers below are a MEASUREMENT of this design, not constants: A39's fix round
-  // 1 (2026-09-14) added A39.4's line at V3:2167 and A39.5's at V3:3246, so the pair moved from
-  // V3:2542/2543 to V3:2543/2544. Re-take them when the ledger grows above them; what the case
-  // asserts — that a pinned row moves by exactly what was inserted above it — never changes.
+  // The numbers below are a MEASUREMENT of this design, not constants — re-take them whenever the
+  // ledger grows above them. What the case asserts, that a pinned row moves by exactly what was
+  // inserted above it, never changes.
   // ---------------------------------------------------------------------------------------
   it('moves A24.4 and A25.3 by exactly what an insertion above them inserted', () => {
     const before = design.split('\n');
-    expect(before[2542]).toContain('areas: areaFc,');
-    expect(before[2543]).toContain('communities: comms.filter');
+    expect(before[2532]).toContain('areas: areaFc,');
+    expect(before[2533]).toContain('communities: comms.filter');
     for (const inserted of [1, 7, 400]) {
       const shifted = [...before.slice(0, 2000), ...Array.from({ length: inserted }, (_, i) => `// synthetic line ${i}`), ...before.slice(2000)].join('\n');
       const { md: next, unresolved } = remapCitations({ ...input, design: shifted });
       expect(unresolved).toEqual([]);
       const cited = (id: string) => Number(/V3:(\d+)/.exec(next.split('\n').find((r) => r.startsWith(`| ${id} |`)) ?? '')?.[1]);
-      expect(cited('A24.4'), `A24.4 after ${inserted} inserted line(s)`).toBe(2543 + inserted);
-      expect(cited('A25.3'), `A25.3 after ${inserted} inserted line(s)`).toBe(2544 + inserted);
+      expect(cited('A24.4'), `A24.4 after ${inserted} inserted line(s)`).toBe(2533 + inserted);
+      expect(cited('A25.3'), `A25.3 after ${inserted} inserted line(s)`).toBe(2534 + inserted);
     }
   });
 
@@ -160,43 +173,43 @@ describe('the citation re-mapper', () => {
     const pins: PinTable = { 'A98.2': { anchor: '      areas: areaFc,', offset: 3, why: 'fixture: fully-superseded, pinned beside a neighbouring anchor' } };
     const { md: next, unresolved, moves } = remapCitations({ ...input, md: row('A98.2', 'V3:1'), list: ghost, pins });
     expect(unresolved).toEqual([]);
-    expect(moves).toEqual([{ id: 'A98.2', from: 1, to: 2546, rung: 'pin' }]);
-    expect(next).toBe(row('A98.2', 'V3:2546'));
+    expect(moves).toEqual([{ id: 'A98.2', from: 1, to: 2536, rung: 'pin' }]);
+    expect(next).toBe(row('A98.2', 'V3:2536'));
   });
 
   it('a pin more than one line from every one of the entry\'s own anchors is refused, not silently moved', () => {
-    // A24.7's own output stands once, at 919 (the "ONE anchor" case below). A pin naming a
-    // completely unrelated line is not evidence of anything — silently snapping it onto 919 would
-    // make the printed move log ("to: 2543") disagree with the file it wrote, which is the exact
+    // A24.7's own output stands once, at 922 (the "ONE anchor" case below). A pin naming a
+    // completely unrelated line is not evidence of anything — silently snapping it onto 922 would
+    // make the printed move log ("to: 2533") disagree with the file it wrote, which is the exact
     // defect measured on the review's own probe.
-    expect(anchorLines('A24.7', input)).toEqual([919]);
-    const pins: PinTable = { 'A24.7': { anchor: '      areas: areaFc,', offset: 0, why: 'fixture: nowhere near A24.7\'s own anchor at 919' } };
+    expect(anchorLines('A24.7', input)).toEqual([922]);
+    const pins: PinTable = { 'A24.7': { anchor: '      areas: areaFc,', offset: 0, why: 'fixture: nowhere near A24.7\'s own anchor at 922' } };
     const { unresolved, moves, md: next } = remapCitations({ ...input, md: row('A24.7', 'V3:1'), pins });
     expect(moves).toEqual([]);
     expect(next).toBe(row('A24.7', 'V3:1'));
-    expect(unresolved[0]).toMatch(/^A24\.7: the pin resolves to V3:2543, which is not within ±1 of any of this entry's own anchors \(919\) — check the pin's anchor and offset$/);
+    expect(unresolved[0]).toMatch(/^A24\.7: the pin resolves to V3:2533, which is not within ±1 of any of this entry's own anchors \(922\) — check the pin's anchor and offset$/);
   });
 
   it('an entry with ONE anchor is re-mapped whatever the row says, and a range keeps its span', () => {
     // A24.7's own output stands once in the design, so the rung never consults the number.
     const one = remapCitations({ ...input, md: row('A24.7', 'V3:1') });
-    expect(one.moves).toEqual([{ id: 'A24.7', from: 1, to: 919, rung: 'only' }]);
-    expect(one.md).toBe(row('A24.7', 'V3:919'));
+    expect(one.moves).toEqual([{ id: 'A24.7', from: 1, to: 922, rung: 'only' }]);
+    expect(one.md).toBe(row('A24.7', 'V3:922'));
     // A range whose SPAN the shift would carry off the end of the entry's own output is snapped
     // back onto it: A24.7 wrote ONE line, so a five-line range collapses onto that line rather
     // than pointing four lines into somebody else's edit.
     const span = remapCitations({ ...input, md: row('A24.7', 'V3:100–104') });
-    expect(span.md).toBe(row('A24.7', 'V3:919–919'));
+    expect(span.md).toBe(row('A24.7', 'V3:922–922'));
   });
 
   it('an entry with SEVERAL anchors takes the one nearest what the row already says', () => {
     // A3's "View full listing" stands twice: its own text node and A11's sibling button, which
     // A3's row cites deliberately. Each number keeps the anchor it was written for.
-    expect(anchorLines('A3', input)).toEqual([858, 872]);
+    expect(anchorLines('A3', input)).toEqual([861, 875]);
     // Both numbers move by the FIRST one's delta, and the second is snapped onto its own anchor
     // when that leaves it off one — which is what keeps A3's two citations on two lines.
-    expect(remapCitations({ ...input, md: row('A3', 'V3:859 and V3:873') }).md).toBe(row('A3', 'V3:858 and V3:872'));
-    expect(remapCitations({ ...input, md: row('A3', 'V3:861 and V3:884') }).md).toBe(row('A3', 'V3:858 and V3:872'));
+    expect(remapCitations({ ...input, md: row('A3', 'V3:862 and V3:876') }).md).toBe(row('A3', 'V3:861 and V3:875'));
+    expect(remapCitations({ ...input, md: row('A3', 'V3:864 and V3:887') }).md).toBe(row('A3', 'V3:861 and V3:875'));
   });
 
   it('A1\'s 24 derived edits are one row, and a row with no citation is untouched', () => {
