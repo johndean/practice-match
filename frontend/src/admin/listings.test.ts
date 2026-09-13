@@ -585,6 +585,20 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
     expect(alertSpy).toHaveBeenCalledWith('That listing could not be unpublished.');
   });
 
+  it('...and a rejected REJECT says "rejected", the same root verb the refusal wording uses', async () => {
+    // The other arm of the catch's own ternary, reached only when a DECLINE is the decide that
+    // never arrives — the `unpublish` case above cannot exercise it, and a wrong verb here would
+    // read "declineed" to the one reviewer who meets it.
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review' })], next_cursor: null } });
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('affiliation could not be verified'));
+    const rows = await listRows();
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be rejected.');
+  });
+
   it('...and a rejected decide asks for no reload, because nothing moved', async () => {
     stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } });
     vi.stubGlobal('alert', vi.fn());
