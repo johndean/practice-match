@@ -2536,6 +2536,45 @@ const A16_22: Amendment = {
   count: 1
 };
 
+/** A16.23 — Task ADMIN-SUPERSET fix round 1 (review Important-1), chained on A16.9. Consumes
+ *  A16.9, whose own literal role check this rewrites.
+ *
+ *  Ruling D-C54 (John, 2026-09-13, verbatim: "as logged in VIN FOUNDATION ADMIN i can no longer
+ *  access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+ *  need to see it all!!!") made `admin` a superset of the whole permission matrix — the FIRST
+ *  commit of this task's work — but A16.9's own bootstrap gate is a SECOND, unrelated copy of the
+ *  matrix, written before D-C54 existed and never asked to agree with it: `(me.roles ||
+ *  []).indexOf("seller") > -1`, a literal role-string test. `POST /api/applications` and the
+ *  router's own `go('seller')` guard now let an admin-only account CREATE a listing (`seller.apply`
+ *  and `page.seller` both carry `admin`), but this one line still gates the load that shows it
+ *  again: an admin-only seller signs in, opens a listing they created earlier, reloads the page —
+ *  and the dashboard renders NO rows, because the account holds no `seller` role string. Latent
+ *  today (no admin-only account owns a listing on QA yet) and certain the day one does.
+ *
+ *  The fix is A40.3's own idiom (`this.props.perms.allowed(...)`, the GENERATED matrix, never a
+ *  role list written here) applied to the ONE role check A40.4 did not reach, because A40's own
+ *  target was `page.admin` and this line asks about `page.seller` — the SAME permission the
+ *  router's `go('seller')` guard already asks (`frontend/src/router/sync.ts`'s
+ *  `requests → request.read_own`, `seller → page.seller` map), so the bootstrap load and the
+ *  screen it feeds can no longer disagree about who may see it. Guarded on `this.props.perms`
+ *  being present, exactly as A40.3's own `!this.props.perms || !this.props.perms.allowed(...)`
+ *  is: the app's `app.setup.js` always supplies one (`perms: { type: Object, default: () =>
+ *  makePermsAdapter() }`), so the guard is a no-op there, and the reference — which receives no
+ *  `perms` prop at all — is unaffected either way, because `this.props.listings` is already
+ *  falsy on the reference (an app-only adapter) and short-circuits the whole condition before the
+ *  role/permission term is ever read: this entry changes NOTHING the reference or the Claude
+ *  Design preview render, and every approved state keeps its pixels (`baseline-manifest.json`'s
+ *  thirteen frozen hashes are proved unmoved by this task's own gate run — the design persona
+ *  holds every role, so `seller-dash`'s frozen capture takes the `this.props.listings` branch on
+ *  an account this line always allowed, before and after). */
+const A16_23: Amendment = {
+  id: 'A16.23', date: '2026-09-13',
+  ruling: 'as logged in VIN FOUNDATION ADMIN i can no longer access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i need to see it all!!! (D-C54; fix round 1, review Important-1: the bootstrap seller-listing load is a second, unrelated copy of the matrix D-C54 never reached)',
+  find: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();\n',
+  replace: '    if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();\n',
+  count: 1
+};
+
 // ---------------------------------------------------------------------------------------
 // A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule,
 // verbatim: "every Admin tab must show real database data, never dummy rows"). A13-A16 are
@@ -6921,7 +6960,7 @@ export function amendments(): Amendment[] {
     // metro dropdown, the Give button and the lightbox), confirmed by `design-amendments.test.ts`
     // applying the whole merged list against the pristine bundle without a single re-match.
     A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19,
-    A16_20a, A16_20b, A16_21, A16_22, A17_1, A17_2,
+    A16_20a, A16_20b, A16_21, A16_22, A16_23, A17_1, A17_2,
     // A18 — the two arrow reversals (2026-09-09). Both finds are unique in the pristine file.
     A18_1, A18_2,
     // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
