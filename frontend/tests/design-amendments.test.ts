@@ -1377,9 +1377,12 @@ describe('local design amendments (spec D15)', () => {
   // a comment: the case runs the same rule at every threshold below the shipped one and pins how
   // many correct citations each would reject. Run it alone with
   //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
-  // The residue below 4 is text the design genuinely repeats: the three shared dismissal closures'
-  // identical `if (this.state.giveMenu) {` heads (3), and the `tickStyle:` declaration A26.2 and
-  // A26.3's filter families share (4).
+  // The residue below 4 is text the design genuinely repeats. RE-MEASURED after A33 (fix round 2,
+  // 2026-09-13): the family's insertions moved every line below V3:1892, so 132 citations were
+  // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
+  // left — which is why the residue FELL from {1: 28, 2: 7, 3: 4} to {1: 21, 2: 4, 3: 2} without
+  // any threshold being relaxed. What is left at 3 is A26.10 and A26.11, the two filter popover
+  // panels whose `panelStyle` string A26.16 unified, so the design carries it four times.
   it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
@@ -1399,7 +1402,7 @@ describe('local design amendments (spec D15)', () => {
       occurrences: (piece) => design.split(piece).length - 1,
       maxOccurrences: k,
     }).findings.filter((f) => f.includes('is stale')).length;
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 28, 2: 7, 3: 4, 4: 0 });
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 21, 2: 4, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 
