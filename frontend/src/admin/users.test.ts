@@ -37,10 +37,16 @@ const BTN = {
   plain: DESIGN[2][3].actions[0].style      // A("Request info") — no tone
 };
 
+// `application_status: null` — an account with NO application row, which every case below that is
+// about some OTHER axis wants, because a row keys its pill and its buttons on an OPEN application
+// where it has one and on its own `account.state` where it has none (fix round 1, Important 1). It
+// is also a real shape rather than a testing convenience: `scripts/seed_persona.py` seeds
+// `pending@practice-match.test` in state `pending` with no `application` row at all. The
+// open-application axis has its own describe block, below the per-state one.
 const PRIYA: UserItem = {
   account_id: 'a1', email: 'priya@example.test', state: 'pending', name: 'Dr. Priya Raghavan',
   affiliation_label: null, kind: 'buyer', flags: [], roles: [], grants: [],
-  decided_at: null, decided_by_name: null,
+  decided_at: null, decided_by_name: null, application_status: null,
   fields: { school_year: 'Texas A&M, 2016', license_state: 'TX', employer: 'Associate, two-doctor practice', intent: 'Looking to buy within 18 months in Central Texas.' }
 };
 const item = (over: Partial<UserItem>): UserItem => ({ ...PRIYA, ...over });
@@ -217,6 +223,8 @@ describe('the facts the design has no element for, stated in its own ` · ` idio
 });
 
 describe('the pill and the decision buttons, per account state', () => {
+  // `application_status: null` is PRIYA's own default — these two are the ACCOUNT-STATE axis, and
+  // the open-application axis has its own block below.
   const pillOf = (state: string) => rowsFor([item({ state })])[0][2];
   const buttonsOf = (state: string) => rowsFor([item({ state })])[0][3];
 
@@ -265,6 +273,79 @@ describe('the pill and the decision buttons, per account state', () => {
 
   it('offers nothing on a state with no transition left, and the cell says so', () => {
     expect(buttonsOf('revoked')).toMatchObject({ hasActions: false, actions: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Fix round 1, review Important 1 — the controller's ruling of 2026-09-13, which closes the gap
+// rulings 4 and 8 left between them: a row's pill and action set key on the OPEN APPLICATION's
+// status where the row has one, and on the account's own state only where it has none.
+//
+// The row that needs it is real and reachable in two clicks: a SELLER applies from an account that
+// is already `active` (`app/api/applications.py` — "moving it to `pending` would strip every role
+// on the next request"), and `POST …/decide` accepts `approve`, `decline` and `request_info` on
+// exactly that application. Before the ruling this tab showed such a row the "Approved" pill and a
+// single "Suspend" button: a seller applicant, told they were approved, with no way to decide them.
+// ---------------------------------------------------------------------------------------
+describe('an OPEN application outranks the account state, because that is the row being decided', () => {
+  const open = (over: Partial<UserItem>) => rowsFor([item(over)])[0];
+  const labels = (row: Cell[]) => row[3].actions.map((a) => a.label);
+
+  it('gives an active account with a pending seller application the applicant\'s own pill and buttons', () => {
+    const row = open({ state: 'active', kind: 'seller', application_status: 'pending' });
+    expect(row[2]).toMatchObject({ pill: 'Pending', pillStyle: PILL.warn });
+    expect(labels(row)).toEqual(['Approve', 'Decline', 'Request info']);
+    // Ruling 8's marker still leads the affiliation sub-line — this changes the pill, not the copy.
+    expect(row[1].sub.startsWith('Seller applicant · ')).toBe(true);
+  });
+
+  it('does the same for the other half of OPEN_STATUSES, after a Request info', () => {
+    const row = open({ state: 'active', kind: 'seller', application_status: 'needs_review' });
+    expect(row[2]).toMatchObject({ pill: 'Needs review', pillStyle: PILL.bad });
+    expect(labels(row)).toEqual(['Approve', 'Decline']);
+  });
+
+  it('leaves a CLOSED application entirely alone — the account state decides again', () => {
+    for (const status of ['approved', 'declined']) {
+      const row = open({ state: 'active', application_status: status });
+      expect(row[2], status).toMatchObject({ pill: 'Approved', pillStyle: PILL.ok });
+      expect(labels(row), status).toEqual(['Suspend']);
+    }
+    // And a suspension still reads as one, whatever the closed application says.
+    expect(labels(open({ state: 'suspended', application_status: 'approved' }))).toEqual(['Reinstate']);
+  });
+
+  it('changes nothing for a buyer applicant, whose account state already said the same thing', () => {
+    const withRow = open({ state: 'pending', application_status: 'pending' });
+    const withoutRow = open({ state: 'pending', application_status: null });
+    expect(withRow[2]).toEqual(withoutRow[2]);
+    expect(labels(withRow)).toEqual(labels(withoutRow));
+    expect(labels(withRow)).toEqual(['Approve', 'Decline', 'Request info']);
+  });
+
+  it('says nothing about an approval while the application is still open (Request info stamps a date)', () => {
+    // `admin_users.decide` writes `decided_at=now()` for EVERY application action, `request_info`
+    // included, and leaves the status `needs_review` — which is OPEN. So an active account whose
+    // seller application has been sent back for more information carries both an open application
+    // and a decision date, and the design's approved sentence is gated on `state === 'active'`
+    // alone: the row would have read "Needs review" beside "Approved August 12 by staff reviewer
+    // K. Alvarez." The sentence belongs to a CLOSED application, so an open one silences it and
+    // the applicant's own words come back.
+    const row = open({
+      state: 'active', kind: 'seller', application_status: 'needs_review',
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez'
+    });
+    expect(row[2]).toMatchObject({ pill: 'Needs review' });
+    expect(row[1].sub).not.toContain('Approved August 12');
+    expect(row[1].sub).toBe('Seller applicant · “Looking to buy within 18 months in Central Texas.”');
+  });
+
+  it('falls back to the account state for an application status this table does not know', () => {
+    // `ACTIONS`/`PILLS` are keyed by names pytest pins against the API's own tables; a status that
+    // is neither open nor closed-as-we-know-it must not blank the row.
+    const row = open({ state: 'active', application_status: 'withdrawn' });
+    expect(row[2]).toMatchObject({ pill: 'Approved', pillStyle: PILL.ok });
+    expect(labels(row)).toEqual(['Suspend']);
   });
 });
 

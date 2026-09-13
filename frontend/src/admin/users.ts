@@ -13,6 +13,18 @@
  * The one thing `A()` does not carry over verbatim is `go: () => {}`: the design's is a
  * prototype no-op, and here it is the decision.
  *
+ * **A ROW IS KEYED ON ITS OPEN APPLICATION WHERE IT HAS ONE, AND ON ITS OWN ACCOUNT STATE WHERE IT
+ * HAS NONE** (the controller's ruling on fix round 1's review Important 1, 2026-09-13, closing the
+ * gap rulings 4 and 8 left between them). `account.state` is not the whole story about what is
+ * waiting on this tab: a SELLER applies from an account that is ALREADY `active` — `POST
+ * /api/applications` says why, "moving it to `pending` would strip every role on the next request"
+ * — and `POST …/decide` accepts `approve`, `decline` and `request_info` on that application. Keyed
+ * on the account state alone, such a row showed the "Approved" pill and one "Suspend" button: a
+ * seller applicant, told they were approved, with no way to decide them, over a badge that did not
+ * count them. So `openStatus()` below is the one place that decision is made, and the pill, the
+ * buttons and the provenance sentence all read it; `app/api/admin_users.py`'s `COUNTS_SQL` counts
+ * the same union, so the badge and the rows cannot disagree about what "open" means.
+ *
  * **REVOKE IS NOT RENDERED, and that is a ruling rather than an omission** (the controller's
  * ruling 6 on the audit's Users items, 2026-09-13). `users.revoke` is the one decision in
  * `permissions.REAUTH`, so the API refuses it without a fresh password step-up — and V3 draws no
@@ -153,6 +165,9 @@ export interface UserItem {
   grants: Grant[];
   decided_at: string | null;
   decided_by_name: string | null;
+  /** The LATEST application's own status, or null where the account has none — `pending`,
+   *  `needs_review`, `approved` or `declined`. The two OPEN ones outrank `state` (module note). */
+  application_status: string | null;
 }
 
 /**
@@ -213,12 +228,30 @@ function roleLine(item: UserItem): string {
     : `granted ${formatDate(grant.granted_at)}`]);
 }
 
+/** `OPEN_STATUSES` in `app/api/admin_users.py` — the two an application is still waiting in. */
+const OPEN_STATUSES = ['pending', 'needs_review'];
+
+/** The status of the row's OWN open application, or null where nothing is open — the one place the
+ *  module note's rule is decided, so the pill, the buttons and the provenance sentence cannot
+ *  disagree with each other about which fact a row is about. */
+function openStatus(item: UserItem): string | null {
+  return item.application_status !== null && OPEN_STATUSES.includes(item.application_status)
+    ? item.application_status
+    : null;
+}
+
 /** "Approved August 12 by staff reviewer K. Alvarez." — the design's own sentence on its approved
  *  row, from `application.decided_at` and the decider's display name (both Task A36's own payload
  *  fields). Only an ACTIVE account gets it: `decided_at` is stamped on a decline too, and the
- *  design has one approved sentence and no declined one. */
+ *  design has one approved sentence and no declined one.
+ *
+ *  And only while nothing is OPEN: `decide` writes `decided_at=now()` for every application action,
+ *  `request_info` among them, and that one leaves the application `needs_review`. So an active
+ *  account whose seller application has been sent back for more carries a decision date beside an
+ *  open application, and this sentence would have called it approved under the "Needs review" pill
+ *  the same ruling puts there (fix round 1). */
 function provenance(item: UserItem): string {
-  if (item.state !== 'active' || item.decided_at === null) return '';
+  if (item.state !== 'active' || item.decided_at === null || openStatus(item) !== null) return '';
   const by = item.decided_by_name === null ? '' : ` by staff reviewer ${item.decided_by_name}`;
   return `Approved ${formatDate(item.decided_at)}${by}.`;
 }
@@ -258,11 +291,18 @@ export function toUserRows(items: (UserItem | DesignUserRow)[], ui: UsersUi): Ce
       ];
     }
     const fields = item.fields ?? {};
+    // The row's own key: its open application where it has one, else its account state (module
+    // note). `PILLS` and `ACTIONS` are indexed by names pytest pins against the API's own
+    // `ACCOUNT_STATES` and `TRANSITIONS`, and `OPEN_STATUSES`'s two members are in both tables —
+    // `pending` and `needs_review` name an account state and an application status alike, which is
+    // what lets one lookup serve both and is why no second table is introduced here.
+    //
     // The fallback is for a state the API learns to report before this table learns to show it:
     // pytest pins PILLS's keys against today's `ACCOUNT_STATES`, so it cannot be reached by any
     // state that exists now.
-    const [pill, tone] = PILLS[item.state] ?? [item.state, 'mute'];
-    const actions = ACTIONS[item.state];
+    const key = openStatus(item) ?? item.state;
+    const [pill, tone] = PILLS[key] ?? [key, 'mute'];
+    const actions = ACTIONS[key];
     const flagged = item.flags.length > 0;
     return [
       // The applicant, then what qualifies the name: the design's own school/licence pair, the VIN

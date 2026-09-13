@@ -101,15 +101,17 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
         {"state": "pending", "kind": None, "role": None, "cursor_at": None, "cursor_id": None, "limit": MAX_LIST + 1},
     ),
-    # Task A36: the SECOND query `GET /api/admin/users` now runs on every call — the grouped count
-    # that answers the Users tab's badge. No `INDEXES` claim and the same two exemptions
-    # `signups_counts` carries below, for the same reason: a full, ungated `GROUP BY` over the whole
-    # `account` table is CORRECTLY a `HashAggregate` over a `Seq Scan`, there being no covering
-    # index on `state` to choose and no reason to add one. It is here so the query's SHAPE is
-    # pinned and visible beside the list query it ships with.
+    # Task A36: the SECOND query `GET /api/admin/users` runs on a tab load — the count that answers
+    # the Users tab's badge (fix round 1, review Minor 1: on the FIRST page only, never once per
+    # page of a paging client). No `INDEXES` claim and the same two exemptions `signups_counts`
+    # carries below, for the same reason: a full, ungated aggregate over the whole `account` table
+    # is CORRECTLY an `Aggregate` over a `Seq Scan`, there being no covering index on `state` to
+    # choose and no reason to add one. It is here so the query's SHAPE is pinned and visible beside
+    # the list query it ships with — fix round 1 widened it with the semi-join on `application`
+    # that counts a seller applying from an `active` account.
     "users_counts": (
         "EXPLAIN (FORMAT JSON) " + USERS_COUNTS_SQL,
-        (),
+        {"open": ["pending", "needs_review"]},
     ),
     "session_lookup": (
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",

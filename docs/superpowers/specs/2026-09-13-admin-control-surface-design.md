@@ -42,6 +42,22 @@ The pill uses the design's three pill tones (dark = active/on, outline = off/not
 
 **Alternative rejected:** `window.prompt` — takes a password unmasked; refused by the A36 brief.
 
+**Its entry point already exists and has no caller.** `frontend/src/auth/api.ts`'s `reauth()` —
+`POST /api/auth/reauth` — was Task I7's half of this dialog; A36 deleted the `reauthThen`/`PERM_OF`
+pair that was going to call it, because a step-up with no element is unreachable code beside a
+100 %-branch gate. `reauth()` itself was KEPT, with its own unit test, and it is the function this
+family calls: named here so a dead-code sweep does not take it first (A36 fix round 1, review
+Minor 4).
+
+**A decision in flight disables its own button**, in the design's own treatment — which the bundle
+does not yet have: `Practice Match V3.dc.html` carries no `disabled`, no `aria-disabled` and no
+`cursor: not-allowed` anywhere (measured, 0 occurrences of each). So a double-click on Approve
+today sends two decisions and the second takes a 409 into the `alert` (A36 fix round 1, review
+Minor 3). The treatment is one ruling — a tone for a button that is working — and it belongs to
+this family rather than to A36, because every REAUTH action and every decision on every tab wants
+the same one. Until John rules it, nothing is invented: the second decision is refused by the API,
+which is the honest failure and not a silent one.
+
 ## 4. The licence decision on Data Sources
 
 The registry's only real write is `POST /data-sources/{key}/license` (REAUTH). V3's "Assign review" / "Open question" buttons have no backing and are removed by A38.

@@ -255,11 +255,142 @@ async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(
 
     every = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
     assert {i["state"] for i in every["items"]} >= {"pending", "needs_review"}
-    assert every["counts"] == {"open": 2, "total": 4}
+    # THREE, not two (fix round 1, review Important 1): `open-seller@example.org` is an `active`
+    # account carrying a pending SELLER application, and the tab shows that row with the applicant's
+    # own buttons, so the badge counts it. Before the ruling the count read `account.state` alone
+    # and called this queue two deep while three rows were waiting.
+    assert every["counts"] == {"open": 3, "total": 4}
     for query in ("?state=pending", "?kind=seller", "?role=admin", "?limit=1"):
         narrowed = (await client.get(f"/api/admin/users{query}", headers=auth_headers(cookies))).json()
         assert narrowed["counts"] == every["counts"], query
     assert str(pending) in {i["account_id"] for i in every["items"]}
+
+
+async def test_an_open_seller_application_on_an_active_account_is_in_the_open_queue_count(client, conn, member):
+    """Fix round 1, review Important 1 (the controller's ruling on it, 2026-09-13).
+
+    A seller applies from an account that is ALREADY `active` — `POST /api/applications` says so
+    outright ("moving it to `pending` would strip every role on the next request") — so the row the
+    Users tab shows has `state: "active"` and `application_status: "pending"` at once, and
+    `decide` accepts `approve`, `decline` and `request_info` on it. The badge read `account.state`
+    alone, so the one row a reviewer most needs to see was not in the number that tells them to
+    look: the tab said the queue was EMPTY while holding a seller applicant with three live
+    buttons. `open` is the queue the tab RENDERS as open — an account with an application awaiting
+    a decision, whatever its own state.
+
+    `total` is unchanged and still counts ACCOUNTS: it is the size of the table, not of the queue.
+    """
+    seller, scookies, shdr = member(("buyer",), email="seller-applicant@example.org")
+    _admin, cookies, hdr = member(("admin",), email="counts-admin@example.org")
+
+    before = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    assert before["counts"] == {"open": 0, "total": 2}
+
+    assert (await client.post("/api/applications", headers=auth_headers(scookies, shdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(seller))
+    # The row this count is about: an ACTIVE account whose application is open.
+    assert row["state"] == "active" and row["kind"] == "seller" and row["application_status"] == "pending"
+    assert body["counts"] == {"open": 1, "total": 2}
+
+    # And the API really does accept a decision on it, which is why it belongs in the queue.
+    decided = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "request_info", "note": "Which hospital is this?"})
+    assert decided.status_code == 200
+    after = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    # Still open — `needs_review` is the other half of `OPEN_STATUSES`, and the account is still
+    # `active`, so this is the same row counted through its application for the second time.
+    assert after["counts"]["open"] == 1
+
+
+async def test_an_open_queue_account_with_no_application_row_is_still_counted(client, conn, member):
+    """The other side of the same ruling, and it is not hypothetical: `scripts/seed_persona.py`
+    seeds `pending@practice-match.test` in state `pending` with NO `application` row at all (only
+    the `needs_review` persona gets one written), so this account shape is live on QA.
+
+    The tab gives such a row the applicant treatment through the account state — that is what "and
+    on the account state only when no application is open" means — so the badge counts it too.
+    Counting open APPLICATIONS alone would have moved Important 1's defect one row over: a Pending
+    pill with three live buttons, over a badge that does not know it is there."""
+    aid, _cookies, _hdr = member((), state="pending", email="no-application-row@example.org")
+    _admin, cookies, _hdr2 = member(("admin",), email="no-row-admin@example.org")
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(aid))
+    assert row["state"] == "pending" and row["application_status"] is None
+    assert body["counts"] == {"open": 1, "total": 2}
+
+
+async def test_the_badge_count_is_asked_for_once_per_tab_load_and_never_once_per_page(client, conn, member, monkeypatch):
+    """Fix round 1, review Minor 1. The count is a full scan of `account`; the list is a keyset
+    page. `admin/users.ts` walks up to `MAX_PAGES` pages and keeps the FIRST page's counts, so a
+    server that answers the grouped scan on every page charges a large queue up to twenty scans
+    for one tab load and throws nineteen of the answers away.
+
+    A page that carries a `cursor` is by definition not the first, so it serves `counts: null` and
+    runs no count at all — which `countsOf` already reads as "no counts on this page".
+
+    Counted, not reasoned: a cursor proxy records every statement the route executes, and the
+    assertion is on how many of them are the count."""
+    from app.api import admin_users as A
+
+    for n in range(3):
+        await _applicant(client, member, email=f"page-{n}@example.org")
+    _admin, cookies, _hdr = member(("admin",), email="paging-admin@example.org")
+
+    counted: list[str] = []
+    real_conn = A.sync_conn
+
+    class CountingCursor:
+        """A pass-through proxy; psycopg2's own cursor is a C object with no settable methods."""
+
+        def __init__(self, cur: Any) -> None:
+            self._cur = cur
+
+        def execute(self, sql: Any, params: Any = None) -> Any:
+            if "count(*)" in str(sql):
+                counted.append(str(sql))
+            return self._cur.execute(sql, params)
+
+        def __enter__(self) -> Any:
+            self._cur.__enter__()
+            return self
+
+        def __exit__(self, *exc: object) -> Any:
+            return self._cur.__exit__(*exc)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._cur, name)
+
+    class CountingConn:
+        def __init__(self, c: Any) -> None:
+            self._c = c
+
+        def cursor(self, *a: Any, **kw: Any) -> CountingCursor:
+            return CountingCursor(self._c.cursor(*a, **kw))
+
+        def __enter__(self) -> Any:
+            return self._c.__enter__()
+
+        def __exit__(self, *exc: object) -> Any:
+            return self._c.__exit__(*exc)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._c, name)
+
+    monkeypatch.setattr(A, "sync_conn", lambda *a, **kw: CountingConn(real_conn(*a, **kw)))
+
+    first = (await client.get("/api/admin/users?limit=1", headers=auth_headers(cookies))).json()
+    assert len(counted) == 1, f"the first page runs the grouped count exactly once, not {len(counted)}"
+    assert first["counts"]["open"] == 3 and first["next_cursor"]
+
+    second = (await client.get(f"/api/admin/users?limit=1&cursor={first['next_cursor']}",
+                               headers=auth_headers(cookies))).json()
+
+    assert len(counted) == 1, "a cursored page must not pay for the count the caller already has"
+    assert second["counts"] is None and second["items"]
 
 
 async def test_the_detail_view_carries_applications_grants_and_refuses_an_unknown_account(client, conn, member):

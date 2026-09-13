@@ -2174,7 +2174,7 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     {
       account_id: 'aaaaaaaa-0000-4000-8000-000000000001', email: 'pending@example.test', state: 'pending',
       name: 'Dr. Wanda Okafor', affiliation_label: null, kind: 'buyer', flags: [], roles: [], grants: [],
-      decided_at: null, decided_by_name: null,
+      decided_at: null, decided_by_name: null, application_status: 'pending',
       fields: { school_year: 'Tufts, 2011', license_state: 'MA', employer: 'Associate, three-doctor practice', intent: 'Buying near Boston within a year.', vin_member_id: '884201' }
     },
     {
@@ -2182,19 +2182,31 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
       name: 'Dr. Idris Calloway', affiliation_label: null, kind: 'seller', flags: [],
       roles: ['admin', 'buyer'],
       grants: [{ role: 'admin', granted_by_name: 'Dr. Wanda Okafor', granted_at: '2026-08-12T09:00:00+00:00' }],
-      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez',
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez', application_status: 'approved',
       fields: { school_year: 'Cornell, 2003', license_state: 'NY, NJ', employer: 'Owner, one practice', intent: 'Listing in 2027.' }
     }
   ];
 
-  /** `GET /api/admin/users` as the REAL API serves it, over the oracle's design-fixture stub. */
-  async function serveAccounts(page: Page): Promise<void> {
+  /** `GET /api/admin/users` as the REAL API serves it, over the oracle's design-fixture stub.
+   *
+   *  `gets` records one entry per LIST request, which is how the reload seam is gated (fix round 1,
+   *  review Important 2): the case that claims a decision re-reads the queue asserted only that a
+   *  row was still on screen, and a row that never left is no evidence at all. `queue` lets a case
+   *  answer the SECOND read with something different from the first. */
+  async function serveAccounts(
+    page: Page,
+    opts: { gets?: string[]; queue?: () => { items: unknown[]; counts: { open: number; total: number } } } = {}
+  ): Promise<void> {
     const href = new URL('/api/admin/users', appOrigin()).href;
+    const answer = opts.queue ?? (() => ({ items: ACCOUNTS, counts: { open: 1, total: 2 } }));
     await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
-      (route) => route.fulfill({
-        status: 200, contentType: 'application/json',
-        body: JSON.stringify({ items: ACCOUNTS, next_cursor: null, counts: { open: 1, total: 2 } })
-      }));
+      (route) => {
+        opts.gets?.push(route.request().url());
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ ...answer(), next_cursor: null })
+        });
+      });
   }
 
   const usersTab = (page: Page) => page.getByRole('button', { name: /^Users\s*\d/ });
@@ -2239,7 +2251,12 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
 
   test('Approve posts the decision the API names, and re-reads the queue after it', async ({ page }) => {
     await prepare(page);
-    await serveAccounts(page);
+    // COUNTED, not observed (fix round 1, review Important 2). This case used to end on "the row
+    // is still visible", which was true before the click and is answered by the same stub after
+    // it: cutting A36.2's `list(() => this.loadAdmin())` to `list(() => {})` left all three A36
+    // cases green. The reload is a REQUEST, so the assertion is on requests.
+    const gets: string[] = [];
+    await serveAccounts(page, { gets });
     const posted: unknown[] = [];
     await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
       posted.push(JSON.parse(route.request().postData() ?? 'null'));
@@ -2247,11 +2264,109 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     });
     await signInAs(page, 'design', '/admin');
     await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+    expect(gets, 'the tab load reads the queue exactly once').toHaveLength(1);
 
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect.poll(() => posted).toEqual([{ action: 'approve', note: '' }]);
-    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made again.
+    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made AGAIN.
+    await expect.poll(() => gets.length, { message: 'the decision did not re-read the queue' }).toBe(2);
     await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Important 1 — the controller's ruling of 2026-09-13, in a real browser.
+  // A SELLER applies from an account that is already `active`, so this row arrives `state:
+  // "active"` with `application_status: "pending"` and the API accepts three decisions on it.
+  // Keyed on the account state alone it read "Approved", offered one "Suspend" and was not in the
+  // badge — a seller applicant a reviewer could see and could not decide.
+  // -----------------------------------------------------------------------------------------
+  const SELLER_APPLICANT = [{
+    account_id: 'aaaaaaaa-0000-4000-8000-000000000003', email: 'seller@example.test', state: 'active',
+    name: 'Dr. Noor Haddad', affiliation_label: null, kind: 'seller', flags: [], roles: ['buyer'], grants: [],
+    decided_at: '2026-07-04T10:00:00+00:00', decided_by_name: 'K. Alvarez', application_status: 'pending',
+    fields: { school_year: 'Davis, 2012', license_state: 'CA', employer: 'Owner, one practice', intent: 'Selling in 2027.' }
+  }];
+
+  test('a seller applying from an approved account is decidable, and is in the badge', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // `counts.open` is 1 because the API counts the open APPLICATION, whatever the account state —
+    // the same union `COUNTS_SQL` explains, pinned on its own side by
+    // `test_an_open_seller_application_on_an_active_account_is_in_the_open_queue_count`.
+    await serveAccounts(page, { queue: () => ({ items: SELLER_APPLICANT, counts: { open: 1, total: 1 } }) });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
+
+    // The applicant's own three, from the OPEN application rather than from `account.state`.
+    for (const label of ['Approve', 'Decline', 'Request info']) {
+      await expect(page.getByRole('button', { name: label, exact: true }), label).toHaveCount(1);
+    }
+    await expect(page.getByRole('button', { name: 'Suspend', exact: true }),
+      'an account with an open application is not offered an account action').toHaveCount(0);
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approved', { exact: true }),
+      'the row is not approved — its application is open').toHaveCount(0);
+    // Ruling 8's marker still leads the sub-line, and the account's EARLIER buyer approval does not
+    // introduce itself over an open application.
+    await expect(page.getByText('Seller applicant · “Selling in 2027.”')).toBeVisible();
+    await expect(usersTab(page)).toHaveText(/^Users\s*1$/);
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Minor 2. Both cases above stub the decide route, so until now the CSRF
+  // header was proved at the unit boundary alone. Here the header the REAL browser sends is read
+  // off the request and compared with the browser's own cookie, the stub answers a real 200, and
+  // the reload is answered with the row in its NEW state — the whole loop the task is named after.
+  //
+  // The decision is not driven against the live route on purpose: the only real accounts this
+  // suite's database holds in an open state are `seed_persona.py`'s `pending@practice-match.test`
+  // and `needs-review@practice-match.test`, which `harness.ts`'s own personas sign in AS to reach
+  // the "under review" gate, so deciding one here would change what `account-flows.spec.ts` sees.
+  // The route itself is exercised end to end by `tests/api/test_admin_users.py`.
+  // -----------------------------------------------------------------------------------------
+  test('the decision the browser really sends is accepted, and the reload renders the new state', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    let decided = false;
+    const sent: { method: string; csrf: string | undefined; body: unknown }[] = [];
+    await serveAccounts(page, {
+      queue: () => ({
+        items: [{ ...SELLER_APPLICANT[0], application_status: decided ? 'approved' : 'pending' }],
+        counts: { open: decided ? 0 : 1, total: 1 }
+      })
+    });
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      const request = route.request();
+      sent.push({
+        method: request.method(),
+        csrf: request.headers()['x-csrf-token'],
+        body: JSON.parse(request.postData() ?? 'null')
+      });
+      decided = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer', 'seller'] }) });
+    });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect.poll(() => sent).toHaveLength(1);
+
+    const cookie = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
+    expect(sent[0].method).toBe('POST');
+    expect(sent[0].body).toEqual({ action: 'approve', note: '' });
+    // The real header, against the real cookie the real browser is holding — `csrfToken()`'s whole
+    // job, and the one thing a unit test with a stubbed `document.cookie` cannot say.
+    expect(cookie?.value, 'the session carries no csrf cookie to send').toBeTruthy();
+    expect(sent[0].csrf).toBe(cookie?.value);
+
+    // 200 → reload → the row's NEW state on screen: "Approved", and the badge down to nothing.
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toHaveCount(1);
+    // A queue of nothing is a NUMBER, not silence: A36.4/A36.5 unmount the pill where the API sent
+    // no count at all (`counts: null`), which is not the same statement as "none are waiting".
+    await expect(usersTab(page)).toHaveText(/^Users\s*0$/);
+    expect(errors).toEqual([]);
   });
 
   test('a blank decline note sends nothing at all — the API refuses one, so the click is not a decision', async ({ page }) => {

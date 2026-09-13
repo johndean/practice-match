@@ -412,9 +412,29 @@ def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | Non
 
 # The badge the Admin Users tab shows is the OPEN QUEUE — every account awaiting a decision, over
 # the whole table, never the filtered page (Task A36, the controller's ruling on the audit's first
-# Users item). One grouped scan, `admin_signups.COUNTS_SQL`'s own pattern: the two numbers the
-# response carries are read from the same rows, so they cannot disagree with each other.
-COUNTS_SQL = "SELECT state, count(*) FROM account GROUP BY 1"
+# Users item). One scan, `admin_signups.COUNTS_SQL`'s own pattern: the two numbers the response
+# carries are read from the same rows, so they cannot disagree with each other.
+#
+# "Awaiting a decision" is the row the TAB renders as open, and fix round 1's ruling on review
+# Important 1 is what makes those two the same sentence: a row takes the applicant's pill and
+# buttons from its OPEN APPLICATION where it has one and from its own `account.state` where it has
+# none, so the count is that same union. Each half is load-bearing on its own:
+#
+#   * the application half, because a SELLER applies from an account that is already `active`
+#     (`api/applications.py`: "moving it to `pending` would strip every role on the next request"),
+#     so a row with three live decision buttons was not in the number that tells a reviewer to look;
+#   * the state half, because `scripts/seed_persona.py` seeds `pending@practice-match.test` in state
+#     `pending` with NO `application` row at all, and that account is live on QA.
+#
+# One open application per ACCOUNT is the invariant `api/applications.py` enforces, so this counts
+# rows of the tab and open applications at the same time; the `EXISTS` says rows either way.
+COUNTS_SQL = """
+SELECT count(*) FILTER (WHERE a.state = ANY(%(open)s)
+                           OR EXISTS (SELECT 1 FROM application
+                                       WHERE account_id = a.id AND status = ANY(%(open)s))) AS open,
+       count(*) AS total
+  FROM account a
+"""
 
 LIST_SQL = """
 SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at, a.last_sign_in_at,
@@ -460,9 +480,15 @@ async def list_users(
     approved row reads "Approved August 12 by staff reviewer K. Alvarez.", a date and a NAME, and
     `application.decided_by` is an account id nobody can read; each grant gains `granted_by_name`
     for the same reason, which is what lets the tab show an admin how another admin came to hold
-    the role (`_grants`'s own docstring). `counts` is the tab's badge: `open` is every account in
-    `OPEN_STATUSES` and `total` every account, over the WHOLE table and never the filtered page —
-    a reviewer who narrows to one applicant must not be told the queue is one deep."""
+    the role (`_grants`'s own docstring). `counts` is the tab's badge: `open` is every account
+    awaiting a decision — by its own application or, where it has none, by its own state, the union
+    `COUNTS_SQL` explains — and `total` every account, over the WHOLE table and never the filtered
+    page: a reviewer who narrows to one applicant must not be told the queue is one deep.
+
+    The count is served with the FIRST page only (fix round 1, review Minor 1). It is a full scan
+    of `account` and the badge describes the whole table, so a client paging the queue already
+    holds the answer; a cursored page carries `counts: null`, which is the client's own "no counts
+    on this page", and runs no scan at all."""
     keyset_at, keyset_id = _keyset(cursor)
     filters = {"state": _filter("state", state, ACCOUNT_STATES),
                "kind": _filter("kind", kind, APPLICATION_KINDS),
@@ -472,9 +498,11 @@ async def list_users(
         with conn.cursor() as cur:
             cur.execute(LIST_SQL, {**filters, "cursor_at": keyset_at, "cursor_id": keyset_id, "limit": capped + 1})
             rows = cur.fetchall()
-            cur.execute(COUNTS_SQL)
-            # Named `at_state`, not `state`: the query parameter of that name is still live above.
-            by_state = {at_state: n for at_state, n in cur.fetchall()}
+            counts: dict[str, int] | None = None
+            if cursor is None:
+                cur.execute(COUNTS_SQL, {"open": list(OPEN_STATUSES)})
+                open_now, total = cast("tuple[int, int]", cur.fetchone())
+                counts = {"open": open_now, "total": total}
         items = [
             {"account_id": str(r[0]), "email": r[1], "state": r[2], "name": r[3], "affiliation_label": r[4],
              "created_at": r[5].isoformat(), "last_sign_in_at": _iso(r[6]),
@@ -487,7 +515,7 @@ async def list_users(
     last = items[-1] if len(rows) > capped else None
     return {"items": items,
             "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None,
-            "counts": {"open": sum(by_state.get(s, 0) for s in OPEN_STATUSES), "total": sum(by_state.values())}}
+            "counts": counts}
 
 
 @router.get("/users/{account_id}")
