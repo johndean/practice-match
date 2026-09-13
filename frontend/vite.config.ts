@@ -25,7 +25,7 @@ export default defineConfig({
       // additions being `src/dc-logic.js` and `src/lib/leaflet.js`, which moved out of the
       // exclusions below once Browse V3's final-review fix round gave them behaviour tests.
       include: ['src/**/*.{ts,js,vue}', 'tests/design-amendments.ts', 'tests/amend-guard.ts',
-        'scripts/port-logic.mjs'],
+        'tests/citation-remap.ts', 'scripts/port-logic.mjs'],
       // NOT measured, and why — every entry is generated, verbatim-ported, types-only or a test
       // double, with nothing left that is merely inconvenient to test: App.vue and pseudo.css
       // are generated from the design; logic.js and app.setup.js are the verbatim-ported

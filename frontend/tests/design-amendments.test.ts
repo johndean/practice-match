@@ -2,11 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
-import { citationFindings, ruledTextFindings } from './amend-guard';
-
-/** The measured distinctiveness threshold: a cited line's matching piece may occur at most this
- *  many times in the amended design. Re-derived by the case that pins the whole table. */
-const DISTINCTIVENESS_K = 4;
+import { DISTINCTIVENESS_K, citationFindings, ruledTextFindings } from './amend-guard';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');

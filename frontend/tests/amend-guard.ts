@@ -220,6 +220,16 @@ export function ruledTextFindings({ list, final, rowOf }: GuardInput): { finding
  *     actually see — by following the chain forward, which is what `outputFor` does.
  *   * A pure REMOVAL amendment has no output to point at and must not carry a citation at all.
  */
+/**
+ * The measured distinctiveness threshold: a cited line's matching piece may occur at most this
+ * many times in the whole amended design. It lives HERE, with the rule it belongs to, because
+ * three readers need the one number — `design-amendments.test.ts`'s two citation cases and the
+ * `remap:citations` tool, which must accept exactly what the gate accepts or it would re-map a
+ * citation onto an anchor the gate then refuses. It is re-derived on every run by
+ * "the distinctiveness threshold is the smallest that accepts every correct citation".
+ */
+export const DISTINCTIVENESS_K = 4;
+
 export type CitationInput = {
   /** Every line of `LOCAL_AMENDMENTS.md`; rows are recognised by their leading `| A<id> |`. */
   rows: string[];
