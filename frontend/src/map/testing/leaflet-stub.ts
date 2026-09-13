@@ -9,7 +9,19 @@ export interface LeafletStub { calls: Call[]; map: FakeMap; tiles: FakeTile[]; c
 let SEQ = 0;
 
 class FakeLayer { added: unknown[] = []; seq = -1; on(ev: string, cb: () => void) { (this as any)['on_' + ev] = cb; return this; } addTo(g: any) { g.added?.push(this); (this as any).parent = g; this.seq = SEQ++; return this; } remove() { const p = (this as any).parent; if (p?.added) p.added = p.added.filter((x: unknown) => x !== this); } bindTooltip(text: string, opts: unknown) { (this as any).tooltip = { text, opts }; return this; } openTooltip() { (this as any).tooltipOpened = ((this as any).tooltipOpened ?? 0) + 1; return this; } }
-export class FakeTile extends FakeLayer { url: string; options: Record<string, unknown>; constructor(url: string, options: Record<string, unknown>) { super(); this.url = url; this.options = options; } setUrl(u: string) { this.url = u; } }
+// `optionsAtSetUrl` is the ORDER, snapshotted, and `noRedrawAtSetUrl` the second argument that
+// decides whether `setUrl` redraws at all. A35.6 (ruling D-C52) writes `options.maxNativeZoom`
+// BEFORE it touches the url and then removes and re-adds the layer, because the re-add is what
+// re-reads the option — `GridLayer.redraw()` moves `_tileZoom` without calling `_resetGrid()`, so
+// a redraw alone leaves the previous zoom's world range in place. A test that reads `options`
+// after the call cannot tell "written first" from "written second", so the stub records what the
+// options WERE at that moment, and `setUrlCalls` counts a call that did not have to happen at all.
+//
+// `_url` carries Leaflet's OWN field name because that is the field A35.6's guard compares (fix
+// round 1: `L.TileLayer` has no public reader for its url and the layer is the only thing that
+// knows which basemap it is showing); `url` stays as a getter over it, which is what every
+// assertion written before that guard reads.
+export class FakeTile extends FakeLayer { _url: string; options: Record<string, unknown>; optionsAtSetUrl: Record<string, unknown> | null = null; noRedrawAtSetUrl: boolean | undefined = undefined; setUrlCalls = 0; constructor(url: string, options: Record<string, unknown>) { super(); this._url = url; this.options = options; } get url() { return this._url; } setUrl(u: string, noRedraw?: boolean) { this.setUrlCalls += 1; this.optionsAtSetUrl = { ...this.options }; this.noRedrawAtSetUrl = noRedraw; this._url = u; } }
 class FakeGroup extends FakeLayer { clearLayers() { this.added = []; } }
 export class FakeMap { added: unknown[] = []; handlers: Record<string, () => void> = {}; center: unknown; zoom: number; invalidated = 0; attributionControl = { _update: () => { (this as any).attrUpdated = ((this as any).attrUpdated ?? 0) + 1; } };
   constructor(public el: HTMLElement, public opts: any) { this.center = opts.center; this.zoom = opts.zoom; el.dataset.leafletMounted = '1'; }

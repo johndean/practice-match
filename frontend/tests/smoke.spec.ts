@@ -1738,3 +1738,308 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// A35 — THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE, AND THE MEMBER ZOOMS PAST IT.
+// John, 2026-09-13 (ruling D-C52): "allow a user to zoom in BELOW the level of the last actual
+// map layer … the map allows user to zoom in as far as they want … this message is never seen".
+//
+// WHY NO GATE CAUGHT IT, and why this one is in a real browser. `harness.ts` answers every
+// arcgisonline request with a transparent 1x1 GIF at any zoom, and every approved state captures
+// at z10 (desktop) / z9 (phone) with no zoom step — so the pixels could never show it. The unit
+// case (`src/map/engines/leaflet.test.ts`) owns the OPTIONS; what only Chromium can prove is what
+// Leaflet does WITH them: that `_clampZoom` holds the URL at the native max while `_limitZoom`
+// lets the map itself reach 20, on both basemaps, across a switch.
+//
+// The URLs are recorded rather than the tiles inspected: the stub deliberately answers 200 to
+// everything (an abort logs a console error the harness's own gate would fail on), which is
+// exactly what Esri does for a missing tile too. The REQUEST is the observable.
+// -------------------------------------------------------------------------------------------
+test.describe('A35 — the gray basemap never asks Esri for a tile it does not have (D-C52)', () => {
+  /** The last level each Esri service is actually cached to, MEASURED 2026-09-13 (the task brief's
+   *  own probe: the Canvas tilemaps report zero tiles at 17+ at all nine US points; World_Imagery
+   *  is real at z19 everywhere probed, rural Texas included). */
+  const NATIVE_MAX: Record<string, number> = { 'gray-base': 16, 'gray-labels': 16, imagery: 19 };
+  const CEILING = 20;
+  /** The two credits, as the design and both ports spell them. The STRINGS are pinned in
+   *  `tests/design-amendments.test.ts` (A35.7) and `src/lib/leaflet.test.ts`; what is measured here
+   *  is which of them the attribution control is RENDERING. */
+  const CREDIT: Record<string, string> = {
+    map: 'Tiles © Esri',
+    satellite: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  };
+
+  type TileHit = { service: string; z: number };
+  // ONE table and ONE pattern, shared by the request log and the pane reads — the two used to carry
+  // their own copies, which is the drift the bundle's own dead-code rule exists to stop.
+  const SERVICE: Record<string, string> = {
+    'Canvas/World_Light_Gray_Base': 'gray-base',
+    'Canvas/World_Light_Gray_Reference': 'gray-labels',
+    World_Imagery: 'imagery'
+  };
+  const TILE_URL = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//;
+  function classify(url: string): TileHit[] {
+    const m = TILE_URL.exec(url);
+    return m !== null && SERVICE[m[1]] !== undefined ? [{ service: SERVICE[m[1]], z: Number(m[2]) }] : [];
+  }
+
+  /** Every basemap tile the page asks for, from before the first navigation — a tile requested at
+   *  mount counts as much as one requested after a click. */
+  function recordTiles(page: Page): TileHit[] {
+    const hits: TileHit[] = [];
+    page.on('request', (r) => hits.push(...classify(r.url())));
+    return hits;
+  }
+
+  /** The MAP's own zoom, read off Leaflet's own animation proxy — the element `Map._animMoveEnd`
+   *  transforms to `scale(getZoomScale(zoom, 1))`, i.e. 2^(zoom-1), on every `moveend`
+   *  (leaflet-src.js:4756). Read from the DOM rather than through a hook, because the production
+   *  code must not grow a test-only seam: the app exposes no zoom and this case does not ask it to.
+   *  The TILE z cannot stand in — separating the two is the whole point of the ruling. */
+  const mapZoom = (page: Page) => page.evaluate(() => {
+    const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+    if (proxy === null) return null;
+    const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+    return m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1;
+  });
+
+  /** One press of the design's own "+" control, waited out rather than slept through — in the PAGE,
+   *  because every zoom step also settles a new viewport and pulls six layers of boundary polygons,
+   *  and a poll driven from the test would be spending its budget on those round trips. Returns the
+   *  zoom it settled on — equal to `from` when the map refused to move, which is the ceiling.
+   *
+   *  The wait is on `leaflet-zoom-anim` LEAVING the map pane as well as on the zoom changing,
+   *  because Leaflet SWALLOWS a zoom request made during a zoom animation (`Map._tryAnimatedZoom`:
+   *  `if (this._animatingZoom) { return true; }`) and the proxy carries the TARGET zoom from
+   *  `zoomanim` onward — so a press timed off the proxy alone lands inside the previous transition
+   *  and is discarded, which is what held an early draft of this case at zoom 11. The class is on
+   *  the MAP PANE, not on the container (leaflet-src.js:4808/4834). */
+  const STEP_TIMEOUT_MS = 10_000;
+  async function zoomInOnce(page: Page, from: number): Promise<number> {
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    try {
+      await page.waitForFunction((prev) => {
+        const pane = document.querySelector('.leaflet-map-pane');
+        const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+        if (pane === null || proxy === null) return false;
+        const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+        if (m === null) return false;
+        return !pane.classList.contains('leaflet-zoom-anim')
+          && Math.round(Math.log2(Number(m[1]))) + 1 !== prev;
+      }, from, { timeout: STEP_TIMEOUT_MS, polling: 100 });
+    } catch {
+      return from;                       // the map did not move: this is the ceiling
+    }
+    return (await mapZoom(page)) as number;
+  }
+
+  /** The basemap tiles one Leaflet PANE is actually SHOWING. Necessary as well as the request log,
+   *  and deterministic where it is not: once a URL has been loaded, Chromium serves it from the
+   *  memory cache and emits no network event at all, so switching BACK to a basemap whose tiles are
+   *  already in hand can legitimately make zero requests. What the layer asked for is still written
+   *  on every `<img>` — and an EMPTY tile pane is exactly the blank map A35.6's reset prevents.
+   *
+   *  The pane is a parameter because the two grid layers do not share one: the base draws into
+   *  `.leaflet-tile-pane` and the labels are created with `pane: "shadowPane"`, so a read of the
+   *  tile pane alone can say nothing at all about A35.4's ruled hiding above z18. */
+  const TILE_PANE = '.leaflet-tile-pane';
+  const SHADOW_PANE = '.leaflet-shadow-pane';
+  async function paneTiles(page: Page, pane: string): Promise<TileHit[]> {
+    const srcs = await page.evaluate(
+      (p) => [...document.querySelectorAll(`${p} img`)].map((el) => (el as HTMLImageElement).src), pane);
+    return srcs.flatMap(classify);
+  }
+  /** The services a pane is showing and the deepest level each is drawn at — one value to poll on,
+   *  so the case waits for the state it is about to assert instead of for a fixed number of ms. */
+  async function paneState(page: Page, pane: string): Promise<{ services: string[]; maxZ: number; count: number }> {
+    const tiles = await paneTiles(page, pane);
+    return {
+      services: [...new Set(tiles.map((h) => h.service))].sort(),
+      maxZ: tiles.length === 0 ? -1 : Math.max(...tiles.map((h) => h.z)),
+      count: tiles.length
+    };
+  }
+
+  /** What the map's own attribution control is RENDERING. Leaflet's default prefix (its own link)
+   *  is always in there, so the assertions are about which CREDITS the text carries. */
+  const attributionText = (page: Page) => page.locator('.leaflet-control-attribution').first().innerText();
+
+  /** Painted pixels on the polygon layer's own canvas — the shading must survive the whole climb,
+   *  because the canvas renderer has no zoom limit and the tiles beneath it now do. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  /** Browse, signed in, with the map up and settled at the design's own zoom 10. */
+  async function browseMap(page: Page): Promise<void> {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await expect.poll(() => mapZoom(page), { timeout: 15_000 })
+      .toBe(10);                                  // the design opens Austin at zoom 10
+    await expect.poll(() => paneState(page, TILE_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+  }
+
+  // Ten zoom steps, each settling a new viewport and pulling six layers of real boundary polygons
+  // through the harness — the cost of measuring the real chain rather than a stub of it.
+  test.setTimeout(180_000);
+
+  test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
+    const hits = recordTiles(page);
+    await browseMap(page);
+
+    // Press + until the map stops, watching the LABEL pane on the way: A35.4 gives the reference
+    // layer its own `maxZoom: 18`, so a GridLayer draws nothing above it (`_setView` sets
+    // `_tileZoom` undefined and calls `_removeAllTiles`). Read from the shadow pane, which is where
+    // `pane: "shadowPane"` puts them — the tile pane can say nothing about it.
+    const labelsAt: Record<number, number> = {};
+    let z = 10;
+    for (let i = 0; i < 14; i++) {
+      const next = await zoomInOnce(page, z);
+      if (next === z) break;
+      z = next;
+      if (z >= 18) labelsAt[z] = (await paneState(page, SHADOW_PANE)).count;
+    }
+    // Settled on the state the assertions are about, rather than on a timer.
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
+
+    const gray = hits.filter((h) => h.service !== 'imagery');
+    expect(gray.length, 'the gray canvas asked for no tiles at all — the recorder is not watching').toBeGreaterThan(0);
+    // (i) The defect itself, stated as the thing that must never be requested: Esri answers 200 with
+    // a 2,521-byte "Map data not yet available" JPEG for any Canvas tile past 16.
+    expect([...new Set(gray.filter((h) => h.z > NATIVE_MAX['gray-base']).map((h) => h.z))].sort((a, b) => a - b),
+      'the gray canvas was asked for a level Esri answers with "Map data not yet available"').toEqual([]);
+    // (ii) …and it still asks AT the ceiling. A layer that quietly stopped drawing at 16 would pass
+    // the assertion above and leave the member on a blank map, which is not the ruling.
+    expect(Math.max(...gray.map((h) => h.z)), 'the gray canvas stopped short of its own native max').toBe(NATIVE_MAX['gray-base']);
+
+    // (iii) The member gets the whole way there, and no further. Before this change Leaflet derived
+    // the map's ceiling from the layers (`getMaxZoom` -> `_layersMaxZoom`) and it was 18.
+    expect(z, 'the + button did not reach the map\'s own ceiling of 20').toBe(CEILING);
+
+    // (c) The labels soften to 18 and then HIDE. Stated as behaviour, on the pane they actually
+    // live in, rather than as an options value: 16x upscaled text is not legible.
+    expect(labelsAt[18], 'the reference labels are not drawn at z18, where Esri still has them').toBeGreaterThan(0);
+    expect(labelsAt[19], 'the reference labels are still drawn at z19, past their own maxZoom').toBe(0);
+    expect(labelsAt[20], 'the reference labels are still drawn at z20, past their own maxZoom').toBe(0);
+
+    // (iv) The polygons are canvas layers with no zoom limit, and they still paint at 20 — the
+    // upscaled basemap is underneath them, not instead of them.
+    expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
+
+    // (v) The other basemap, switched AT the ceiling — which is where A35.6's reset is load-bearing,
+    // because the two services clamp to different tile zooms and `redraw()` alone leaves the
+    // layer holding the previous zoom's world range. An empty tile pane here is the blank map.
+    const beforeSat = hits.length;
+    const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
+    await satTab.click();
+    await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['imagery'], maxZ: NATIVE_MAX.imagery, count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
+    expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
+      'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
+
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
+
+    // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
+    // for a tile the service that serves it does not have.
+    const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
+    expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
+
+    // …and nothing is DRAWN past it either, in either pane, at any point in the run.
+    for (const pane of [TILE_PANE, SHADOW_PANE]) {
+      expect((await paneTiles(page, pane)).filter((h) => h.z > NATIVE_MAX[h.service])).toEqual([]);
+    }
+
+    const byZoom = [...new Set(hits.map((h) => h.service))].sort().map((s) => {
+      const zs = hits.filter((h) => h.service === s).map((h) => h.z);
+      return `${s}: z${Math.min(...zs)}–${Math.max(...zs)} (${zs.length} requests)`;
+    });
+    console.log(`[A35] map zoom reached ${z}; labels drawn at 18/19/20: ${labelsAt[18]}/${labelsAt[19]}/${labelsAt[20]}; ${byZoom.join('; ')}`);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 and Important-2. Attribution is legally load-bearing (CLAUDE.md), and
+  // nothing on this branch read what the control RENDERS — the unit case only counted `_update()`
+  // calls. `Control.Attribution._update()` rebuilds from its own `_attributions` registry, not from
+  // the layer's current `options.attribution`, and the registry is written by `_addAttribution` at
+  // ADD time and by its `once('remove')` handler at REMOVE time. A35.6 assigned the new credit
+  // AFTER `addTo`, so the first switch re-registered the OLD string (A35.7's credit was never shown
+  // on Satellite at all) and the second de-registered a string that had never been registered while
+  // registering the new one — leaving BOTH credits in the footer for the life of the map.
+  // Assigning between `remove()` and `addTo()` fixes both, and this case is what says so.
+  // -----------------------------------------------------------------------------------------
+  test('the attribution control shows exactly the current basemap\'s credit, never both', async ({ page }) => {
+    await browseMap(page);
+    const other = (kind: string) => (kind === 'map' ? CREDIT.satellite : CREDIT.map);
+
+    for (const step of ['map', 'satellite', 'map', 'satellite'] as const) {
+      if (step !== 'map' || (await attributionText(page)).includes(CREDIT.satellite)) {
+        await page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }).click();
+        await expect(page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }))
+          .toHaveAttribute('aria-pressed', 'true');
+      }
+      await expect.poll(() => attributionText(page), { timeout: 10_000 })
+        .toContain(CREDIT[step]);
+      expect(await attributionText(page), `the footer carries BOTH credits on the ${step} basemap`)
+        .not.toContain(other(step));
+    }
+    console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-3. `MarketMapView`'s basemap watcher carries `status` among its deps, so
+  // it fires `setBase(props.basemap)` with the SAME basemap the engine has just mounted. Under the
+  // old code that was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152)
+  // — and A35.6's reset is unconditional, so every mount paid a second full basemap tile load.
+  // The base layer and the label layer cover the same view at the same tile size, so one load each
+  // means the SAME number of requests; a second load of the base alone breaks that equality, which
+  // is what makes this measurable without hard-coding a tile count for a viewport.
+  // -----------------------------------------------------------------------------------------
+  test('a mount loads the basemap ONCE — the no-op setBase the watcher fires costs nothing', async ({ page }) => {
+    // COUNTED IN THE DOM, not in the request log, and that is the whole design of this case: the
+    // second load asks for the SAME urls the first one is still fetching, so Chromium coalesces it
+    // and the network shows twelve requests either way (measured — the request counts are identical
+    // before and after the fix). What is not hidden is that Leaflet builds twelve more `<img>`
+    // elements, which a MutationObserver installed before the page's own scripts can count. The
+    // observer lives in the TEST, through addInitScript; no production code grows a seam for it.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __tileAdds: Record<string, number> };
+      w.__tileAdds = {};
+      new MutationObserver((records) => {
+        for (const r of records) {
+          for (const node of r.addedNodes) {
+            if (!(node instanceof HTMLImageElement) || !node.classList.contains('leaflet-tile')) continue;
+            const m = /\/services\/(.+?)\/MapServer\/tile\//.exec(node.src);
+            if (m) w.__tileAdds[m[1]] = (w.__tileAdds[m[1]] ?? 0) + 1;
+          }
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+    await browseMap(page);
+    await expect.poll(() => paneState(page, SHADOW_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+
+    const adds = await page.evaluate(() => (window as unknown as { __tileAdds: Record<string, number> }).__tileAdds);
+    const base = adds['Canvas/World_Light_Gray_Base'] ?? 0;
+    const labels = adds['Canvas/World_Light_Gray_Reference'] ?? 0;
+    // The base layer and the label layer cover the same view at the same tile size, so ONE load
+    // each is the same number of tiles. A second load of the base alone breaks that equality —
+    // which is what makes this measurable without hard-coding a tile count for a viewport.
+    expect(labels, 'the label layer built no tiles at all — the comparison below is vacuous').toBeGreaterThan(0);
+    expect(base, 'the basemap was built more than once at mount — the no-op setBase reset the layer')
+      .toBe(labels);
+    console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
+  });
+});
