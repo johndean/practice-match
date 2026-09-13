@@ -6251,11 +6251,16 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     expect(c2.state.adminListingCounts, 'the key names the tab it belongs to').toEqual({ in_review: 2 });
     expect(c2.state.adminCounts, 'and the shared object the comment described is gone').toBeUndefined();
 
-    // What a second tab's loader does in the same `Promise.all`: `setState` with ITS own key.
-    // Under the old shared object this same write blanked the Listings badge.
-    c2.setState({ adminUserCounts: { open: 4, total: 9 } });
-    expect(c2.state.adminListingCounts, 'untouched by the sibling write').toEqual({ in_review: 2 });
-    expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
+    // FIX ROUND 2, Minor 2: this used to write `adminUserCounts` and assert the listings count
+    // survived — which NO `setState` implementation could break, so it held under the retracted
+    // shared-object design too and pinned nothing. The write below is the HAZARD itself: a sibling
+    // loader putting its own badge in the one shared `adminCounts` object the first draft
+    // described, in the same `Promise.all`, with `setState`'s top-level merge replacing it whole.
+    // With each tab on its own key the Listings badge cannot see it; with one shared object it
+    // read `String(undefined)`.
+    c2.setState({ adminCounts: { open: 4, total: 9 } });
+    expect(c2.state.adminListingCounts, 'the sibling wrote the shared key and this one survived').toEqual({ in_review: 2 });
+    expect(tabCount(c2), 'and the badge still reads the count its own tab loaded').toMatchObject({ count: '2', hasCount: true });
   });
 
   // ---------------------------------------------------------------------------------------

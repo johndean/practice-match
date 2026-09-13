@@ -382,13 +382,39 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
   });
 
   it('follows next_cursor to the end, the way the seller dashboard\'s own list() does', async () => {
+    // The second page carries NO `counts`, which is the envelope `list_all` really answers a
+    // continuation request with (fix round 1, M-1): the badge is a fact about the table, an
+    // unindexed `count(*)` to compute, and the route stops paying for it once a `cursor` is given.
     const calls = stubFetch(
       { status: 200, body: { counts: { in_review: 1 }, items: [item({ id: 'l1' })], next_cursor: '2026-09-01T00:00:00Z|l1' } },
-      { status: 200, body: { counts: { in_review: 1 }, items: [item({ id: 'l2' })], next_cursor: null } }
+      { status: 200, body: { items: [item({ id: 'l2' })], next_cursor: null } }
     );
-    const rows = await listRows();
+    const { rows, counts } = await makeAdminListingsAdapter().list();
     expect(rows).toHaveLength(2);
     expect(calls[1].url).toContain('cursor=2026-09-01T00%3A00%3A00Z%7Cl1');
+    expect(counts, 'a continuation page without counts is not an error').toEqual({ in_review: 1 });
+  });
+
+  it('takes the badge off the FIRST page and lets no later page move it (fix round 2, Minor 1)', async () => {
+    // Both halves of M-1's client rule, which nothing held before this case. A regression in
+    // either direction is invisible at 100 % coverage: demanding `counts` on every page throws
+    // "the review queue answered no counts" on page 2, and A39.2's rejection arm then empties the
+    // table and blanks the badge for every reviewer; letting a later page WRITE the badge would
+    // show a number the route no longer sends and nobody measured.
+    stubFetch(
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ id: 'l1' })], next_cursor: '2026-09-01T00:00:00Z|l1' } },
+      { status: 200, body: { counts: { in_review: 99 }, items: [item({ id: 'l2' })], next_cursor: null } }
+    );
+    const { rows, counts } = await makeAdminListingsAdapter().list();
+    expect(rows).toHaveLength(2);
+    expect(counts, 'page 1 answered the badge; page 2 cannot move it').toEqual({ in_review: 1 });
+  });
+
+  it('...and a FIRST page with no counts is still refused', async () => {
+    // The rule is "the first page alone", not "whichever page happens to carry one": a queue that
+    // answers no badge at all is the case `items`' own guard exists for.
+    stubFetch({ status: 200, body: { items: [item({ id: 'l1' })], next_cursor: null } });
+    await expect(makeAdminListingsAdapter().list()).rejects.toThrow('no counts');
   });
 
   it('rejects when the queue cannot be read, or answers no items', async () => {
@@ -541,6 +567,34 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
       await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
       expect(reloaded, `${answer.status}: nothing moved, so there is nothing to re-read`).toBe(false);
     }
+  });
+
+  it('tells the reviewer when the decide never reached the server at all (fix round 2)', async () => {
+    // Recorded by the re-review as a PRE-EXISTING gap, older than A39 and unchanged by fix round
+    // 1: the button binding is `go: () => Promise<void>` and the design's own template does not
+    // await it, so a REJECTED promise — `fetch` throwing on an offline browser or a DNS failure,
+    // never an HTTP status — became an unhandled rejection and the reviewer saw NOTHING happen.
+    // A refusal the server SENT already alerts; a request that never arrived must say so through
+    // the same door, in the same words the `??` fallback uses for a bodyless refusal.
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } });
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const rows = await listRows();
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await expect(rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go()).resolves.toBeUndefined();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be unpublished.');
+  });
+
+  it('...and a rejected decide asks for no reload, because nothing moved', async () => {
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } });
+    vi.stubGlobal('alert', vi.fn());
+    const adapter = makeAdminListingsAdapter();
+    let reloaded = false;
+    adapter.onDecision(() => { reloaded = true; });
+    const rows = (await adapter.list()).rows;
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+    expect(reloaded).toBe(false);
   });
 
   it('decides perfectly well for a host that registered nothing — the reference and the unit tests', async () => {

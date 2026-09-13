@@ -240,7 +240,17 @@ function decision(item: ListingItem, action: Action, ui: ListingsUi): () => Prom
       // Cancelled: a first publish needs both, so there is nothing to send yet.
       if (fields === null) return;
     }
-    await ui.decide(item, action, note, fields);
+    // Fix round 2, on the gap the re-review recorded as pre-existing (older than A39, untouched by
+    // fix round 1, which handled the 409 the server ANSWERS). This promise is handed to the
+    // design's own `onClick`, which does not await it, so a REJECTION — `fetch` throwing on an
+    // offline browser or a DNS failure, never an HTTP status — was an unhandled rejection and the
+    // reviewer watched the button do nothing at all. A request that never arrived is told in the
+    // same place and the same words a refusal with no readable body is: `windowUi.decide` owns
+    // every message the server DID send, so this catch never speaks over one — by the time it
+    // runs, `decide` has either alerted and returned or thrown before it could.
+    await ui.decide(item, action, note, fields).catch(() => {
+      window.alert(`That listing could not be ${action === 'decline' ? 'reject' : action}ed.`);
+    });
   };
 }
 
@@ -295,7 +305,11 @@ const PAGE_LIMIT = 200;
 const MAX_PAGES = 20;
 
 /** One page of `GET /api/admin/listings` as it arrives. `counts` is the whole TABLE's, beside
- *  `items` rather than inside them (`admin_signups`'s own envelope), so every page carries it. */
+ *  `items` rather than inside them (`admin_signups`'s own envelope) — and it arrives on the FIRST
+ *  page ONLY (fix round 1, M-1): it is an unindexed `count(*)`, it cannot change between pages of
+ *  one traversal, and `list_all` stops computing it for any request carrying a `cursor`. A
+ *  continuation page therefore OMITS the key rather than sending a null, which is why the field is
+ *  optional here and why `list()` asks for it on page 0 alone. */
 interface QueueBody { items?: unknown; next_cursor?: string | null; counts?: { in_review?: unknown } }
 
 async function send(method: string, path: string, body?: unknown): Promise<Response> {

@@ -350,16 +350,30 @@ async def test_the_status_change_asks_the_audit_log_once_per_row_in_the_index_s_
     Both halves are pinned on the REAL plan of the REAL query, self-calibrating rather than
     hand-counted: the status-change join must add exactly ONE audit_log access to the plan (it
     added two), and the lateral's order must be PRESORTED by the index (it was a full sort).
-    `enable_seqscan` is off so the planner's choice is about the index and not about a test
-    table's size."""
+    `enable_seqscan` is off so the planner's choice is about the INDEX and not about a test table's
+    size.
+
+    Fix round 2, re-review Minor 3: that last sentence used to be false. The `conn` fixture is
+    AUTOCOMMIT, so `SET LOCAL` is outside a transaction block — Postgres answers
+    `WARNING: SET LOCAL can only be used in transaction blocks`, leaves the setting `on`, and
+    psycopg2 files the warning in `conn.notices` where `-W error` can never see it. The plain
+    session-level `SET` below really takes (the connection is to a per-test scratch database that
+    is dropped afterwards, so nothing outlives it), and the assertions read the setting back and
+    the notice log, so a silent no-op cannot come back."""
     from app.api.admin_listings import _STATUS_CHANGE
     from app.api.seller_listings import _COLUMNS
 
     tail = " WHERE TRUE ORDER BY updated_at DESC, id DESC LIMIT 50"
 
+    del conn.notices[:]
+    with conn.cursor() as cur:
+        cur.execute("SET enable_seqscan = off")
+        cur.execute("SHOW enable_seqscan")
+        assert cur.fetchone()[0] == "off", "the planner is still free to choose a sequential scan"
+    assert conn.notices == [], f"the SET did not take: {conn.notices}"
+
     def plan(sql: str) -> str:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL enable_seqscan = off")
             cur.execute("EXPLAIN " + sql)
             return "\n".join(row[0] for row in cur.fetchall())
 
