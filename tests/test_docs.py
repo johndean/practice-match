@@ -1382,6 +1382,12 @@ LISTING_WRITERS = {
         "the wizard's own writes. None of them sets `status = 'published'`: submit writes "
         "`in_review`, and `take_off_market` moves a published row OFF the market (A-SL15), so no "
         "statement in this module can fire the gate.",
+    "app/census/geocode.py":
+        "Task GEO-WIRE's resolve, which writes `listing.geom` (and nothing else) for a listing "
+        "whose address has just been geocoded. The trigger is BEFORE UPDATE **OF status**, so a "
+        "statement that never names `status` does not fire it at all — the easy declaration, and "
+        "the honest one: a pin is not a publication. `app/tasks/census.py` reaches the table only "
+        "through this function and writes no listing row of its own.",
     "scripts/seed_listings.py":
         "the demo hospitals' UPSERT, which INSERTs directly as `published`. The gate has no INSERT "
         "arm (A-IDP-6), and the seeds take `040`'s `NOT_SHOW` default (A-IDP-4 (1)) — their path "
@@ -1389,6 +1395,10 @@ LISTING_WRITERS = {
     "tests/api/test_admin_listings.py":
         "review-queue fixtures with no photographs; a listing with an empty `photos` array has "
         "nothing for the gate's predicate to find.",
+    "tests/api/test_geo_wire.py":
+        "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
+        "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "
+        "already-published row and never `status` — BEFORE UPDATE **OF status** does not fire.",
     "tests/api/test_listing_assets.py":
         "`_SEED_INSERT` inserts as `published` (no INSERT arm); `_publish` and `_republish` write a "
         "SELLER_CONFIRMED privacy row with a derivative for every uploaded photograph BEFORE they "
@@ -1402,6 +1412,11 @@ LISTING_WRITERS = {
         "is a wizard draft with an empty `photos` array, so the predicate finds nothing to refuse.",
     "tests/census/listing_fixtures.py":
         "geocoding fixtures inserted directly with their status; no INSERT arm.",
+    "tests/census/test_geocode.py":
+        "the geocoder's own suite. Its one direct statement seeds a pin with `UPDATE listing SET "
+        "geom` so the no-coordinate rung can be proved not to blank it; it never names `status`, "
+        "and the rows it builds come from `tests/census/listing_fixtures.py` already declared "
+        "above.",
     "tests/census/test_market_api.py":
         "sets `location_disclosed` on an existing row and never `status`, so the trigger — BEFORE "
         "UPDATE **OF status** — does not fire at all.",
@@ -1436,7 +1451,11 @@ def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
     gets made, rather than in a prose count that enforces nothing."""
     # THIS file is skipped: the pattern below occurs in it as the pattern, and a docs-and-drift
     # suite that takes no `conn` fixture writes no table. Every other file is scanned.
-    write = re.compile(r"INSERT INTO listing[ (\n]|UPDATE listing SET")
+    # `\s+` between the table and `SET`, not one space: `app/census/geocode.py` writes its
+    # `UPDATE listing\n      SET geom = ...` across two lines, and the one-space form walked
+    # straight past a PRODUCTION writer of the table. Proved by perturbation before being left
+    # green — collapsing that statement onto one line must not change what this finds.
+    write = re.compile(r"INSERT INTO listing[ (\n]|UPDATE listing\s+SET")
     found = {
         str(path.relative_to(ROOT))
         for root in ("app", "scripts", "tests")
