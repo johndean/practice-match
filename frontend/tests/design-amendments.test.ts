@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
+import { ruledTextFindings } from './amend-guard';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -1368,6 +1369,46 @@ describe('local design amendments (spec D15)', () => {
     expect(stale, `${stale.length} stale citation(s) found`).toEqual([]);
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(20);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // AMEND-GUARD (Task HOUSEKEEPING-B, 2026-09-13). The case above proves every citation POINTS
+  // somewhere; this one proves nothing ruled SILENTLY LEFT. The byte-equality case cannot see it:
+  // pristine + amendments still equals the amended file when one entry's `find` swallows text an
+  // earlier entry's `replace` introduced, the ids and the count are still right, and the sentence
+  // is simply gone. A24.20's "Population growth is measured for the surrounding city or county,
+  // not the tract." went that way on 2026-09-12 — A24.56's `find` spanned two ruled sentences of
+  // the Browse Market-data footnote and its `replace` returned one — while CLAUDE.md went on
+  // asserting it was there and the pixel gate re-based `browse-market-strip` without a question.
+  //
+  // The rule: every line an entry's `replace` introduced is in the final amended file, OR the
+  // later entry that consumed it NAMES that entry in its own `LOCAL_AMENDMENTS.md` row. That is
+  // the shape the two supersessions this ledger already has were written in — A-C29 reverting
+  // A21.2/A21.2b, A10.2 revising A10 — so the guard asks for what a ruled supersession already
+  // looks like and refuses only the SILENT ones.
+  //
+  // Run over the whole ledger on 2026-09-13 it found 98 consumed lines, 70 of them already named
+  // and 28 silent across 24 (superseded → consumer) pairs. Every one was read: all 24 are
+  // legitimate chained edits — a later ruling extending or rewriting an earlier entry's own line,
+  // with nothing ruled lost — so all 24 were NAMED in the consuming entry's row and none was
+  // restored. The guard was not weakened to reach zero.
+  // ---------------------------------------------------------------------------------------
+  it('every sentence a ruled entry introduced is still in the design, unless a later entry names its removal', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const rowOf = (id: string) => {
+      const key = id.startsWith('A1.') ? 'A1' : id;
+      return md.split('\n').find((row) => /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1] === key) ?? '';
+    };
+    const silent: string[] = [];
+    let checked = 0;
+    for (const [file, path] of [['dc', AMENDED], ['jsx', AMENDED_JSX]] as const) {
+      const out = ruledTextFindings({ list: amendmentsFor(file), final: readFileSync(path, 'utf8'), rowOf });
+      silent.push(...out.findings);
+      checked += out.lines + out.sentences;
+    }
+    expect(silent, `${silent.length} ruled line(s) left the design with no entry naming the supersession`).toEqual([]);
+    // Not a vacuous pass: the ledger really was walked. Every entry introduces at least one line.
+    expect(checked, 'no introduced line was examined — the ledger or the diff stopped matching').toBeGreaterThan(amendments().length);
   });
 
   // ---------------------------------------------------------------------------------------
