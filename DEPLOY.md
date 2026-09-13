@@ -141,7 +141,7 @@ rather than through the app, so they belong on this page:
   Every run writes an audit row. **The link is a credential**: send it the way you would a password
   reset, never into a shared log.
 * **QA persona accounts** — `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`
-  seeds the ten `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
+  seeds the eleven `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
   **refuses on production with no override flag** (exit 2). `PERSONA_PASSWORD` is read from the
   shell by the script itself; held in the operator's macOS Keychain (service `practice-match-qa`,
   account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s

@@ -51,3 +51,6 @@ Above the section, the page header carries `<div class="strip">` with three span
 
 ## An unreleased version is never a bare number
 The stakeholder read "0.1.24 in progress" as QA being on 0.1.24. A version that is not on a host is always written "next (0.1.24) · being built · not deployed" — in the strip, the rail node and the board `tid` — and the hero's h2 names only versions measured from `/api/healthz`.
+
+## When the account changes
+An account change removes write access to the published artifact (the tool answers `artifact-deleted`). Publish the same file fresh (a first publish needs a `favicon`), tell the stakeholder the old link no longer works for them, and record the new URL in the `practice-match-external-refs` memory the same minute.

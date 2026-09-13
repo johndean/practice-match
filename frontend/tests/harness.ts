@@ -632,6 +632,11 @@ export const PERSONAS = {
   design: { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] },
   buyer: { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] },
   seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
+  // Ruling D-C54 (John, 2026-09-13): an account whose ONLY grant is `admin` — the shape his own
+  // account has, and the one `design@`'s four roles can never express. Its computed label is
+  // `design@`'s own, which is part of why the defect hid: the header reads "VIN Foundation admin"
+  // for both, and only the matrix knew they opened different doors.
+  adminOnly: { email: 'admin@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin'] },
   pending: { email: 'pending@practice-match.test', name: 'Pending Applicant', role: 'Applicant', initials: 'PA', state: 'pending', roles: [] },
   needsReview: { email: 'needs-review@practice-match.test', name: 'Applicant Under Review', role: 'Applicant', initials: 'AR', state: 'needs_review', roles: [] },
   declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] },
@@ -1024,7 +1029,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET — FIFTEEN of thirty (review round 1, I1/M3; traced against the real
+ * THE BUDGET — SIXTEEN of thirty (review round 1, I1/M3; traced against the real
  * `POST /api/auth/signin` calls, not estimated).
  *
  * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
@@ -1040,14 +1045,16 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  *                     and Task ADMIN-GATE's own: `design@` through the design's own form, the one
  *                     path that exercises the reload seam (A40.5) — `signInAs` sets cookies and
  *                     reloads, which is precisely what hid that defect
- *   smoke         +1  the reauth check's standalone `personaSignIn()` session
+ *   smoke         +2  the reauth check's standalone `personaSignIn()` session, and ruling D-C54's
+ *                     `adminOnly` — the account with `admin` and nothing else
  *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
  *                     reset revoked the session and `personaPasswordRotated` forgot it
  *
- * TEN accounts are seeded and NINE of them are signed in as: `design`, `buyer`, `seller`,
- * `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The tenth,
- * `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists only to
- * own the verify fixture tokens, because consuming one confirms its account for good (A-S5.2).
+ * ELEVEN accounts are seeded and TEN of them are signed in as: `design`, `buyer`, `seller`,
+ * `adminOnly`, `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The
+ * eleventh, `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists
+ * only to own the verify fixture tokens, because consuming one confirms its account for good
+ * (A-S5.2).
  *
  * Each RESET costs one extra: `POST /api/auth/password/reset` revokes every session the account
  * had, so `personaPasswordRotated` drops the memo and the next state that needs `verified@` signs
@@ -1072,7 +1079,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * for `buyer@` only, and one of ten.
  */
 export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
-  design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
+  design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null }, adminOnly: { cookies: null },
   pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null },
   verified: { cookies: null }, unverified: { cookies: null }, invited: { cookies: null },
   verifyMe: { cookies: null }

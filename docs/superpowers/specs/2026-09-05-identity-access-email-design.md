@@ -86,9 +86,9 @@ Roles: `anonymous · applicant · buyer · seller · staff · admin`. `anonymous
 | `market.read` | `/browse?tab=market`, `/api/layers`, `/api/markets*`, `/api/listings/{id}/market`, `/api/map-config` | flag | — | ✅ | ✅ | ✅ | ✅ |
 | `layer.google_live` | Google live layers + `/api/listings/{id}/competition/live` (∧ licence ∧ engine) | — | — | ✅ | ✅ | ✅ | ✅ |
 | `layer.satellite` | satellite toggle (∧ cleared imagery/engine row) | — | — | ✅ | ✅ | ✅ | ✅ |
-| `request.create` · `request.read_own` | `/requests`; express interest; own threads (2b) | — | — | ✅ | ✅ | — | — |
-| `seller.apply` | file the seller application | — | — | ✅ | — | — | — |
-| `page.seller` · `listing.manage_own` · `request.answer_own` | `/seller`, wizard, own listings, answer own requests (2b) | — | — | — | ✅ | — | — |
+| `request.create` · `request.read_own` | `/requests`; express interest; own threads (2b) | — | — | ✅ | ✅ | — | ✅ |
+| `seller.apply` | file the seller application | — | — | ✅ | — | — | ✅ |
+| `page.seller` · `listing.manage_own` · `request.answer_own` | `/seller`, wizard, own listings, answer own requests (2b) | — | — | — | ✅ | — | ✅ |
 | `page.admin` · `users.review` · `users.view_detail` | `/admin?tab=users`; list applications/members (`users.review`, not audited); **view an application's detail** (`users.view_detail`, audited — split 2026-09-08 after the I5 review so that polling the list does not write an audit row per call) | — | — | — | — | ✅ | ✅ |
 | `users.decide` | Approve · Decline · Request info · Suspend · Revoke (re-auth for Revoke) | — | — | — | — | ✅ | ✅ |
 | `listing.review` · `listing.publish` | `/admin?tab=listings`; publish/unpublish/flag (2b) | — | — | — | — | ✅ | ✅ |
@@ -99,6 +99,15 @@ Roles: `anonymous · applicant · buyer · seller · staff · admin`. `anonymous
 | `roles.grant` | grant/revoke staff, admin; grant seller outside an application (re-auth) | — | — | — | — | — | ✅ |
 | `tokens.manage` | create/revoke `api_token`s | — | — | — | — | — | ✅ |
 | `audit.read` · `permissions.read` | `/admin?tab=permissions`, `GET /api/admin/audit`, `GET /api/admin/permissions` | — | — | — | — | ✅ | ✅ |
+
+The `admin` column above is a superset of every other column (ruling D-C54, 2026-09-13, John:
+"as logged in VIN FOUNDATION ADMIN i can no longer access nor see MY REQUEST and LIST A PRACTICE
+- this is not right as SUPERADMIN JOHN DEAN i need to see it all!!!"): `request.create`,
+`request.read_own`, `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`
+read `✅` for `admin` above where this table used to print `—` — the six actions the buyer/seller
+columns alone carried until an account holding `admin` alone was refused "My Requests" and "List a
+Practice". Built structurally in `app/auth/permissions.py`, so a permission this table gains later
+cannot be drawn with a stale `—` in this column.
 
 **Scope predicates** ride with `*_own` permissions (`listing.seller_id = me`, `request.buyer_id = me`) and live in the same module; `users.review` never returns hashes; `abuse.investigate` is the only path to message bodies.
 
