@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test';
-import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, guard, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
@@ -131,6 +131,95 @@ test.describe('smoke', () => {
     await expect(page.getByRole('button', { name: /^Listings\s*0$/ })).toBeVisible();
     expect(posted, 'the decision the API was actually asked for').toEqual([{ action: 'publish', reason: '' }]);
     await expect(page, 'the page never navigated').toHaveURL(/\/admin\?tab=listings$/);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
+  // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+  // need to see it all!!!"
+  //
+  // The defect ADMIN-GATE (D-C53, above) surfaced rather than caused: `page.seller` was
+  // `["seller"]` and `request.read_own` was `["buyer","seller"]`, so an account holding `admin`
+  // ALONE held neither, and once the guard ran on the header-nav path those two screens answered
+  // with the unavailable gate. Every persona this suite had held four roles or one member role —
+  // `design@` masked it everywhere — so `adminOnly` (`admin@practice-match.test`, seeded by
+  // `scripts/seed_persona.py` under this ruling) is the account with exactly John's grants.
+  //
+  // All THREE doors, in one test, because the point of the ruling is that an admin sees it all:
+  // the two he was locked out of and the one he was not.
+  // ---------------------------------------------------------------------------------------
+  test('an admin-only account opens My Requests, List a Practice and the Admin screens (D-C54)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'adminOnly', '/browse');
+    await expect(page).toHaveURL(/\/browse$/);
+
+    for (const [label, url] of [['My Requests', /\/requests$/], ['List a Practice', /\/seller$/],
+                                ['VIN Foundation Admin', /\/admin$/]] as const) {
+      await page.getByRole('button', { name: label, exact: true }).first().click();
+      await expect(page, `${label} must open, not answer with the unavailable gate`).toHaveURL(url);
+      await expect(page.getByText('This page is not available to your account')).toHaveCount(0);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  // The other half of the ruling, and the reason it is one role and not "privilege": D-C53's own
+  // case must stay green. A buyer is still refused the Admin screen — asserted above — and here a
+  // buyer is still refused nothing it used to hold, i.e. the ruling widened `admin` and nobody else.
+  test('and the buyer keeps exactly the doors it had — D-C54 widened one role', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/requests$/);
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-SUPERSET fix round 1 (review Important-1, chained on A16.9, amendment A16.23,
+  // ruling D-C54). The two tests above prove an admin-only account REACHES "List a Practice"; this
+  // one proves it can actually USE it and keep using it — the gap the review found: D-C54 widened
+  // `seller.apply`/`page.seller`, so an admin-only account could CREATE a listing, but
+  // `componentDidMount`'s own bootstrap load still gated on the literal string `(me.roles ||
+  // []).indexOf("seller") > -1` — a SECOND, unrelated copy of the matrix nobody had asked to agree
+  // with D-C54 — so the dashboard never showed that listing again after a reload.
+  //
+  // `guard(page)`, not `prepare(page)`: this presses real buttons against the real API
+  // (`listing-flows.spec.ts`'s own idiom — no route of any kind, "Create a listing" mints a real
+  // row) and a stubbed `/api/listings`/seller-collection would prove nothing about A16.23's fix.
+  // "Save and exit" needs nothing typed (A16.15/A-SL27 (2): a draft is incomplete by nature, and
+  // the partial save omits the blank required fields rather than refusing them).
+  // ---------------------------------------------------------------------------------------
+  test('an admin-only account creates a listing, reloads, and still sees it on the dashboard (D-C54, A16.23)', async ({ page }) => {
+    guard(page);
+    await signInAs(page, 'adminOnly', '/seller');
+    const createButton = page.getByRole('button', { name: 'Create a listing', exact: true });
+    await expect(createButton).toBeVisible();
+
+    const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
+    await createButton.click();
+    const createdResponse = await created;
+    expect(createdResponse.status(), 'an admin-only account may now create a listing (D-C54: seller.apply/page.seller)').toBe(201);
+    const { id } = (await createdResponse.json()) as { id: string };
+
+    const saved = page.waitForResponse((r) => r.url().includes(`/api/seller/listings/${id}`) && r.request().method() === 'PATCH');
+    await page.getByRole('button', { name: 'Save and exit', exact: true }).click();
+    expect((await saved).status(), 'the partial save accepts a bare draft').toBe(200);
+    await expect(createButton, 'back on the dashboard, straight after creating it').toBeVisible();
+
+    // The reload: a FRESH componentDidMount, the one A16.23 fixes. Before the fix this loaded
+    // nothing — an admin-only account holds no `seller` role string — and the dashboard showed
+    // either the design's own fixtures (no adapter) or, with one, no rows at all.
+    await page.reload();
+    await expect(createButton, 'the dashboard, not the sign-in gate — the session survives a reload').toBeVisible();
+    // `frontend/src/listings/seller.ts`'s own title rule: a bare draft has no city, so its row
+    // reads "Untitled listing" — never the design's four Austin fixtures and never a blank
+    // dashboard, either of which is what the pre-fix literal role check produced for this account.
+    // `.first()`, `listing-flows.spec.ts`'s own idiom: the API orders rows `updated_at DESC`, so
+    // the row this run just saved is always first, whatever else this persona owns from an
+    // earlier run — this account is not reseeded between runs, only its identity is.
+    const firstListingRow = page.locator('div[style*="var(--shadow-sm)"]').first();
+    await expect(firstListingRow, 'A16.23: the bootstrap loaded this account\'s own row, by permission').toContainText('Untitled listing');
   });
 
   test('unknown routes redirect to /', async ({ page }) => {

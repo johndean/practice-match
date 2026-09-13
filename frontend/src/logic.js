@@ -415,7 +415,7 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
-    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();
+    if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     this.loadAdmin();
     if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());

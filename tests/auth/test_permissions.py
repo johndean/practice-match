@@ -15,9 +15,14 @@ def P(*roles, state="active"):
 
 
 def test_matrix_matches_the_spec_table():
+    # `seller.apply` and `page.seller` carry `admin` since ruling D-C54 (2026-09-13): the admin role
+    # is a superset of the whole table, applied structurally at the foot of `permissions.py`. The
+    # rows are still written here as the spec's own holders PLUS that one rule, so a row that lost
+    # its real holder would still fail — `tests/auth/test_matrix.py` pins the rule itself.
     assert PM.MATRIX["page.gate"] == frozenset(PM.ROLES)
     assert PM.MATRIX["market.read"] == frozenset({"buyer", "seller", "staff", "admin"})
-    assert PM.MATRIX["seller.apply"] == frozenset({"buyer"})
+    assert PM.MATRIX["seller.apply"] == frozenset({"buyer", "admin"})
+    assert PM.MATRIX["page.seller"] == frozenset({"seller", "admin"})
     assert PM.MATRIX["users.decide"] == frozenset({"staff", "admin"})
     assert PM.MATRIX["engine.activate"] == frozenset({"admin"}) and "engine.activate" in PM.REAUTH
     assert PM.MATRIX["abuse.investigate"] == frozenset({"admin"}) and "abuse.investigate" in PM.AUDITED

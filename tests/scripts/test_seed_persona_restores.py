@@ -231,7 +231,10 @@ async def test_the_seed_restores_every_fixture_a_live_run_mutates(client, conn, 
     answered application where `gate-answer` expects a question, and a `declined@` with two rows.
     """
     monkeypatch.setenv("PERSONA_PASSWORD", PERSONA_PW)
-    assert len(_fixture_emails()) == 10, "ten fixture accounts (A-S5.2); a new one joins the snapshot deliberately"
+    # Eleven since ruling D-C54 (2026-09-13) added `admin@practice-match.test`, the account whose
+    # only grant is `admin` — the shape John's own account has and `design@`'s four roles cannot
+    # express.
+    assert len(_fixture_emails()) == 11, "eleven fixture accounts (D-C54); a new one joins the snapshot deliberately"
 
     _run_seed()
     baseline = _snapshot(conn)
@@ -242,6 +245,8 @@ async def test_the_seed_restores_every_fixture_a_live_run_mutates(client, conn, 
         "design@practice-match.test": "active",
         "buyer@practice-match.test": "active",
         "seller@practice-match.test": "active",
+        # Ruling D-C54 (2026-09-13): the fourth member, holding `admin` and nothing else.
+        "admin@practice-match.test": "active",
         "pending@practice-match.test": "pending",
         "needs-review@practice-match.test": "needs_review",
         "declined@practice-match.test": "declined",
