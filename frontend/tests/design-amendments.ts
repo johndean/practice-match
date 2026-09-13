@@ -7536,9 +7536,11 @@ export function amendments(): Amendment[] {
     // already guarantees.
     A40_3, A40_4, A40_5, A40_6,
     // A34 -- ONE VOCABULARY (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13). Appended last, as
-    // every family is, and it has to be: SIX of the fourteen are CHAINED on an earlier family's
-    // output -- A34.3 on A24.44, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on A21.4d, A34.8 on
-    // A31.11, A34.10 on A21.5b and A34.14 on A24.50 -- so each runs after the entry it reads.
+    // every family is, and it has to be: SEVEN of the first fourteen are CHAINED on an earlier
+    // family's output -- A34.3 on A31.12b, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on A21.4d,
+    // A34.8 on A31.11, A34.10 on A21.5b and A34.14 on A24.50 -- so each runs after the entry it
+    // reads. (Counted, not estimated: the first draft of this comment said SIX and then named
+    // seven, which the review caught as Minor 7.)
     // A34.14 also reads the object literal A34.13 has just shortened, which is why the two
     // deletions are ordered. Definition order in this file matches this list (m8).
     A34_1, A34_2, A34_3, A34_4, A34_5, A34_6, A34_7, A34_8, A34_9, A34_10,

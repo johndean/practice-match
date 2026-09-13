@@ -6190,14 +6190,42 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
 // same. `growth` (place or county) and `econ` (county) are the two that are never the ring, and
 // they are the pair every fix round on this surface has been about (D-C48, A31.12).
 //
-// WHAT THIS GATE DOES NOT OWN, deliberately. The closure runs over the captions the design
-// composes FROM ITS OWN CATALOGUE (`LAYER_META` through `metaSource`, and `AREA_LABEL`) and over
-// the captions composed where the API HAS served a geography. It does NOT run over the design's
-// own no-label fallbacks: the brief's ruling 1 refuses "market level" and "community level" as
-// geography words `(where the API serves a basis)`, and `stripCards`' `locBasis` still reads
-// "community level" when the API serves no `communityLabel` at all — the reference path and every
-// approved state. Replacing that fallback is a ruled string §3.2 proposes for no row.
+// WHAT THIS GATE OWNS AND WHAT IT DOES NOT, stated as it is CODED (review Minor 9, 2026-09-13 —
+// the first draft described a narrower exemption than the code had).
+//
+//   * THE CLOSURE (`every geography a catalogue caption names…`) walks the ` · `-joined segments
+//     of the captions the design composes FROM ITS OWN CATALOGUE: the map tooltip's source line,
+//     the legend card's source line and the snapshot strip's `src`. Every segment after the first
+//     must be a phrase from §3.1's list. `valueNote` is NOT walked by it, on EITHER arm — not the
+//     served-label arm and not the fallback — because a served `communityLabel` or `growthScope`
+//     is a proper name the server chooses ("Dallas", "Orange County") and no closed list can
+//     enumerate one. What the LOCATION case below asserts instead is the thing that can be
+//     asserted: the caption CONTAINS the geography that figure is measured at, and every §3.1
+//     phrase it names is that one. A word appended to a correct phrase would pass, and that is a
+//     known width, not an oversight.
+//   * THE PROSE CHECK (`no surface qualifies a figure with a geography outside the list`) is the
+//     fix-round-1 widening (Important 2): the econ tooltip's MARGIN sentence read "…, county
+//     level." beside a source line saying "· County" — one tooltip, two vocabularies. Prose
+//     cannot be closed the way a ` · `-joined caption can, so this half is honestly a BLACKLIST of
+//     the two shapes the audit actually found — `<word> level` and a bare "the community" used as
+//     a geography — run over every tooltip's whole text and every caption on every surface. A
+//     brand-new noun would slip it; "market level", "community level" and "county level" cannot.
+//   * `stripCards`' `locBasis` FALLBACK still reads "community level" where the API serves no
+//     `communityLabel` at all — the reference path and every approved state — and it is ruled
+//     exempt from the closure: the brief's ruling 1 refuses that phrase `(where the API serves a
+//     basis)`, and this is the arm where it does not. It is exempt from the PROSE check too, by
+//     the same ruling, and the check states that exemption in one place rather than two.
 // -------------------------------------------------------------------------------------------
+/** The design's own title per layer, read once so the snapshot case below can pair a card with
+ *  the layer it belongs to without re-typing six strings. Declared BEFORE the describe that uses
+ *  it (review Minor 11): hoisting made the tail work, and a dangling tail on a 6,300-line file
+ *  reads as an accident. */
+const LAYER_TITLE: Record<string, string> = {
+  income: 'Median household income', pets: 'Pet ownership (estimated)',
+  competition: 'Veterinary competition', growth: 'Population growth',
+  households: 'Households', econ: 'Average practice payroll'
+};
+
 describe('A34 — one vocabulary: every figure names its own geography, from one closed list (D-C51)', () => {
   const AUSTIN = 'Austin, TX';
   const LAYERS = ['income', 'pets', 'competition', 'growth', 'households', 'econ'] as const;
@@ -6328,6 +6356,20 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
     }
   });
 
+  it('…and the ONE exemption is the fallback the brief ruled, and only it', () => {
+    // The brief's ruling 1 refuses "community level" as a geography word `(where the API serves a
+    // basis)`. Where the API serves NO `communityLabel`, `locBasis` is the design's own wording,
+    // the reference path and every approved state; replacing it is a ruled string §3.2 proposes
+    // for no row. Asserted rather than assumed, so that if it ever IS ruled the exemption is
+    // removed here and not merely left standing.
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    browse('income', p.id as string);
+    const notes = c.marketVals(P).stripCards.map((card: { valueNote?: string }) => card.valueNote);
+    expect(notes.filter((n: string) => n === 'community level').length,
+      'the no-label fallback is not "community level" any more, so the exemption above is stale').toBe(4);
+  });
+
   it('a catalogue caption names the geography that layer is DRAWN at, and no other', () => {
     for (const layer of LAYERS) {
       browse(layer, null);
@@ -6352,7 +6394,7 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
       for (const layer of LAYERS) {
         browse(layer, id);
         for (const card of c.marketVals(P).stripCards) {
-          const key = LAYERS.filter((k) => c.state && (LAYER_TITLE[k] === card.title))[0];
+          const key = LAYERS.filter((k) => LAYER_TITLE[k] === card.title)[0];
           expect(key, `no layer answers to the card titled "${card.title}"`).toBeTruthy();
           const own = PRACTICE_GEOGRAPHY[key];
           expect(card.valueNote, `the "${card.title}" card is captioned "${card.valueNote}" for a figure measured at ${own}`)
@@ -6424,11 +6466,3 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
       .toContain('Population growth is measured for the city or county named on its own tile.');
   });
 });
-
-/** The design's own title per layer, read once so the snapshot case above can pair a card with
- *  the layer it belongs to without re-typing six strings. */
-const LAYER_TITLE: Record<string, string> = {
-  income: 'Median household income', pets: 'Pet ownership (estimated)',
-  competition: 'Veterinary competition', growth: 'Population growth',
-  households: 'Households', econ: 'Average practice payroll'
-};

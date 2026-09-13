@@ -1451,7 +1451,11 @@ describe('local design amendments (spec D15)', () => {
     // of them are distinctive only at 2, A34.6's own sub-line (byte-identical to A27.7's, which
     // is the point of that entry) and A34.1's dataset line. What the case asserts is unchanged
     // and is the whole point: 4 accepts every citation, and 3 does not, so 4 is the smallest
-    // threshold that can ship.
+    // threshold that can ship. RE-TAKEN for fix round 1 (2026-09-13), as this comment's own rule
+    // requires whenever the ledger grows: the round adds nine entries, FIVE of them removals, so
+    // four citations join (A34.15's econ margin line, A34.16's and A34.17's income captions and
+    // A34.23's `VALUE_LAYERS.competition`) and the five deletions move every design line below
+    // them. Re-measured at both the four-entry and the nine-entry state: the table does not move.
     expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 24, 2: 5, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });

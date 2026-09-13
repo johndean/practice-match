@@ -2111,8 +2111,12 @@ test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
     'surrounding county', 'across the metro', 'vs US'
   ];
   /** Audit §3.1's basis words — appended only where the figure is not the Census's own published
-   *  estimate for that exact area. */
-  const BASIS = ['approximate', 'derived estimate', 'not an observed count'];
+   *  estimate for that exact area. `'not an observed count'` is NOT in this list (review Minor 10):
+   *  A34.1 took it out of every caption in the product when `pets` gained a `dataset:`, and the one
+   *  surviving occurrence is the pets tooltip's own margin sentence "Not an observed count.",
+   *  capital N, which this case-sensitive matcher could never have matched anyway. Dead vocabulary
+   *  in a gate reads as coverage it does not have. */
+  const BASIS = ['approximate', 'derived estimate'];
 
   /** Every ruled geography phrase a caption names, longest first so "Census tracts" is not read
    *  as "Census tract" and a stray "s". */
