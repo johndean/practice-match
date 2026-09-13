@@ -196,6 +196,30 @@ def _figures(
 # (`App.vue`'s Insights heading and its footnote) are corrected in the same release.
 BAND_LABEL = "Within about 5 miles of the practice"
 
+# A34 (ruling D-C51, 2026-09-13): the one BASIS word the API appends to a figure it derived
+# rather than read. `income_note` joins it to `BAND_LABEL` below, and the docked panel joins the
+# same word to its own index (A33.1b) -- two surfaces, one spelling, pinned across the wire by
+# `tests/census/test_design_shading_labels.py`. The audit found the median qualified
+# "approximate" on the detail card and not on the snapshot strip beside it, which is collision C1.
+APPROXIMATE_BASIS = "approximate"
+
+
+def income_note_for(label: str | None) -> str:
+    """The median-income tile's sub-line, composed from ONE basis word on BOTH arms.
+
+    A34 fix round 1 (ruling D-C51, 2026-09-13, review Important 3). `APPROXIMATE_BASIS` named the
+    word the label-present arm joins, and the sibling arm hard-coded a second spelling,
+    `"Approximate"` -- capital A, a word the closed list does not hold -- which the design renders
+    straight through (`stripCards`' `sel.incomeNote`, the detail card's `p.incomeNote`). A listing
+    on that arm therefore showed a caption that was a BASIS WITH NO GEOGRAPHY: the defect class the
+    ruling exists to remove, produced by the release meant to close it.
+
+    So the no-label arm serves the same word and nothing else, and the CLIENT puts its own fallback
+    in front of it (A34.16/A34.17) -- `<fallback> · approximate`, exactly the shape
+    `<label> · approximate` has. One spelling, one join, an area named on every path.
+    """
+    return f"{label} · {APPROXIMATE_BASIS}" if label is not None else APPROXIMATE_BASIS
+
 # The area figures move as ONE GROUP (D-C38). `label` describes all of them at once, so a group
 # drawn half from the ring and half from the city would put a city figure under a ring caption —
 # the very defect D-C38 exists to remove. A figure the chosen band does not have is null, which is
@@ -453,7 +477,7 @@ def community_rows(
         if area["income"] is not None:
             income_approximate = bool(area_metrics["median_hh_income"]["is_derived"])
             if income_approximate:
-                income_note = f"{label} · approximate" if label is not None else "Approximate"
+                income_note = income_note_for(label)
 
         # A33.1 — the index the pipeline already stores, from the band the median came from.
         # `materialize.py:294` writes `income_index_vs_us` in every band it computes, against

@@ -9,7 +9,7 @@ import logging
 import fakeredis
 
 from app.census import catchment, geocode, materialize
-from app.census.serve import BAND_LABEL, community_rows
+from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL, community_rows
 from tests.census.listing_fixtures import make_listing
 from tests.census.test_geocode import NOMATCH, _geocoder
 
@@ -967,7 +967,11 @@ def test_a_derived_place_median_carries_the_qualifier_too(conn):
 
     assert row["label"] is None
     assert row["income"] == "$67,760"
-    assert row["income_note"] == "Approximate"
+    # A34 fix round 1 (D-C51, Important 3): the no-label arm serves the ONE basis word, lower
+    # case, and nothing else — `"Approximate"` was a second spelling of it, rendered straight
+    # through as a caption that named no area at all. The CLIENT composes
+    # `<its own fallback> · approximate` here (A34.16/A34.17), so the caption still names one.
+    assert row["income_note"] == APPROXIMATE_BASIS
 
 
 # ---------------------------------------------------------------------------------------------
