@@ -1,0 +1,22 @@
+{
+  "A24.4": {
+    "anchor": "      areas: areaFc,",
+    "offset": 0,
+    "why": "A24.4 wrote `areas:` and A25.3 wrote `communities:` on the NEXT line, and a later entry's find swallowed BOTH, so `outputOf` resolves the two ids to one block and only A25.3's line of it still stands in the design — which is why both rows cited V3:2543 and why every renumbering moved them together. Only the `find` each entry carries can tell them apart, so the line is named here: A24.4's own output is `areas: areaFc,`, one line above."
+  },
+  "A25.3": {
+    "anchor": "      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {",
+    "offset": 0,
+    "why": "A24.4's twin. The derivation happens to land here anyway — the shared block's one surviving distinctive line IS A25.3's — but that is an accident of which line a later entry rewrote, so it is stated rather than relied on."
+  },
+  "A24.35": {
+    "anchor": "    sub: \"Total households by Census tract · ACS 5-year\",",
+    "offset": 2,
+    "why": "A24.35 (households) and A24.36 (income) introduced BYTE-IDENTICAL `dataset:` lines, so the text cannot say which entry stands where and the nearest-anchor rule sent households' row to income's line at V3:1945. Named from the households card's own `sub:` line, two above its `dataset:`."
+  },
+  "A24.47": {
+    "anchor": "    sub: \"Total households by Census tract · ACS 5-year\",",
+    "offset": 2,
+    "why": "A24.35's consumer, with the same ambiguity for the same reason: A24.46 (income) and A24.47 (households) also write identical `dataset:` lines. The ledger's own rule decides it by the `find` anchor each carries — A24.46 declares A24.36, A24.47 declares A24.35 — so A24.47's line is the households card's."
+  }
+}
