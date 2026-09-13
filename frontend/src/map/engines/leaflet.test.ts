@@ -28,9 +28,9 @@ async function mounted(opts: Partial<Parameters<LeafletMapEngine['mount']>[1]> =
 describe('LeafletMapEngine — mount contract, scaleControl option kept', () => {
   it('creates the map, tiles, labels, scale control and groups exactly as the handoff did', async () => {
     const { stub, el } = await mounted();
-    expect(stub.calls[0]).toEqual({ fn: 'map', args: [el, { center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true }] });
-    expect(stub.tiles[0].url).toBe(BASEMAPS.map.url); expect(stub.tiles[0].options).toEqual({ attribution: BASEMAPS.map.attribution, maxZoom: 18 });
-    expect(stub.tiles[1].url).toBe(LABEL_TILES); expect(stub.tiles[1].options).toEqual({ maxZoom: 18, pane: 'shadowPane' });
+    expect(stub.calls[0]).toEqual({ fn: 'map', args: [el, { center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true, maxZoom: 20 }] });
+    expect(stub.tiles[0].url).toBe(BASEMAPS.map.url); expect(stub.tiles[0].options).toEqual({ attribution: BASEMAPS.map.attribution, maxZoom: 20, maxNativeZoom: 16 });
+    expect(stub.tiles[1].url).toBe(LABEL_TILES); expect(stub.tiles[1].options).toEqual({ maxZoom: 18, maxNativeZoom: 16, pane: 'shadowPane' });
     expect(stub.map.added).toContain(stub.tiles[1]);                       // labels shown on the gray canvas
     expect(stub.calls.find((c) => c.fn === 'control.scale')?.args).toEqual([{ imperial: true, metric: false, position: 'bottomright' }]);
     expect(stub.calls.filter((c) => c.fn === 'control.zoom')).toHaveLength(0);
@@ -64,6 +64,109 @@ describe('LeafletMapEngine — mount contract, scaleControl option kept', () => 
     engine.show(); vi.advanceTimersByTime(80); expect(stub.map.invalidated).toBe(2);
     let seen = 0; const off = engine.onMove((_c, z) => { seen = z; }); stub.map.zoom = 11; stub.map.handlers.zoomend(); expect(seen).toBe(11); off(); expect(stub.map.handlers.zoomend).toBeUndefined();
     engine.destroy(); expect((stub.map as any).removed).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A35 (John's words, ruling D-C52, 2026-09-13): "allow a user to zoom in BELOW the level of the
+// last actual map layer … the map allows user to zoom in as far as they want … this message is
+// never seen".
+//
+// MEASURED 2026-09-13: Esri's Canvas/World_Light_Gray_Base is cached "from Level 14 through
+// Level 16" in North America and its tilemap reports ZERO tiles at 17+ at every US point probed.
+// For a tile past 16 the service answers HTTP **200** with a constant 2,521-byte grey JPEG
+// reading "Map data not yet available" — a SUCCESSFUL image, so `errorTileUrl` and `tileerror`
+// (which fire on an <img> error) can never see it. The design created both layers with
+// `maxZoom: 18` and no `maxNativeZoom`, and the map with no ceiling of its own, so Leaflet derived
+// the map's max from the layers, `_getZoomForUrl` put 17 and 18 in the URL, and the placeholder
+// was requested and drawn under live tract polygons, a tooltip and a pin.
+//
+// The fix is the option Leaflet already has for exactly this: REQUEST at the last real level and
+// UPSCALE past it. These are the ruled values, and this case is where they are stated once.
+// -------------------------------------------------------------------------------------------
+describe('LeafletMapEngine — A35: the basemap never requests a tile Esri does not have (D-C52)', () => {
+  // A35.6, and the finding that produced its shape. `setUrl` alone cannot carry a basemap switch
+  // where the two services clamp to DIFFERENT tile zooms: `GridLayer.redraw()` moves `_tileZoom`
+  // to the new clamp but never calls `_resetGrid()` (leaflet-src.js:11330-11341), the only place
+  // `_globalTileRange` is recomputed, so the layer asks for the new zoom's coordinates while
+  // holding the old zoom's world range and `_isValidTile` rejects every one of them. Measured in
+  // real Chromium (`tests/smoke.spec.ts`): a switch to Satellite at map zoom 20 requested ZERO
+  // tiles and left the tile pane empty, while the same switch at zoom 10 — where both services
+  // clamp to the same tile zoom — requested twelve. So the url is set with `noRedraw` and the
+  // layer is removed and re-added, which is Leaflet's own full reset (`onAdd` -> `_resetView`
+  // -> `_setView` with `_tileZoom` undefined), and the option is written FIRST because the
+  // re-add is what reads it.
+  it('setBase writes the new basemap\'s native max FIRST, then resets the layer rather than redrawing it', async () => {
+    const { stub, engine } = await mounted();
+    const tile = stub.tiles[0];
+    expect(tile.optionsAtSetUrl, 'mount() must not call setUrl at all').toBeNull();
+    const attachedAtMount = tile.seq;
+
+    engine.setBase('satellite');
+    expect(tile.options.maxNativeZoom, 'World_Imagery is real to z19 (Esri\'s published US floor)').toBe(19);
+    expect(tile.optionsAtSetUrl?.maxNativeZoom, 'the option must be written before the layer is touched').toBe(19);
+    expect(tile.noRedrawAtSetUrl, 'setUrl must NOT redraw — the re-add below is the reset').toBe(true);
+    expect(tile.seq, 'the layer was not re-attached, so its grid was never reset').toBeGreaterThan(attachedAtMount);
+    expect((stub.map.added as unknown[]).filter((l) => l === tile), 'the tile layer is attached exactly once').toHaveLength(1);
+
+    const attachedAfterSatellite = tile.seq;
+    engine.setBase('map');
+    expect(tile.options.maxNativeZoom, 'the gray canvas is cached to z16 and no further').toBe(16);
+    expect(tile.optionsAtSetUrl?.maxNativeZoom).toBe(16);
+    expect(tile.seq).toBeGreaterThan(attachedAfterSatellite);
+    expect((stub.map.added as unknown[]).filter((l) => l === tile)).toHaveLength(1);
+    // The display ceiling is the MAP's, not the basemap's, so the + button stops in the same place
+    // whichever tab is on — and it never moves when the basemap does.
+    expect(tile.options.maxZoom, 'setBase must not touch the display ceiling').toBe(20);
+    expect((stub.map as any).opts.maxZoom).toBe(20);
+  });
+
+  // Fix round 1, Important-3. `MarketMapView`'s basemap watcher carries `status` among its deps, so
+  // it fires `setBase(props.basemap)` with the SAME basemap the engine has just mounted. Under the
+  // old code that was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152)
+  // — and A35.6's reset is unconditional, so every mount paid a SECOND full basemap tile load
+  // (measured with real Leaflet in a 900x700 map: 12 createTile calls at mount, 24 after the
+  // no-op setBase). On a project that ruled on exactly this class of waste (A32, "a metro switch
+  // pulled the whole metro TWICE"), the reset is guarded on an actual change of basemap.
+  it('a setBase for the basemap already on the map touches nothing at all', async () => {
+    const { stub, engine } = await mounted();
+    const tile = stub.tiles[0];
+    const attachedAtMount = tile.seq;
+    expect(tile.setUrlCalls, 'mount() must not call setUrl at all').toBe(0);
+
+    engine.setBase('map');
+    expect(tile.setUrlCalls, 'the layer was re-urled for the basemap it is already showing').toBe(0);
+    expect(tile.seq, 'the layer was removed and re-added for the basemap it is already showing').toBe(attachedAtMount);
+    expect((stub.map as any).attrUpdated ?? 0, 'the attribution control was rebuilt for nothing').toBe(0);
+    expect(tile.options.maxNativeZoom, 'the guard must leave the native cap exactly where it was').toBe(16);
+
+    // …and a REAL change still does all of it, so the guard cannot be satisfied by doing nothing.
+    engine.setBase('satellite');
+    expect(tile.setUrlCalls).toBe(1);
+    expect(tile.seq).toBeGreaterThan(attachedAtMount);
+    expect(tile.options.maxNativeZoom).toBe(19);
+    // Re-selecting the tab that is already pressed is the same no-op.
+    const attachedAfterSatellite = tile.seq;
+    engine.setBase('satellite');
+    expect(tile.setUrlCalls).toBe(1);
+    expect(tile.seq).toBe(attachedAfterSatellite);
+  });
+
+  it('every basemap declares its own native max, and no layer can be asked past it', async () => {
+    // Stated on the CONSTANTS as well as on the mount, because `setBase` reads them directly:
+    // a basemap added without one would leave `maxNativeZoom` undefined and Leaflet would go
+    // straight back to requesting whatever the display ceiling allows.
+    for (const [kind, native] of [['map', 16], ['satellite', 19]] as const) {
+      expect((BASEMAPS as Record<string, { maxNativeZoom: number }>)[kind].maxNativeZoom, kind).toBe(native);
+      expect((BASEMAPS as Record<string, { maxNativeZoom: number }>)[kind].maxNativeZoom).toBeLessThan(20);
+    }
+    const { stub } = await mounted({ basemap: 'satellite' });
+    expect(stub.tiles[0].options).toEqual({ attribution: BASEMAPS.satellite.attribution, maxZoom: 20, maxNativeZoom: 19 });
+    // The labels HIDE at 19 and 20 rather than upscaling 8x or 16x: a GridLayer draws nothing
+    // above its own `maxZoom`, and illegible text is worse than no text. The base keeps the map's
+    // ceiling, so the map itself still reaches 20.
+    expect(stub.tiles[1].options.maxZoom).toBe(18);
+    expect(stub.tiles[1].options.maxNativeZoom).toBe(16);
   });
 });
 

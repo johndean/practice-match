@@ -40,11 +40,18 @@ export class LeafletMapEngine implements MapEngine {
     // with nothing holding a reference to tear either down.
     if (this.destroyed) return;
     this.L = L;
-    this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true });
+    // A35 (ruling D-C52): the MAP carries the ceiling — `maxZoom: 20` — so `getMaxZoom()` stops
+    // deriving it from whichever layers are on and the + button stops in the same place on both
+    // basemaps. Each tile layer REQUESTS at its own service's `maxNativeZoom` and Leaflet upscales
+    // above it, so a tile Esri does not have is never asked for. `detectRetina` stays unset: it
+    // adds a zoomOffset WITHOUT touching maxNativeZoom, which is the same defect by another door.
+    this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true, maxZoom: 20 });
     const cfg = BASEMAPS[opts.basemap] || BASEMAPS.map;
-    this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 18 }).addTo(this.map);
+    this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 20, maxNativeZoom: cfg.maxNativeZoom }).addTo(this.map);
     // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
-    this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' });
+    // They keep their own `maxZoom: 18` and HIDE above it rather than upscale 16x into
+    // illegibility, while the base layer keeps the map's ceiling.
+    this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: 'shadowPane' });
     if (opts.basemap === 'map') this.labels.addTo(this.map);
     // ONE canvas renderer per mount, shared by every shaded area (MarketMapV3.jsx:248). A
     // renderer per polygon is what made the 12,560-rectangle mosaic unusable, and the rule
@@ -82,9 +89,39 @@ export class LeafletMapEngine implements MapEngine {
   setBase(kind: BaseKind): void {
     if (this.destroyed) return;
     const cfg = BASEMAPS[kind] || BASEMAPS.map;
-    this.tile.setUrl(cfg.url);
-    if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
+    // A35.6 (ruling D-C52). The two basemaps clamp to DIFFERENT tile zooms (16 and 19), and
+    // `setUrl`'s own redraw cannot carry that: `GridLayer.redraw()` moves `_tileZoom` to the new
+    // clamp but never calls `_resetGrid()` (leaflet-src.js:11330-11341), which is the only place
+    // `_globalTileRange` is recomputed — so after a switch at map zoom 20 the layer asked for z19
+    // coordinates while still holding the z16 world range, `_isValidTile` rejected every one of
+    // them, and the map went BLANK. Measured in real Chromium by `tests/smoke.spec.ts`: zero tiles
+    // requested at z20, twelve at z10 (where both services clamp to the same tile zoom and
+    // `redraw()` leaves `_tileZoom` alone). So the url is set with `noRedraw` and the layer is
+    // removed and re-added — `GridLayer.onAdd` -> `_resetView()` -> `_setView()` with `_tileZoom`
+    // undefined is Leaflet's own full reset, `_resetGrid()` included. It costs nothing a switch
+    // was not paying anyway: `setUrl`'s redraw already removes every tile, and every tile of the
+    // new service is a new request either way. The option is written FIRST, because the re-add is
+    // what reads it.
+    //
+    // Fix round 1, Important-3: …but ONLY when the basemap actually changed. `MarketMapView`'s
+    // watcher carries `status` among its deps and fires this with the basemap the engine has just
+    // mounted; `setUrl(sameUrl)` used to be free (leaflet-src.js:12150-12152 sets `noRedraw`
+    // itself) and the reset is not, so every mount paid a second full basemap load — 24 tile
+    // `<img>` built against the label layer's 12. `_url` because `L.TileLayer` has no public
+    // reader for it and the layer is the only thing that knows which basemap it is showing.
+    if (this.tile._url === cfg.url && this.tile.options.maxNativeZoom === cfg.maxNativeZoom) return;
+    this.tile.options.maxNativeZoom = cfg.maxNativeZoom;
+    this.tile.setUrl(cfg.url, true);
+    this.tile.remove();
+    // Fix round 1, Important-1 and Important-2: BETWEEN the remove and the add, never after.
+    // `Control.Attribution` keeps a REGISTRY written from `getAttribution()` at add time and
+    // cleared from it at remove time, and `_update()` rebuilds the footer from that registry and
+    // not from this option — so assigned after `addTo` the first switch re-registered the OLD
+    // credit (A35.7's string never reached the footer on Satellite) and the second left BOTH in it
+    // for the life of the map. Attribution is legally load-bearing (CLAUDE.md).
     this.tile.options.attribution = cfg.attribution;
+    this.tile.addTo(this.map);
+    if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
     if (this.map.attributionControl._update) this.map.attributionControl._update();
   }
   circle(center: LatLng, radiusM: number, s: CircleStyle, group: string): Handle {

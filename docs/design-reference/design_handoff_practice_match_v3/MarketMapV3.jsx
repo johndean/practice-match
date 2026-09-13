@@ -39,11 +39,13 @@ function loadLeaflet() {
 const BASEMAPS = {
   map: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    maxNativeZoom: 16,
     attribution: "Tiles \u00a9 Esri"
   },
   satellite: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution: "Imagery \u00a9 Esri, Maxar, Earthstar Geographics"
+    maxNativeZoom: 19,
+    attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"
   }
 };
 const LABEL_TILES =
@@ -157,12 +159,13 @@ function MarketMapV3(props) {
     loadLeaflet()
       .then((L) => {
         if (dead || !hostRef.current || mapRef.current) return;
-        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true });
+        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true, maxZoom: 20 });
         tileRef.current = L.tileLayer(BASEMAPS[basemap].url, {
           attribution: BASEMAPS[basemap].attribution,
-          maxZoom: 18
+          maxZoom: 20,
+          maxNativeZoom: BASEMAPS[basemap].maxNativeZoom
         }).addTo(map);
-        labelRef.current = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: "shadowPane" });
+        labelRef.current = L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: "shadowPane" });
         if (basemap === "map") labelRef.current.addTo(map);
         areaRef.current = L.layerGroup().addTo(map);
         pinRef.current = L.layerGroup().addTo(map);
@@ -185,8 +188,12 @@ function MarketMapV3(props) {
     const map = mapRef.current;
     if (!L || !map || !tileRef.current) return;
     const cfg = BASEMAPS[basemap] || BASEMAPS.map;
-    tileRef.current.setUrl(cfg.url);
+    if (tileRef.current._url === cfg.url && tileRef.current.options.maxNativeZoom === cfg.maxNativeZoom) return;
+    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;
+    tileRef.current.setUrl(cfg.url, true);
+    tileRef.current.remove();
     tileRef.current.options.attribution = cfg.attribution;
+    tileRef.current.addTo(map);
     if (labelRef.current) {
       if (basemap === "map") labelRef.current.addTo(map);
       else map.removeLayer(labelRef.current);

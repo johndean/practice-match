@@ -375,8 +375,14 @@ describe('local design amendments (spec D15)', () => {
     'A31.12', 'A31.12b', 'A31.12c',
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     'A31.13', 'A31.13b',
+    // A35 — the basemap never requests a tile Esri does not have, and the member zooms past it
+    // (John's ruling D-C52, 2026-09-13). Seven literal edits, all in `MarketMapV3.jsx` (`file:
+    // 'jsx'`, A28.1's precedent), none chained: every `find` occurs exactly once in the pristine
+    // twin.
+    'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7',
     // A40 — the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every
-    // family is. A40.1/A40.2 are RESERVED and deliberately absent — the nav filter they carry
+    // family is; A35 edits the OTHER bundle file, so the two never meet in `amendmentsFor`.
+    // A40.1/A40.2 are RESERVED and deliberately absent — the nav filter they carry
     // moves 28 approved states and seven frozen hashes, which is a ruling and not this task's
     // (see the block over their definitions in design-amendments.ts). A40.3–A40.6 are every one
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
@@ -572,7 +578,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(307);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(314);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1475,7 +1481,103 @@ describe('local design amendments (spec D15)', () => {
     // polygons, 2026-09-11) added the four the partition was built for, and they are appended
     // after it because A24 is appended after A28 in `amendments()`. The list is spelled out rather than counted so an entry that silently
     // changes file still fails here.
-    expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12']);
+    expect(amendmentsFor('jsx').map((a) => a.id)).toEqual([
+      'A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12',
+      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7'
+    ]);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // A35 — THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE, AND THE MEMBER ZOOMS PAST IT.
+  // John, 2026-09-13 (ruling D-C52): "allow a user to zoom in BELOW the level of the last actual
+  // map layer … the map allows user to zoom in as far as they want … this message is never seen".
+  //
+  // MEASURED 2026-09-13. Esri's Canvas/World_Light_Gray_Base and its matching Reference layer are
+  // cached "from Level 0 … through Level 13" worldwide and "from Level 14 … through Level 16" in
+  // North America (the services' own `serviceDescription`), and their tilemap reports ZERO cached
+  // tiles at 17+ at every US point probed. For a tile past 16 the service answers HTTP **200**
+  // with a constant 2,521-byte grey JPEG reading "Map data not yet available" — a SUCCESSFUL
+  // image, which is why neither `errorTileUrl` nor a `tileerror` handler could ever have caught
+  // it. The design asked for `maxZoom: 18` on both layers and gave the map no ceiling of its own,
+  // so Leaflet 1.9.4 derived the map's 18 from the layers (`getMaxZoom` -> `_layersMaxZoom`),
+  // `_getZoomForUrl` put 17 and 18 in the URL, and the placeholder was drawn under live tract
+  // polygons, a tooltip and a pin.
+  //
+  // The ruled values, and the reason each is what it is:
+  //   gray base   maxNativeZoom 16, maxZoom 20 — requested at 16, upscaled 2x/4x/8x/16x above it
+  //   gray labels maxNativeZoom 16, maxZoom 18 — softened to 18 and then HIDDEN (a GridLayer
+  //               draws nothing above its own maxZoom): 16x upscaled text is not legible, and
+  //               hiding is honest
+  //   satellite   maxNativeZoom 19, maxZoom 20 — Esri's published US floor (0.3 m), measured real
+  //               at every probed point including rural Texas; metros with z20/z21 imagery give up
+  //               one level of native sharpness for a guarantee the placeholder cannot appear
+  //   the MAP     maxZoom 20 — so the + button's ceiling does not depend on which basemap is on
+  // `detectRetina` stays unset, deliberately: it adds a zoomOffset WITHOUT touching
+  // `maxNativeZoom`, which is the placeholder again by another door.
+  // -------------------------------------------------------------------------------------------
+  it('A35.1-A35.6 stop the gray canvas being asked past z16, and give the MAP the ceiling', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+
+    // Each basemap declares the last level its own service actually has a tile for.
+    expect(jsx).toContain('/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",\n    maxNativeZoom: 16,\n');
+    expect(jsx).toContain('/World_Imagery/MapServer/tile/{z}/{y}/{x}",\n    maxNativeZoom: 19,\n');
+
+    // The base tile layer REQUESTS at its basemap's native max and DISPLAYS to 20.
+    expect(jsx).toContain('          maxZoom: 20,\n          maxNativeZoom: BASEMAPS[basemap].maxNativeZoom\n');
+    // The labels keep their own 18 and hide above it; only the native max is added.
+    expect(jsx).toContain('L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: "shadowPane" });');
+    // The map's own ceiling, so `getMaxZoom()` stops reading it off whichever layers are on.
+    expect(jsx).toContain('zoomControl: false, attributionControl: true, maxZoom: 20 });');
+    // A35.6, whole, as fix round 1 leaves it. The option is written FIRST and the layer is then
+    // RESET rather than redrawn — `GridLayer.redraw()` moves `_tileZoom` to the new clamp but
+    // never calls `_resetGrid()` (leaflet-src.js:11330-11341), so a redraw alone leaves the
+    // previous zoom's `_globalTileRange` in place and `_isValidTile` rejects every tile at the new
+    // tile zoom (measured in Chromium as a switch to Satellite at zoom 20 that requested NOTHING).
+    // The guard in front of it is Important-3: the caller fires this with the basemap already
+    // mounted, and an unconditional reset made every mount pay a second full basemap load. The
+    // credit is assigned BETWEEN the remove and the add — Important-1/2: `Control.Attribution`
+    // rebuilds from a registry written at add time and cleared at remove time, so assigned after
+    // `addTo` the footer ended up carrying BOTH basemaps' credits for the life of the map.
+    expect(jsx).toContain(
+      '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
+      + '    if (tileRef.current._url === cfg.url && tileRef.current.options.maxNativeZoom === cfg.maxNativeZoom) return;\n'
+      + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
+      + '    tileRef.current.setUrl(cfg.url, true);\n'
+      + '    tileRef.current.remove();\n'
+      + '    tileRef.current.options.attribution = cfg.attribution;\n'
+      + '    tileRef.current.addTo(map);\n'
+    );
+    // The credit is assigned ONCE, and on the inside of the reset — never after it.
+    expect(jsx.split('tileRef.current.options.attribution = cfg.attribution;')).toHaveLength(2);
+    expect(jsx, 'the credit is assigned after the layer is back on the map, which is the defect')
+      .not.toContain('addTo(map);\n    tileRef.current.options.attribution');
+
+    // Both directions: the pristine bundle really did carry the un-capped pair (so none of the
+    // assertions above is vacuous), and nothing in the amended file still asks a Canvas layer for
+    // a level Esri does not have.
+    expect(pristineJsx, 'the pristine bundle no longer carries the un-capped base layer')
+      .toContain('          attribution: BASEMAPS[basemap].attribution,\n          maxZoom: 18\n');
+    expect(pristineJsx, 'the pristine bundle no longer carries the un-capped label layer')
+      .toContain('L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: "shadowPane" });');
+    expect(pristineJsx).not.toContain('maxNativeZoom');
+    expect(jsx, 'a tile layer is still created with no native cap').not.toContain('maxZoom: 18\n        }');
+    // `detectRetina` would re-open the hole it just closed — a zoomOffset with no native cap.
+    expect(jsx, 'detectRetina requests one level deeper than the map is on').not.toContain('detectRetina');
+  });
+
+  it('A35.7 credits the satellite imagery with the service\'s own current copyrightText', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+    // World_Imagery's `copyrightText`, fetched from the service on 2026-09-13. Attribution is
+    // legally load-bearing here, so it is Esri's own credit line verbatim rather than one composed
+    // from it — the rule `dataset_registry.attribution_text` already follows for Census datasets.
+    expect(jsx).toContain('attribution: "Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community"');
+    expect(pristineJsx, 'the pristine bundle no longer names Maxar').toContain('Maxar');
+    expect(jsx, 'Maxar is the vendor\'s former name and the service no longer credits it').not.toContain('Maxar');
+    // The gray canvas keeps the approved design's own string — D-C52 reaches the satellite line
+    // alone, and "Tiles © Esri" is what CLAUDE.md marks legally load-bearing today.
+    expect(jsx).toContain('attribution: "Tiles \\u00a9 Esri"');
   });
 
   it('A28.2-A28.4 delete the legacy panel\'s orphans, and the last "drive time" strings with them', () => {
