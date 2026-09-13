@@ -16,9 +16,12 @@ changes" column with the token the gate reads:
 * `Supersedes A24.20` — this entry removes a ruled SENTENCE that entry put in the design. Prose is
   a ruling in the member's own words, so taking one out needs this word, not a citation. The other
   direction, `Superseded by A10.2` on the entry that is being retired, counts too (A10's own row).
+* The token goes on YOUR row — the row of the entry whose `find` takes the text. A token on some
+  other later entry does not count for you: every consumer declares its own consumption.
 * Name the RIGHT id. Where two entries introduced byte-identical lines — A24.35 (households) and
-  A24.36 (income) both wrote the same `source:` line — the guard cannot tell them apart and will
-  accept the token on either row; the ANCHORS can, so decide it by the `find` each entry carries.
+  A24.36 (income) both wrote the same `source:` line — that text has two consumers and the guard
+  cannot tell which took which, so either consumer's token counts for it; the ANCHORS can tell, so
+  decide it by the `find` each entry carries (A24.46 declares A24.36, A24.47 declares A24.35).
 
 **If you cite a line** (`V3:2407`), the cited line — or one either side, so a citation may name the
 anchor a multi-line edit starts from — must carry a DISTINCTIVE line of what your entry put there:

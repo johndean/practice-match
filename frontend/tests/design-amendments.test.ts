@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
 import { citationFindings, ruledTextFindings } from './amend-guard';
 
+/** The measured distinctiveness threshold: a cited line's matching piece may occur at most this
+ *  many times in the amended design. Re-derived by the case that pins the whole table. */
+const DISTINCTIVENESS_K = 4;
+
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
   // D15 makes the pristine copy the authority every amendment is measured from, so it needs an
@@ -1348,14 +1352,42 @@ describe('local design amendments (spec D15)', () => {
         return own.length === 0 ? null : own.flatMap(outputOf);
       },
       occurrences: (piece) => design.split(piece).length - 1,
-      // MEASURED on this ledger, 2026-09-13: at 4 every correct citation passes; at 3 four fail,
-      // at 2 seven, at 1 twenty-five — the residue being lines the design genuinely repeats, like
-      // the three shared dismissal closures' identical `if (this.state.giveMenu) {` heads.
-      maxOccurrences: 4,
+      // MEASURED, not chosen — the case below re-derives the whole table on every run.
+      maxOccurrences: DISTINCTIVENESS_K,
     });
     expect(findings, `${findings.length} stale citation(s) found`).toEqual([]);
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(200);
+  });
+
+  // K is a property of THIS ledger, not a constant, so it is re-derived rather than asserted from
+  // a comment: the case runs the same rule at every threshold below the shipped one and pins how
+  // many correct citations each would reject. Run it alone with
+  //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
+  // The residue below 4 is text the design genuinely repeats: the three shared dismissal closures'
+  // identical `if (this.state.giveMenu) {` heads (3), and the `tickStyle:` declaration A26.2 and
+  // A26.3's filter families share (4).
+  it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const design = readFileSync(AMENDED, 'utf8');
+    const list = amendments();
+    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
+    const outputOf = (a: Amendment): string[] => {
+      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
+      return later ? outputOf(later) : trimmed(a.replace);
+    };
+    const staleAt = (k: number) => citationFindings({
+      rows: md.split('\n'),
+      lines: design.split('\n'),
+      outputFor: (id) => {
+        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
+        return own.length === 0 ? null : own.flatMap(outputOf);
+      },
+      occurrences: (piece) => design.split(piece).length - 1,
+      maxOccurrences: k,
+    }).findings.filter((f) => f.includes('is stale')).length;
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 28, 2: 7, 3: 4, 4: 0 });
+    expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 
   // ---------------------------------------------------------------------------------------
@@ -1368,17 +1400,22 @@ describe('local design amendments (spec D15)', () => {
   // the Browse Market-data footnote and its `replace` returned one — while CLAUDE.md went on
   // asserting it was there and the pixel gate re-based `browse-market-strip` without a question.
   //
-  // The rule: every line an entry's `replace` introduced is in the final amended file, OR the
-  // later entry that consumed it NAMES that entry in its own `LOCAL_AMENDMENTS.md` row. That is
-  // the shape the two supersessions this ledger already has were written in — A-C29 reverting
-  // A21.2/A21.2b, A10.2 revising A10 — so the guard asks for what a ruled supersession already
-  // looks like and refuses only the SILENT ones.
+  // THE RULE IS TWO TIERS, AND BOTH TAKE AN EXPLICIT TOKEN (`amend-guard.ts` carries it in full):
+  //   * a consumed LINE is declared by `consumes <id>` — or the stronger `supersedes <id>` — in
+  //     the row of an entry that TOOK that line;
+  //   * a consumed ruled SENTENCE is declared only by `supersedes <id>`, or by `superseded by <id>`
+  //     on the entry that put it there, which is A10 and A10.2's own vocabulary.
+  // A bare mention of the id does not count, and neither does a citation: at `db8bf67` A24.56's
+  // row both cited A24.20 and QUOTED the sentence it was dropping, and the sentence left the
+  // product all the same. Nor does a token on an entry that did not take THIS line — every
+  // consumer declares its own consumption (fix round 2, ruled 2026-09-13).
   //
-  // Run over the whole ledger on 2026-09-13 it found 98 consumed lines, 70 of them already named
-  // and 28 silent across 24 (superseded → consumer) pairs. Every one was read: all 24 are
-  // legitimate chained edits — a later ruling extending or rewriting an earlier entry's own line,
-  // with nothing ruled lost — so all 24 were NAMED in the consuming entry's row and none was
-  // restored. The guard was not weakened to reach zero.
+  // The population, re-measured at this tip: 1,325 introduced lines and 59 ruled sentences walked;
+  // 98 consumed lines across 68 (superseded → consumer) pairs, and 6 consumed sentences. Every one
+  // carries a deliberate token. The 33 that no row named before this task were read one by one and
+  // verified independently: 33 RULED-REMOVAL, 0 SILENT-LOSS — legitimate chained edits under a
+  // named ruling, nothing ruled lost — so all were NAMED and none restored. The guard was not
+  // weakened to reach zero.
   // ---------------------------------------------------------------------------------------
   it('every sentence a ruled entry introduced is still in the design, unless a later entry names its removal', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');

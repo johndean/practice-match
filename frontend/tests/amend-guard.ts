@@ -31,13 +31,19 @@
  * `db8bf67` A24.56's row both cited A24.20 and QUOTED the sentence it was dropping, and the
  * sentence still left the product unremarked.
  *
- * WHY THE TOKEN MAY SIT ON ANY LATER ENTRY, not only the computed consumer. Two entries can
- * introduce byte-identical lines — A24.35 (households) and A24.36 (income) both write
- * `source: "U.S. Census ACS 5-year estimates (2023) · Census tract",` — and `consumerOf` then
- * returns the same earlier-later entry for both, because the text alone cannot tell them apart.
- * Demanding the token on THAT row forces one of the two rows to state a falsehood, which is exactly
- * what happened at A24.46. The claim the guard verifies is "some later ruled entry declares this
- * text consumed"; which entry is a fact the ledger states and the guard does not invent.
+ * WHO MUST DECLARE: the entry that TAKES the text, and only ever one of the entries that take THAT
+ * text. The first draft asked whether the id appeared in any later row at all, which meant one
+ * token covered every line the entry ever lost — remove two of the three `Consumes A14.2` tokens
+ * and the ledger stayed green, because a third consumer still declared (fix round 2, ruled a defect
+ * on the re-review, 2026-09-13). Every consumer declares its own consumption.
+ *
+ * The one narrowing that keeps: two entries can introduce byte-identical lines — A24.35
+ * (households) and A24.36 (income) both write
+ * `source: "U.S. Census ACS 5-year estimates (2023) · Census tract",` — so that text has TWO
+ * consumers and the text alone cannot say which took which. Either consumer's token counts for it,
+ * which is what lets A24.46 declare A24.36 and A24.47 declare A24.35, each the one its own `find`
+ * anchor addresses, instead of one row being made to state a falsehood (which is what happened at
+ * A24.46 before the task review caught it).
  *
  * The logic lives here rather than inline in the test so that it can be run against a HISTORICAL
  * tree — the same code, an older ledger — which is how its RED was proved, and so that
@@ -106,13 +112,22 @@ export function ruledSentences(line: string): string[] {
   return [...new Set(out)];
 }
 
-/** The later entry that took `ruled` out, or undefined if nothing did. Two directions, because an
- *  entry's `find` may span the whole line (it rewrites it) or sit INSIDE it (it edits part of it);
- *  in the first direction an entry whose `replace` carries the text forward has not consumed it.
- *  `count` is checked at application time by `applyAmendments`, so an overlapping `find` is an
- *  overlapping EDIT — there is no other occurrence it could have matched instead. */
+/** EVERY later entry that takes `ruled` out. Two directions, because an entry's `find` may span the
+ *  whole line (it rewrites it) or sit INSIDE it (it edits part of it); in the first direction an
+ *  entry whose `replace` carries the text forward has not consumed it. `count` is checked at
+ *  application time by `applyAmendments`, so an overlapping `find` is an overlapping EDIT — there
+ *  is no other occurrence it could have matched instead.
+ *
+ *  All of them, not the first: where two entries introduced byte-identical lines, the same text has
+ *  two consumers and the text alone cannot say which took which. */
+export function consumersOf(ruled: string, later: Amendment[]): Amendment[] {
+  return later.filter((f) => (f.find.includes(ruled) && !f.replace.includes(ruled)) || ruled.includes(f.find.trim()));
+}
+
+/** The FIRST entry that takes `ruled` out — the one a finding names, since it is the one that
+ *  reached the text first. */
 export function consumerOf(ruled: string, later: Amendment[]): Amendment | undefined {
-  return later.find((f) => (f.find.includes(ruled) && !f.replace.includes(ruled)) || ruled.includes(f.find.trim()));
+  return consumersOf(ruled, later)[0];
 }
 
 /** Every ruled line and ruled sentence that left the design with no entry declaring it, plus how
@@ -124,27 +139,34 @@ export function ruledTextFindings({ list, final, rowOf }: GuardInput): { finding
   const quote = (s: string) => JSON.stringify(s.length > 120 ? `${s.slice(0, 120)}…` : s);
   list.forEach((e, i) => {
     const later = list.slice(i + 1);
-    const declared = (test: (row: string, id: string) => boolean) => later.some((f) => test(rowOf(f.id), e.id));
+    /** Did one of the entries that took THIS text declare taking it? Keyed on the (text, consumer)
+     *  pair rather than on the id alone: asking whether the id appears in ANY later row let one
+     *  token cover every line an entry ever lost, so a consumer that swallowed a line in silence
+     *  passed because a different consumer had declared (fix round 2, ruled 2026-09-13). */
+    const declaredBy = (takers: Amendment[], test: (row: string, id: string) => boolean) =>
+      takers.some((f) => test(rowOf(f.id), e.id));
     for (const ruled of introducedLines(e)) {
       // The SENTENCE tier first: a line may be rewritten lawfully and still carry its sentences
       // forward, which is the A24.20/A24.56 pair as it stands on `main` today.
       for (const sentence of ruledSentences(ruled)) {
         sentences++;
         if (final.includes(sentence)) continue;
-        const by = consumerOf(sentence, later) ?? consumerOf(ruled, later);
+        const takers = consumersOf(sentence, later).length > 0 ? consumersOf(sentence, later) : consumersOf(ruled, later);
+        const by = takers[0];
         if (by === undefined) {
           findings.push(`${e.id}: the ruled sentence ${quote(sentence)} is not in the amended design and no later entry's find touches it`);
-        } else if (!declared(declaresSupersession) && !declaresSupersededBy(rowOf(e.id), by.id)) {
+        } else if (!declaredBy(takers, declaresSupersession) && !declaresSupersededBy(rowOf(e.id), by.id)) {
           findings.push(`${e.id} -> ${by.id}: the ruled sentence ${quote(sentence)} left the design and no row says so — a later row must say it supersedes ${e.id}, or ${e.id}'s row that it is superseded by ${by.id}`);
         }
       }
       lines++;
       if (final.includes(ruled)) continue;
-      const by = consumerOf(ruled, later);
+      const takers = consumersOf(ruled, later);
+      const by = takers[0];
       if (by === undefined) {
         findings.push(`${e.id}: ${quote(ruled)} is not in the amended design and no later entry's find touches it`);
-      } else if (!declared(declaresConsumption)) {
-        findings.push(`${e.id} -> ${by.id}: ${quote(ruled)} left the design and no LOCAL_AMENDMENTS.md row declares it — the row of the entry that took it (${by.id}, or whichever entry actually did) must say it consumes ${e.id}`);
+      } else if (!declaredBy(takers, declaresConsumption)) {
+        findings.push(`${e.id} -> ${by.id}: ${quote(ruled)} left the design and no LOCAL_AMENDMENTS.md row of an entry that TAKES it declares it — the entry that takes a line says it consumes ${e.id}`);
       }
     }
   });
@@ -167,9 +189,11 @@ export function ruledTextFindings({ list, final, rowOf }: GuardInput): { finding
  * `maxOccurrences` times in the whole file. The first draft asked only for the word token, which
  * let `</sc-if>` (114 occurrences), `</button>` (89), `</sc-for>` (68) and `return {` (39) anchor
  * ten live citations that could each have been dozens of lines out. `maxOccurrences` is MEASURED,
- * not chosen: at 4 every correct citation passes, at 3 four fail, at 2 seven, at 1 twenty-five —
- * the residue being lines the design genuinely repeats, like the three shared dismissal closures'
- * identical `if (this.state.giveMenu) {` heads, which the ledger cites one per closure.
+ * not chosen: at 4 every correct citation passes, at 3 four fail, at 2 seven, at 1 twenty-eight —
+ * the residue being text the design genuinely repeats, like the three shared dismissal closures'
+ * identical `if (this.state.giveMenu) {` heads, which the ledger cites one per closure. The table
+ * is re-derived on every run rather than trusted here; to see it alone, run
+ *   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
  *
  * EQUALITY was measured first and rejected. `line.trim() === piece` rejects 24 of the 211 correct
  * citations, because their entry's `replace` is a FRAGMENT of a line — A3's text node, A10's two

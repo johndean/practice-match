@@ -50,7 +50,7 @@ describe('the LINE tier', () => {
     expect(out.findings).toHaveLength(1);
     expect(out.findings[0]).toContain('F1 -> F2');
     expect(out.findings[0]).toContain('taken later');
-    expect(out.findings[0]).toContain('must say it consumes F1');
+    expect(out.findings[0]).toContain('says it consumes F1');
   });
 
   // The loophole this round closes (task review, Minor): 44 of the 68 real consumed-line pairs were
@@ -71,19 +71,52 @@ describe('the LINE tier', () => {
     expect(run(consumedLine, { F2: '| F2 | … | Supersedes F1. |' }).findings).toEqual([]);
   });
 
-  // The token may sit on ANY later entry's row, not only the computed consumer's. Two entries can
-  // introduce byte-identical lines (A24.35 and A24.36 both write `source: "U.S. Census ACS 5-year
-  // estimates (2023) · Census tract",`), and `consumerOf` then returns the EARLIER later entry for
-  // both — so demanding the token on that row forces one of the two rows to state a falsehood,
-  // which is exactly the defect the task review found at A24.46. The claim the guard verifies is
-  // "some later ruled entry declares this line consumed", and a written token cannot be incidental.
-  it('accepts the token on a later entry that is not the computed consumer', () => {
+  // A later entry that does NOT take this line cannot speak for the one that does (fix round 2).
+  // F3 takes what F2 left, so F2 owes the declaration for F1's line and F3 owes one for F2's.
+  it('refuses a token from a later entry that did not take this line', () => {
     const third = entry('F3', 'gone: "replaced",', 'gone: "replaced once more",');
     const out = ruledTextFindings({
       list: [consumedLine.first, consumedLine.second, third],
       final: 'const a = 1;\n  keep: "kept",\n  gone: "replaced once more",\n',
-      // F3 takes F1's line (through F2's rewrite of it) and F2's own, and declares both.
       rowOf: (id) => (id === 'F3' ? '| F3 | … | Consumes F1. Consumes F2. |' : ''),
+    });
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0]).toContain('F1 -> F2');
+  });
+
+  // Fix round 2 (controller, 2026-09-13, ruled a defect on the re-review's observation). The first
+  // draft asked "does SOME later row declare this id?", so one token covered every line the entry
+  // ever lost: removing two of the three `Consumes A14.2` tokens left the real ledger green,
+  // because a THIRD consumer still declared. Every consumer declares its OWN consumption, so the
+  // question is asked of the entries that took THIS line.
+  it('asks each consumer for its own token, not the entry\'s id anywhere later', () => {
+    const first = entry('F1', 'a', 'a\n  one: "taken by F2",\n  two: "taken by F3",');
+    const second = entry('F2', 'one: "taken by F2",', 'one: "replaced",');
+    const third = entry('F3', 'two: "taken by F3",', 'two: "replaced",');
+    const out = ruledTextFindings({
+      list: [first, second, third],
+      final: 'a\n  one: "replaced",\n  two: "replaced",\n',
+      // F2 declares; F3 does not. F3's silence is the finding — the old rule let F2's token cover it.
+      rowOf: (id) => (id === 'F2' ? '| F2 | … | Consumes F1. |' : ''),
+    });
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0]).toContain('F1 -> F3');
+  });
+
+  // …and the ONE narrowing that keeps: where two entries introduced byte-identical lines (A24.35's
+  // and A24.36's `source:` lines), the same text has TWO consumers and the guard cannot tell which
+  // took which. Either consumer's token counts for that line, which is what lets A24.46 declare
+  // A24.36 and A24.47 declare A24.35 — each the one its own `find` anchor addresses — instead of
+  // one row being made to state a falsehood.
+  it('accepts the token from any entry that consumes THAT line, when a line has several', () => {
+    const alpha = entry('F1', 'a', 'a\n  same: "identical",');
+    const beta = entry('F2', 'b', 'b\n  same: "identical",');
+    const consumerA = entry('F3', 'a\n  same: "identical",', 'a\n  same: "A took it",');
+    const consumerB = entry('F4', 'b\n  same: "identical",', 'b\n  same: "B took it",');
+    const out = ruledTextFindings({
+      list: [alpha, beta, consumerA, consumerB],
+      final: 'a\n  same: "A took it",\nb\n  same: "B took it",\n',
+      rowOf: (id) => (id === 'F3' ? '| F3 | … | Consumes F1. |' : id === 'F4' ? '| F4 | … | Consumes F2. |' : ''),
     });
     expect(out.findings).toEqual([]);
   });
