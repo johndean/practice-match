@@ -488,7 +488,7 @@
                             <span style="display: inline-flex; align-items: center; gap: 5px;"><span :style="v.md?.compareKeyA"></span><span v-if="__s(v.md?.compareLabelA) !== null" class="sc-interp">{{ __s(v.md?.compareLabelA) }}</span></span>
                             <span style="display: inline-flex; align-items: center; gap: 5px;"><span :style="v.md?.compareKeyB"></span><span v-if="__s(v.md?.compareLabelB) !== null" class="sc-interp">{{ __s(v.md?.compareLabelB) }}</span></span>
                           </div>
-                          <div style="margin-top: 8px; font-size: 10px; line-height: 1.5; color: #767676;">Each bar is coloured by the class it falls in, using that layer's own scale — the top bar matches the shading on the map.</div>
+                          <div style="margin-top: 8px; font-size: 10px; line-height: 1.5; color: #767676;">Each bar is one listing's own figure for the area within about 5 miles of it, coloured on that layer's community scale.</div>
                         </div>
                       </template>
                     </div>
@@ -730,6 +730,9 @@
                   </div>
 
                   <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Competitive Landscape</div>
+                  <template v-if="v.md?.panel?.hasOverviewScope">
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.panel?.overviewScope) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewScope) }}</span></div>
+                  </template>
                   <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 9px;">
                     <div style="display: flex; gap: 8px; align-items: center; padding: 10px; border: 1px solid #e6e6e6; border-radius: 6px;">
                       <img src="/assets/icons/sub-info.svg" alt width="15" height="15" style="flex: none; opacity: .7;">
@@ -784,7 +787,7 @@
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <template v-if="v.md?.panel?.hasDemo">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.</p>
                   </template>
                 </div>
               </template>
@@ -841,7 +844,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </template>
 

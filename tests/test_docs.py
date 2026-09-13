@@ -2840,3 +2840,50 @@ def test_claude_md_amendment_paragraph_states_the_amend_guard_vocabulary():
     guard = (ROOT / "frontend" / "tests" / "amend-guard.ts").read_text()
     for word in ("consumes", "supersedes", "superseded\\s+by"):
         assert re.search(word, guard), f"amend-guard.ts does not read the {word} token"
+
+
+# ---------------------------------------------------------------------------------------------
+# Task ONE-VOCABULARY fix round 1, Important 1 (review of 9d16baf, 2026-09-13). A34's paragraph was
+# inserted in front of a standing sentence — "None of `baseline-manifest.json`'s thirteen frozen
+# hashes moves." — that belonged to A33's block, where it was true. A34.10 re-pinned `detail` under
+# D-C51, so the source-of-truth document asserted, in consecutive sentences, that one hash moved
+# and that none did. Both byte-identical copies carried it.
+#
+# The claim is worth pinning rather than merely correcting: the frozen manifest is the within-
+# worktree leak detector, and a document that says "none moves" while one has been re-pinned is
+# exactly how the next re-pin goes unremarked. So CLAUDE.md must state the CURRENT truth — twelve
+# unmoved, `detail` re-pinned under a named ruling — and must not carry the superseded absolute.
+# ---------------------------------------------------------------------------------------------
+FROZEN_HASH_SENTENCE = (
+    "Twelve of `baseline-manifest.json`'s thirteen frozen hashes are unmoved; `detail` was "
+    "re-pinned under D-C51 (A34, 2026-09-13), the A18 mechanism."
+)
+SUPERSEDED_FROZEN_HASH_SENTENCE = "None of `baseline-manifest.json`'s thirteen frozen hashes moves."
+
+
+def test_claude_md_states_the_frozen_hashes_truthfully_in_both_copies():
+    """One `detail` re-pin has happened; the paragraph may not also claim none has.
+
+    The absolute is checked as ABSENT as well as the replacement PRESENT: correcting one copy and
+    leaving the other is the exact shape of drift `tests/test_docs.py` exists to catch, and the two
+    copies are required to be byte-identical elsewhere in this file."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A34\*\*", line)]
+    assert copies, "CLAUDE.md carries no A34 paragraph at all"
+    for i, copy in enumerate(copies, start=1):
+        assert FROZEN_HASH_SENTENCE in copy, (
+            f"copy {i} of {len(copies)} does not state which frozen hashes are unmoved and which "
+            f"was re-pinned; expected: {FROZEN_HASH_SENTENCE!r}"
+        )
+        assert SUPERSEDED_FROZEN_HASH_SENTENCE not in copy, (
+            f"copy {i} of {len(copies)} still carries the superseded absolute "
+            f"{SUPERSEDED_FROZEN_HASH_SENTENCE!r} — A34.10 re-pinned `detail`, so it is false"
+        )
+    # …and the manifest really does hold thirteen rows, so the sentence's own arithmetic is checked
+    # against the file rather than against itself.
+    manifest = json.loads((ROOT / "frontend" / "tests" / "baseline-manifest.json").read_text())
+    assert len(manifest["screens"]) == 13, (
+        f"the manifest holds {len(manifest['screens'])} frozen screens; CLAUDE.md's sentence says "
+        "twelve unmoved plus one re-pinned"
+    )
+    assert "detail" in manifest["screens"], "the manifest has no `detail` row for the sentence to name"
