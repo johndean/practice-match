@@ -1160,6 +1160,87 @@ def test_the_admin_listings_table_matches_the_api():
             assert status in DECISIONS[action][0], f"the Admin Listings table offers {action!r} from {status!r}, which the API refuses"
 
 
+def _data_sources_ts_literal(name: str) -> object:
+    """`frontend/src/admin/data_sources.ts`'s one exported JSON literal — the same
+    single-line-double-quoted-JSON convention `_users_ts_literal` and `_listings_ts_literal` read,
+    applied to Task A38's own table."""
+    source = (ROOT / "frontend" / "src" / "admin" / "data_sources.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/data_sources.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. It is written as double-quoted JSON on ONE line for "
+        f"exactly that reason; the file says so beside it."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/data_sources.ts: {name} is no longer DOUBLE-QUOTED JSON on a single "
+        f"line, so this cross-language pin cannot read it ({reason}). Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_data_sources_table_matches_the_registry():
+    """Task A38. Unlike the Users and Listings tabs, whose tables picture a legal SUBSET of the
+    API's states, `dataset_registry.license_status` has exactly THREE values — its own CHECK
+    constraint says so — and the approved design draws exactly three pills. So this pin is an
+    EQUALITY in both directions: a fourth licence state added to the column with no pill would
+    render its raw key on the tab that carries the platform's legal gate, and a pill the column
+    cannot produce would be a status nothing can ever reach.
+
+    The constraint is read out of `migrations/017_census_registry.sql` rather than restated here —
+    an applied migration is immutable, so it is the durable statement of what the column allows."""
+    sql = (ROOT / "migrations" / "017_census_registry.sql").read_text()
+    match = re.search(r"license_status text NOT NULL CHECK \(license_status IN \(([^)]*)\)\)", sql)
+    assert match, "migrations/017_census_registry.sql no longer states license_status's CHECK constraint"
+    allowed = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert allowed == {"cleared", "unresolved", "blocked"}, allowed
+    assert set(cast("dict[str, object]", _data_sources_ts_literal("PILLS"))) == allowed
+
+
+ESRI_REGISTRY_MIGRATION = "092_esri_basemap_registry.sql"
+# The two layers the Browse map actually loads, by the `BASEMAPS` key that configures each and the
+# `dataset_registry.dataset_key` that records it (controller ruling 17, 2026-09-13).
+ESRI_LAYERS = {"map": "esri_tiles", "satellite": "esri_imagery"}
+
+
+def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
+    """Task A38 / controller ruling 17. Attribution is LEGALLY load-bearing (Census spec §12;
+    CLAUDE.md "Attribution stays visible on every map"), and it is now stated in two places: the
+    string `frontend/src/lib/leaflet.js` hands Leaflet, which is what a member sees in the map's
+    own footer, and `dataset_registry.attribution_text`, which is what the admin Data Sources tab
+    prints verbatim. Two copies of a legal string drift, and the drift is silent: A35.7 corrected
+    the satellite credit from "Imagery © Esri, Maxar, Earthstar Geographics" to the service's own
+    current `copyrightText` on 2026-09-13, and nothing outside that one file would have noticed if
+    the registry had been seeded with the stale one.
+
+    So the two are pinned against each other, by VALUE and in both directions: every registered
+    Esri row's attribution is the one its own layer draws, and no OTHER string appears in either
+    place. Read out of the migration's text rather than the database, so it holds on a checkout
+    with no Postgres — the schema drift tests' own rule."""
+    migration = (ROOT / "migrations" / ESRI_REGISTRY_MIGRATION).read_text()
+    leaflet = (ROOT / "frontend" / "src" / "lib" / "leaflet.js").read_text()
+    for basemap, dataset_key in ESRI_LAYERS.items():
+        # The first `attribution:` after the layer's own key. NOT "everything up to the next `}`":
+        # each layer's `url` carries Leaflet's own `{z}/{y}/{x}` template, so the first brace in the
+        # block belongs to the URL (this test's first draft read exactly that and found nothing).
+        drawn = re.search(rf"{basemap}: \{{.*?attribution: \"(.*?)\"", leaflet, re.DOTALL)
+        assert drawn, f"frontend/src/lib/leaflet.js declares no attribution for BASEMAPS.{basemap}"
+        # leaflet.js escapes the © as \u00a9; the SQL carries the character itself.
+        text = drawn.group(1).replace("\\u00a9", "\u00a9")
+        row = re.search(rf"\('{dataset_key}',(.*?)\)[,;]\n", migration, re.DOTALL)
+        assert row, f"{ESRI_REGISTRY_MIGRATION} registers no {dataset_key} row"
+        assert f"'{text}'" in row.group(1), (
+            f"{dataset_key}'s attribution_text is not the string BASEMAPS.{basemap} actually draws "
+            f"({text!r}). One of the two has moved; a credit must never change in one place only."
+        )
+        assert "'unresolved'" in row.group(1), (
+            f"{dataset_key} is no longer registered as unresolved. Clearing a basemap licence is "
+            "the VIN Foundation's decision under the Census plan's one basemap decision record."
+        )
+
+
 # --- Task I9a: the identity wave's operator documentation -----------------------------------------
 # Four tests: two are PINS on what I4-I6 and I8a already made true (the variables, the launch
 # removal), two watch documentation this task wrote (the runbook's endpoints, the Resend DNS table).

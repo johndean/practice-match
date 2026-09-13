@@ -2,6 +2,7 @@ import { request as apiRequest, type BrowserContext, type Page } from '@playwrig
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody } from './design-summary.mjs';
@@ -286,20 +287,23 @@ export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string 
   return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
-/** The two collection endpoints the oracle answers itself, or `[]` on a remote target
- *  (A-SL2, A-SL23 (2)). Pinned in harness.test.ts (review I4): an untested `if` is all that
- *  stands between a stub and a QA parity run. */
+/** The three collection endpoints the oracle answers itself, or `[]` on a remote target
+ *  (A-SL2, A-SL23 (2); Task A38 added the registry). Pinned in harness.test.ts (review I4): an
+ *  untested `if` is all that stands between a stub and a QA parity run. */
 export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
-  return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
+  return ['/api/seller/listings', '/api/admin/listings', '/api/admin/data-sources'].map((path) => new URL(path, appOrigin(env)).href);
 }
 
-/** What each of them answers: the design's own four seller rows, and — for the admin collection
- *  (Task SL8) — the design's own five Listings rows, "Flagged" included (see `design-admin-
- *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit). Never "no
- *  page": an error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
+/** What each of them answers: the design's own four seller rows; for the admin listings collection
+ *  (Task SL8) the design's own five Listings rows, "Flagged" included (see `design-admin-
+ *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit); and for the
+ *  registry (Task A38) the design's own five Data Sources rows, whose pill words ARE
+ *  `dataset_registry.license_status`'s own three values. Never "no page": an error-shaped answer is
+ *  exactly what A-SL23 (2) took out of this harness. */
 export function collectionStubBody(href: string): string {
-  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : designAdminListingsBody();
+  if (href.endsWith('/api/seller/listings')) return designSellerPageBody();
+  return href.endsWith('/api/admin/data-sources') ? designAdminDataSourcesBody() : designAdminListingsBody();
 }
 
 /** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid

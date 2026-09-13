@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { designAdminDataSourceRows, designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody, designSummarySet } from './design-summary.mjs';
@@ -425,9 +426,9 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
 
   it('names both collections on the local app origin, on the port the run uses', () => {
     expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings']);
+      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/data-sources']);
     expect(collectionStubUrls({} as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings']);
+      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/data-sources']);
   });
 
   it('serves every design seller fixture as one complete page (A-SL23 (2))', () => {
@@ -454,6 +455,31 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(body.items).toHaveLength(5);
     expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
     expect(collectionStubBody('http://localhost:5473/api/admin/listings')).toBe(designAdminListingsBody());
+  });
+
+  it('serves the whole design registry as the bare array the route really answers (Task A38)', () => {
+    // `list_data_sources` returns a LIST, not an `{items, next_cursor}` envelope — no pagination,
+    // the whole registry in one body — so the oracle answers in that shape and the adapter's own
+    // `Array.isArray` guard is exercised by the frozen capture rather than only by a unit test.
+    const rows = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/data-sources')) as unknown[];
+    expect(Array.isArray(rows), 'the registry route answers a bare array').toBe(true);
+    expect(rows).toEqual(designAdminDataSourceRows());
+    expect(rows).toHaveLength(5);
+    expect(collectionStubBody('http://localhost:5473/api/admin/data-sources')).toBe(designAdminDataSourcesBody());
+  });
+
+  it('speaks dataset_registry\'s own licence vocabulary, so the badge is one rule (Task A38)', () => {
+    // The design prints exactly the three words the column's CHECK constraint allows, so the
+    // fixture's `license_status` is its own pill lower-cased and `notCleared` counts it exactly as
+    // it counts a real row. Two of the five are not cleared — the design's own literal badge "2".
+    const rows = designAdminDataSourceRows() as { license_status: string; actions: { label: string }[] }[];
+    expect(rows.map((r) => r.license_status))
+      .toEqual(['cleared', 'cleared', 'cleared', 'unresolved', 'blocked']);
+    expect(rows.filter((r) => r.license_status !== 'cleared')).toHaveLength(2);
+    // Controller ruling 18: the two unbacked buttons left the design (A38.4/A38.5), so exactly the
+    // three rows with a recorded terms page carry an action.
+    expect(rows.map((r) => r.actions.map((a) => a.label)))
+      .toEqual([['View terms'], ['View terms'], ['View terms'], [], []]);
   });
 
   it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {

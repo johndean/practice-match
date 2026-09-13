@@ -401,6 +401,12 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A38 (Task A38, D-C53) — the Data Sources tab reads the dataset registry. The two
+    // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
+    // fixture rows, so taking a button out afterwards would be an entry eating text an
+    // earlier entry had just put there (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both
+    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40.
+    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3a', 'A38.3b', 'A38.3c',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -591,7 +597,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(334);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1424,7 +1430,12 @@ describe('local design amendments (spec D15)', () => {
     // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
     // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
     // and 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
+    // Task A38 (2026-09-13) re-takes it again: its seven rows cite no line at all, but A38.2
+    // and A38.3a-c insert into the design and shift the lines below them, so one previously
+    // 2-distinctive citation landed on a line that is distinctive at 1 —
+    // { 1: 22, 2: 5, 3: 2, 4: 0 } becomes { 1: 23, 2: 4, 3: 2, 4: 0 }. `staleAt(4)` is still
+    // ZERO, which is the assertion that matters.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 23, 2: 4, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

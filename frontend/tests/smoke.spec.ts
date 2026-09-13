@@ -2069,3 +2069,130 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task A38 (D-C53) — the Admin > Data Sources tab reads `dataset_registry`, in a real browser.
+//
+// This is the surface CLAUDE.md marks LEGALLY load-bearing ("Blocked datasets never ship … The
+// admin Data Sources tab shows this gate; keep it"), and until this task it was five literal
+// fixture rows — two of them false about the running product. The approved-state oracle proves
+// the tab keeps its PIXELS through the design's own rows; what a pixel gate cannot say is that a
+// REAL registry reaches it, so these walk Chromium against a registry-shaped answer of the size
+// and shape the API actually sends (a bare array, ordered by key, no envelope and no cursor).
+//
+// Every stub row below is a real `dataset_registry` row's shape — `app/api/admin_data_sources.py`
+// `::_row`'s own keys — including the two states this tab exists to show: `blocked` with no
+// licence URL (pet ownership, the CLAUDE.md gate) and `unresolved` (the Esri basemap rows
+// migration 092 registers, which SHIP while their licence is undecided).
+// ---------------------------------------------------------------------------------------
+test.describe('admin data sources', () => {
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'acs5', display_name: 'ACS 5-Year Detailed Tables', api_dataset_id: '2023/acs/acs5',
+    vintage: '2019–2023', refresh_cadence: 'Annual (Dec)', license_status: 'cleared',
+    license_name: 'Public domain', license_url: 'https://www.census.gov/data/developers/about/terms-of-service.html',
+    attribution_text: 'Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023',
+    last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  // Seventeen of the nineteen keys migration 092 leaves in the registry, plus the two the tab is
+  // FOR: the blocked dataset with no terms page, and an Esri basemap row that ships unresolved.
+  const REGISTRY = [
+    ...Array.from({ length: 16 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
+    registryRow({
+      dataset_key: 'esri_tiles', display_name: 'Base map and tiles (Esri Light Gray Canvas)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'Live tiles',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement', attribution_text: 'Tiles © Esri'
+    }),
+    registryRow({
+      dataset_key: 'pet_ownership', display_name: 'Pet ownership incidence (commercial)',
+      license_status: 'blocked', license_name: null, license_url: null, refresh_cadence: 'n/a',
+      attribution_text: 'Pet-ownership incidence (licensed) — not in use',
+      notes: 'Ship only the ACS-derived estimate (rate 0.57) until a licence is signed',
+      drift_flagged: true
+    }),
+    registryRow({ dataset_key: 'zzz_cleared' })
+  ];
+
+  async function dataTab(page: Page, answer: { status: number; body?: string }) {
+    await prepare(page);
+    // Registered AFTER prepare()'s own collection stub — Playwright matches the LAST handler first.
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (route) => route.fulfill({ status: answer.status, contentType: 'application/json', body: answer.body ?? '{}' }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+  }
+
+  /** One status pill per row, and the head row has none — so this counts ROWS, and counts them
+   *  by the cell that carries the legal gate rather than by a div nesting a refactor could move.
+   *  `.sc-interp` is the generated template's own interpolation span, so each pill counts once. */
+  const statusPills = (page: Page) =>
+    page.locator('span.sc-interp').filter({ hasText: /^(Cleared|Unresolved|Blocked)$/ });
+
+  test('every registry row renders, with the blocked dataset\'s own pill and its attribution verbatim', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+
+    // The design draws five rows; a real registry has nineteen. Proving the COUNT is what says the
+    // tab stopped being a fixture — the pixel oracle can only ever say it still looks like one.
+    await expect(page.getByText('Base map and tiles (Esri Light Gray Canvas)').first()).toBeVisible();
+    await expect(page.getByText('Pet ownership incidence (commercial)').first()).toBeVisible();
+    await expect(statusPills(page), 'one status pill per registry key').toHaveCount(REGISTRY.length);
+    // …and NONE of the design's own fixture rows survives beside them.
+    await expect(page.getByText('Prior VetVision work'), 'a design fixture row is still on the tab').toHaveCount(0);
+
+    // The legal gate itself: the blocked dataset says Blocked, and its attribution is the
+    // `attribution_text` column verbatim, never composed.
+    await expect(statusPills(page).filter({ hasText: 'Blocked' })).toHaveCount(1);
+    await expect(page.getByText('Pet-ownership incidence (licensed) — not in use').first()).toBeVisible();
+    // `drift_flagged` is appended to the source sub-line — no fourth pill (controller ruling).
+    await expect(page.getByText(/Terms drift flagged/).first()).toBeVisible();
+    // The Esri row ships while its licence is undecided, and the tab says so in both columns.
+    await expect(page.getByText('Tiles © Esri').first()).toBeVisible();
+    await expect(statusPills(page).filter({ hasText: 'Unresolved' })).toHaveCount(1);
+    await expect(page.getByText('Licence not recorded').first()).toBeVisible();
+  });
+
+  test('the badge counts the rows nobody has cleared — never the design\'s literal 2', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const outstanding = REGISTRY.filter((r) => r.license_status !== 'cleared').length;
+    expect(outstanding, 'the fixture must not accidentally equal the design\'s own 2').toBeGreaterThan(2);
+    await expect(page.getByRole('button', { name: `Data Sources ${outstanding}`, exact: true })).toBeVisible();
+  });
+
+  test('View terms renders only where a licence URL is recorded, and opens that page', async ({ page, context }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const terms = page.getByRole('button', { name: 'View terms' });
+    // Every row but the blocked one — the only row in the fixture with a null `license_url`.
+    await expect(terms).toHaveCount(REGISTRY.length - 1);
+
+    // `window.open(url, '_blank', 'noopener')` — the page the button actually reaches for.
+    const opened = await page.evaluate(() => {
+      const w = window as unknown as { __opened: unknown[] };
+      w.__opened = [];
+      window.open = (...args: unknown[]) => { w.__opened.push(args); return null; };
+      return true;
+    });
+    expect(opened).toBe(true);
+    await terms.first().click();
+    expect(await page.evaluate(() => (window as unknown as { __opened: unknown[][] }).__opened))
+      .toEqual([['https://www.census.gov/data/developers/about/terms-of-service.html', '_blank', 'noopener']]);
+    expect(context.pages(), 'the stub replaced window.open, so no tab may actually have opened').toHaveLength(1);
+  });
+
+  test('a refusal empties the tab and the badge — it never falls back to the design\'s five rows', async ({ page }) => {
+    // A17.1's rule, applied to the surface that carries the legal gate: showing a reviewer five
+    // datasets that are not the ones the platform holds is worse than showing none, and a badge
+    // over no rows is the "Data Sources 2" defect this task closed.
+    expectApiStatus(page, 403);
+    await dataTab(page, { status: 403, body: '{"error":{"code":"FORBIDDEN","message":"no"}}' });
+    await expect(statusPills(page), 'no row at all, rather than the design\'s five').toHaveCount(0);
+    await expect(page.getByText('Prior VetVision work')).toHaveCount(0);
+    await expect(page.getByText('Pet ownership estimates')).toHaveCount(0);
+    // No number at all, rather than a stale or fabricated one (A38.3a/A38.2).
+    await expect(page.getByRole('button', { name: /^Data Sources\s*\d/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Data Sources', exact: true })).toBeVisible();
+    // The footnote — the sentence the whole gate rests on — is the design's own and still there.
+    await expect(page.getByText(/No dataset reaches production until its license is recorded here/).first()).toBeVisible();
+    await settleExpectedApiFailures(page);
+  });
+});

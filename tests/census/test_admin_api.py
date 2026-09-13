@@ -92,7 +92,7 @@ async def test_staff_may_read_it_too_and_the_list_is_ordered_by_key(client, memb
     r = await client.get(PATH, headers=auth_headers(cookies, hdr))
     assert r.status_code == 200
     keys = [row["dataset_key"] for row in r.json()]
-    assert keys == sorted(keys) and len(keys) == 17
+    assert keys == sorted(keys) and len(keys) == 19  # A38: + esri_tiles, esri_imagery (controller ruling 17)
 
 
 async def test_every_row_carries_its_attribution_and_agrees_with_the_licence_gate(client, conn, redis, member):

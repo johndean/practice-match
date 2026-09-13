@@ -1496,6 +1496,7 @@ class Component extends DCLogic {
     if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
     if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));
+    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => this.setState({ adminDataRows: r.rows, adminDataCount: r.count }), () => this.setState({ adminDataRows: [], adminDataCount: null })));
     return Promise.all(loads);
   }
 
@@ -1646,13 +1647,13 @@ class Component extends DCLogic {
         columns: ["Dataset", "Source and license", "Status", "Action"],
         grid: "1.1fr 1.6fr .8fr .8fr",
         footnote: "No dataset reaches production until its license is recorded here. Anything marked unresolved is excluded from listings and from the map until the VIN Foundation clears it.",
-        rows: [
+        rows: s.adminDataRows !== undefined ? s.adminDataRows : (this.props.adminDataSources ? [] : [
           [cell("Population, households, median income", "Refreshed annually"), cell("U.S. Census Bureau — ACS 5-year estimates", "Public domain. Attribution requested. Ingested via the Census API."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
           [cell("Base map and tiles", "Live tiles"), cell("OpenStreetMap contributors", "Open Database License. Attribution required and displayed on the map."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
           [cell("Address to coordinates", "On listing creation"), cell("Census Geocoder", "Public domain. No commercial restriction identified."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
-          [cell("Pet ownership estimates", "Last checked June 2026"), cell("Industry survey (commercial)", "License unresolved — redistribution terms unclear. Excluded from listings pending review."), cell(null, null, "Unresolved", "bad"), cell(null, null, null, null, [A("Assign review", "primary")])],
-          [cell("Veterinary practice locations", "Prior VetVision work"), cell("Mixed provenance", "Collection method not documented. Not ingested; needs a documented source before any competition view is built."), cell(null, null, "Blocked", "bad"), cell(null, null, null, null, [A("Open question")])]
-        ]
+          [cell("Pet ownership estimates", "Last checked June 2026"), cell("Industry survey (commercial)", "License unresolved — redistribution terms unclear. Excluded from listings pending review."), cell(null, null, "Unresolved", "bad"), cell(null)],
+          [cell("Veterinary practice locations", "Prior VetVision work"), cell("Mixed provenance", "Collection method not documented. Not ingested; needs a documented source before any competition view is built."), cell(null, null, "Blocked", "bad"), cell(null)]
+        ])
       }
     };
 
@@ -1662,9 +1663,9 @@ class Component extends DCLogic {
         { key: "users", label: "Users", count: "3" },
         { key: "listings", label: "Listings", count: "3" },
         { key: "activity", label: "Requests", count: "2" },
-        { key: "data", label: "Data Sources", count: "2" }
+        { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }
       ].map((t) => ({
-        label: t.label, count: t.count,
+        label: t.label, count: t.count, hasCount: !!t.count,
         go: () => this.setState({ adminTab: t.key }),
         style: "font-family: var(--rf-display); display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; letter-spacing: .02em; padding: 12px 18px; border: 0; border-radius: 8px 8px 0 0; cursor: pointer; color: " +
           (tab === t.key ? "var(--color-navy)" : "#494949") + "; background: " + (tab === t.key ? "var(--color-white)" : "transparent") + ";",

@@ -6903,6 +6903,133 @@ const A40_6: Amendment = {
   count: 1
 };
 
+// ---------------------------------------------------------------------------------------
+// A38 — the Data Sources tab reads the dataset registry (Task A38; John's ruling D-C53,
+// 2026-09-13: "all the admin tabs must be factual and fully functional, zero-gaps, zero-fake
+// data, everything must be surfaced and wired to UX").
+//
+// The tab CLAUDE.md calls legally load-bearing — "Blocked datasets never ship … The admin Data
+// Sources tab shows this gate; keep it" — was 100 % fixture, and two of its five rows were FALSE
+// about the running product: the basemap row said OpenStreetMap / ODbL where the product loads
+// Esri tiles and `dataset_registry` records CARTO, and the pet-ownership row showed "Unresolved"
+// over a dataset the database records as `blocked`. `app/api/admin_data_sources.py` had answered
+// the truth since Task A9 and NOTHING read it.
+//
+// APPLICATION ORDER IS A38.4, A38.5, A38.1, A38.2, A38.3a–c, and the ids are the brief's own.
+// The two REMOVALS run first on purpose: A38.1's `replace` re-introduces all five fixture rows,
+// so removing a button afterwards would be an entry eating text an earlier entry's `replace` put
+// there — AMEND-GUARD's LINE tier, and a `Consumes A38.1` token stating something that is not
+// what happened. Applied before it, each removal edits the PRISTINE bundle's own line and A38.1
+// simply wraps what is left.
+// ---------------------------------------------------------------------------------------
+const D_C53 = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53)';
+const A38 = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources tab reads the dataset registry` };
+const A38_BUTTON = { date: '2026-09-13', ruling: `${D_C53} — a button that does nothing is removed (controller ruling 18, 2026-09-13)` };
+const A38_BADGE = { date: '2026-09-13', ruling: `${D_C53} — the badge is not painted until a count arrives` };
+const A38_COUNT = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources badge counts rows the VIN Foundation has not cleared` };
+
+/** A38.4 — "Assign review" leaves the design (controller ruling 18, 2026-09-13). The button
+ *  called nothing: no route assigns a licence review, no table records one, and the design's own
+ *  `A()` gives every action on this tab a prototype `go: () => {}`. D-C53's rule is that a button
+ *  which does nothing is REMOVED by amendment rather than shipped as a no-op, so the cell becomes
+ *  the design's own empty `cell(null)` — the shape its Requests tab already uses for a cell with
+ *  nothing in it. The real licence decision (`POST /api/admin/data-sources/{key}/license`, Clear
+ *  or Block with a note, behind REAUTH) EXISTS on the server and has no element in V3; composing
+ *  one is the admin spec's to approve and is recorded as a composition item, never invented here.
+ *  `admin-data-sources` is one of the thirteen frozen screens and this moves its pixels, so its
+ *  `baseline-manifest.json` hash is re-pinned under this ruling — A6's and A14's own mechanism. */
+const A38_4: Amendment = {
+  id: 'A38.4', ...A38_BUTTON,
+  find: "          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null, null, null, null, [A(\"Assign review\", \"primary\")])],",
+  replace: "          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],",
+  count: 1
+};
+
+/** A38.5 — "Open question" leaves the design, for A38.4's reason and under the same ruling: no
+ *  route, no table, no transition. The two are separate entries because they are two separate
+ *  buttons on two separate rows, and a single `find` spanning both would make the ledger say one
+ *  thing where two were removed. */
+const A38_5: Amendment = {
+  id: 'A38.5', ...A38_BUTTON,
+  find: "          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null, null, null, null, [A(\"Open question\")])]",
+  replace: "          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]",
+  count: 1
+};
+
+/** A38.1 — the Data Sources rows come from `dataset_registry`, and from nowhere else once an
+ *  adapter is present. A17.1's own shape and A16.1's own reason for the `!== undefined` test: a
+ *  LOADED empty registry is a real answer and must empty the table, and where the array is not
+ *  there at all, who is asking decides — the app renders zero rows whatever the API answered (a
+ *  load failure never shows a reviewer five datasets that are not the ones the platform holds),
+ *  and the reference and the Claude Design preview keep the design's own fixture. CHAINED on
+ *  A38.4 and A38.5: the five rows it re-introduces are the post-removal ones.
+ *  `s.adminDataRows` is written by A38.2's loader alone. */
+const A38_1: Amendment = {
+  id: 'A38.1', ...A38,
+  find: "        rows: [\n          [cell(\"Population, households, median income\", \"Refreshed annually\"), cell(\"U.S. Census Bureau — ACS 5-year estimates\", \"Public domain. Attribution requested. Ingested via the Census API.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Base map and tiles\", \"Live tiles\"), cell(\"OpenStreetMap contributors\", \"Open Database License. Attribution required and displayed on the map.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Address to coordinates\", \"On listing creation\"), cell(\"Census Geocoder\", \"Public domain. No commercial restriction identified.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],\n          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]\n        ]\n      }",
+  replace: "        rows: s.adminDataRows !== undefined ? s.adminDataRows : (this.props.adminDataSources ? [] : [\n          [cell(\"Population, households, median income\", \"Refreshed annually\"), cell(\"U.S. Census Bureau — ACS 5-year estimates\", \"Public domain. Attribution requested. Ingested via the Census API.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Base map and tiles\", \"Live tiles\"), cell(\"OpenStreetMap contributors\", \"Open Database License. Attribution required and displayed on the map.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Address to coordinates\", \"On listing creation\"), cell(\"Census Geocoder\", \"Public domain. No commercial restriction identified.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],\n          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]\n        ])\n      }",
+  count: 1
+};
+
+/** A38.2 — one line in A40.3's `loadAdmin()`, the seam that entry was written to carry ("A36
+ *  (Users), A37 (Requests) and A38 (Data Sources) each add theirs below"). Its own rejection arm
+ *  empties BOTH the rows and the badge: a tab left on the design's five fixtures after a refusal
+ *  is exactly what A17.1's rule forbids, and a badge left on a stale number would describe rows
+ *  that are no longer on the screen. The count is `null`, not `"0"` — a refused load does not
+ *  know that nothing is outstanding, and A38.3a unmounts the pill rather than printing a number
+ *  nobody measured. CHAINED on A40.3, whose `loads` array and `return` this sits between. */
+const A38_2: Amendment = {
+  id: 'A38.2', ...A38,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n    return Promise.all(loads);',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
+    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => this.setState({ adminDataRows: r.rows, adminDataCount: r.count }), () => this.setState({ adminDataRows: [], adminDataCount: null })));\n'
+    + '    return Promise.all(loads);',
+  count: 1
+};
+
+/** A38.3a — the tab badge is not painted until a count arrives. The design's four counts are
+ *  literal strings, so the pill always had one; a wired tab has a moment before the registry
+ *  answers, and a refusal has none at all. The design's OWN idiom for "this element has nothing
+ *  to show" is a boolean beside the value and an `sc-if` around the element — `hasPill`,
+ *  `hasMain`, `hasSub`, `hasActions` on this very table — so the badge takes it too, rather than
+ *  an empty coloured pill or a fabricated zero.
+ *
+ *  SHARED INFRASTRUCTURE: this entry and A38.3b are the mechanism for ALL FOUR badges, not just
+ *  this one. A36 (Users), A37 (Requests) and A39 (Listings) each need only their own tab's
+ *  `count:` term (A38.3c's shape) and must REUSE these two rather than add a second `sc-if`. */
+const A38_3a: Amendment = {
+  id: 'A38.3a', ...A38_BADGE,
+  find: '<button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<span style="{{ t.countStyle }}">{{ t.count }}</span></button>',
+  replace: '<button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<sc-if value="{{ t.hasCount }}" hint-placeholder-val="{{ true }}"><span style="{{ t.countStyle }}">{{ t.count }}</span></sc-if></button>',
+  count: 1
+};
+
+/** A38.3b — the flag A38.3a reads, in the design's own `!!value` form (`hasMain: !!main`). A
+ *  count of `"0"` is a non-empty string and therefore truthy, so a registry with nothing
+ *  outstanding still paints its badge; only `null` (A38.2's rejection arm) and A38.3c's
+ *  adapter-present-but-not-yet-loaded state unmount it. Shared with A36/A37/A39 (see A38.3a). */
+const A38_3b: Amendment = {
+  id: 'A38.3b', ...A38_BADGE,
+  find: '        label: t.label, count: t.count,\n',
+  replace: '        label: t.label, count: t.count, hasCount: !!t.count,\n',
+  count: 1
+};
+
+/** A38.3c — the Data Sources badge counts what it says it counts: rows the VIN Foundation has
+ *  not cleared (`license_status <> 'cleared'`, the controller's ruling and the design's own
+ *  arithmetic — its literal "2" is the two of five fixture rows that are not Cleared). A16.1's
+ *  ternary again, keyed on adapter PRESENCE: with one, the number is the one that came back with
+ *  the rows under it or NO number at all; with none — the reference, the Claude Design preview —
+ *  the design's own "2". The count and the rows are one answer to one request, so the badge and
+ *  the table can never disagree, which is the defect this closes ("Data Sources 2" over whatever
+ *  the tab happened to be showing). */
+const A38_3c: Amendment = {
+  id: 'A38.3c', ...A38_COUNT,
+  find: '        { key: "data", label: "Data Sources", count: "2" }\n',
+  replace: '        { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7080,5 +7207,12 @@ export function amendments(): Amendment[] {
     // `componentDidMount` load outright, A40.5 reads A5.1's fulfilled `signIn` arm and A40.6
     // A26.9a's `go` guard -- so all four must run after those, which appending the family last
     // already guarantees.
-    A40_3, A40_4, A40_5, A40_6];
+    A40_3, A40_4, A40_5, A40_6,
+    // A38 -- the Data Sources tab reads the dataset registry (Task A38, D-C53,
+    // 2026-09-13). Appended last, as every family is. The REMOVALS run first inside the
+    // family (A38.4/A38.5 before A38.1) so that A38.1's own `replace` re-introduces the
+    // post-removal rows rather than a later entry eating text it had just put there
+    // (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both, and A38.2 on A40.3's
+    // `loadAdmin` body, so this block must run after A40.
+    A38_4, A38_5, A38_1, A38_2, A38_3a, A38_3b, A38_3c];
 }
