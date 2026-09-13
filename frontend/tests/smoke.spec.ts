@@ -55,23 +55,16 @@ test.describe('smoke', () => {
   });
 
   // ---------------------------------------------------------------------------------------
-  // Task ADMIN-GATE (D-C53, 2026-09-13): the two halves of "a buyer never reaches the Admin
-  // screen", in a real browser. The door is not shown (A40.1/A40.2), and the guard refuses it on
-  // the path the header nav takes even if it were (`refusedScreen`, the router half).
+  // Task ADMIN-GATE (D-C53, 2026-09-13): a buyer never reaches the Admin screen, in a real
+  // browser and on the path the header nav takes. The buyer persona is the one John's four admin
+  // screenshots were taken as; `signInAs` reuses the run's memoised `buyer@` session, so this
+  // spends no sign-in of its own.
   //
-  // The buyer persona is the one John's four admin screenshots were taken as. `signInAs` reuses
-  // the run's memoised `buyer@` session, so neither case spends a sign-in of its own.
+  // The DOOR is still shown — A40.1/A40.2 are reserved and held (see `design-amendments.ts`'s A40
+  // block: the filter moves 28 approved states and seven frozen hashes, which is a ruling). What
+  // is proved here is that clicking it lands on the design's own gate and never on the shell.
   // ---------------------------------------------------------------------------------------
-  test('a buyer\'s header carries no door the account cannot open (A40, D-C53)', async ({ page }) => {
-    await prepare(page);
-    await signInAs(page, 'buyer', '/browse');
-    await expect(page.getByRole('button', { name: 'Browse Practices', exact: true }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'My Requests', exact: true }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }), 'page.admin is ["admin","staff"]').toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'List a Practice', exact: true }), 'page.seller is ["seller"]').toHaveCount(0);
-  });
-
-  test('and a buyer who asks for /admin anyway gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
+  test('a buyer who reaches for /admin gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
     await prepare(page);
     await signInAs(page, 'buyer', '/admin');
     await expect(page.getByText('This page is not available to your account')).toBeVisible();
@@ -79,12 +72,12 @@ test.describe('smoke', () => {
     await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' }), 'the admin shell must not render').toHaveCount(0);
   });
 
-  test('the design persona holds both permissions, so its header still carries all four doors', async ({ page }) => {
+  test('and the header\'s own Admin button is refused the same way — the path that bypassed the guard', async ({ page }) => {
     await prepare(page);
-    await signInAs(page, 'design', '/browse');
-    for (const label of ['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']) {
-      await expect(page.getByRole('button', { name: label, exact: true }).first(), label).toBeVisible();
-    }
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
   });
 
   test('unknown routes redirect to /', async ({ page }) => {

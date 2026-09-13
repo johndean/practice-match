@@ -6280,50 +6280,31 @@ const A31_12c: Amendment = {
  *  wired to UX").
  *
  *  John's four admin screenshots were taken signed in as the QA BUYER persona
- *  (`buyer@practice-match.test`, header "Approved buyer · StartUp Club"): a buyer reached the
- *  Admin screen, where the Listings tab was correctly empty (the API refused it) under the design's
- *  literal badge "3", and the other three tabs showed the design's fixture rows to somebody with no
- *  business seeing them. Two independent causes, one task. The ROUTER bypass is app code
- *  (`src/router/sync.ts`'s `refusedScreen`, consulted by the state → route watcher) and carries no
- *  amendment. These entries are the design's own half.
+ *  (`buyer@practice-match.test`, header "Approved buyer · StartUp Club"): a buyer reached the Admin
+ *  screen, where the Listings tab was correctly empty (the API refused it) under the design's
+ *  literal badge "3", while the other three tabs showed the design's fixture rows to somebody with
+ *  no business seeing them. Two independent causes, one task. The ROUTER bypass is app code
+ *  (`src/router/sync.ts`'s `refusedScreen`, consulted by the state → route watcher before it
+ *  navigates) and carries no amendment. The RELOAD seam is A40.3–A40.6 below.
  *
- *  A40.1/A40.2 — A DOOR THAT REFUSES IS NOT SHOWN. The header rendered all four nav items to every
- *  account, so the refusal the router now issues would be the FIRST thing a buyer learned about a
- *  door the product had invited them through. Each gated row carries the permission the API guards
- *  the same screen with, and the array is filtered through `this.props.perms` — `src/auth/perms.ts`
- *  → `can()` → the GENERATED `src/auth/permissions.ts`, whose source is `app/auth/permissions.py`.
- *  The matrix is never re-stated in the design: a role test written here would be a second copy of
- *  it, which is exactly what `componentDidMount`'s `r === "staff" || r === "admin"` was (A40.4
- *  retires it).
- *
- *  "List a Practice" is gated on `page.seller` ALONE, and the alternative was measured rather than
- *  assumed: `seller.apply` is a real API permission (`POST /api/applications`, kind `seller`, buyers
- *  only) but the DESIGN has no seller-application screen and no caller of that route — the nav item
- *  goes to the seller dashboard and nowhere else. So for a buyer it is a door onto the refusal, not
- *  a door onto applying, and hiding it removes an invitation the product cannot honour. The day a
- *  seller-apply flow exists, this row's `perm` is where it is re-opened.
- *
- *  The reference and the Claude Design preview pass no `perms` adapter, so the filter is inert
- *  there and all four doors stay — which is what keeps every approved state on its pixels; the
- *  app's own single persona (`design@practice-match.test`, roles admin/buyer/seller/staff) holds
- *  both permissions, so the app renders four as well. */
-const A40_1: Amendment = {
-  id: 'A40.1', date: '2026-09-13',
-  ruling: 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — a door the account cannot open is not shown: the header renders "VIN Foundation Admin" only for an account that holds `page.admin`, asked of the generated permission matrix and never re-stated in the design',
-  find: '      { key: "admin", label: "VIN Foundation Admin" }\n    ].map((n) => ({\n',
-  replace: '      { key: "admin", label: "VIN Foundation Admin", perm: "page.admin" }\n'
-    + '    ].filter((n) => !n.perm || !this.props.perms || this.props.perms.allowed(n.perm)).map((n) => ({\n',
-  count: 1
-};
-
-const A40_2: Amendment = {
-  id: 'A40.2', date: '2026-09-13',
-  ruling: 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — "List a Practice" is shown only to an account that holds `page.seller`: the design has no seller-application screen behind it, so for a buyer it is a door onto a refusal rather than a door onto applying',
-  find: '      { key: "seller", label: "List a Practice" },\n',
-  replace: '      { key: "seller", label: "List a Practice", perm: "page.seller" },\n',
-  count: 1
-};
-
+ *  **A40.1 AND A40.2 ARE RESERVED, NOT WRITTEN — the ids are taken and must not be reused.** They
+ *  were to hide a door the account cannot open: `perm: "page.admin"` on the header's admin row and
+ *  `perm: "page.seller"` on "List a Practice", with the nav array filtered through `this.props.perms`.
+ *  They were implemented, measured and then held, because the ORACLE cannot be told what the app
+ *  knows: the reference is driven by `?props=` alone and receives no adapter, so it renders all four
+ *  doors for every account, while the app renders the account's own. Approved states are captured
+ *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
+ *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
+ *  the filter moved 28 of the 54 approved states — every DOM and pixel capture of a member screen
+ *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
+ *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
+ *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
+ *  own header). Making the oracle agree needs a NINTH declared prototype prop — the `startMyListings`
+ *  mechanism (A16.11a), for the same reason: the reference has no other way to reach the state — and
+ *  a re-pin of those seven under the ruling. Neither is this task's to decide: the brief predicted
+ *  that no approved state would move, and it does, so the measurement goes back before the edit
+ *  lands. The `perms` adapter itself stays — A40.3 reads it, and it is the seam either outcome
+ *  needs. */
 const RULING_ADMIN_LOAD = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — the admin data loads whenever an account that may open the screen arrives, not only on a hard reload';
 
 /** A40.3–A40.6 — THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES (Task ADMIN-GATE, D-C53).
@@ -6558,8 +6539,9 @@ export function amendments(): Amendment[] {
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     A31_13, A31_13b,
     // A40 -- the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every family
-    // is. A40.1/A40.2 are NOT chained: both `find` strings are the pristine bundle's own nav array.
-    A40_1, A40_2,
+    // is. A40.1/A40.2 are RESERVED and unwritten (see the block above): the nav filter moves 28
+    // approved states and seven frozen hashes, which is the controller's to rule on.
+    //
     // A40.3-A40.6 -- the reload seam. Every one of these is CHAINED, on an earlier family's
     // output: A40.3 reads A16.17's `reloadListings`, A40.4 replaces A17.2's own
     // `componentDidMount` load outright, A40.5 reads A5.1's fulfilled `signIn` arm and A40.6

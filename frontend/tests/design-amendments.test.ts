@@ -371,10 +371,12 @@ describe('local design amendments (spec D15)', () => {
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     'A31.13', 'A31.13b',
     // A40 — the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every
-    // family is. A40.1/A40.2 are not chained — both `find` strings are the pristine bundle's own
-    // nav array — while A40.3–A40.6 every one are: A16.17's `reloadListings`, A17.2's own
-    // `componentDidMount` load, A5.1's fulfilled `signIn` arm and A26.9a's `go` guard.
-    'A40.1', 'A40.2', 'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // family is. A40.1/A40.2 are RESERVED and deliberately absent — the nav filter they carry
+    // moves 28 approved states and seven frozen hashes, which is a ruling and not this task's
+    // (see the block over their definitions in design-amendments.ts). A40.3–A40.6 are every one
+    // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
+    // `signIn` arm and A26.9a's `go` guard.
+    'A40.3', 'A40.4', 'A40.5', 'A40.6',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -565,7 +567,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(309);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(307);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

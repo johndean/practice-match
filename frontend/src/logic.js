@@ -1912,9 +1912,9 @@ class Component extends DCLogic {
     const nav = [
       { key: "browse", label: "Browse Practices" },
       { key: "requests", label: "My Requests" },
-      { key: "seller", label: "List a Practice", perm: "page.seller" },
-      { key: "admin", label: "VIN Foundation Admin", perm: "page.admin" }
-    ].filter((n) => !n.perm || !this.props.perms || this.props.perms.allowed(n.perm)).map((n) => ({
+      { key: "seller", label: "List a Practice" },
+      { key: "admin", label: "VIN Foundation Admin" }
+    ].map((n) => ({
       label: n.label,
       go: this.go(n.key),
       goMenu: () => { this.setState({ navMenu: false }); this.go(n.key)(); },
