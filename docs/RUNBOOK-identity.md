@@ -119,10 +119,12 @@ Practice and the Admin screens, and granting it the other three buys it nothing.
 
 Two consequences of the superset, recorded rather than surprised at later (Task ADMIN-SUPERSET fix
 round 1, review Informational 1/2): an `api_token` minted for the `admin` role now also carries the
-six member actions the superset added, exactly as a human admin's session does — `TOKEN_DENIED`
-(`tokens.manage`) is the only thing an `api_token` is refused regardless of role, unchanged by this
-ruling — so an automation token that only ever needed `page.admin`-family permissions is, from this
-release on, also able to reach `/api/seller/*` and `/api/requests/*`; and an admin who acts as a
+six member actions the superset added, exactly as a human admin's session does — the two refusals a
+token meets whatever role it carries are unchanged by this ruling: `tokens.manage` (`TOKEN_DENIED`),
+and every step-up action (`REAUTH`: `engine.activate`, `licence.decide`, `roles.grant`,
+`signups.notify`, `tokens.manage`, `users.revoke`), which a token has no password to
+re-authenticate with — so an automation token that only ever needed `page.admin`-family permissions
+is, from this release on, also able to reach `/api/seller/*`; and an admin who acts as a
 seller (creating or editing a listing) leaves no `roles.grant` audit row the way a deliberate
 self-grant of `seller` would have, because none is needed — the only trace an admin used member
 powers is the listing's own `listing.edit` audit trail, not an identity-side one.
