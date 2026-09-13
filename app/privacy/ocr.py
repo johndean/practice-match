@@ -11,16 +11,29 @@ will not import raises `OcrUnavailable` and one that fails on a photograph raise
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 from typing import Any, NamedTuple, Protocol, cast
 
 from PIL import Image
 
 from app.config import settings
 
-#: Recorded in the privacy row's `ocr.engine`, so a record says which engine produced it.
-ENGINE = "rapidocr-onnxruntime/1.4.4"
+#: Recorded in the privacy row's `ocr.engine`, so a record says which engine produced it -- which
+#: means it is READ from the installed distribution and never written down. `pyproject.toml` admits
+#: anything below 2.0.0, so a later `poetry lock` can move the engine under a hard-coded constant
+#: and leave every row from then on naming a version that produced nothing (review I2). The
+#: distribution's metadata is on disk whether or not the engine module is ever imported, so this
+#: costs the api nothing and does not break `_load`'s laziness.
+ENGINE = f"rapidocr-onnxruntime/{importlib.metadata.version('rapidocr-onnxruntime')}"
 #: A line shorter than this is re-read on a 2x upscale -- directories, business cards, door vinyl.
 UPSCALE_BELOW_PX = 24
+#: Two lines are the SAME line when their quads' bounding boxes overlap by at least this much
+#: (intersection over union). The second pass re-reads the same photograph at 2x, so one sign's two
+#: readings halve back onto each other within a pixel or two -- an IoU above 0.9 -- while two
+#: separate signs in one frame do not touch at all; 0.5 sits between those, far enough above zero
+#: that nothing merely adjacent is merged and far enough below one that a box which grew or shrank
+#: by a third in the sharper read is still recognised as the line it is (amendment A-IDP-11).
+DUPLICATE_IOU = 0.5
 
 
 class Line(NamedTuple):
@@ -89,22 +102,52 @@ def _height(quad: list[tuple[float, float]]) -> float:
     return max(y for _, y in quad) - min(y for _, y in quad)
 
 
+def _bbox(quad: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    """The quad's axis-aligned bounding box. A rotated box is compared by its bounds rather than by
+    its own polygon: the two readings of one sign differ by a degree or two at most, and the extra
+    area a bounding box claims is the same area for both of them."""
+    xs = [x for x, _ in quad]
+    ys = [y for _, y in quad]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
+    """Intersection over union of two quads' bounding boxes, 0.0 when they do not overlap."""
+    ax0, ay0, ax1, ay1 = _bbox(a)
+    bx0, by0, bx1, by1 = _bbox(b)
+    width = min(ax1, bx1) - max(ax0, bx0)
+    height = min(ay1, by1) - max(ay0, by0)
+    if width <= 0 or height <= 0:
+        return 0.0
+    # Past that guard the intersection is positive, and each box is at least as large as it, so the
+    # union is positive too -- there is no zero to divide by.
+    intersection = width * height
+    union = (ax1 - ax0) * (ay1 - ay0) + (bx1 - bx0) * (by1 - by0) - intersection
+    return intersection / union
+
+
 def read_text(image: Image.Image) -> list[Line]:
     """Every line the engine finds, plus a second pass on a 2x upscale whenever the first pass saw
     a short line or nothing at all. The second pass's coordinates are halved back into display
-    space, and a line whose quad already overlaps one from the first pass is dropped."""
+    space, and a line whose quad overlaps one already kept by `DUPLICATE_IOU` or more is dropped.
+
+    De-duplication is by GEOMETRY and never by text (amendment A-IDP-11). Two readings of one sign
+    routinely disagree about its words -- the same painted line came back "HILL COUNTRYVET" at
+    display size and "HILLCOUNTRYVET" at 2x -- and a practice's name is often on the building AND on
+    the van in one photograph, where a text rule drops the van's sign and NOTHING under NOT_SHOW
+    ever fills it. Distinct quads carrying identical text are therefore both kept."""
     engine = _engine()
     try:
         lines = list(engine.run(image))
         if not lines or any(_height(line.quad) < UPSCALE_BELOW_PX for line in lines):
             doubled = image.resize((image.width * 2, image.height * 2), Image.Resampling.LANCZOS)
-            found = engine.run(doubled)
+            found = list(engine.run(doubled))
         else:
             found = []
     except Exception as exc:  # the engine's own failures are not a documented, catchable set
         raise OcrError("OCR_ERROR") from exc
     for line in found:
         halved = Line(line.text, line.confidence, [(x / 2, y / 2) for x, y in line.quad])
-        if not any(seen.text == halved.text for seen in lines):
+        if not any(_iou(seen.quad, halved.quad) >= DUPLICATE_IOU for seen in lines):
             lines.append(halved)
     return lines

@@ -3,6 +3,7 @@ under NOT_SHOW regardless of payload: a QR cannot be reviewed by eye, and the wo
 one -- no egress, no SSRF. The payload is classified offline and the STRING is never stored."""
 from __future__ import annotations
 
+import importlib.metadata
 import sys
 import types
 from typing import Any
@@ -76,8 +77,8 @@ def test_the_real_adapter_wraps_the_wheels_own_reader(monkeypatch: pytest.Monkey
     def read_barcodes(image: Image.Image, **kwargs: Any) -> list[Any]:
         seen.append(kwargs)
         return [types.SimpleNamespace(position=position, text="https://hillcountryvet.example/a",
-                                      valid=True, format="QRCode"),
-                types.SimpleNamespace(position=position, text="", valid=False, format="QRCode")]
+                                      valid=True, format="QR Code"),
+                types.SimpleNamespace(position=position, text="", valid=False, format="QR Code")]
 
     wheel = types.ModuleType("zxingcpp")
     wheel.read_barcodes = read_barcodes
@@ -87,7 +88,7 @@ def test_the_real_adapter_wraps_the_wheels_own_reader(monkeypatch: pytest.Monkey
 
     quad = [(10.0, 20.0), (50.0, 20.0), (50.0, 60.0), (10.0, 60.0)]
     assert barcodes.read_symbols(Image.new("RGB", (200, 200))) == [
-        barcodes.Symbol("QRCode", "url", quad), barcodes.Symbol("QRCode", "undecodable", quad)]
+        barcodes.Symbol("QR Code", "url", quad), barcodes.Symbol("QR Code", "undecodable", quad)]
     assert seen == [{"try_rotate": True, "try_downscale": True, "return_errors": True}]
 
 
@@ -111,6 +112,24 @@ def test_an_engine_that_raises_on_this_photograph_is_an_error(monkeypatch: pytes
         barcodes.read_symbols(Image.new("RGB", (200, 200)))
 
 
+def test_a_module_without_an_engine_class_is_unavailable_not_an_attribute_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M1, the twin of `test_ocr.py`'s own case: narrowing `except (ImportError,
+    AttributeError)` to `except ImportError` left every case green at 100 % branch coverage, because
+    coverage cannot see WHICH exception type a handler catches."""
+    monkeypatch.setitem(sys.modules, "tests.e2e.engineless", types.ModuleType("tests.e2e.engineless"))
+    monkeypatch.setattr("app.privacy.barcodes.settings.privacy_engine_module", "tests.e2e.engineless")
+    monkeypatch.setattr("app.privacy.barcodes._LOADED", None)
+    with pytest.raises(barcodes.BarcodeUnavailable) as caught:
+        barcodes.read_symbols(Image.new("RGB", (200, 200)))
+    assert isinstance(caught.value.__cause__, AttributeError)
+
+
 def test_the_engine_name_and_the_expansion_are_recorded_for_the_privacy_row() -> None:
-    assert barcodes.ENGINE.startswith("zxing-cpp/")
-    assert barcodes.EXPAND > 1.0
+    """`ENGINE` is pinned to the INSTALLED distribution for the reason review I2 gives — a record
+    whose only purpose is to be trustworthy may not name a version nothing checked, and the range in
+    `pyproject.toml` runs to `<4.0.0`. `EXPAND` is pinned to the ruled value rather than to
+    `> 1.0`, which admitted 1.0001: spec C.5 step 2b says the symbol's corners are expanded 15 %."""
+    assert barcodes.ENGINE == f"zxing-cpp/{importlib.metadata.version('zxing-cpp')}"
+    assert barcodes.EXPAND == 1.15

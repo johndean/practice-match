@@ -8,6 +8,7 @@ itself is never stored; the seller can Remove a mask that was unnecessary."""
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import re
 from typing import Any, NamedTuple, Protocol, cast
 
@@ -15,7 +16,10 @@ from PIL import Image
 
 from app.config import settings
 
-ENGINE = "zxing-cpp/3.1.1"
+#: Read from the installed distribution, never written down, for the reason `ocr.ENGINE` gives:
+#: `pyproject.toml` admits anything below 4.0.0, and a privacy row may not name a version nothing
+#: checked (review I2).
+ENGINE = f"zxing-cpp/{importlib.metadata.version('zxing-cpp')}"
 #: Each symbol's four corners, expanded about their centroid by this factor before the fill.
 EXPAND = 1.15
 
