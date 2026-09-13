@@ -61,7 +61,7 @@ export function guard(page: Page): void {
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     if (consumeExpectedApiFailure(page, m.text())) return;
-    if (allowsAnonymousBootRefusal(page, m.text())) return;
+    if (allowsAnonymousBootRefusal(page, m.text(), m.location().url)) return;
     throw new Error(`console.error: ${m.text()}`);
   });
 }
@@ -79,12 +79,19 @@ export function guard(page: Page): void {
 // parity run measures the real seeded API), which is exactly why nothing saw it until the 0.1.23
 // release agent ran the suite at QA and had to re-create the check as a throwaway spec.
 //
-// The allowance is shaped like `expectApiStatus` and is deliberately narrower in two ways and
+// The allowance is shaped like `expectApiStatus` and is deliberately narrower in three ways and
 // wider in one:
 //
 //   * LIVE ONLY. It is a no-op wherever the D6 stub is armed — the same `listingsStubUrl` decision,
 //     read once, so the local and CI runs keep the gate they have always had and a 401 there still
 //     fails the test at its cause.
+//   * ONE REQUEST. `GET /api/listings` — the anonymous boot's own call — and no other: the console
+//     line carries no request identity of its own, so `guard()` reads it from the message's own
+//     `location().url`, the resource Chromium is reporting on for a "Failed to load resource" line,
+//     and it is matched with `matchesListings`'s own idiom (the bare path or the same path with a
+//     query, never a prefix) so a real server route under it is never swept in by accident. Review,
+//     HOUSEKEEPING-C fix round 1, Important-3: matching on status alone tolerated a 401 from ANY
+//     request for the whole life of the page, which is a real refusal this gate exists to catch.
 //   * ONE STATUS. 401 and nothing else: a 500 from the boot is a real failure and still throws.
 //   * STANDING, not one-shot, which is the one way it is weaker than `expectApiStatus`. An
 //     anonymous boot happens on every anonymous load and these tests load more than once, so a
@@ -92,17 +99,18 @@ export function guard(page: Page): void {
 //     asks for — and a wrong guess fails the run for the wrong reason. It is armed per PAGE from
 //     the test's own body, so nothing else in the suite is exempted from anything.
 // ---------------------------------------------------------------------------------------
-const anonymousBootAllowance = new WeakSet<Page>();
+const anonymousBootAllowance = new WeakMap<Page, string>();
 
 /** Tolerates the anonymous boot's own 401 on this page, on a LIVE target. A no-op locally. */
 export function allowAnonymousBootRefusal(page: Page, env: NodeJS.ProcessEnv = process.env): void {
   if (listingsStubUrl(env) !== null) return;
-  anonymousBootAllowance.add(page);
+  anonymousBootAllowance.set(page, new URL('/api/listings', appOrigin(env)).href);
 }
 
-/** Whether this console line is that refusal on a page that armed the allowance. */
-export function allowsAnonymousBootRefusal(page: Page, message: string): boolean {
-  return anonymousBootAllowance.has(page) && isExpectedApiFailure(401, message);
+/** Whether this console line, FROM THIS REQUEST, is that refusal on a page that armed the allowance. */
+export function allowsAnonymousBootRefusal(page: Page, message: string, url: string): boolean {
+  const base = anonymousBootAllowance.get(page);
+  return base !== undefined && matchesListings(url, base) && isExpectedApiFailure(401, message);
 }
 
 export async function prepare(page: Page): Promise<void> {
