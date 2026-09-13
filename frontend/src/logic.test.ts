@@ -6049,10 +6049,15 @@ describe('A33.2 — the margin caveat counts the bands', () => {
 describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
   const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
   const ROWS = [['a listing row'], ['another']];
+  // A39 (D-C53): `list()` answers a PAGE — the rows the table renders and the number its tab
+  // badges — because both come from one request and neither may ever be shown beside the other's
+  // answer. `onDecision` is the seam a decision re-reads the queue through (A39.4).
+  const PAGE = { rows: ROWS, counts: { listings: 2 } };
   const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
-  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE)) => {
     const calls: string[] = [];
-    return { calls, list: () => { calls.push('list()'); return answer(); } };
+    const adapter: any = { calls, list: () => { calls.push('list()'); return answer(); }, onDecision: (fn: () => unknown) => { adapter.decided = fn; } };
+    return adapter;
   };
   const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
 
@@ -6155,5 +6160,64 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
       expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
       await expect(answer).resolves.toBeInstanceOf(Array);
     }
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A39 (Task A39, D-C53, 2026-09-13): the badge is the database's, and a decision refreshes the
+  // table it was taken on. Before this the tab read "Listings 3" on every database in the world —
+  // `logic.js`'s own string literal, which is the number the design's four fixture rows happen to
+  // have — and a Publish left the In-review pill on screen until the reviewer reloaded the page.
+  // ---------------------------------------------------------------------------------------
+  const tabCount = (c2: any) => c2.adminVals().tabs.find((t: any) => t.label === 'Listings');
+
+  it('A39.1/A39.2: the Listings badge is the count the queue served, not the design\'s literal', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminCounts).toEqual({ listings: 2 });
+    expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
+  });
+
+  it('A39.3a/A39.3b: no count, no pill — an empty blue lozenge is not a number', () => {
+    // Between arrival and the first answer there is no count, and the design paints the badge
+    // unconditionally; `hasCount` is what unmounts it (`sc-if`), in `cell()`'s own `!!` idiom.
+    const c2: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.2: a refusal clears the badge with the rows — a count over an empty table is a lie', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(() => Promise.reject(new Error('403'))), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.state.adminCounts).toBeNull();
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.1: with no adapter the design\'s own literal stands — the reference and the preview', () => {
+    const c2: any = new Component({});
+    expect(tabCount(c2)).toMatchObject({ count: '3', hasCount: true });
+    // ...and the other three tabs are untouched by this family, on every host.
+    expect(c2.adminVals().tabs.map((t: any) => [t.label, t.count]))
+      .toEqual([['Users', '3'], ['Listings', '3'], ['Requests', '2'], ['Data Sources', '2']]);
+  });
+
+  it('A39.4: a decision the API accepted re-reads the queue through loadAdmin, with no reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(adapter.calls).toEqual(['list()']);
+
+    // What `admin/listings.ts` calls after a 2xx — the adapter never writes state itself.
+    await adapter.decided();
+    expect(adapter.calls, 'the decision re-lists through the ONE loader').toEqual(['list()', 'list()']);
+  });
+
+  it('A39.4 arms nothing for an adapter that predates it, and the guard is the METHOD', () => {
+    const old: any = { list: () => Promise.resolve(PAGE) };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: old, perms: perms(['page.admin']) });
+    expect(() => c2.componentDidMount()).not.toThrow();
   });
 });

@@ -401,6 +401,12 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
+    // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
+    // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
+    // `adminListings` line and A39.4 reads A40.4's, which is A24's own precedent for a family
+    // whose id is lower than the one it chains on.
+    'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -591,7 +597,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(332);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1422,9 +1428,12 @@ describe('local design amendments (spec D15)', () => {
     // distinctive at 2 and not at 1. Task SCREEN-LABELS (A33, 2026-09-13) moves it again, and
     // DOWNWARD: its insertions shifted every design line below V3:1892, so 136 citations were
     // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-    // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
-    // and 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
+    // left. Task A39 (2026-09-13) moves it once more, to { 1: 21, 2: 4, 3: 2, 4: 0 }: A39.4 adds
+    // ONE line to `componentDidMount`, so 144 citations below it were re-mapped by one, and its
+    // own five rows cite lines whose output is distinctive at 1. What the case asserts is
+    // unchanged and is the whole point: 4 accepts every citation, and 3 does not, so 4 is the
+    // smallest threshold that can ship.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 21, 2: 4, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

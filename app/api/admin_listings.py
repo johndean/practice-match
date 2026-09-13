@@ -133,6 +133,40 @@ def slug_for(name: str, listing_id: Any) -> str:
     return f"{base[:MAX_SLUG_BASE]}-{str(listing_id)[:8]}"
 
 
+# Task A39, ruling 5 (D-C53). WHO last moved this listing into the status it is in NOW, and WHEN.
+# `audit_log` is where a decision already lives (D4), so this rides along with the row exactly as
+# `_COLUMNS`'s own `decline_reason` subquery does, asked of a different column pair on the same
+# index (`audit_log_target_idx` is `(target_type, target_id, at DESC)`, the predicate below).
+#
+# `actor_role` rather than a name: it is the role list `app/auth/audit.py` records, and it is what
+# separates the seller's own pause from the reviewer's unpublish — two doors that reach the SAME
+# `paused` status and are otherwise indistinguishable in the row. Served VERBATIM; the tab is what
+# turns it into a word.
+_STATUS_CHANGE = """
+              (SELECT a.at FROM audit_log a
+                WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
+                  AND a.after ->> 'status' = listing.status
+                ORDER BY a.id DESC LIMIT 1) AS status_changed_at,
+              (SELECT a.actor_role FROM audit_log a
+                WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
+                  AND a.after ->> 'status' = listing.status
+                ORDER BY a.id DESC LIMIT 1) AS status_changed_by"""
+# Ruling 1: the tab's badge is SERVED, never `logic.js`'s literal "3" — a number the design's own
+# four rows happen to have and no database ever produced. ONE grouped scan, `admin_signups`'s own
+# `COUNTS_SQL` pattern, so the badge and the total can never disagree; and it counts the whole
+# TABLE, never the page, because what is waiting for a reviewer is not what fits on one screen.
+COUNTS_SQL = "SELECT status, count(*) FROM listing GROUP BY 1"
+
+
+def queue_counts(conn: Any) -> dict[str, int]:
+    """What the Listings tab badges, and the whole that number is part of."""
+    with conn.cursor() as cur:
+        cur.execute(COUNTS_SQL)
+        rows = cast("list[tuple[str, int]]", cur.fetchall())
+    return {"in_review": sum(n for status, n in rows if status == "in_review"),
+            "total": sum(n for _status, n in rows)}
+
+
 def sellers_for(conn: Any, seller_ids: list[Any]) -> dict[Any, str | None]:
     """Each owner's display name, in ONE round trip — `assets_for`'s own shape and its own reason.
 
@@ -180,21 +214,32 @@ async def list_all(request: Request) -> Response:
     where = ["TRUE"] + (["status = %s"] if status else []) + (["(updated_at, id) < (%s::timestamptz, %s::uuid)"] if keyset else [])
     params: list[Any] = [*([status] if status else []), *(keyset or ())]
     with closing(sync_conn()) as conn, conn:
-        rows = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE {' AND '.join(where)}"
+        rows = _rows(conn, f"SELECT {_COLUMNS}, listed_at,{_STATUS_CHANGE} FROM listing"
+                           f" WHERE {' AND '.join(where)}"
                            " ORDER BY updated_at DESC, id DESC LIMIT %s", (*params, limit + 1))
         page = rows[:limit]
         assets = assets_for(conn, [row["id"] for row in page])
         names = sellers_for(conn, [row["seller_id"] for row in page if row["seller_id"] is not None])
         items = [{**serialise_draft(row, assets[row["id"]]),
                   "seller_id": str(row["seller_id"]) if row["seller_id"] is not None else None,
-                  "seller_name": names.get(row["seller_id"])}
+                  "seller_name": names.get(row["seller_id"]),
+                  # Ruling 5's three: the date a listing reached the market (016's own column,
+                  # re-stamped at the FIRST publish alone), and the date and the actor of the
+                  # latest move into the status it is in now.
+                  "listed_at": row["listed_at"].isoformat(),
+                  "status_changed_at": row["status_changed_at"].isoformat() if row["status_changed_at"] else None,
+                  "status_changed_by": row["status_changed_by"]}
                  for row in page]
+        counts = queue_counts(conn)
     # `page` is never empty when `more` is true (one extra row was asked for and arrived), so the
     # cursor is read off `page[-1]` without a second emptiness test.
     last = page[-1] if len(rows) > limit else None
     return JSONResponse({
         "items": items,
         "next_cursor": f"{last['updated_at'].astimezone(UTC).isoformat().replace('+00:00', 'Z')}|{last['id']}" if last else None,
+        # Beside `items`, never inside them (`admin_signups.list_signups`'s own envelope): the badge
+        # is a fact about the TABLE, and a page of it cannot carry one.
+        "counts": counts,
     })
 
 

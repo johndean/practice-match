@@ -1146,14 +1146,24 @@ def test_the_admin_listings_table_matches_the_api():
     offered from a status `DECISIONS` refuses would take a 409 the same way; and a
     `listing.status` the API can report with no pill would render its raw key.
 
-    The design deliberately offers a legal SUBSET of `DECISIONS` (its Paused row's "Contact
-    seller" is not wired, and the API also allows `publish` from `declined`/`paused`, which the
-    design's own In review row does not offer) and pictures only three of the six real statuses
-    (A-SL24 (4)) — what is pinned is that the subset is legal, not that it is complete."""
+    Task A39 (D-C53, 2026-09-13) turns the PILLS half into a TWO-WAY pin. It used to be `<=`,
+    because the design pictures only three of the six real statuses and `draft`, `withdrawn` and
+    `declined` rendered the column's own key, muted (A-SL24 (4)) — John ruled the three words, so
+    every `listing.status` the API can report now has a label and no raw key can reach the table.
+    A seventh status added to the column must be given one here before it ships; the `??` fallback
+    in `toListingRows` is left for a status that is not `listing.status`'s at all, which is exactly
+    what the design's own oracle-only "Flagged" row is.
+
+    `ACTIONS` stays a legal SUBSET: A39 adds the design's own primary Publish to the `paused` and
+    `declined` rows (ruling 3 — `DECISIONS` has always allowed it and the tab's footnote promises
+    "reversible"), and what is pinned is that every button offered is legal from the status it is
+    offered on, not that every legal decision is offered somewhere."""
     from app.api.admin_listings import DECISIONS, NOTE_REQUIRED, STATUSES
 
     assert _listings_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
-    assert set(cast("dict[str, object]", _listings_ts_literal("PILLS"))) <= set(STATUSES)
+    pills = set(cast("dict[str, object]", _listings_ts_literal("PILLS")))
+    assert pills <= set(STATUSES), f"the Admin Listings table labels {sorted(pills - set(STATUSES))!r}, which listing.status cannot hold"
+    assert set(STATUSES) <= pills, f"the Admin Listings table has no ruled label for {sorted(set(STATUSES) - pills)!r}, so the raw key would render"
     for status, offered in cast("dict[str, list[str]]", _listings_ts_literal("ACTIONS")).items():
         for action in offered:
             assert action in DECISIONS, f"the Admin Listings table offers {action!r}, which app/api/admin_listings.py has no decision for"

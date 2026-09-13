@@ -213,6 +213,98 @@ async def test_a_buyer_and_a_seller_cannot_read_the_queue(client: Any, conn: Any
         assert response.status_code == 403 and response.json()["error"]["code"] == "FORBIDDEN"
 
 
+# --- Task A39: the dates and the badge the Listings tab renders (D-C53, controller rulings 1, 2, 5) -
+
+async def test_the_queue_says_when_each_listing_last_moved_and_who_moved_it(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """Ruling 5. The tab's own sub-lines are "Published <date>", "Paused by seller <date>" and
+    "Unpublished by reviewer <date>", and until this task the payload carried neither date: only
+    `submitted_at`, which every row after the first decision is out of date about.
+
+    `listed_at` is the LISTING's own column (016, re-stamped at the first publish alone), and the
+    status change is the latest `audit_log` row whose `after.status` is the status the row is in
+    NOW — the `_COLUMNS` `decline_reason` subquery's own shape and its own index
+    (`audit_log_target_idx`). `actor_role` is what separates the seller's pause from the
+    reviewer's unpublish; it is the role list `app/auth/audit.py` records, served verbatim."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+
+    async def item() -> dict[str, Any]:
+        body = (await client.get("/api/admin/listings", headers=staff)).json()
+        return next(row for row in body["items"] if row["id"] == listing_id)
+
+    submitted = await item()
+    assert submitted["status"] == "in_review"
+    # The seller's own submit is the audit row that put it here, and the seller's own roles say so.
+    assert submitted["status_changed_by"] == "buyer,seller"
+    assert submitted["status_changed_at"] is not None
+    assert submitted["listed_at"] is not None
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide",
+                              json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                              headers=staff)).status_code == 200
+    published = await item()
+    assert published["status"] == "published"
+    assert published["status_changed_by"] == "staff"
+    with conn.cursor() as cur:
+        cur.execute("SELECT listed_at FROM listing WHERE id=%s", (listing_id,))
+        stamped = cur.fetchone()[0]
+    assert published["listed_at"] == stamped.isoformat()
+
+    # The reviewer's unpublish and the seller's own pause reach the SAME status by different doors,
+    # and `actor_role` is the only thing in the row that tells them apart.
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"},
+                              headers=staff)).status_code == 200
+    assert (await item())["status_changed_by"] == "staff"
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"},
+                              headers=staff)).status_code == 200
+    assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                              headers=signed)).status_code == 200
+    paused = await item()
+    assert paused["status"] == "paused"
+    assert paused["status_changed_by"] == "buyer,seller"
+
+
+async def test_a_listing_no_audit_row_has_ever_named_carries_nulls_rather_than_a_guess(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A draft has never been decided, so no `audit_log` row names `draft` as an `after.status` —
+    absent beats faked (D24), and the tab renders the submission line it already had."""
+    listing_id, _signed = await _draft(client, member)
+    staff = await _staff(client, member)
+    body = (await client.get("/api/admin/listings", headers=staff)).json()
+    row = next(item for item in body["items"] if item["id"] == listing_id)
+    assert row["status"] == "draft"
+    assert row["status_changed_at"] is None and row["status_changed_by"] is None
+    assert row["listed_at"] is not None     # 016's own NOT NULL DEFAULT now()
+
+
+async def test_the_queue_counts_what_the_tab_badges(client: Any, conn: Any, member: Any) -> None:
+    """Ruling 1: the Listings badge is the number of listings awaiting review, and it is SERVED
+    rather than hard-coded — `logic.js` carried the literal "3" (the design's own four rows have
+    three that are undecided), which is a number no database ever produced.
+
+    One grouped scan, the `admin_signups.COUNTS_SQL` pattern, so the badge and the total can never
+    disagree with each other. It counts the WHOLE table, never the page: the badge is what is
+    waiting, not what fits on one screen."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    draft = (await client.post("/api/seller/listings", headers=signed)).json()["id"]
+
+    body = (await client.get("/api/admin/listings", headers=staff)).json()
+    assert body["counts"] == {"in_review": 1, "total": 2}
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide",
+                              json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                              headers=staff)).status_code == 200
+    after = (await client.get("/api/admin/listings?limit=1", headers=staff)).json()
+    assert after["counts"] == {"in_review": 0, "total": 2}, "the badge counts the table, not the page"
+    assert len(after["items"]) == 1
+    assert draft in {row["id"] for row in (await client.get("/api/admin/listings", headers=staff)).json()["items"]}
+
+
 async def test_publish_needs_state_and_market_on_the_first_publish_and_not_after(
     client: Any, conn: Any, member: Any
 ) -> None:
