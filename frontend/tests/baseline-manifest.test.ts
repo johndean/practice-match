@@ -62,7 +62,7 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines,
 // one, and the 55 PNGs diffed by SHA-256 — twenty-one moved, and `detail` is the only one of them
 // in this manifest. `mobile-detail` did NOT move, which is the proof this reached the Community
 // Context card and nothing else: the phone frame renders its own detail screen and does not carry
-// that card. A34's other thirteen entries touch Browse surfaces (the Market data card's source
+// that card. A34's other twenty-two entries touch Browse surfaces (the Market data card's source
 // line, the docked panel, the snapshot strip, Compare) and four computed values with no template
 // reader at all, none of which is in this manifest.
 //
