@@ -378,8 +378,16 @@ describe('local design amendments (spec D15)', () => {
     // A35 — the basemap never requests a tile Esri does not have, and the member zooms past it
     // (John's ruling D-C52, 2026-09-13). Seven literal edits, all in `MarketMapV3.jsx` (`file:
     // 'jsx'`, A28.1's precedent), none chained: every `find` occurs exactly once in the pristine
-    // twin. Appended last, as every family is.
+    // twin.
     'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7',
+    // A40 — the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every
+    // family is; A35 edits the OTHER bundle file, so the two never meet in `amendmentsFor`.
+    // A40.1/A40.2 are RESERVED and deliberately absent — the nav filter they carry
+    // moves 28 approved states and seven frozen hashes, which is a ruling and not this task's
+    // (see the block over their definitions in design-amendments.ts). A40.3–A40.6 are every one
+    // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
+    // `signIn` arm and A26.9a's `go` guard.
+    'A40.3', 'A40.4', 'A40.5', 'A40.6',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -570,7 +578,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(310);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(314);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1391,7 +1399,13 @@ describe('local design amendments (spec D15)', () => {
       occurrences: (piece) => design.split(piece).length - 1,
       maxOccurrences: k,
     }).findings.filter((f) => f.includes('is stale')).length;
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 28, 2: 7, 3: 4, 4: 0 });
+    // RE-TAKEN whenever the ledger grows — this is a measurement of THIS ledger, not a
+    // constant. Task ADMIN-GATE (2026-09-13) added four rows and moved it from
+    // { 1: 28, 2: 7, 3: 4, 4: 0 }: A40.4's own output is the line `this.loadAdmin();`, which
+    // A40.6 also writes inside its own line, so that citation is distinctive at 2 and not at 1.
+    // What the case asserts is unchanged and is the whole point: 4 accepts every citation, and
+    // 3 does not, so 4 is the smallest threshold that can ship.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 29, 2: 8, 3: 4, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

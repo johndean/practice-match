@@ -1630,6 +1630,38 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
         f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
     )
 
+    # Task ADMIN-GATE fix round 1 (2026-09-13, review Minor 1). The WORD was the only thing pinned,
+    # and both documents also state the TERMS the word adds up — so when the budget went fourteen ->
+    # fifteen, the runbook's parenthesised arithmetic stayed "(7 + 2 + 3 + 1 + 1)", fourteen, and
+    # passed the gate written for exactly this drift. A word is not a sum: both sums are added up
+    # here and compared with the word, so a term that changes has to be carried into the arithmetic
+    # or this fails.
+    word_to_number = {word.lower(): n for n, word in NUMBER_WORDS.items()}
+    stated = word_to_number[runbook_match.group(1).lower()]
+
+    runbook_terms = re.search(r"traced\s+budget:\s*([\d\s+]+?)\)", _collapse_whitespace(runbook))
+    assert runbook_terms, "docs/RUNBOOK-identity.md no longer itemises the traced budget as `budget: a + b + …)`"
+    runbook_sum = sum(int(t) for t in re.findall(r"\d+", runbook_terms.group(1)))
+    assert runbook_sum == stated, (
+        f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} sign-ins but its own arithmetic "
+        f"({runbook_terms.group(1).strip()}) adds up to {runbook_sum}"
+    )
+
+    # The harness's own trace, the thing both words are ultimately claims about: one line per spec
+    # file, each naming how many of `SIGNIN_IP`'s thirty it spends.
+    lines = harness.splitlines()
+    start = lines.index(budget_line)
+    end = next(i for i in range(start, len(lines)) if "accounts are seeded" in lines[i])
+    harness_terms = [int(m.group(1)) for line in lines[start:end]
+                     if (m := re.match(r"\s*\*\s+[a-z-]+\s+\+?(\d+)\s", line))]
+    assert len(harness_terms) >= 5, (
+        "frontend/tests/harness.ts's THE BUDGET block no longer itemises one line per spec file"
+    )
+    assert sum(harness_terms) == stated, (
+        f"frontend/tests/harness.ts says {harness_match.group(1)!r} but its own trace "
+        f"({' + '.join(map(str, harness_terms))}) adds up to {sum(harness_terms)}"
+    )
+
 
 # --- S6 fix round 2: every stale statement the final review and its docs-drift sweep found ---------
 

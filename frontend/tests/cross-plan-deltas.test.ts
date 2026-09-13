@@ -421,3 +421,29 @@ describe('the logic.js port lists every normalisation it performs', () => {
     expect(readSpec(BROWSE_V3_SPEC)).toContain('export { Component, MARKETS, P, VETS, ECON_K };');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-GATE fix round 1 (2026-09-13, review Minor 2): the held ruling 2's measurement
+// names a COUNT of approved states, and it was written by hand as 54 while `SCREENS` had held
+// 55 since A31 added `browse-market-strip-location`. A hand-written census goes stale the next
+// time a state is appended, and this one is the evidence a ruling is waiting on — so it is
+// pinned against the array itself, in the three places the sentence is written.
+//
+// `SCREENS.length`, not a literal: the point is that the number tracks the oracle. Only the
+// TOTAL is pinned here; the 28 is a property of `harness.ts`'s `SCREEN_PERSONA` split, which
+// no longer has a filter in the tree to measure it against (the review says so too).
+// ---------------------------------------------------------------------------------------
+describe('the held A40.1/A40.2 measurement counts the approved states it was measured over', () => {
+  const phrase = `28 of the ${SCREENS.length} approved states`;
+  const claudeMd = () => readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
+
+  it('names SCREENS.length in the amendment ledger, the characterisation suite and CLAUDE.md', () => {
+    expect(readFileSync(join(ROOT, 'frontend', 'tests', 'design-amendments.ts'), 'utf8'), 'design-amendments.ts').toContain(phrase);
+    expect(readFileSync(join(ROOT, 'frontend', 'src', 'logic.test.ts'), 'utf8'), 'logic.test.ts').toContain(phrase);
+    expect(claudeMd(), 'CLAUDE.md').toContain(phrase);
+  });
+
+  it('says it in BOTH byte-identical copies of CLAUDE.md\'s amendment paragraph', () => {
+    expect(claudeMd().split(phrase)).toHaveLength(3);
+  });
+});

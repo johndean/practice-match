@@ -6472,6 +6472,138 @@ const A35_7: Amendment = {
   count: 1
 };
 
+/** A40 — the admin screen is reached only by an account that may open it, and its data is loaded
+ *  whenever such an account arrives (Task ADMIN-GATE; D-C53, John, 2026-09-13: "all the admin tabs
+ *  must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and
+ *  wired to UX").
+ *
+ *  John's four admin screenshots were taken signed in as the QA BUYER persona
+ *  (`buyer@practice-match.test`, header "Approved buyer · StartUp Club"): a buyer reached the Admin
+ *  screen, where the Listings tab was correctly empty (the API refused it) under the design's
+ *  literal badge "3", while the other three tabs showed the design's fixture rows to somebody with
+ *  no business seeing them. Two independent causes, one task. The ROUTER bypass is app code
+ *  (`src/router/sync.ts`'s `refusedScreen`, consulted by the state → route watcher before it
+ *  navigates) and carries no amendment. The RELOAD seam is A40.3–A40.6 below.
+ *
+ *  **A40.1 AND A40.2 ARE RESERVED, NOT WRITTEN — the ids are taken and must not be reused.** They
+ *  were to hide a door the account cannot open: `perm: "page.admin"` on the header's admin row and
+ *  `perm: "page.seller"` on "List a Practice", with the nav array filtered through `this.props.perms`.
+ *  They were implemented, measured and then held, because the ORACLE cannot be told what the app
+ *  knows: the reference is driven by `?props=` alone and receives no adapter, so it renders all four
+ *  doors for every account, while the app renders the account's own. Approved states are captured
+ *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
+ *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
+ *  the filter moved 28 of the 55 approved states — every DOM and pixel capture of a member screen
+ *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
+ *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
+ *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
+ *  own header). Making the oracle agree needs a NINTH declared prototype prop — the `startMyListings`
+ *  mechanism (A16.11a), for the same reason: the reference has no other way to reach the state — and
+ *  a re-pin of those seven under the ruling. Neither is this task's to decide: the brief predicted
+ *  that no approved state would move, and it does, so the measurement goes back before the edit
+ *  lands. The `perms` adapter itself stays — A40.3 reads it, and it is the seam either outcome
+ *  needs. */
+const RULING_ADMIN_LOAD = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — the admin data loads whenever an account that may open the screen arrives, not only on a hard reload';
+
+/** A40.3–A40.6 — THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES (Task ADMIN-GATE, D-C53).
+ *
+ *  A defect independent of the router bypass A40.1/A40.2 sit beside, and of which persona is
+ *  signed in: the review queue was fetched in `componentDidMount` and NOWHERE else, while
+ *  `signIn` set `me` and loaded nothing — so a reviewer who signed in through the design's own
+ *  form saw an EMPTY Listings table under the design's literal badge "3" until they hard-reloaded
+ *  the page (`admin-tabs-audit.md`, "Second Listings load defect").
+ *
+ *  A40.3 gives the design ONE place where the admin screen's data is read, beside `reloadListings`
+ *  — the seller-side loader whose shape and rejection-arm discipline it copies (A16.17). It is
+ *  guarded on the PERMISSION, asked of the generated matrix through the `perms` adapter —
+ *  introduced by `frontend/src/app.setup.js` (and so by the generated `App.vue`), built by
+ *  `frontend/src/auth/perms.ts` over `can()`, and NOT by A40.1, which was never written (fix round
+ *  1, review Minor 4: the first draft of this paragraph credited an amendment this same block says
+ *  does not exist). That adapter is what lets A40.4 retire `componentDidMount`'s own
+ *  `r === "staff" || r === "admin"` — a second copy of the matrix, and the only one left in the
+ *  design. Each tab's load is one line pushed onto `loads`, so A36 (Users), A37 (Requests) and A38
+ *  (Data Sources) each add one and nothing else; every load carries its own rejection arm, so a
+ *  refusal leaves a tab EMPTY rather than falling back to the design's fixture rows, which is
+ *  A17.1's rule for the render path applied to the load path.
+ *
+ *  IT FAILS CLOSED, and it always settles (fix round 1, review Minors 5 and 6). The guard was
+ *  `this.props.perms && !allowed(...)`, which asks the permission only when something is there to
+ *  ask — so a host with `adminListings` and no `perms` would load the queue for whoever was signed
+ *  in. No such host exists (both ports default the adapter; the reference passes neither), and the
+ *  API refuses the request anyway, but "guarded on the PERMISSION" is unconditional prose and the
+ *  guard now matches it: no `perms`, no load. THE RETIRED LINE'S OTHER TERM IS NOT NEEDED — A17.2
+ *  also required `me.state === "active"`, and `can()` already answers that: `effectiveRoles`
+ *  returns `['applicant']` for every state but `active`, so a suspended admin holds `page.admin`
+ *  nowhere. Re-stating it here would be the second copy of the matrix this entry exists to remove.
+ *  And BOTH arms return a promise — `Promise.resolve([])` on the refusal — so A40.5's "signIn
+ *  answers a promise, and a caller can await a settled screen" is true for every account, not only
+ *  for one that may open the screen.
+ *
+ *  A40.5 returns that promise from `signIn`'s fulfilled arm, so the design's own contract —
+ *  `signIn` answers a promise — still holds and a caller can await a settled screen. A40.6 loads
+ *  on the header nav's own door too, so a queue whose first load failed is not empty for the rest
+ *  of the session; `loadAdmin`'s own guards make it a no-op on every other door.
+ *
+ *  With no `perms` adapter and no `adminListings` adapter — the reference and the Claude Design
+ *  preview — nothing is asked and nothing is set, so the design's own five Listings fixtures
+ *  stand and every approved state keeps its pixels. */
+const A40_3: Amendment = {
+  id: 'A40.3', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n',
+  replace: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n'
+    + '\n'
+    + '  // A40.3 (D-C53): the ONE place the admin screen\'s data is read. Called on arrival\n'
+    + '  // (componentDidMount, A40.4), on an interactive sign-in by an account that may open the\n'
+    + '  // screen (A40.5) and on the header nav\'s own door (A40.6). Before this only the first\n'
+    + '  // existed, so a reviewer who signed in through the form saw an empty queue until a hard\n'
+    + '  // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`\n'
+    + '  // adapter, never a role list written here (`can()` answers the account STATE too, so the\n'
+    + '  // `me.state === "active"` term A17.2 carried is not restated) -- and on each adapter\'s\n'
+    + '  // presence. One tab, one\n'
+    + '  // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each\n'
+    + '  // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the\n'
+    + '  // design\'s fixtures (A16.17\'s discipline, A17.1\'s rule for the render path).\n'
+    + '  loadAdmin() {\n'
+    + '    // Fails closed: no `perms` to ask, no load. Both arms answer a promise, so every caller\n'
+    + '    // -- A40.5\'s `signIn` among them -- can await a settled screen whoever is signed in.\n'
+    + '    if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);\n'
+    + '    const loads = [];\n'
+    + '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
+    + '    return Promise.all(loads);\n'
+    + '  }\n',
+  count: 1
+};
+
+const A40_4: Amendment = {
+  id: 'A40.4', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n',
+  replace: '    this.loadAdmin();\n',
+  count: 1
+};
+
+const A40_5: Amendment = {
+  id: 'A40.5', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '          (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),\n',
+  replace: '          (me) => { this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }); return this.loadAdmin(); },\n',
+  count: 1
+};
+
+const A40_6: Amendment = {
+  id: 'A40.6', date: '2026-09-13',
+  ruling: RULING_ADMIN_LOAD,
+  find: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  replace: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n'
+    + '    if (screen === "admin") this.loadAdmin();\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6627,6 +6759,17 @@ export function amendments(): Amendment[] {
     // A35 -- the basemap never requests a tile Esri does not have, and the member zooms past it
     // (John's ruling D-C52, 2026-09-13). Seven literal edits, all `file: 'jsx'` (A28.1's
     // precedent) and none chained: every `find` occurs exactly once in the pristine twin.
-    // Appended last, as every family is. Definition order in this file matches this list (m8).
-    A35_1, A35_2, A35_3, A35_4, A35_5, A35_6, A35_7];
+    // Definition order in this file matches this list (m8).
+    A35_1, A35_2, A35_3, A35_4, A35_5, A35_6, A35_7,
+    // A40 -- the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every family
+    // is; A35 edits the OTHER bundle file, so the two families never meet in `amendmentsFor`.
+    // A40.1/A40.2 are RESERVED and unwritten (see the block above): the nav filter moves 28
+    // approved states and seven frozen hashes, which is the controller's to rule on.
+    //
+    // A40.3-A40.6 -- the reload seam. Every one of these is CHAINED, on an earlier family's
+    // output: A40.3 reads A16.17's `reloadListings`, A40.4 replaces A17.2's own
+    // `componentDidMount` load outright, A40.5 reads A5.1's fulfilled `signIn` arm and A40.6
+    // A26.9a's `go` guard -- so all four must run after those, which appending the family last
+    // already guarantees.
+    A40_3, A40_4, A40_5, A40_6];
 }

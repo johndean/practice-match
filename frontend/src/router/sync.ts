@@ -85,6 +85,27 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
   return { apply: patch, pending: null };
 }
 
+// Task ADMIN-GATE (D-C53, 2026-09-13): the same question, asked of a screen the STATE has already
+// moved to rather than of a route that was requested.
+//
+// `guard()` above is consulted on the route → state side only, and the design's own header nav
+// never goes that way: `go()` sets `state.screen` directly, and the state → route watcher's own
+// `router.push` sets `settling`, which is exactly the flag the composable's `afterEach` reads to
+// skip `apply()`. So a buyer clicking "VIN Foundation Admin" reached the admin shell with the
+// matrix never asked (`admin-tabs-audit.md`, "Router bypass" — the single cause of John's four
+// admin screenshots).
+//
+// It DELEGATES to `guard` rather than re-asking the matrix, so there is exactly one statement of
+// what a screen needs: with `auth` true, `guard`'s signed-out branch cannot fire, so the only way
+// its answer can be the gate is the permission refusal — which is what makes reading `apply.screen`
+// sound here. The signed-out case is deliberately NOT this function's: `go()` already sends a
+// signed-out visitor to the sign-in gate, and `apply()` is where a deep link is remembered.
+export function refusedScreen(state: RoutedState & { auth?: boolean }, ctx: { me: Me | null }): Partial<RoutedState> | null {
+  if (!state.auth || state.screen === 'gate') return null;
+  const g = guard(state, { screen: state.screen }, ctx);
+  return g.apply.screen === 'gate' ? g.apply : null;
+}
+
 export function needsPatch(state: RoutedState, patch: Partial<RoutedState>): boolean {
   return Object.entries(patch).some(([k, v]) => (state as unknown as Record<string, unknown>)[k] !== v);
 }

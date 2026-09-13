@@ -1020,7 +1020,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET — FOURTEEN of thirty (review round 1, I1/M3; traced against the real
+ * THE BUDGET — FIFTEEN of thirty (review round 1, I1/M3; traced against the real
  * `POST /api/auth/signin` calls, not estimated).
  *
  * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
@@ -1032,7 +1032,10 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  *                     (through `decideAs`, the reviewer that puts the applicant fixtures back),
  *                     `declined`, `buyer`, `unverified`
  *   dom           +2  `pending` and `seller`; every other state reuses a jar account-flows minted
- *   signin-form   +3  the successful sign-in, the deliberately wrong password, the sign-out test's
+ *   signin-form   +4  the successful sign-in, the deliberately wrong password, the sign-out test's,
+ *                     and Task ADMIN-GATE's own: `design@` through the design's own form, the one
+ *                     path that exercises the reload seam (A40.5) — `signInAs` sets cookies and
+ *                     reloads, which is precisely what hid that defect
  *   smoke         +1  the reauth check's standalone `personaSignIn()` session
  *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
  *                     reset revoked the session and `personaPasswordRotated` forgot it
