@@ -6903,6 +6903,295 @@ const A40_6: Amendment = {
   count: 1
 };
 
+
+/** A34 — ONE VOCABULARY (Task ONE-VOCABULARY, 2026-09-13). Fourteen literal edits.
+ *
+ *  THE RULING, verbatim and in full, because every entry below quotes it: D-C51 (John,
+ *  2026-09-13) — “WE MUST COMMUNICATE THE EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE
+ *  DIFFERENCES AND THEY ARE MEASURING DIFFERENT THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE
+ *  SAME SO THE LOGIC WOULD BE THEY ARE SAME.”
+ *
+ *  THE SPECIFICATION is the 47-figure audit
+ *  (`.superpowers/sdd/2026-09-11-neighbourhood-shading/one-vocabulary-audit.md`): eleven
+ *  collisions, §3.1 the closed word list, §3.2 the per-row proposals, §4 the two footnote
+ *  insertions, §5 the three pins. THE GRAMMAR, already shipped by A27.1: the TITLE carries the
+ *  statistic and the caption is `<geography> · <basis>`, the basis appended only where the figure
+ *  is not the Census's own published estimate for that exact area. The geography words are exactly
+ *  §3.1's list; "market level" and "community level" are refused by the closure pin
+ *  (`src/logic.test.ts`, Gate 2).
+ *
+ *  Audit rows R13–R18 and R25 are NOT here: they were re-measured at the head of this task and
+ *  found already served — A33.3 (Task SCREEN-LABELS) gave all six drawer rows the ruled grammar
+ *  and A31.12c (Task SNAP fix round 1) gave the snapshot's income card the API's own `income_note`.
+ *  Rows R27, R29, R43 and R46 are deliberately UNCHANGED (the brief's ruling 3): an ACS count
+ *  summed over the ring is still an ACS count, and inventing a fifth basis word for it would add
+ *  vocabulary rather than remove it. */
+const ONEVOCAB = { date: '2026-09-13', ruling: 'D-C51 (John, 2026-09-13): “WE MUST COMMUNICATE THE EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING DIFFERENT THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY ARE SAME.”' };
+
+/** A34.1 (audit R3, collision C4) — `pets` names the geography it shades. `metaSource` appends
+ *  the caller's geography only to a layer that declares a `dataset:`; `pets` declared a `source:`
+ *  instead, so its map tooltip was the ONE tip on the map that named no geography at all while the
+ *  legend card beside it named one. The basis is not lost: "Derived estimate" leads the dataset
+ *  itself, `means` calls it a modelled estimate, the drawer row says "derived from ACS households"
+ *  and the tip's own margin line says "Not an observed count." — the sentence this `source:`
+ *  duplicated. Re-bases `browse-market-strip` and `browse-market-strip-location`, whose pets card
+ *  reads this line. */
+const A34_1: Amendment = {
+  id: 'A34.1', ...ONEVOCAB,
+  find: '    source: "Derived estimate from ACS household counts (2023) · not an observed count",\n',
+  replace: '    dataset: "Derived estimate from ACS household counts (2023)",\n',
+  count: 1
+};
+
+/** A34.2 (audit R6/R12, collision C5) — `econ` names the geography it shades, and stops naming a
+ *  geography that belongs to no vocabulary in the product. Measured: payroll had FOUR strings for
+ *  ONE geography — the tip's margin said "county level", its source said "market level", the
+ *  legend's geo line said "County" and the snapshot's LOCATION card says "surrounding county". The
+ *  ruling deletes "· market level, not practice level" (the brief's ruling 5, verbatim): `means`
+ *  already says "A derived market-level indicator … not any individual practice's figures", so the
+ *  source line was a second copy of a sentence the card already carries.
+ *
+ *  The margin line's own "county level" is NOT touched: it is a sentence about how the figure is
+ *  computed, not a caption, and ruling 5 names the source line and the `dataset:` and nothing
+ *  else. Recorded rather than widened — A28.2–A28.4's own discipline. */
+const A34_2: Amendment = {
+  id: 'A34.2', ...ONEVOCAB,
+  find: '    source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",\n',
+  replace: '    dataset: "Derived from Census CBP payroll and establishment counts (2023)",\n',
+  count: 1
+};
+
+/** A34.3 — the comment on `metaSource` that A34.1 and A34.2 made false. It named `econ` and `pets`
+ *  as "a layer that names no geography", which is exactly what those two entries end: all six
+ *  layers carry a `dataset:` now and the `source` arm stands only for a key `LAYER_META` does not
+ *  hold. A24.59's own precedent — a comment that stopped being true when the code beneath it was
+ *  fixed is corrected through the same mechanism, as its own entry. Consumes A31.12b, whose two
+ *  introduced comment lines this rewrites. */
+const A34_3: Amendment = {
+  id: 'A34.3', ...ONEVOCAB,
+  find: '// notes, and the snapshot strip\'s AREA mode, which measures those same polygons. A layer\n'
+    + '// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on\n'
+    + '// every surface, and this returns it unchanged.\n',
+  replace: '// notes, and the snapshot strip\'s AREA mode, which measures those same polygons.\n'
+    + '//\n'
+    + '// A34 (D-C51): all six layers declare a `dataset:` now, so the `source` arm below is the\n'
+    + '// guard for a key `LAYER_META` does not hold and nothing else - "" beats "undefined · X".\n',
+  count: 1
+};
+
+/** A34.4 (audit R7–R12, the brief's ruling 4) — the legend card names its geography ONCE. The card
+ *  already prints `geoLine` on its own line ("Census tract"), and `sourceLine` printed it again
+ *  inside the source sentence: one fact, two strings, on one card, which is the rule
+ *  A24.44–A24.57 established and this surface never followed. `sourceShort` — the collapsed bar's
+ *  own line — is unchanged by construction: it is `mapSource.split(" · ")[0]`, which was already
+ *  the dataset alone. CHAINED on A24.52; consumes A24.52, whose whole `const` line this rewrites.
+ *  Re-bases every Browse state that renders the Market data card. */
+const A34_4: Amendment = {
+  id: 'A34.4', ...ONEVOCAB,
+  find: '        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";\n',
+  replace: '        const mapSource = valueLayer ? metaSource(valueLayer, "") : "";\n',
+  count: 1
+};
+
+/** A34.5 (audit R32, collision C3) — the panel's Households tile names the statistic its number
+ *  is. Four different "Households" figures are reachable in two clicks — one tract's published
+ *  count, the median of 503 tract counts, the practice's ring sum, and that ring sum again here —
+ *  and this caption said "ACS 5-year", which names neither statistic nor geography and is true of
+ *  all four. The geography is the card's own scope sub-line (A27.7); the statistic is the word the
+ *  tile was missing. CHAINED on A21.2d; consumes A21.2d, whose introduced tile line this rewrites.
+ *  Re-bases `browse-market-panel` and `browse-panel-lightbox`. */
+const A34_5: Amendment = {
+  id: 'A34.5', ...ONEVOCAB,
+  find: '        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },\n',
+  replace: '        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "Total · ACS 5-year" },\n',
+  count: 1
+};
+
+/** A34.6 (audit R35–R37, collision C8) — the Competitive Landscape block says which area it
+ *  describes. `overviewScope` is rendered ONCE, above the overview grid (A27.7), and this heading
+ *  sits below it, so its three figures — an establishment count, a rate and a verdict, all three
+ *  the ring's — stood under no scope line at all while the card's only one described the grid
+ *  above. It takes the Market Overview heading's own sub-line, element for element: the card's
+ *  established idiom, no new copy and no new state. Where the API serves no label the `sc-if`
+ *  renders no element, so the reference and every approved state keep their pixels. */
+const A34_6: Amendment = {
+  id: 'A34.6', ...ONEVOCAB,
+  find: '                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Competitive Landscape</div>\n'
+    + '                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 9px;">\n',
+  replace: '                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Competitive Landscape</div>\n'
+    + '                  <sc-if value="{{ md.panel.hasOverviewScope }}" hint-placeholder-val="{{ false }}">\n'
+    + '                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;">{{ md.panel.overviewScope }}</div>\n'
+    + '                  </sc-if>\n'
+    + '                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 9px;">\n',
+  count: 1
+};
+
+/** A34.7 (audit §4 and R38–R41, collisions C6/C7) — the docked panel's footnote. TWO insertions
+ *  into one paragraph, neither of them a rewrite:
+ *
+ *  (1) §4's three-kinds paragraph, inserted AFTER D-C39's own first sentence, which does not move.
+ *      The panel holds a tract figure, a ring figure and a metro figure within one scroll and
+ *      nothing said they are three different measurements.
+ *  (2) The Score sentence is EXTENDED, not replaced, so that Market Opportunity's verdicts name
+ *      their own bases: Affluence is the ring median against the US median, Population Growth is
+ *      the place-or-county rate and Sector Payroll the county's — the two that are never the ring,
+ *      sitting under a card whose only scope line says the ring. That is D-C48 surviving one tile
+ *      over. Four 9.5 px tile sub-lines cannot carry it; the footnote can.
+ *
+ *  CHAINED on A21.4d. A27.4's sentence and the pet-household sentence are carried forward byte for
+ *  byte. WHEN SNAP-METRO (A31.14) LANDS the metro sentence changes: it will then have to
+ *  distinguish the Census's own PUBLISHED metro median from this median of the metro's areas,
+ *  which is the fifth income figure the audit records as deferred (C2). Re-bases
+ *  `browse-market-panel` and `browse-panel-lightbox`. */
+const A34_7: Amendment = {
+  id: 'A34.7', ...ONEVOCAB,
+  find: 'Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.</p>',
+  count: 1
+};
+
+/** A34.8 (audit §4 and the brief's Addendum) — the snapshot strip's footnote, two insertions in
+ *  one paragraph:
+ *
+ *  (1) §4's three-kinds paragraph, inserted IN FRONT of the existing first sentence. The same words
+ *      as A34.7's, because the same three kinds of figure appear on both surfaces and two wordings
+ *      of one fact is how they come to disagree.
+ *  (2) The Addendum's own correction (the SNAP re-review's new Minor): "each card is that
+ *      practice’s own community figure" is contradicted by the growth and payroll cards on their
+ *      own captions — A31.12 made those read "surrounding city or county" and "surrounding county",
+ *      which is the point of this whole family. The sentence now says what is true of all six.
+ *
+ *  A24.20's growth sentence and the derived-estimates sentence stay BYTE FOR BYTE: that is the
+ *  fix-round-3 lesson CLAUDE.md records, and the reason AMEND-GUARD exists. Supersedes A31.11,
+ *  whose first sentence this revises and whose whole introduced line this rewrites. Re-bases
+ *  `browse-market-strip` and `browse-market-strip-location`. */
+const A34_8: Amendment = {
+  id: 'A34.8', ...ONEVOCAB,
+  find: 'In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** A34.9 (audit R42, collision C10; the brief's ruling 2 — caption change ONLY, no behaviour
+ *  change) — the Compare caption says what the bars are. It claimed "the top bar matches the
+ *  shading on the map", which is FALSE for three of the six layers: `bar()` calls
+ *  `bucket(k, num(v))` WITHOUT the area flag, so households, pets and competition are classed on
+ *  `VALUE_LAYERS` while the map paints `AREA_LAYERS`. The ruling is explicit that the flag is not
+ *  passed here — a ring's household COUNT classed on tract breaks is the defect A31.13's own
+ *  comment names — so the sentence stops claiming a match it does not have and states what each
+ *  bar IS instead: one listing's own ring figure, on that layer's community scale. Re-bases
+ *  `browse-compare-open`. */
+const A34_9: Amendment = {
+  id: 'A34.9', ...ONEVOCAB,
+  find: 'Each bar is coloured by the class it falls in, using that layer\'s own scale — the top bar matches the shading on the map.',
+  replace: 'Each bar is one listing\'s own figure for the area within about 5 miles of it, coloured on that layer\'s community scale.',
+  count: 1
+};
+
+/** A34.10 (audit R47, collision C11) — the detail card's scope paragraph stops contradicting the
+ *  tile beside it. It claimed the ring for ALL FOUR figures while its own Growth tile reads
+ *  "Dallas · since 2018" (A27.2): one paragraph, one tile, one card, and the paragraph is the one
+ *  that is wrong. CHAINED on A21.5b; consumes A21.5b, whose introduced line this rewrites.
+ *
+ *  THE FROZEN HASH MOVES. `detail` is one of `baseline-manifest.json`'s thirteen, and this is a
+ *  RULED re-pin under D-C51 — the mechanism A18's own one-row re-pin used, and A6's and A14's
+ *  before it. The other twelve do not move, which is the proof the change stayed on this card. */
+const A34_10: Amendment = {
+  id: 'A34.10', ...ONEVOCAB,
+  find: '      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",\n',
+  replace: '      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself. Population growth is measured for the city or county named on its own tile.",\n',
+  count: 1
+};
+
+/** A34.11 (the brief's ruling 9) — `md.legend`, deleted under the bundle's own dead-code rule.
+ *  MEASURED first, the A28.2–A28.9 way: ONE declaration in the design, and ZERO readers — no
+ *  `v.md?.legend?.…` in `App.vue`, nothing in `MarketMapView.vue`, nothing in any test. The Market
+ *  data card's own `active` block is what the legend actually renders from; this 20-line object
+ *  has computed a SECOND and DIFFERENT legend beside it — different class labels
+ *  (`VALUE_LAYERS.buckets`, never `AREA_LAYERS`') and no No-data row — since that card was
+ *  rewritten. A caption nobody can read is the one kind this ruling cannot reach, so it goes.
+ *
+ *  WHAT THE DELETION ORPHANS, measured and LEFT STANDING: `tightColumn` (one declaration in
+ *  `marketVals`), `SYMBOL_STYLE` and `SYMBOL_SCALE` (one declaration each) have no reader after
+ *  it. Ruling 9 names four values and these are not among them — A28.2–A28.4 left the helpers
+ *  their own deleted rows called standing for exactly this reason, and closing it took a
+ *  controller amendment of its own (D-C45). This entry states the measurement and takes nothing
+ *  that was not ruled. (`md.symbols`, `md.symbolColors` and `md.hasLegend` were ALREADY unread
+ *  before this change and are likewise not in the ruling.) */
+const A34_11: Amendment = {
+  id: 'A34.11', ...ONEVOCAB,
+  find: '      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus\n'
+    + '      // a hue + graduated-size row for each active count layer.\n'
+    + '      hasLegend: !!valueLayer || activeSymbols.length > 0,\n'
+    + '      legend: {\n'
+    + '        hasFill: !!valueLayer,\n'
+    + '        title: valueLayer ? VALUE_LAYERS[valueLayer].label : "",\n'
+    + '        swatches: valueLayer\n'
+    + '          ? ramp(valueLayer).map((c, i) => ({\n'
+    + '              style: "flex: 1; height: 10px; background: " + c + ";",\n'
+    + '              label: VALUE_LAYERS[valueLayer].buckets[i]\n'
+    + '            }))\n'
+    + '          : [],\n'
+    + '        hasSymbols: activeSymbols.length > 0 && !tightColumn,\n'
+    + '        symbolWrapStyle: "margin-top: " + (valueLayer ? "10px" : "0") +\n'
+    + '          "; padding-top: " + (valueLayer ? "9px" : "0") +\n'
+    + '          "; border-top: " + (valueLayer ? "1px solid #e6e6e6" : "0") + ";",\n'
+    + '        symbols: activeSymbols.map((k) => {\n'
+    + '          const hue = ramp(k)[3];\n'
+    + '          return {\n'
+    + '            label: SYMBOL_STYLE[k].label,\n'
+    + '            swatchStyle: "flex: none; width: 10px; height: 10px; border-radius: 999px; background: " + hue + ";",\n'
+    + '            sizes: SYMBOL_SCALE[k].map((row) => ({\n'
+    + '              label: row.label,\n'
+    + '              dotStyle: "display: block; width: " + row.px + "px; height: " + row.px +\n'
+    + '                "px; border-radius: 999px; background: " + hue + "; opacity: .85;"\n'
+    + '            }))\n'
+    + '          };\n'
+    + '        })\n'
+    + '      },\n',
+  replace: '      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus\n'
+    + '      // a hue + graduated-size row for each active count layer.\n'
+    + '      hasLegend: !!valueLayer || activeSymbols.length > 0,\n',
+  count: 1
+};
+
+/** A34.12 (the brief's ruling 9) — `active.sub`, deleted under the same rule and measured the same
+ *  way: one declaration, and no `v.md?.active?.sub` anywhere in `App.vue`. `LAYER_META.*.sub` IS
+ *  rendered — by the "Market data layers" drawer (`layerChoices.sub`, and the mobile sheet's own
+ *  row), which A33.3 gave the ruled grammar — and this second, unread copy of it on the legend
+ *  card is what made the audit call the drawer "the legend sub-line". */
+const A34_12: Amendment = {
+  id: 'A34.12', ...ONEVOCAB,
+  find: '          sub: meta.sub || "Choose a layer to shade the map",\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.13 (the brief's ruling 9) — `md.communities[].metricName`. One declaration; zero readers.
+ *  It was the MOSAIC tooltip's own title line, and the mosaic was deleted with A24
+ *  (D-C34–D-C37): `MarketMapView.vue` takes `communities` as a watcher dependency and draws
+ *  polygons and pins alone. The title a member actually reads comes from `areaTip`, which builds
+ *  the whole tip once. */
+const A34_13: Amendment = {
+  id: 'A34.13', ...ONEVOCAB,
+  find: '          metricName: valueLayer ? LAYER_META[valueLayer].title : "",\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.14 (the brief's ruling 9) — `md.communities[].sourceNote`, `metricName`'s twin and the last
+ *  of the four. Measured the same way: one declaration, zero readers, the same deleted mosaic tip.
+ *  It takes the trailing comma of the line above it with it, which is why it is applied after
+ *  A34.13. Consumes A24.50, whose whole introduced line this removes — a caption A24.49/A24.50
+ *  composed for a surface that had already stopped rendering. */
+const A34_14: Amendment = {
+  id: 'A34.14', ...ONEVOCAB,
+  find: '          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals,\n'
+    + '          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""\n',
+  replace: '          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7080,5 +7369,13 @@ export function amendments(): Amendment[] {
     // `componentDidMount` load outright, A40.5 reads A5.1's fulfilled `signIn` arm and A40.6
     // A26.9a's `go` guard -- so all four must run after those, which appending the family last
     // already guarantees.
-    A40_3, A40_4, A40_5, A40_6];
+    A40_3, A40_4, A40_5, A40_6,
+    // A34 -- ONE VOCABULARY (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13). Appended last, as
+    // every family is, and it has to be: SIX of the fourteen are CHAINED on an earlier family's
+    // output -- A34.3 on A24.44, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on A21.4d, A34.8 on
+    // A31.11, A34.10 on A21.5b and A34.14 on A24.50 -- so each runs after the entry it reads.
+    // A34.14 also reads the object literal A34.13 has just shortened, which is why the two
+    // deletions are ordered. Definition order in this file matches this list (m8).
+    A34_1, A34_2, A34_3, A34_4, A34_5, A34_6, A34_7, A34_8, A34_9, A34_10,
+    A34_11, A34_12, A34_13, A34_14];
 }

@@ -150,9 +150,14 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(md).not.toHaveProperty('fillRows');
     expect(md).not.toHaveProperty('overlayRows');
     // …and nothing the family did not name went with them: the compact control V3 made
-    // canonical, and the legend the design still draws, are untouched.
+    // canonical is untouched.
     expect(md).toHaveProperty('layerChoices');
-    expect(md).toHaveProperty('legend');
+    // A34.11 (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13) then took `md.legend` under this
+    // same dead-code rule: it was a SECOND and different legend — `VALUE_LAYERS.buckets` class
+    // labels rather than `AREA_LAYERS`' and no No-data row — computed beside the `active` block
+    // the card actually renders from, and no template on either target read it.
+    expect(md, 'A34.11 removed the unread second legend; the card renders from `active`').not.toHaveProperty('legend');
+    expect(md).toHaveProperty('active');
     // A28.4: the two drive-band flags leave the defaults and the four LIVE members stay, with
     // their values. Read through `symbols` — `SYMBOL_KEYS.filter((k) => layers[k] && ...)` — which
     // is what actually consumes them, so all three of `pets: false`, `households: false` and
@@ -3512,7 +3517,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     without([p], () => {
       expect(panelFor(p).overviewTiles).toEqual([
         { v: undefined, k: 'Population', sub: undefined },
-        { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+        { v: undefined, k: 'Households', sub: 'Total \u00b7 ACS 5-year' },
         { v: undefined, k: 'Median Income', sub: undefined },
         { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
       ]);
@@ -3613,8 +3618,11 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         ...panel.oppTiles.map((t: any) => t.label),
         panel.compEstab, panel.compPer10k, panel.compLevel, panel.score, panel.scoreLabel
       ].filter((x: unknown) => x !== undefined && x !== '');
-      // Two static sub-lines survive: they describe the SOURCE, not a figure.
-      expect(interpolated).toEqual(['ACS 5-year', 'derived estimate']);
+      // Two static sub-lines survive: they describe the STATISTIC and the SOURCE, not a figure.
+      // A34.5 (ruling D-C51) gave the Households tile its own statistic word: "ACS 5-year" named
+      // neither statistic nor geography and was true of all four "Households" figures Browse can
+      // show at once (audit R32, collision C3).
+      expect(interpolated).toEqual(['Total \u00b7 ACS 5-year', 'derived estimate']);
     });
   });
 
@@ -3674,7 +3682,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
       // The VALUE is the ring's population and is untouched: D-C48 labels the sub-line, it
       // changes no figure. And the three tiles the heading sub-line DOES describe keep theirs.
       expect(panelFor(p).overviewTiles[0].v).toBe(value);
-      expect(panelFor(p).overviewTiles[1].sub).toBe('ACS 5-year');
+      expect(panelFor(p).overviewTiles[1].sub).toBe('Total \u00b7 ACS 5-year');
       expect(panelFor(p).overviewTiles[3].sub).toBe('derived estimate');
     } finally { delete (p as any).growthScope; }
   });
@@ -3697,14 +3705,16 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const before = c.detail();
     expect(before.demo[0].sub).toBe('Community, 2023');
     expect(before.demo[3].sub).toBe('In the community');
-    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
+    // A34.10 (ruling D-C51, audit R47/collision C11): the paragraph claimed the ring for all
+    // four figures while the Growth tile beside it names a city. It names the exception now.
+    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself. Population growth is measured for the city or county named on its own tile.');
 
     (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
       const after = c.detail();
       expect(after.demo[0].sub).toBe('Within about 5 miles of the practice');
       expect(after.demo[3].sub).toBe('Within about 5 miles of the practice');
-      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself.');
+      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself. Population growth is measured for the city or county named on its own tile.');
       // The Census attribution itself is legally load-bearing and is not part of this sentence.
       expect(after.demoScope).not.toContain('Census');
     } finally { delete (p as any).communityLabel; }
@@ -3847,10 +3857,13 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
     const growth = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
     expect(growth.src).toBe('U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
-    // …the LEGEND takes the same composition, which is where the vaguer wording also stood.
+    // …the LEGEND takes the DATASET, and its own `geoLine` carries the geography beside it:
+    // A34.4 (ruling D-C51, audit R7-R12) stopped the card printing one fact twice, which is the
+    // rule A24.44-A24.57 established and this one surface never followed.
     c.setState({ mdValue: 'growth' });
     expect(c.renderVals().md.active.sourceLine)
-      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023');
+    expect(c.renderVals().md.active.geoLine).toBe('Place (city/town)');
     // …and LOCATION mode carries the dataset alone, as the other five do (A31.12).
     c.setState({ mdValue: 'income', mdSel: austin()[0].id });
     expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0].src)
@@ -4331,7 +4344,7 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     const panel = c.marketPanel(sel, null, [], AUSTIN);
     expect(panel.overviewTiles).toEqual([
       { v: undefined, k: 'Population', sub: undefined },
-      { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+      { v: undefined, k: 'Households', sub: 'Total \u00b7 ACS 5-year' },
       { v: undefined, k: 'Median Income', sub: undefined },
       { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
     ]);
@@ -5235,10 +5248,11 @@ describe('A24 — real boundary polygons', () => {
     expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023)');
     expect(bare.valueNote).toBe('community level');
 
-    // The LEGEND still names the map's own geography — that is what it describes, and it has not
-    // moved: one string per fact, composed for the surface that prints it.
+    // The LEGEND names the map's own geography — on its own `geoLine`, ONCE. A34.4 (ruling
+    // D-C51) took it out of the source sentence beside it: the card printed one fact twice.
     c.state.mdValue = 'households';
-    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023)');
+    expect(c.marketVals(P).active.geoLine).toBe('Census tract');
   });
 
   // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
@@ -6157,3 +6171,169 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     }
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// Task ONE-VOCABULARY — GATE 2 of ruling D-C51 (John, 2026-09-13): "WE MUST COMMUNICATE THE
+// EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING
+// DIFFERENT THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY
+// ARE SAME." Family A34; the specification is `one-vocabulary-audit.md` — 47 figures, 11
+// collisions, §3.1 the closed word list and §3.2 the per-row proposals.
+//
+// THE GRAMMAR (§3.1, ratified as the brief's ruling 1): the TITLE carries the statistic, the
+// caption is `<geography> · <basis>`, and a basis appears only where the figure is not the
+// Census's own published estimate for that exact area. The geography words are a CLOSED list.
+//
+// THE TWO ASSERTIONS. Closure — no caption may name a geography the product has not ruled, which
+// is what stops a seventh word like "market level" being added later. Correctness — the
+// geography a caption names is the geography that figure is ACTUALLY measured at, which is the
+// ruling itself: a ring caption over a city figure is two different measurements labelled the
+// same. `growth` (place or county) and `econ` (county) are the two that are never the ring, and
+// they are the pair every fix round on this surface has been about (D-C48, A31.12).
+//
+// WHAT THIS GATE DOES NOT OWN, deliberately. The closure runs over the captions the design
+// composes FROM ITS OWN CATALOGUE (`LAYER_META` through `metaSource`, and `AREA_LABEL`) and over
+// the captions composed where the API HAS served a geography. It does NOT run over the design's
+// own no-label fallbacks: the brief's ruling 1 refuses "market level" and "community level" as
+// geography words `(where the API serves a basis)`, and `stripCards`' `locBasis` still reads
+// "community level" when the API serves no `communityLabel` at all — the reference path and every
+// approved state. Replacing that fallback is a ruled string §3.2 proposes for no row.
+// -------------------------------------------------------------------------------------------
+describe('A34 — one vocabulary: every figure names its own geography, from one closed list (D-C51)', () => {
+  const AUSTIN = 'Austin, TX';
+  const LAYERS = ['income', 'pets', 'competition', 'growth', 'households', 'econ'] as const;
+  const RING = 'Within about 5 miles of the practice';
+  const SCOPE = 'Dallas';
+
+  /** Audit §3.1, verbatim — the ONLY phrases a caption may use for a geography. */
+  const GEOGRAPHY = [
+    'Census tract', 'Census tracts',
+    'Place (city/town)', 'places',
+    'County', 'counties',
+    'ZIP Code Tabulation Area', 'ZIP areas',
+    RING,
+    'surrounding city or county', 'surrounding county',
+    'across the metro',
+    'vs US'
+  ];
+
+  /** The geography the MAP draws each layer at (`app/api/market.SHADING`, pinned across the wire
+   *  by `tests/census/test_design_shading_labels.py`). */
+  const MAP_GEOGRAPHY: Record<string, string> = {
+    income: 'Census tract', pets: 'Census tract', households: 'Census tract',
+    growth: 'Place (city/town)', econ: 'County', competition: 'ZIP Code Tabulation Area'
+  };
+
+  /** The geography each figure is measured at for ONE SELECTED PRACTICE (`app/census/serve.py`:
+   *  the area group comes from the catchment band, growth is place-or-county and payroll is the
+   *  county CBP row everywhere and always). */
+  const PRACTICE_GEOGRAPHY: Record<string, string> = {
+    income: RING, pets: RING, households: RING, competition: RING,
+    growth: SCOPE, econ: 'surrounding county'
+  };
+
+  const segments = (caption: string) => caption.replace(/^Source: /, '').split(' · ');
+  /** Every ruled geography phrase a caption names, longest first so "Census tracts" is not read
+   *  as "Census tract" plus a stray letter. */
+  const named = (caption: string) => GEOGRAPHY.slice()
+    .sort((a, b) => b.length - a.length)
+    .filter((g) => { const m = caption.includes(g); if (m) caption = caption.split(g).join(''); return m; });
+
+  const browse = (layer: string, sel: string | null) =>
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: sel, mdValue: layer });
+
+  /** The map tooltip's own source line — the last <div> `areaTip` writes. */
+  const tipSource = (layer: string): string => {
+    const tip: string = c.areaTip({ name: 'n', value: 1, moe: null, suppressed: false }, layer, true);
+    const line = /margin-top:5px">([^<]*)<\/div>/.exec(tip);
+    expect(line, `${layer}: areaTip no longer ends in a source line`).toBeTruthy();
+    return line![1];
+  };
+
+  /** The selected-practice fixture, carrying the three fields the API serves for D-C38. */
+  function withServedPractice<T>(run: (id: string) => T): T {
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    Object.assign(p, { communityLabel: RING, growthScope: SCOPE, incomeNote: `${RING} · approximate`, incomeApproximate: true });
+    try { return run(p.id as string); } finally {
+      for (const k of ['communityLabel', 'growthScope', 'incomeNote', 'incomeApproximate']) delete p[k];
+    }
+  }
+
+  it('every geography a catalogue caption names is one of the closed list (the closure)', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      const captions: Array<[string, string]> = [['map tooltip', tipSource(layer)]];
+      if (md.active.sourceLine) captions.push(['legend card', md.active.sourceLine]);
+      for (const card of md.stripCards) captions.push([`snapshot AREA/${card.title}`, card.src]);
+      for (const [surface, caption] of captions) {
+        for (const seg of segments(caption).slice(1)) {
+          expect(GEOGRAPHY, `${surface} (${layer}): "${seg}" is not a geography word this product has ruled — the caption reads "${caption}"`)
+            .toContain(seg);
+        }
+      }
+    }
+  });
+
+  it('a catalogue caption names the geography that layer is DRAWN at, and no other', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      expect(named(tipSource(layer)), `the map tooltip for ${layer} does not name ${MAP_GEOGRAPHY[layer]}`)
+        .toEqual([MAP_GEOGRAPHY[layer]]);
+      expect(md.active.geoLine, `the legend's geo line for ${layer}`).toBe(MAP_GEOGRAPHY[layer]);
+    }
+  });
+
+  it('the legend card names its geography ONCE — the source line no longer repeats the geo line', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const active = c.marketVals(P).active;
+      expect(active.sourceLine, `${layer}: the legend prints "${active.geoLine}" twice — on its own geo line and again inside its source line`)
+        .not.toContain(active.geoLine);
+    }
+  });
+
+  it('with a practice selected every snapshot card names THAT figure\'s own geography', () => {
+    withServedPractice((id) => {
+      for (const layer of LAYERS) {
+        browse(layer, id);
+        for (const card of c.marketVals(P).stripCards) {
+          const key = LAYERS.filter((k) => c.state && (LAYER_TITLE[k] === card.title))[0];
+          expect(key, `no layer answers to the card titled "${card.title}"`).toBeTruthy();
+          const own = PRACTICE_GEOGRAPHY[key];
+          expect(card.valueNote, `the "${card.title}" card is captioned "${card.valueNote}" for a figure measured at ${own}`)
+            .toContain(own);
+          for (const other of named(card.valueNote)) {
+            expect(other, `the "${card.title}" card names ${other}, which is not where its number comes from`).toBe(own);
+          }
+          // …and the source line carries the DATASET alone: the geography is stated once
+          // (A24.44-A24.57's one-string-per-fact rule, applied by A31.12 to this mode).
+          expect(named(card.src), `the "${card.title}" card names its geography twice`).toEqual([]);
+        }
+      }
+    });
+  });
+
+  it('the panel Households tile names the statistic its number is, not only its dataset', () => {
+    withServedPractice((id) => {
+      browse('income', id);
+      const tile = c.marketVals(P).panel.overviewTiles.filter((t: { k: string }) => t.k === 'Households')[0];
+      expect(tile.sub).toBe('Total · ACS 5-year');
+    });
+  });
+
+  it('the detail card\'s scope paragraph no longer claims the ring for the growth figure beside it', () => {
+    c.setState({ auth: true, screen: 'detail', detailId: 'p1' });
+    expect(c.detail().demoScope, 'the paragraph claims every figure is the area\'s while its own Growth tile names a city')
+      .toContain('Population growth is measured for the city or county named on its own tile.');
+  });
+});
+
+/** The design's own title per layer, read once so the snapshot case above can pair a card with
+ *  the layer it belongs to without re-typing six strings. */
+const LAYER_TITLE: Record<string, string> = {
+  income: 'Median household income', pets: 'Pet ownership (estimated)',
+  competition: 'Veterinary competition', growth: 'Population growth',
+  households: 'Households', econ: 'Average practice payroll'
+};

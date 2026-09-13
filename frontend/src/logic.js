@@ -174,9 +174,10 @@ const SYMBOL_SCALE = {
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
 // by its caller - the map's own geography for the legend and the tip, the map's community
-// notes, and the snapshot strip's AREA mode, which measures those same polygons. A layer
-// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on
-// every surface, and this returns it unchanged.
+// notes, and the snapshot strip's AREA mode, which measures those same polygons.
+//
+// A34 (D-C51): all six layers declare a `dataset:` now, so the `source` arm below is the
+// guard for a key `LAYER_META` does not hold and nothing else - "" beats "undefined · X".
 //
 // A31.12b (fix round 1): a caller with NO geography to name gets the dataset alone. The
 // strip's LOCATION mode is one - the card's own note carries the geography there, and one
@@ -203,7 +204,7 @@ const LAYER_META = {
     title: "Pet ownership (estimated)",
     sub: "Estimated pet households by Census tract · derived from ACS households",
     updated: "Updated: derived Jan 2025 from ACS 2023",
-    source: "Derived estimate from ACS household counts (2023) · not an observed count",
+    dataset: "Derived estimate from ACS household counts (2023)",
     means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
     why: "Pet-household concentration is a rough proxy for the size of the potential client base near a practice."
   },
@@ -235,7 +236,7 @@ const LAYER_META = {
     title: "Average practice payroll",
     sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",
     updated: "Updated: derived from CBP 2023 (Nov 2024)",
-    source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",
+    dataset: "Derived from Census CBP payroll and establishment counts (2023)",
     means: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures.",
     why: "Typical employer scale hints at the staffing model a market supports, which is context for a practice's own numbers."
   }
@@ -802,9 +803,7 @@ class Component extends DCLogic {
           vals[k] = { t: b.t, color: b.color, label: this.fmtMetric(k, raw) };
         });
         return {
-          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals,
-          metricName: valueLayer ? LAYER_META[valueLayer].title : "",
-          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""
+          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals
         };
       }),
       practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({
@@ -818,10 +817,9 @@ class Component extends DCLogic {
       active: (() => {
         const meta = LAYER_META[valueLayer] || {};
         const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;
-        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";
+        const mapSource = valueLayer ? metaSource(valueLayer, "") : "";
         return {
           title: meta.title || "No layer active",
-          sub: meta.sub || "Choose a layer to shade the map",
           sourceLine: mapSource ? "Source: " + mapSource : "",
           sourceShort: mapSource ? "Source: " + mapSource.split(" · ")[0] : "",
           updatedLine: meta.updated || "",
@@ -1010,32 +1008,6 @@ class Component extends DCLogic {
       // Every mark on the map gets a key: the fill ramp with its real class breaks, plus
       // a hue + graduated-size row for each active count layer.
       hasLegend: !!valueLayer || activeSymbols.length > 0,
-      legend: {
-        hasFill: !!valueLayer,
-        title: valueLayer ? VALUE_LAYERS[valueLayer].label : "",
-        swatches: valueLayer
-          ? ramp(valueLayer).map((c, i) => ({
-              style: "flex: 1; height: 10px; background: " + c + ";",
-              label: VALUE_LAYERS[valueLayer].buckets[i]
-            }))
-          : [],
-        hasSymbols: activeSymbols.length > 0 && !tightColumn,
-        symbolWrapStyle: "margin-top: " + (valueLayer ? "10px" : "0") +
-          "; padding-top: " + (valueLayer ? "9px" : "0") +
-          "; border-top: " + (valueLayer ? "1px solid #e6e6e6" : "0") + ";",
-        symbols: activeSymbols.map((k) => {
-          const hue = ramp(k)[3];
-          return {
-            label: SYMBOL_STYLE[k].label,
-            swatchStyle: "flex: none; width: 10px; height: 10px; border-radius: 999px; background: " + hue + ";",
-            sizes: SYMBOL_SCALE[k].map((row) => ({
-              label: row.label,
-              dotStyle: "display: block; width: " + row.px + "px; height: " + row.px +
-                "px; border-radius: 999px; background: " + hue + "; opacity: .85;"
-            }))
-          };
-        })
-      },
       mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),
       mdSubline: market + " metro · within 20 miles",
       mdResults: list.map((p) => {
@@ -1392,7 +1364,7 @@ class Component extends DCLogic {
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
         { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " · " + sel.growthScope : "")) : undefined },
-        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
+        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "Total · ACS 5-year" },
         { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : (sel.incomeApproximate ? "approximate" : undefined) },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
@@ -1865,7 +1837,7 @@ class Component extends DCLogic {
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
       hasDemo: p.id !== "p8" && p.pop != null,
       noDemo: p.id === "p8" || p.pop == null,
-      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
+      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself. Population growth is measured for the city or county named on its own tile.",
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
         { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },

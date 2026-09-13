@@ -48,6 +48,24 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines,
 // name the design as it stood at this re-pin; the rows in LOCAL_AMENDMENTS.md carry the ones
 // re-checked after later insertions.)
 //
+// Amendment A34 (Task ONE-VOCABULARY, John's ruling D-C51, 2026-09-13: "WE MUST COMMUNICATE THE
+// EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING
+// DIFFERENT THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY ARE
+// SAME") re-based ONE row, and the same one A18 did. A34.10 appends a sentence to the detail
+// card's scope paragraph: that paragraph claimed the area within five miles of the practice for
+// ALL FOUR figures while its own Growth tile reads "Dallas · since 2018" (A27.2), so one
+// paragraph contradicted one tile it sits under (audit R47, collision C11). The paragraph names
+// the exception now, which reflows it from two rendered lines to three.
+//
+// The other twelve kept their hashes. MEASURED, not reasoned, the way A33 measured its own: the
+// reference baselines were regenerated from the design as it stood at 3ee9a59 and again from this
+// one, and the 55 PNGs diffed by SHA-256 — twenty-one moved, and `detail` is the only one of them
+// in this manifest. `mobile-detail` did NOT move, which is the proof this reached the Community
+// Context card and nothing else: the phone frame renders its own detail screen and does not carry
+// that card. A34's other thirteen entries touch Browse surfaces (the Market data card's source
+// line, the docked panel, the snapshot strip, Compare) and four computed values with no template
+// reader at all, none of which is in this manifest.
+//
 // From here a moved hash means a CODE change moved a screen the design did not.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 

@@ -401,6 +401,14 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A34 — ONE VOCABULARY (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13): every figure's
+    // caption names its statistic, geography and basis in ONE vocabulary, and no two figures of
+    // different measure read alike. Appended last, as every family is, and it has to be: seven of
+    // the fourteen are CHAINED — A34.3 on A31.12b, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on
+    // A21.4d, A34.8 on A31.11, A34.10 on A21.5b and A34.14 on A24.50 — and A34.14 also reads the
+    // object literal A34.13 has just shortened, which orders the two deletions.
+    'A34.1', 'A34.2', 'A34.3', 'A34.4', 'A34.5', 'A34.6', 'A34.7', 'A34.8', 'A34.9', 'A34.10',
+    'A34.11', 'A34.12', 'A34.13', 'A34.14',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -516,7 +524,13 @@ describe('local design amendments (spec D15)', () => {
     // so "Figures describe the area around each practice" became false by this release's own act
     // (the A27.5 rule). The paragraph states both modes now, and A24.20's growth caveat still
     // stands beside them byte for byte, because growth is measured at place or county in either.
-    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own community figure.');
+    // A34.8 (Task ONE-VOCABULARY, ruling D-C51) revises the SECOND half of that sentence and
+    // nothing else: the growth and payroll cards contradict "that practice's own community
+    // figure" on their own captions since A31.12 gave them "surrounding city or county" and
+    // "surrounding county", so the clause says what is true of all six. The AREA clause is
+    // carried forward byte for byte, and A34.8's own three-kinds paragraph sits in front of it.
+    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    expect(footnote, 'the three kinds of figure are no longer distinguished on the strip').toContain('Three kinds of figure appear here and they measure different things.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
     // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
     expect(footnote, 'the superseded per-practice sentence survives in the footnote').not.toContain('not the practice itself');
@@ -591,7 +605,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(341);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1422,9 +1436,13 @@ describe('local design amendments (spec D15)', () => {
     // distinctive at 2 and not at 1. Task SCREEN-LABELS (A33, 2026-09-13) moves it again, and
     // DOWNWARD: its insertions shifted every design line below V3:1892, so 136 citations were
     // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-    // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
-    // and 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
+    // left. Task ONE-VOCABULARY (A34, 2026-09-13) moves it to { 1: 24, 2: 5, 3: 2, 4: 0 }: it
+    // adds eleven citations — three of its fourteen entries are REMOVALS and carry none — and two
+    // of them are distinctive only at 2, A34.6's own sub-line (byte-identical to A27.7's, which
+    // is the point of that entry) and A34.1's dataset line. What the case asserts is unchanged
+    // and is the whole point: 4 accepts every citation, and 3 does not, so 4 is the smallest
+    // threshold that can ship.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 24, 2: 5, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

@@ -349,8 +349,16 @@ test.describe('mobile: the same map, market data in a sheet', () => {
       .toBeLessThan(text.indexOf('COMPARE AGAINST'));
     // A24.36 (fix round 1, Important 2): income shades at the CENSUS TRACT and its source line
     // said "community level" — the one line on this card that named no geography while the line
-    // above it named the tract.
-    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    // above it named the tract. A34.4 (Task ONE-VOCABULARY, ruling D-C51) then took the geography
+    // back OUT of the source line, because the card prints it on its own `geoLine` directly above:
+    // one fact, one string (A24.44–A24.57's rule, which this one surface never followed). Both
+    // halves are asserted, and in the order the sheet renders them.
+    expect(text).toContain('Census tract');
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023)');
+    expect(text, 'the geography is printed twice on the sheet\'s Market data card')
+      .not.toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    expect(text.indexOf('Census tract'), 'the geography line is not above the source line')
+      .toBeLessThan(text.indexOf('Source: U.S. Census ACS 5-year estimates (2023)'));
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
@@ -908,7 +916,10 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await serveListings(page, { community_label: LABEL });
     const panel = await openPanel(page);
 
-    await expect(panel.getByText(LABEL)).toBeVisible();
+    // `.first()` since A34.6 (ruling D-C51): the Competitive Landscape heading carries the SAME
+    // sub-line, because its three figures are the ring's too and it stood under no scope line at
+    // all. Two elements now render this label on the Insights tab, by ruling.
+    await expect(panel.getByText(LABEL).first()).toBeVisible();
     // D-C42 (John, 2026-09-11). The heading KEEPS its name and the geography renders on its own
     // sub-line beneath it — A21.5a let the label replace the heading, and D-C38 gives 28 of 29 QA
     // listings a label, so "Market Overview" appeared nowhere on QA and A27.3's own correction
@@ -973,8 +984,12 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
       .toMatch(/[+-]\d+\.\d% \(5 yrs\) \u00b7 Dallas/);
     // The heading's own sub-line still says what the AREA figures describe, and says it once.
     await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    // TWICE since A34.6 (ruling D-C51), and exactly twice: once under "Market Overview" for the
+    // four tiles it describes and once under "Competitive Landscape" for the three figures that
+    // had no scope line at all (audit R35–R37, collision C8). A third occurrence would mean the
+    // Population tile had taken it back, which is the D-C48 defect A27.8 removed.
     expect((await panel.innerText()).split(LABEL).length - 1,
-      'the ring caption is stated more than once on the Insights tab').toBe(1);
+      'the ring caption is not stated exactly once per block that describes the ring').toBe(2);
     expect(errors).toEqual([]);
   });
 
@@ -2067,5 +2082,182 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     expect(base, 'the basemap was built more than once at mount — the no-op setBase reset the layer')
       .toBe(labels);
     console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task ONE-VOCABULARY — GATE 1 of ruling D-C51 (John, 2026-09-13): "WE MUST COMMUNICATE THE EXACT
+// DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING DIFFERENT
+// THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY ARE SAME."
+//
+// THE RULING, LITERALLY. Browse holds THREE "median household income" figures at once and they
+// are three different measurements: one Census tract's published median (the map tooltip), the
+// selected practice's own five-mile ring — a household-weighted median of about ninety-nine tract
+// medians, derived and never published (the snapshot strip), and that same ring figure again in
+// the docked panel. Audit collision C1. This case reads all three captions off one rendered
+// screen and asserts that they say so.
+//
+// IT LIVES HERE, not in `screens.ts`, for the reason A27.7's and D-C48's own oracles do: the
+// design's fixtures carry no `communityLabel`, no `incomeNote` and no `growthScope`, and the
+// reference has no way to be handed one without editing approved fixture data or declaring a
+// ninth prototype prop. So the assertion is on the RENDERED DOM under a stubbed API.
+// -------------------------------------------------------------------------------------------
+test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
+  const RING = 'Within about 5 miles of the practice';
+  /** Audit §3.1's closed geography list, verbatim. */
+  const GEOGRAPHY = [
+    'Census tract', 'Census tracts', 'Place (city/town)', 'places', 'County', 'counties',
+    'ZIP Code Tabulation Area', 'ZIP areas', RING, 'surrounding city or county',
+    'surrounding county', 'across the metro', 'vs US'
+  ];
+  /** Audit §3.1's basis words — appended only where the figure is not the Census's own published
+   *  estimate for that exact area. */
+  const BASIS = ['approximate', 'derived estimate', 'not an observed count'];
+
+  /** Every ruled geography phrase a caption names, longest first so "Census tracts" is not read
+   *  as "Census tract" and a stray "s". */
+  const geographiesIn = (caption: string) => GEOGRAPHY.slice().sort((a, b) => b.length - a.length)
+    .filter((g) => { const hit = caption.includes(g); if (hit) caption = caption.split(g).join(''); return hit; });
+  const basesIn = (caption: string) => BASIS.filter((b) => caption.includes(b));
+
+  async function serveListings(page: Page, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    for (const item of body.items) Object.assign(item, over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  /** Browse with the docked panel open over Cedar Park AND the snapshot strip expanded — the one
+   *  screen that carries all three income figures at once. The selection is the click
+   *  `browse-market-panel` makes and the expansion the one `browse-market-strip-location` makes. */
+  async function browseWithPanelAndStrip(page: Page) {
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.getByText('Cedar Park').first().click();
+    const panel = page.locator('div.rf-scroll[style*="width: 366px"]');
+    await panel.getByRole('button', { name: 'View full listing' }).waitFor({ state: 'visible' });
+    await click(page, 'Expand all six layers');
+    await page.getByText(/^LOCATION · /).first().waitFor({ state: 'visible' });
+    return panel;
+  }
+
+  /** The SNAPSHOT card whose title is `title`, flattened. Anchored on the card's own
+   *  "View on map" / "Showing on map" control rather than on the title alone: the Market data
+   *  legend card renders the SAME title on its own trigger, and reading that one instead is how
+   *  this case first went red with "Census tract" where the ring belongs. The innermost matching
+   *  container is the card. */
+  const stripCard = (page: Page, title: string) => page.evaluate((t) => {
+    const boxes = Array.from(document.querySelectorAll('div')).filter((d) =>
+      /View on map|Showing on map/.test(d.textContent || '')
+      && Array.from(d.querySelectorAll('div')).some((x) => (x.textContent || '').trim() === t));
+    const card = boxes[boxes.length - 1];
+    return card ? (card.textContent || '').replace(/\s+/g, ' ').trim() : null;
+  }, title);
+
+  /** The docked panel's overview tile whose key is `key`, flattened. */
+  const panelTile = (panel: Locator, key: string) => panel.evaluate((root, k) => {
+    const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === k);
+    const box = label && (label.parentElement as HTMLElement | null);
+    return box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : null;
+  }, key);
+
+  /** The map's own `rf-tip`, opened by hovering the shaded polygons. The boundary layer is drawn
+   *  on the engine's shared canvas renderer, so there is no element to hover — the hit test is
+   *  Leaflet's, over the container. A short lattice is walked until one opens; a map with no
+   *  polygons on it opens none and the caller fails on the null rather than on a timeout. */
+  async function hoverAreaTip(page: Page): Promise<string | null> {
+    const box = (await page.locator('.leaflet-container').first().boundingBox())!;
+    for (const fx of [0.5, 0.4, 0.6, 0.35, 0.65]) {
+      for (const fy of [0.5, 0.4, 0.6]) {
+        await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+        const tip = page.locator('.leaflet-tooltip.rf-tip');
+        try { await tip.first().waitFor({ state: 'visible', timeout: 700 }); } catch { continue; }
+        return (await tip.first().innerText()).replace(/\s+/g, ' ').trim();
+      }
+    }
+    return null;
+  }
+
+  test('the three "median household income" figures on Browse read as three different measurements', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, {
+      community_label: RING,
+      income_note: `${RING} · approximate`,
+      income_approximate: true,
+      income_vs_us_pct: 19.4,
+      growth_scope: 'Dallas',
+    });
+    const panel = await browseWithPanelAndStrip(page);
+
+    // (1) ONE TRACT'S PUBLISHED MEDIAN — the map tooltip's own source line.
+    const tip = await hoverAreaTip(page);
+    expect(tip, 'no polygon tooltip opened — the map drew no shading to read a caption off').toBeTruthy();
+    const tipGeo = geographiesIn(tip!);
+    expect(tipGeo, `the tooltip names ${JSON.stringify(tipGeo)}, not exactly one ruled geography: "${tip}"`).toEqual(['Census tract']);
+    expect(basesIn(tip!), 'a published tract estimate carries a basis word it has not earned').toEqual([]);
+
+    // (2) THE PRACTICE'S OWN RING — the snapshot strip's income card, in LOCATION mode.
+    const strip = await stripCard(page, 'Median household income');
+    expect(strip, 'the snapshot strip has no "Median household income" card').toBeTruthy();
+    expect(geographiesIn(strip!), `the strip card reads "${strip}"`).toEqual([RING]);
+    expect(basesIn(strip!), 'the API serves "approximate" on this exact figure and the strip drops it').toEqual(['approximate']);
+
+    // (3) THE SAME RING FIGURE IN THE PANEL — the Median Income tile, under the card's own scope.
+    const tile = await panelTile(panel, 'Median Income');
+    expect(tile, 'the panel has no Median Income tile').toBeTruthy();
+    expect(tile).toContain('+19% vs US · approximate');
+    await expect(panel.getByText(RING).first()).toBeVisible();
+
+    // THE RULING: the tract figure and the ring figures are captioned differently, and the two
+    // that ARE the same measurement are captioned the same.
+    expect(tipGeo).not.toEqual(geographiesIn(strip!));
+    expect(basesIn(strip!)).toEqual(basesIn(tile!));
+    expect(errors).toEqual([]);
+  });
+
+  test('every block of the docked panel says which area it describes, and the footnotes say how the three kinds differ', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, { community_label: RING, growth_scope: 'Dallas' });
+    const panel = await browseWithPanelAndStrip(page);
+
+    // R35-R37 / collision C8: the Competitive Landscape block sat under NO scope line at all —
+    // `overviewScope` is rendered once, above the overview grid, and this heading is below it. It
+    // takes the Market Overview heading's own sub-line, which is A27.7's established idiom.
+    for (const heading of ['Market Overview', 'Competitive Landscape']) {
+      const beneath = await panel.evaluate((root, h) => {
+        const head = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === h);
+        const next = head && (head.nextElementSibling as HTMLElement | null);
+        return { found: Boolean(head), text: next && (next.textContent || '').trim(), size: next && getComputedStyle(next).fontSize };
+      }, heading);
+      expect(beneath.found, `the panel has no "${heading}" heading`).toBe(true);
+      expect(beneath.text, `"${heading}" names no area — the block beneath it reads as the card's own ring scope without saying so`).toBe(RING);
+      expect(beneath.size, `"${heading}"'s sub-line is not the design's own place-line type`).toBe('12.5px');
+    }
+
+    // §4 — the same paragraph on both surfaces, because the three kinds of figure appear on both.
+    const KINDS = 'Three kinds of figure appear here and they measure different things.';
+    await expect(panel.getByText(KINDS)).toBeVisible();
+    // …after D-C39's own sentence, which must not move.
+    await expect(panel.getByText('A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.').first()).toBeVisible();
+    // R38-R41 / collisions C6 and C7: the four Market Opportunity verdicts are explained where a
+    // 9.5 px tile sub-line cannot carry them.
+    await expect(panel.getByText('Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.')).toBeVisible();
+
+    const strip = page.getByText(KINDS);
+    await expect(strip.first()).toBeVisible();
+    // The Addendum's own correction: the growth and payroll cards contradict "that practice's own
+    // community figure" on their own captions, so the sentence says what is true of all six.
+    await expect(page.getByText('with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for.').first()).toBeVisible();
+    // A24.20's growth caveat and the derived-estimates sentence stay byte for byte (the
+    // fix-round-3 lesson recorded in CLAUDE.md).
+    await expect(page.getByText('Population growth is measured for the surrounding city or county, not the tract.').first()).toBeVisible();
+    await expect(page.getByText('Pet-household counts and average practice payroll are derived estimates, not observed values.').first()).toBeVisible();
+    expect(errors).toEqual([]);
   });
 });
