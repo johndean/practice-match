@@ -344,7 +344,7 @@ async def test_the_status_change_asks_the_audit_log_once_per_row_in_the_index_s_
 
     `_STATUS_CHANGE` began as a faithful copy of `_COLUMNS`'s own `decline_reason` precedent: TWO
     correlated subqueries with the same predicate, one for `at` and one for `actor_role`, so every
-    row cost 2 × the index probes it needs — and each probe SORTED, because it ordered by
+    row cost twice the index probes it needs — and each probe SORTED, because it ordered by
     `a.id DESC` while `audit_log_target_idx`'s trailing column is `at DESC`.
 
     Both halves are pinned on the REAL plan of the REAL query, self-calibrating rather than

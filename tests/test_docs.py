@@ -546,6 +546,22 @@ def test_deploy_md_documents_the_expect_sha_semantics():
         assert wrong not in lowered, f"DEPLOY.md repeats the wrong EXPECT_SHA semantics: {wrong!r}"
 
 
+def test_deploy_md_says_expect_sha_is_the_short_sha():
+    """REL-0123 concern 4 (2026-09-13). `EXPECT_SHA` is compared VERBATIM against the
+    `commit_sha` /api/healthz reports, which is `/app/BUILD_SHA` — the `git rev-parse --short
+    HEAD` `scripts/deploy.sh` stamps into the archive. So the 40-character form every `git log`
+    and every GitHub URL hands an operator is REJECTED as a stale container: a correct deploy
+    fails its own verification with `commit_sha is '087acc1', expected '087acc1c0f...'`. The
+    release agent hit it and the runbook said nothing, so it says it here."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "SHORT sha" in text, "DEPLOY.md does not say EXPECT_SHA is the short sha"
+    # The rule is stated where EXPECT_SHA is defined, not in some distant paragraph.
+    block = text[text.index("**`EXPECT_SHA`**"):]
+    block = block[: block.index("**`EXPECT_VERSION`**")]
+    assert "SHORT sha" in block, "the short-sha rule is not in the EXPECT_SHA paragraph"
+    assert "40-character" in block, "the form that is rejected is not named"
+
+
 def test_deploy_md_documents_the_coming_soon_verify_output():
     """verify-deploy.sh is site-mode aware (Task 11f): production's coming-soon shell and
     /api/interest probe replace the SPA fallback check, and the runbook must say so."""

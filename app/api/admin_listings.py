@@ -145,7 +145,7 @@ def slug_for(name: str, listing_id: Any) -> str:
 #
 # ONE LATERAL rather than two correlated subqueries (fix round 1, review Minor-2). Written first as
 # a faithful copy of the `decline_reason` precedent, it asked the same question TWICE per row — once
-# for `at`, once for `actor_role` — which is 2 × `limit` index probes a page; and each probe SORTED,
+# for `at`, once for `actor_role` — which is twice the index probes a page needs; and each SORTED,
 # because it ordered by `a.id DESC` and the index's trailing column is `at DESC`. Both facts come
 # from one row, so one `LEFT JOIN LATERAL … LIMIT 1` fetches them together, and `ORDER BY a.at DESC`
 # is the order the index itself supplies. `a.id DESC` stays as the TIE-BREAK — `at` is `now()`, which
