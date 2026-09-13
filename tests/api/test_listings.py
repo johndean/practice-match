@@ -1129,8 +1129,9 @@ async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
     )
     for payload in (single, listed):
         # DERIVED, never typed: the list is `CommunityRow`'s own annotations, so a field added to
-        # the producer is asserted here by existing rather than by somebody remembering.
-        assert len(COMMUNITY_PAYLOAD_FIELDS) == len(CommunityRow.__annotations__)
+        # the producer is asserted here by existing rather than by somebody remembering — and the
+        # route's own answer is what it is compared against, so the check can fail.
+        _assert_serves_every_community_field(payload)
         for field in COMMUNITY_PAYLOAD_FIELDS:
             assert payload[field] is None, field
 
@@ -1146,6 +1147,26 @@ async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
 COMMUNITY_PAYLOAD_FIELDS = tuple(
     "community_label" if k == "label" else k for k in CommunityRow.__annotations__
 )
+
+
+def _assert_serves_every_community_field(payload: dict[str, Any]) -> None:
+    """Every field the PRODUCER declares is actually on the wire.
+
+    Fix round 2, review Minor: this used to read
+    `assert len(COMMUNITY_PAYLOAD_FIELDS) == len(CommunityRow.__annotations__)`, which cannot
+    fail — the tuple is a 1:1 comprehension over the very thing it was compared against, so the
+    two lengths are equal by construction. The branch's own rule is that a gate must be able to
+    fail, so the comparison is made against something INDEPENDENT: the keys of a real answer.
+    A tenth field added to `CommunityRow` and forgotten in `serialise` fails here, named, instead
+    of passing in silence.
+
+    The `KeyError` the loops below would raise is the same fact; this states it as a set, so the
+    message names every missing field at once rather than the first."""
+    missing = sorted(f for f in COMMUNITY_PAYLOAD_FIELDS if f not in payload)
+    assert missing == [], (
+        f"`CommunityRow` declares {len(COMMUNITY_PAYLOAD_FIELDS)} community fields and the served "
+        f"payload carries no key for: {', '.join(missing)}"
+    )
 
 
 def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
@@ -1191,7 +1212,8 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
     assert unlabelled["income_approximate"] is None
 
     absent = serialise(row, now)
-    assert len(COMMUNITY_PAYLOAD_FIELDS) == len(CommunityRow.__annotations__)
+    _assert_serves_every_community_field(absent)
+    _assert_serves_every_community_field(labelled)
     for field in COMMUNITY_PAYLOAD_FIELDS:
         assert absent[field] is None, field
 

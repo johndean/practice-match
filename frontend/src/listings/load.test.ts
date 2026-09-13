@@ -540,6 +540,34 @@ describe('the design-fixture stub round-trips exactly (spec D6)', () => {
     }
   });
 
+  // Fix round 2, review Minor — THE STUB PARSES A MEDIAN THE WAY THE DESIGN DOES. A33.1c gave the
+  // oracle body the design's own income index, and its first implementation re-derived the number
+  // with `String(p.income).replace(/[^0-9.]/g, '')` — the strip-every-non-digit form A24.43 and
+  // A24.58 REMOVED from the product for losing a leading minus and gluing on a trailing year.
+  // Unreachable against today's fixtures (every median is a positive "$118,400"-shaped string),
+  // but the stub's whole claim is that it is derived from `logic.js` and cannot drift, and `num`
+  // changed twice in one week. It now evaluates `logic.js`'s OWN `num` declaration rather than
+  // re-implementing it, so these two cases are about the design's parser, not about a copy of it.
+  it('the oracle parses a median exactly as the design\'s own num() does', async () => {
+    const { designIncomeIndex } = await import('../../tests/design-listings.mjs');
+    // The constant the design divides by, so the expectations below are arithmetic and not magic.
+    const NAT = 75149;
+    const idx = (v: number) => Math.round(((v - NAT) / NAT) * 100);
+
+    // The shape every fixture actually carries.
+    expect(designIncomeIndex({ income: '$118,400' })).toBe(idx(118400));
+    // A TRAILING YEAR — `num` reads the first number token and nothing after it. The old parser
+    // glued the year on: "$67,760 since 2018" became 67760.2018.
+    expect(designIncomeIndex({ income: '$67,760 since 2018' })).toBe(idx(67760));
+    // A LEADING MINUS survives — the old parser stripped it, which is the exact defect MS1
+    // (A24.43) was raised for on the snapshot strip.
+    expect(designIncomeIndex({ income: '-1,500' })).toBe(idx(-1500));
+    // …and the design's own contract for a string carrying no number at all: zero, not NaN.
+    expect(designIncomeIndex({ income: 'unknown' })).toBe(idx(0));
+    // No median, no index — what the API sends and what the tile needs.
+    expect(designIncomeIndex({ income: null })).toBeNull();
+  });
+
   // B10: the stub sends `vets` and `econ_k` too. B7 added both fields to the endpoint and this
   // stub kept answering `null` for each, so the app under test installed nothing and cleared the
   // design's own fixture keys — the docked panel's Competitive Landscape row then went blank

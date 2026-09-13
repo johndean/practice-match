@@ -18,6 +18,8 @@
 // it IS exactly what the server sends for a listing with no photographs. `photo_captions: []`
 // says the same about the descriptions amendment A15 reads (A-L11): the design's fixtures have
 // no words of their own, so every caption they render is the design's own fixed slot caption.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Component, ECON_K, P, VETS } from '../src/logic.js';
 
 /**
@@ -104,14 +106,33 @@ export function toApiShape(p, i) {
 //: (`const incomeNat = 75149;`), and reading it this way needs no file access and no second copy.
 const INCOME_NAT = Number(/const incomeNat = (\d+);/.exec(String(Component.prototype.marketPanel))[1]);
 
+//: `logic.js`'s OWN `num`, EVALUATED from its own declaration rather than re-implemented (fix
+//: round 2, review Minor). The first version of `designIncomeIndex` parsed the median with
+//: `String(p.income).replace(/[^0-9.]/g, '')` — the strip-every-non-digit form A24.43 removed from
+//: the snapshot strip for losing a leading minus, and A24.58 removed from `communities()` for
+//: gluing a trailing year onto the digits ("+14.2% since 2015" → 14.22015). It agreed with the
+//: design on all 21 fixtures, every one of them a positive "$118,400"-shaped string, and would
+//: have disagreed the moment one carried either. `num` is a module-level arrow in `logic.js` and
+//: is not exported, so it is not reachable through `Component.prototype`; its declaration is one
+//: line and is read and evaluated here, which is a DERIVATION and not a copy — a re-cut of `num`
+//: moves this with it. Same discipline as `INCOME_NAT` above, one file read further.
+const num = (() => {
+  const src = readFileSync(fileURLToPath(new URL('../src/logic.js', import.meta.url)), 'utf8');
+  const decl = /^const num = (\(s\) => \{.*\});$/m.exec(src);
+  if (!decl) throw new Error('logic.js no longer declares `const num = (s) => { … };` on one line');
+  // eslint-disable-next-line no-new-func -- the design's own source is the definition, not input
+  return new Function(`return ${decl[1]};`)();
+})();
+
 /** The design's own index for one fixture: how far its median sits above or below the U.S. figure
  *  the design itself divides by, ALREADY ROUNDED so `Math.round(sel.incomeVsUs)` in the panel and
  *  the design's own `Math.round(((c.income - incomeNat) / incomeNat) * 100)` cannot differ by one
- *  through double rounding. `null` for a fixture with no median, which is what the API sends. */
+ *  through double rounding. `null` for a fixture with no median, which is what the API sends —
+ *  and `num`'s own zero-for-a-string-carrying-no-number contract everywhere else, because the
+ *  panel reads `c.income`, which `communities()` produced with this very function. */
 export function designIncomeIndex(p) {
   if (p.income == null) return null;
-  const income = Number(String(p.income).replace(/[^0-9.]/g, ''));
-  return Math.round(((income - INCOME_NAT) / INCOME_NAT) * 100);
+  return Math.round(((num(p.income) - INCOME_NAT) / INCOME_NAT) * 100);
 }
 
 /** The whole design catalogue as one `GET /api/listings` page body.
