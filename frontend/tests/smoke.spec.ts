@@ -2115,11 +2115,17 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     const errors = trapErrors(page);
     await serveAccounts(page);
     await signInAs(page, 'design', '/admin');
-    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+    // `exact` because the SECOND account's roles sub-line names this same person as its granter
+    // (`granted_by_name`, the fact A36 added to every grant), so a substring match resolves to two.
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
 
     // Nobody from the design's own fixture survives an adapter that answered (A36.1's ternary).
     await expect(page.getByText('Dr. Priya Raghavan'), 'a design fixture row reached a real reviewer').toHaveCount(0);
-    await expect(page.getByText('Dr. Rachel Mendes')).toHaveCount(0);
+    // The design's own Approved row is asserted by its APPLICANT SUB-LINE rather than by its name:
+    // the persona this case signs in as IS `state.me` — "Dr. Rachel Mendes" — so the header's
+    // account menu names her on every admin screen, and a header is not a row. "Texas A&M, 2014 ·
+    // TX license" (`logic.js`'s fourth fixture row) belongs to the row and to nothing else.
+    await expect(page.getByText('Texas A&M, 2014 · TX license')).toHaveCount(0);
 
     // `PILLS`, and `ACTIONS` per state — pending offers three, an active account one.
     await expect(page.getByText('Pending', { exact: true })).toBeVisible();
@@ -2151,12 +2157,12 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer'] }) });
     });
     await signInAs(page, 'design', '/admin');
-    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect.poll(() => posted).toEqual([{ action: 'approve', note: '' }]);
     // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made again.
-    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
   });
 
   test('a blank decline note sends nothing at all — the API refuses one, so the click is not a decision', async ({ page }) => {
@@ -2170,7 +2176,7 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     // The browser's own prompt, cancelled — `window.prompt` answers null on a dismissed dialog.
     page.on('dialog', (d) => void d.dismiss());
     await signInAs(page, 'design', '/admin');
-    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Decline', exact: true }).click();
     await page.waitForTimeout(300);
