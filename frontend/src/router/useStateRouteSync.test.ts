@@ -679,6 +679,47 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     expect(router.currentRoute.value.fullPath, 'nothing is pending any more, so the URL settles').toBe('/');
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-GATE (D-C53, 2026-09-13): THE GUARD RUNS ON EVERY PATH TO A SCREEN.
+  //
+  // Every case above drives the route — `router.push('/admin')` — which reaches `apply()` through
+  // `afterEach` and therefore reaches `guard()`. The design's own header nav does not: `go()`
+  // (logic.js) sets `state.screen` directly and checks `state.auth` and nothing else, so the
+  // state → route watcher below computed `/admin`, pushed it, and set `settling` — which is
+  // precisely the flag `afterEach` reads to SKIP `apply()`. The permission matrix was never
+  // consulted, and a buyer clicking "VIN Foundation Admin" landed on the admin shell with the
+  // design's fixture rows in three of its four tabs. That is what produced John's four admin
+  // screenshots (`admin-tabs-audit.md`, "Router bypass").
+  //
+  // Reproduced here through the REAL `go()`, not through a `setState` that imitates it, because
+  // the button's own handler is the path that bypassed the guard.
+  // ---------------------------------------------------------------------------------------
+  it('refuses the header-nav click too: go(\'admin\') for a buyer reaches the unavailable gate, not the admin shell', async () => {
+    const { c, router } = await setup('/browse', BUYER);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+    expect(c.state.screen, 'a buyer holds page.browse').toBe('browse');
+
+    c.go('admin')();                                  // the header's "VIN Foundation Admin" button
+    await flush(); await nextTick();
+
+    expect(c.state.screen, 'page.admin is ["admin","staff"]; a buyer holds neither').toBe('gate');
+    expect(c.state.gate).toBe('unavailable');
+    expect(router.currentRoute.value.fullPath, 'and the URL never settles on the screen that was refused').toBe('/');
+  });
+
+  it('lets the header-nav click through for an account that holds the permission', async () => {
+    const { c, router } = await setup('/browse', MEMBER);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+
+    c.go('admin')();
+    await flush(); await nextTick();
+
+    expect(c.state.screen).toBe('admin');
+    expect(router.currentRoute.value.fullPath).toBe('/admin');
+  });
+
   it('still honours a remembered deep link the account DOES hold', async () => {
     const { c, router } = await setup('/browse', BUYER);
     expect(c.state.gate).toBe('signin');

@@ -54,6 +54,32 @@ test.describe('smoke', () => {
     await expect(page).toHaveURL(/\/admin\?tab=data$/);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-GATE (D-C53, 2026-09-13): a buyer never reaches the Admin screen, in a real
+  // browser and on the path the header nav takes. The buyer persona is the one John's four admin
+  // screenshots were taken as; `signInAs` reuses the run's memoised `buyer@` session, so this
+  // spends no sign-in of its own.
+  //
+  // The DOOR is still shown — A40.1/A40.2 are reserved and held (see `design-amendments.ts`'s A40
+  // block: the filter moves 28 approved states and seven frozen hashes, which is a ruling). What
+  // is proved here is that clicking it lands on the design's own gate and never on the shell.
+  // ---------------------------------------------------------------------------------------
+  test('a buyer who reaches for /admin gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/admin');
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' }), 'the admin shell must not render').toHaveCount(0);
+  });
+
+  test('and the header\'s own Admin button is refused the same way — the path that bypassed the guard', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
+  });
+
   test('unknown routes redirect to /', async ({ page }) => {
     await page.goto('/definitely-not-a-route');
     await expect(page).toHaveURL(/\/$/);

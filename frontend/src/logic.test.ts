@@ -59,6 +59,20 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v.signedOut).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A40.1/A40.2 (D-C53, 2026-09-13) — RESERVED AND HELD, so this case still reads four.
+  //
+  // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
+  // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
+  // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
+  // the filter moved 28 of the 55 approved states and seven of the thirteen frozen hashes. The
+  // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
+  // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
+  // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
+  // refuses the click (`refusedScreen`) — a visible door onto the design's own "not available to
+  // your account" gate, never the admin shell.
+  // ---------------------------------------------------------------------------------------
+
   it('adminVals renders the four tabs and switches the row set with adminTab', () => {
     expect(c.adminVals().tabs.map((t: any) => t.label)).toEqual(['Users', 'Listings', 'Requests', 'Data Sources']);
     c.setState({ adminTab: 'data' });
@@ -6014,5 +6028,132 @@ describe('A33.2 — the margin caveat counts the bands', () => {
     expect(suppressed).toContain('No data for this area');
     expect(suppressed).not.toContain('legend bands');
     expect(suppressed, 'the discarded margin string reached the tip').not.toContain('undefined');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-GATE (D-C53, 2026-09-13): THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES.
+//
+// The review queue was fetched in `componentDidMount` and nowhere else, so a reviewer who
+// signed in through the design's own form saw an EMPTY Listings tab under the design's literal
+// badge "3" until they hard-reloaded the page: `signIn` set `me` and loaded nothing
+// (`admin-tabs-audit.md`, "Second Listings load defect" — independent of the router bypass and
+// of which persona is signed in).
+//
+// `loadAdmin()` is the one place the admin screen's data is read, and the seam A36/A38/A37 each
+// add ONE line to. It is guarded on the permission — asked of the generated matrix through the
+// `perms` adapter, never a role list written here — and on the adapter's presence, and every
+// load carries A16.17's rejection arm, so a refusal leaves the tab EMPTY rather than falling
+// back to the design's five fixture rows.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
+  const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
+  const ROWS = [['a listing row'], ['another']];
+  const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+    const calls: string[] = [];
+    return { calls, list: () => { calls.push('list()'); return answer(); } };
+  };
+  const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
+
+  it('an interactive sign-in loads the review queue, with no hard reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'signIn set `me` and loaded nothing before this').toEqual(['list()']);
+    expect(c2.state.adminListingRows).toEqual(ROWS);
+    expect(c2.adminVals().rows.map((r: any) => r.cells), 'and the tab renders them, not the design\'s five fixtures').toEqual(ROWS);
+  });
+
+  it('a sign-in by an account that cannot open the screen spends no request at all', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.browse']) });
+    c2.setState({ email: 'buyer@practice-match.test', pw: 'a-password' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'the API would refuse it; the client does not ask').toEqual([]);
+    expect(c2.state.adminListingRows).toBeUndefined();
+  });
+
+  it('componentDidMount still loads on arrival — the reload path, which is all there was', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    expect(adapter.calls).toEqual(['list()']);
+
+    const buyer: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.browse']) });
+    buyer.componentDidMount();
+    expect(buyer.props.adminListings.calls, 'the permission, not a role list written into the design').toEqual([]);
+  });
+
+  it('go("admin") loads too, so a queue that failed on arrival is not empty for the rest of the session', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ auth: true, screen: 'browse' });
+
+    c2.go('admin')();
+    await Promise.resolve();
+
+    expect(c2.state.screen).toBe('admin');
+    expect(adapter.calls).toEqual(['list()']);
+
+    c2.go('browse')();
+    expect(adapter.calls, 'and only that door asks').toEqual(['list()']);
+  });
+
+  it('a refusal leaves the tab empty rather than falling back to the design\'s fixture rows (A16.17)', async () => {
+    const adapter = adminListings(() => Promise.reject(new Error('403')));
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.adminVals().rows).toEqual([]);
+  });
+
+  it('with no adapter nothing is asked and nothing is set — the reference and the Claude Design preview', async () => {
+    const c2: any = new Component({ auth: auth(STAFF), perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toBeUndefined();
+    expect(c2.adminVals().rows.length, 'the design\'s own five Listings fixtures stand').toBe(5);
+  });
+
+  // Fix round 1 (2026-09-13, review Minor 6). The guard was `perms && !allowed(...)`, so a host
+  // that passed `adminListings` and no `perms` loaded the queue for WHOEVER was signed in — the
+  // permission being checked only when something was there to check it with. The line A40.4 retired
+  // was unconditional (it also required `me.state === "active"`), and the entry's own prose says
+  // "guarded on the PERMISSION" without qualification, so the guard is made to match the sentence:
+  // no `perms`, no load. Nothing in the tree is that host — both ports default the adapter and the
+  // reference passes neither — which is exactly why it has to be a test and not an observation.
+  it('A40.3 fails closed: an adapter with no perms to check against loads NOTHING', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter });
+    c2.componentDidMount();
+    expect(adapter.calls, 'the queue is not asked for by an unidentified caller').toEqual([]);
+    expect(c2.state.adminListingRows, 'and nothing is set, so the design\'s own fixtures stand').toBeUndefined();
+  });
+
+  // Fix round 1 (2026-09-13, review Minor 5). A40.5 returns `loadAdmin()` from `signIn`'s fulfilled
+  // arm so "signIn answers a promise" still holds and a caller can await a settled screen — which
+  // was true only for an account that may open the screen: the refusal arm returned `undefined`, so
+  // `await` on the sign-in of a buyer resolved to it and any `.then` on the loader itself threw.
+  // Both arms settle now.
+  it('A40.3 always answers a settled promise, for every account and every host', async () => {
+    const allowed: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    const refused: any = new Component({ adminListings: adminListings(), perms: perms(['page.browse']) });
+    const hostless: any = new Component({ perms: perms(['page.admin']) });
+    for (const [name, c2] of [['allowed', allowed], ['refused', refused], ['no adapter', hostless]] as const) {
+      const answer = c2.loadAdmin();
+      expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
+      await expect(answer).resolves.toBeInstanceOf(Array);
+    }
   });
 });

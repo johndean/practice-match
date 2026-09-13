@@ -65,7 +65,7 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
   const card = (page: Page) => page.locator('div').filter({ has: page.getByLabel('Password', { exact: true }) }).last();
   const signInButton = (page: Page) => card(page).getByRole('button', { name: 'Sign in', exact: true });
 
-  async function typeCredentials(page: Page, persona: 'buyer', pw: string) {
+  async function typeCredentials(page: Page, persona: 'buyer' | 'design', pw: string) {
     await email(page).fill(PERSONAS[persona].email);
     await password(page).fill(pw);
     await signInButton(page).click();
@@ -137,5 +137,49 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
     await page.goto('/browse');
     await expect(page.getByText('Approved members only')).toBeVisible();
     await expect(page.getByRole('button', { name: /^Layers/ }), 'Browse must not render for a signed-out visitor').toHaveCount(0);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-GATE (D-C53, 2026-09-13), the reload seam (A40.3/A40.5).
+  //
+  // The review queue was fetched in `componentDidMount` and NOWHERE else, and `signIn` set `me`
+  // and loaded nothing — so a reviewer who signed in through THIS form saw an empty Listings
+  // table under the design's literal badge "3" until they hard-reloaded the page. Only an
+  // interactive sign-in exercises that: every other test in the suite signs in out of band with
+  // `signInAs`, which sets cookies and reloads, which is precisely the path that hid it.
+  //
+  // ONE sign-in, and it is counted: `harness.ts`'s traced budget goes from fourteen of
+  // `SIGNIN_IP`'s thirty to fifteen, and `docs/RUNBOOK-identity.md` and `tests/targets.ts` say
+  // the same number (`tests/test_docs.py` pins the first two against each other).
+  // ---------------------------------------------------------------------------------------
+  test('the design persona signs in and the Admin Listings queue is populated without a reload (A40, D-C53)', async ({ page }) => {
+    const asked: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/listings') asked.push(r.method()); });
+
+    await prepare(page);
+    await page.goto('/');
+    await typeCredentials(page, 'design', personaCredentials('design').password);
+    await expect(page).toHaveURL(/\/browse$/);
+
+    // A40.5, and the whole defect: before this, `signIn` set `me` and asked for nothing, so the
+    // queue stayed unloaded until a hard reload. The member is still on Browse — the load is on
+    // ARRIVAL of the account, not of the screen.
+    await expect.poll(() => asked.length, { message: 'the sign-in itself loads the admin queue' }).toBeGreaterThan(0);
+    const afterSignIn = asked.length;
+
+    // A40.6: the header's own door — the path both defects were on — asks again.
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/admin$/);
+    await page.getByRole('button', { name: /^Listings\s*\d/ }).first().click();
+    await expect(page).toHaveURL(/\/admin\?tab=listings$/);
+    await expect.poll(() => asked.length, { message: 'go("admin") reloads the queue' }).toBeGreaterThan(afterSignIn);
+
+    // WHAT the table shows is the API's answer, and locally that is the oracle's own stub — the
+    // design's five Listings rows (`collectionStubBody`). Against a remote target the stub is
+    // disarmed by design (`listingsStubUrl`'s rule) and the real queue answers, so the row text is
+    // asserted only where the harness controls it; what is asserted on BOTH is that the queue was
+    // asked for and that no reload happened.
+    if (!process.env.PW_APP_URL) await expect(page.getByText('Mixed practice — Bastrop')).toBeVisible();
+    expect(await page.evaluate(() => performance.getEntriesByType('navigation').length), 'one navigation: nothing reloaded').toBe(1);
   });
 });
