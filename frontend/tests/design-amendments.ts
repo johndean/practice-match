@@ -7247,6 +7247,86 @@ const A34_17: Amendment = {
   count: 1
 };
 
+/** A34.18 (fix round 1, Important 4, controller ruling (a)) — `SYMBOL_STYLE`, deleted under the
+ *  bundle's own dead-code rule. A34.11 took `md.legend`, and these are the declarations that
+ *  deletion orphaned; the round-1 entry measured them and LEFT them standing on A28.2–A28.4's
+ *  precedent, and the controller has since ruled them out, which is D-C45's own shape one family
+ *  later. MEASURED again at this commit: ONE declaration in the design, and ZERO readers — no
+ *  occurrence in `App.vue`, in `MarketMapView.vue`, or in any test. Its only reader was
+ *  `md.legend.symbols`'s `SYMBOL_STYLE[k].label`. The `SYMBOL_KEYS` array above it STAYS: it is
+ *  read by `activeSymbols`, which `md.symbols` renders (A28.4's own pin). */
+const A34_18: Amendment = {
+  id: 'A34.18', ...ONEVOCAB,
+  find: 'const SYMBOL_STYLE = {\n'
+    + '  pets: { color: "rgba(232,147,49,.85)", label: "Est. pet households" },\n'
+    + '  households: { color: "rgba(31,111,168,.85)", label: "Households" },\n'
+    + '  competition: { color: "rgba(120,86,190,.85)", label: "Vet establishments" }\n'
+    + '};\n'
+    + '\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.19 (fix round 1, Important 4, ruling (a)) — `SYMBOL_SCALE`, `SYMBOL_STYLE`'s twin and the
+ *  graduated-size key `md.legend.symbols[].sizes` was the only reader of. Measured the same way:
+ *  ONE declaration, ZERO readers anywhere in `frontend/src`, `frontend/tests` or the map
+ *  component. Its own comment — "Pixel values mirror the renderer's 11 + t·22 sizing" — described
+ *  a key nothing drew. */
+const A34_19: Amendment = {
+  id: 'A34.19', ...ONEVOCAB,
+  find: '// Graduated-size key. Pixel values mirror the renderer\'s 11 + t·22 sizing at t = 0, .5, 1.\n'
+    + 'const SYMBOL_SCALE = {\n'
+    + '  pets: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "40K+" }],\n'
+    + '  households: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "45K+" }],\n'
+    + '  competition: [{ px: 6, label: "2" }, { px: 9, label: "8" }, { px: 13, label: "14+" }]\n'
+    + '};\n'
+    + '\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.20 (fix round 1, Important 4, ruling (a)) — `tightColumn`, the local in `marketVals` whose
+ *  only reader was `md.legend.hasSymbols`'s `&& !tightColumn`. Measured: ONE declaration, ZERO
+ *  readers. `s.mdStrip`, the state key it read, is untouched and has six other readers (the strip
+ *  itself). */
+const A34_20: Amendment = {
+  id: 'A34.20', ...ONEVOCAB,
+  find: '    const tightColumn = !!s.mdStrip;\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.21 (fix round 1, Important 4, ruling (a)) — `md.symbolColors`. Measured: ONE declaration,
+ *  ZERO template readers — no `v.md?.symbolColors` in `App.vue` and none in `MarketMapView.vue`,
+ *  which takes `communities`, `areas` and `practices` and nothing else. Unlike A34.18–A34.20 this
+ *  one was ALREADY unread before A34.11 rather than orphaned by it, and the round-1 entry said so;
+ *  the controller's ruling (a) names it, so it goes with them. */
+const A34_21: Amendment = {
+  id: 'A34.21', ...ONEVOCAB,
+  find: '      symbolColors: SYMBOL_KEYS.reduce((o, k) => { o[k] = ramp(k)[3]; return o; }, {}),\n',
+  replace: '',
+  count: 1
+};
+
+/** A34.22 (fix round 1, Important 4, ruling (a)) — `md.hasLegend`, the `sc-if` flag for the legend
+ *  box A34.11 deleted. Measured: ONE declaration, ZERO readers; `App.vue` gates the Market data
+ *  card on `md.legendOpen`, which is a different declaration and is untouched. Its own comment
+ *  goes with it, because it describes `md.legend`'s contents and nothing that is left.
+ *
+ *  `md.symbols` (the line directly above `symbolColors`) is DELIBERATELY NOT deleted and is not in
+ *  the ruling: it HAS a reader — `frontend/src/logic.test.ts`'s A28.4 pin, the one thing that
+ *  still reads the three layer-default flags through `SYMBOL_KEYS.filter(...)`. Taking it would
+ *  silently retire that pin and orphan `activeSymbols` and `SYMBOL_KEYS` with it, which is a
+ *  separate ruling. */
+const A34_22: Amendment = {
+  id: 'A34.22', ...ONEVOCAB,
+  find: '      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus\n'
+    + '      // a hue + graduated-size row for each active count layer.\n'
+    + '      hasLegend: !!valueLayer || activeSymbols.length > 0,\n',
+  replace: '',
+  count: 1
+};
+
 /** A34.23 (fix round 1, the data-sources audit, 2026-09-13 — the same D-C51 class) — the
  *  competition layer's own label names the dataset it is actually served from. `VALUE_LAYERS`
  *  carries the design's display name for each shading layer and several name a DATASET in
@@ -7463,11 +7543,12 @@ export function amendments(): Amendment[] {
     // deletions are ordered. Definition order in this file matches this list (m8).
     A34_1, A34_2, A34_3, A34_4, A34_5, A34_6, A34_7, A34_8, A34_9, A34_10,
     A34_11, A34_12, A34_13, A34_14,
-    // A34.15-A34.17 -- fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). Every one is
-    // CHAINED on an earlier entry's output: A34.15 on A24.3/A24.30b (the econ margin line both
-    // introduced), A34.16 on A31.12 and A34.17 on A27.1, so each runs after the entry it reads.
-    // Definition order in this file matches this list (m8).
-    A34_15, A34_16, A34_17,
+    // A34.15-A34.22 -- fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). A34.15 is
+    // CHAINED on A24.3/A24.30b (the econ margin line both introduced), A34.16 on A31.12,
+    // A34.17 on A27.1 and A34.22 on A34.11's own surviving comment, so each runs after the
+    // entry it reads; A34.18-A34.21 take pristine declarations. Definition order in this file
+    // matches this list (m8).
+    A34_15, A34_16, A34_17, A34_18, A34_19, A34_20, A34_21, A34_22,
     // A34.23 -- the data-sources audit's own finding (2026-09-13): the competition layer's
     // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
     // pristine bundle's own declaration.

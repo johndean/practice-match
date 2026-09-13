@@ -1908,19 +1908,6 @@ const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
 const SYMBOL_KEYS = ["pets", "households", "competition"];
-const SYMBOL_STYLE = {
-  pets: { color: "rgba(232,147,49,.85)", label: "Est. pet households" },
-  households: { color: "rgba(31,111,168,.85)", label: "Households" },
-  competition: { color: "rgba(120,86,190,.85)", label: "Vet establishments" }
-};
-
-// Graduated-size key. Pixel values mirror the renderer's 11 + t·22 sizing at t = 0, .5, 1.
-const SYMBOL_SCALE = {
-  pets: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "40K+" }],
-  households: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "45K+" }],
-  competition: [{ px: 6, label: "2" }, { px: 9, label: "8" }, { px: 13, label: "14+" }]
-};
-
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
 // by its caller - the map's own geography for the legend and the tip, the map's community
@@ -2472,7 +2459,6 @@ class Component extends DCLogic {
     const sel = s.mdSel ? P.filter((x) => x.id === s.mdSel)[0] : null;
     const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
     const ramp = (k) => pal[k] || BRAND_RAMP;
-    const tightColumn = !!s.mdStrip;
     const activeSymbols = SYMBOL_KEYS.filter(
       (k) => k !== valueLayer && layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
     );
@@ -2748,16 +2734,12 @@ class Component extends DCLogic {
       selectArea: (name) => this.setState({ mdArea: name }),
       snapshotCount: "6 indicators · Census-sourced",
       symbols: activeSymbols,
-      symbolColors: SYMBOL_KEYS.reduce((o, k) => { o[k] = ramp(k)[3]; return o; }, {}),
       hiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].filter((k) => off[k]).length,
       hasHiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].some((k) => off[k]),
       // Legend yields before the controls panel does: below a short map column the symbol
       // rows fold away and the key shows the fill ramp only.
       legendBoxStyle: "flex: 0 1 auto; width: 276px; pointer-events: auto; overflow: hidden; padding: 10px 12px 11px; " +
         "background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,58,112,.16);",
-      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus
-      // a hue + graduated-size row for each active count layer.
-      hasLegend: !!valueLayer || activeSymbols.length > 0,
       mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),
       mdSubline: market + " metro · within 20 miles",
       mdResults: list.map((p) => {
