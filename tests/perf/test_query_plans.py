@@ -32,7 +32,9 @@ from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import COUNTS_SQL as USERS_COUNTS_SQL
+from app.api.admin_users import DECIDABLE_STATES as USERS_DECIDABLE_STATES
 from app.api.admin_users import LIST_SQL, MAX_LIST
+from app.api.admin_users import OPEN_STATUSES as USERS_OPEN_STATUSES
 from app.api.market import _SUMMARY_SQL, SUMMARY_FRACTIONS
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
@@ -111,7 +113,7 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     # that counts a seller applying from an `active` account.
     "users_counts": (
         "EXPLAIN (FORMAT JSON) " + USERS_COUNTS_SQL,
-        {"open": ["pending", "needs_review"]},
+        {"open": list(USERS_OPEN_STATUSES), "decidable": list(USERS_DECIDABLE_STATES)},
     ),
     "session_lookup": (
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",

@@ -228,30 +228,62 @@ function roleLine(item: UserItem): string {
     : `granted ${formatDate(grant.granted_at)}`]);
 }
 
+// The last two of the cross-language JSON literals (see the block above `NOTE_REQUIRED`): both are
+// pinned by equality against `app/api/admin_users.py` in `tests/test_docs.py`, so a third waiting
+// status or a widened state machine fails on both sides at once instead of leaving the badge and
+// the rows describing different sets (fix round 2, re-review Minor 2).
+
 /** `OPEN_STATUSES` in `app/api/admin_users.py` — the two an application is still waiting in. */
-const OPEN_STATUSES = ['pending', 'needs_review'];
+export const OPEN_STATUSES: readonly string[] = ["pending", "needs_review"];
+
+/** The account states `decide` will act on an APPLICATION from — `app/api/admin_users.py`'s own
+ *  `DECIDABLE_STATES`, which is `TRANSITIONS`' union over `APPLICATION_ACTIONS` plus the `active`
+ *  a seller application is decided from and to. */
+export const DECIDABLE_STATES: readonly string[] = ["active", "pending", "needs_review"];
 
 /** The status of the row's OWN open application, or null where nothing is open — the one place the
  *  module note's rule is decided, so the pill, the buttons and the provenance sentence cannot
- *  disagree with each other about which fact a row is about. */
+ *  disagree with each other about which fact a row is about.
+ *
+ *  It governs the row only from a state the API will DECIDE that application from (fix round 2,
+ *  re-review Important 2, the controller's ruling narrowing fix round 1's union). `suspend` and
+ *  `revoke` are ACCOUNT actions — neither is in `APPLICATION_ACTIONS` — so `decide` never closes
+ *  the application row, and a suspended or revoked account keeps a STALE open one for ever. Keyed
+ *  on it, such a row offered Approve / Decline / Request info, each of which the API refuses with
+ *  409 STATE, and hid Reinstate, the one action it accepts: three fake buttons and no way out,
+ *  which is the sentence D-C53 is made of. `COUNTS_SQL` narrows to the same set, so the badge
+ *  still counts exactly the rows this table renders as decidable. */
 function openStatus(item: UserItem): string | null {
-  return item.application_status !== null && OPEN_STATUSES.includes(item.application_status)
+  return item.application_status !== null
+    && OPEN_STATUSES.includes(item.application_status)
+    && DECIDABLE_STATES.includes(item.state)
     ? item.application_status
     : null;
 }
 
 /** "Approved August 12 by staff reviewer K. Alvarez." — the design's own sentence on its approved
  *  row, from `application.decided_at` and the decider's display name (both Task A36's own payload
- *  fields). Only an ACTIVE account gets it: `decided_at` is stamped on a decline too, and the
- *  design has one approved sentence and no declined one.
+ *  fields). The design has ONE provenance sentence and it says "Approved", so it is gated on the
+ *  application really having been APPROVED (fix round 2, re-review Important 1).
  *
- *  And only while nothing is OPEN: `decide` writes `decided_at=now()` for every application action,
- *  `request_info` among them, and that one leaves the application `needs_review`. So an active
- *  account whose seller application has been sent back for more carries a decision date beside an
- *  open application, and this sentence would have called it approved under the "Needs review" pill
- *  the same ruling puts there (fix round 1). */
+ *  That term is what the earlier two could not be: `decide` stamps `decided_at=now()` on every
+ *  application decision, a decline included, and a SELLER application is decided from `active` to
+ *  `active` — so a declined seller application on an approved buyer satisfied "state is active",
+ *  "a decision date exists" and "nothing is open" at once, and the row named the colleague who
+ *  DECLINED it as the approver, on the decline's own date. `approved` is never open, so the
+ *  `openStatus` term of fix round 1 is implied by this one and retired with it.
+ *
+ *  The state term STAYS beside it: a suspended account whose approved application still carries
+ *  its stamp would otherwise print "Approved …" under a "Suspended" pill.
+ *
+ *  Nothing is invented for a decline. The design carries a `declined` PILL (its own muted
+ *  account-state tone) and NO declined sub-line at all, and on this row the pill and the single
+ *  Suspend button are the ACCOUNT's — which really is an approved buyer, ruled in fix round 1 and
+ *  not re-opened here — so silence is the treatment and the applicant's own words come back,
+ *  exactly as they do while the application is open. A ruled "Declined … by …" sentence is a
+ *  composition item for the admin spec, not a thing this fix may write. */
 function provenance(item: UserItem): string {
-  if (item.state !== 'active' || item.decided_at === null || openStatus(item) !== null) return '';
+  if (item.state !== 'active' || item.application_status !== 'approved' || item.decided_at === null) return '';
   const by = item.decided_by_name === null ? '' : ` by staff reviewer ${item.decided_by_name}`;
   return `Approved ${formatDate(item.decided_at)}${by}.`;
 }
@@ -343,12 +375,18 @@ interface QueuePage { items?: unknown; next_cursor?: string | null; counts?: unk
 /** The Users tab's badge, as `GET /api/admin/users` serves it beside `items`. */
 export interface UserCounts { open: number; total: number }
 
-/** The counts, or null where the answer carried none this table can read — an older API, or a
- *  shape nobody has seen. Null is not zero: the badge is UNMOUNTED while there is no count
- *  (amendment A36.4), because a pill reading "0" is a claim and silence is not. */
+/** The counts, or null where the answer carried none this table can read — an older API, a shape
+ *  nobody has seen, or the explicit `counts: null` the route serves on every page past the first
+ *  (the count describes the whole table, so a paging caller already holds it). Null is not zero:
+ *  the badge is UNMOUNTED while there is no count (amendment A36.4), because a pill reading "0" is
+ *  a claim and silence is not.
+ *
+ *  `!= null`, not `!== undefined`: JSON `null` passes an undefined test and `null.open` THROWS —
+ *  inside `list()`, which would fire A36.2's rejection arm and empty a tab that had just been read
+ *  successfully (fix round 2, re-review Minor 1). Only call order kept it unreached. */
 export function countsOf(body: QueuePage): UserCounts | null {
-  const counts = body.counts as UserCounts | undefined;
-  return counts !== undefined && typeof counts.open === 'number' && typeof counts.total === 'number' ? counts : null;
+  const counts = body.counts as UserCounts | null | undefined;
+  return counts != null && typeof counts.open === 'number' && typeof counts.total === 'number' ? counts : null;
 }
 
 async function send(method: string, path: string, body?: unknown): Promise<Response> {
@@ -414,8 +452,9 @@ export function makeAdminUsersAdapter(): AdminUsersAdapter {
         const body = (await res.json()) as QueuePage;
         if (!Array.isArray(body.items)) throw new Error('the account queue answered no items');
         items.push(...(body.items as (UserItem | DesignUserRow)[]));
-        // The badge counts the whole table, so every page carries the same object; the first one
-        // that answers is the answer.
+        // The badge counts the whole table, so only the FIRST page carries it and every page after
+        // it serves `counts: null` (the route's own M-1 economy). The first page that answers is
+        // the answer, and a later page never takes it away: whatever this holds is kept.
         if (counts === null) counts = countsOf(body);
         cursor = body.next_cursor ?? null;
         if (cursor === null) break;

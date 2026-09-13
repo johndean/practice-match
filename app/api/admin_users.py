@@ -106,6 +106,14 @@ ACCOUNT_STATES = ("unverified", "verified", "pending", "needs_review", "declined
 APPLICATION_KINDS = ("buyer", "seller")
 OPEN_STATUSES = ("pending", "needs_review")
 APPLICATION_ACTIONS = ("approve", "decline", "request_info")
+# The account states `decide` will act on an APPLICATION from: `TRANSITIONS`' union over
+# `APPLICATION_ACTIONS` plus `active`, the state a SELLER application is decided from and to
+# (`_seller_decision` below). Read by `COUNTS_SQL` and mirrored in `frontend/src/admin/users.ts`,
+# pinned by equality in `tests/test_docs.py` (fix round 2, re-review Important 2 and Minor 2): a
+# suspended or revoked account keeps a STALE open application for ever — neither `suspend` nor
+# `revoke` is an application action, so `decide` never closes the row — and outside this set that
+# row is not something a reviewer can decide, so it is neither rendered as one nor counted as one.
+DECIDABLE_STATES = ("active", "pending", "needs_review")
 NOTE_REQUIRED = ("decline", "request_info", "suspend", "revoke")
 # The decision table (spec §4). `revoke` is reachable from every state but `revoked` itself.
 EVERY_STATE = ("unverified", "verified", "pending", "needs_review", "declined", "active", "suspended")
@@ -426,14 +434,23 @@ def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | Non
 #   * the state half, because `scripts/seed_persona.py` seeds `pending@practice-match.test` in state
 #     `pending` with NO `application` row at all, and that account is live on QA.
 #
-# One open application per ACCOUNT is the invariant `api/applications.py` enforces, so this counts
-# rows of the tab and open applications at the same time; the `EXISTS` says rows either way.
+# The application half is read through `LIST_SQL`'s OWN lateral -- the same `ORDER BY submitted_at
+# DESC, id DESC LIMIT 1` -- rather than an `EXISTS` over every row (fix round 2, re-review Minor 3).
+# An `EXISTS` and a LATEST agree only while at most one application per account is open, and that
+# invariant is `api/applications.py`'s alone: the schema allows a seed script or direct SQL to break
+# it, and then the badge counted a row the table renders as CLOSED. Reading one lateral makes the
+# two structurally incapable of disagreeing about which application a row is about, with no new
+# index and nothing to be true of the rows QA and production have already applied.
+#
+# `DECIDABLE_STATES` is the second term: an open row on a suspended or revoked account is stale and
+# undecidable, so it is not counted (Important 2).
 COUNTS_SQL = """
 SELECT count(*) FILTER (WHERE a.state = ANY(%(open)s)
-                           OR EXISTS (SELECT 1 FROM application
-                                       WHERE account_id = a.id AND status = ANY(%(open)s))) AS open,
+                           OR (a.state = ANY(%(decidable)s) AND ap.status = ANY(%(open)s))) AS open,
        count(*) AS total
   FROM account a
+  LEFT JOIN LATERAL (SELECT status FROM application WHERE account_id = a.id
+                      ORDER BY submitted_at DESC, id DESC LIMIT 1) ap ON true
 """
 
 LIST_SQL = """
@@ -481,9 +498,10 @@ async def list_users(
     `application.decided_by` is an account id nobody can read; each grant gains `granted_by_name`
     for the same reason, which is what lets the tab show an admin how another admin came to hold
     the role (`_grants`'s own docstring). `counts` is the tab's badge: `open` is every account
-    awaiting a decision — by its own application or, where it has none, by its own state, the union
-    `COUNTS_SQL` explains — and `total` every account, over the WHOLE table and never the filtered
-    page: a reviewer who narrows to one applicant must not be told the queue is one deep.
+    awaiting a decision — by its own state, or by its latest application where the account is in a
+    state that application can be DECIDED from, the union `COUNTS_SQL` explains — and `total` every
+    account, over the WHOLE table and never the filtered page: a reviewer who narrows to one
+    applicant must not be told the queue is one deep.
 
     The count is served with the FIRST page only (fix round 1, review Minor 1). It is a full scan
     of `account` and the badge describes the whole table, so a client paging the queue already
@@ -500,7 +518,7 @@ async def list_users(
             rows = cur.fetchall()
             counts: dict[str, int] | None = None
             if cursor is None:
-                cur.execute(COUNTS_SQL, {"open": list(OPEN_STATUSES)})
+                cur.execute(COUNTS_SQL, {"open": list(OPEN_STATUSES), "decidable": list(DECIDABLE_STATES)})
                 open_now, total = cast("tuple[int, int]", cur.fetchone())
                 counts = {"open": open_now, "total": total}
         items = [

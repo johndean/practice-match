@@ -90,7 +90,10 @@ describe('toUserRows renders the design\'s Users table from the live payload', (
     // the application's own decision rather than prose with nothing behind it.
     const [row] = rowsFor([item({
       name: 'Dr. Rachel Mendes', state: 'active', affiliation_label: 'StartUp Club',
-      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez',
+      // `decided_at` and `application_status` come from ONE `ap` row in `LIST_SQL`, so a stamp
+      // beside a null status is a payload the API cannot serve. `test_admin_users.py` pins the
+      // real pair for a buyer approval: state `active`, application_status `approved`.
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez', application_status: 'approved',
       fields: { school_year: 'Texas A&M, 2014', license_state: 'TX', employer: 'Relief veterinarian', intent: 'Buy within 18 months.' }
     })]);
     expect(row[0]).toEqual(DESIGN[3][0]);      // "Dr. Rachel Mendes" / "Texas A&M, 2014 · TX license"
@@ -102,12 +105,12 @@ describe('toUserRows renders the design\'s Users table from the live payload', (
     // `formatDate`'s reason for existing: the same instant an hour before midnight UTC is the
     // NEXT day in half the world, and `toLocaleDateString` would report the reviewer's day rather
     // than the decision's.
-    const [row] = rowsFor([item({ state: 'active', decided_at: '2026-01-31T23:30:00+00:00', decided_by_name: 'K. Alvarez' })]);
+    const [row] = rowsFor([item({ state: 'active', application_status: 'approved', decided_at: '2026-01-31T23:30:00+00:00', decided_by_name: 'K. Alvarez' })]);
     expect(row[1].sub).toBe('Approved January 31 by staff reviewer K. Alvarez.');
   });
 
   it('names the day and not the decider when the payload carries no name', () => {
-    const [row] = rowsFor([item({ state: 'active', decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: null })]);
+    const [row] = rowsFor([item({ state: 'active', application_status: 'approved', decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: null })]);
     expect(row[1].sub).toBe('Approved August 12.');
   });
 
@@ -116,6 +119,28 @@ describe('toUserRows renders the design\'s Users table from the live payload', (
     // design's own intent quote rather than an "Approved" sentence with no date behind it.
     const [row] = rowsFor([item({ state: 'active' })]);
     expect(row[1].sub).toBe('“Looking to buy within 18 months in Central Texas.”');
+  });
+
+  it('never calls a DECLINED seller application an approval, on an account that is still active', () => {
+    // Fix round 2, re-review Important 1. A seller application is decided from `active` TO
+    // `active` and a decline stamps `status`, `decided_by` and `decided_at` on the application —
+    // so every term the sentence was gated on (state active, a decision date, nothing open) is
+    // satisfied by a DECLINE, and the row named the colleague who declined it as the approver, on
+    // the decline's own date. The sentence belongs to an APPROVED application and to no other.
+    //
+    // Silence is the treatment, not a new sentence: the design carries a `declined` PILL (its own
+    // muted account-state tone, asserted by the case below) and NO declined sub-line at all, and
+    // the row's pill and single Suspend button are the account's — ruled in fix round 1 and not
+    // re-opened here, because the ACCOUNT really is an approved buyer. So the applicant's own
+    // words come back, exactly as they do while the application is open.
+    const [row] = rowsFor([item({
+      state: 'active', kind: 'seller', application_status: 'declined',
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez'
+    })]);
+    expect(row[1].sub).toBe('Seller applicant · “Looking to buy within 18 months in Central Texas.”');
+    expect(row[1].sub).not.toContain('Approved');
+    expect(row[2]).toMatchObject({ pill: 'Approved', pillStyle: PILL.ok });   // the ACCOUNT's state
+    expect(row[3].actions.map((a) => a.label)).toEqual(['Suspend']);
   });
 
   it('never calls a decline an approval, however recently it was decided', () => {
@@ -290,6 +315,12 @@ describe('the pill and the decision buttons, per account state', () => {
 describe('an OPEN application outranks the account state, because that is the row being decided', () => {
   const open = (over: Partial<UserItem>) => rowsFor([item(over)])[0];
   const labels = (row: Cell[]) => row[3].actions.map((a) => a.label);
+  /** `LABEL` in `users.ts` is private; this is the same table, and the case that reads it walks
+   *  `ACTIONS` so a new action with no entry here fails rather than being skipped. */
+  const LABEL_OF: Record<string, string> = {
+    approve: 'Approve', decline: 'Decline', request_info: 'Request info',
+    suspend: 'Suspend', reinstate: 'Reinstate', revoke: 'Revoke'
+  };
 
   it('gives an active account with a pending seller application the applicant\'s own pill and buttons', () => {
     const row = open({ state: 'active', kind: 'seller', application_status: 'pending' });
@@ -338,6 +369,46 @@ describe('an OPEN application outranks the account state, because that is the ro
     expect(row[2]).toMatchObject({ pill: 'Needs review' });
     expect(row[1].sub).not.toContain('Approved August 12');
     expect(row[1].sub).toBe('Seller applicant · “Looking to buy within 18 months in Central Texas.”');
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 2, re-review Important 2 — the controller's ruling, narrowing round 1's union: the
+  // open application governs the row only where `decide` will act on it.
+  //
+  // `suspend` and `revoke` are ACCOUNT actions and neither is in `APPLICATION_ACTIONS`, so
+  // `decide` never closes the application row. A suspended account therefore arrives with a STALE
+  // open application, and keyed on it the tab offered Approve / Decline / Request info — each
+  // refused 409 STATE by the API — hid Reinstate, the one action the API accepts, and counted the
+  // row open. A revoked account was the same row with no action that could ever succeed, counted
+  // open for ever. `test_a_suspended_or_revoked_account_is_not_decidable_and_is_not_in_the_open_
+  // queue` is the API's own side of this.
+  // ---------------------------------------------------------------------------------------
+  it('does NOT let a stale open application speak for a suspended account — Reinstate is the one legal action', () => {
+    for (const status of ['pending', 'needs_review']) {
+      const row = open({ state: 'suspended', kind: 'seller', application_status: status });
+      expect(row[2], status).toMatchObject({ pill: 'Suspended', pillStyle: PILL.info });
+      expect(labels(row), status).toEqual(['Reinstate']);
+    }
+  });
+
+  it('does NOT let one speak for a revoked account either, which has no action left at all', () => {
+    const row = open({ state: 'revoked', application_status: 'pending' });
+    expect(row[2]).toMatchObject({ pill: 'Revoked', pillStyle: PILL.bad });
+    expect(row[3]).toMatchObject({ hasActions: false, actions: [] });
+  });
+
+  it('governs exactly the states `decide` accepts an application action from, and no others', () => {
+    // `active` (a seller application) and the two OPEN account states (a buyer's) — the set
+    // `tests/test_docs.py` pins against `app/api/admin_users.py`'s own `DECIDABLE_STATES`.
+    for (const state of ['active', 'pending', 'needs_review']) {
+      expect(labels(open({ state, application_status: 'pending' })), state)
+        .toEqual(['Approve', 'Decline', 'Request info']);
+    }
+    for (const state of ['unverified', 'verified', 'declined', 'suspended', 'revoked']) {
+      const row = open({ state, application_status: 'pending' });
+      expect(row[2].pill, state).toBe(PILLS[state][0]);
+      expect(labels(row), state).toEqual((ACTIONS[state] ?? []).map((a) => LABEL_OF[a]));
+    }
   });
 
   it('falls back to the account state for an application status this table does not know', () => {
@@ -424,6 +495,17 @@ describe('countsOf reads the badge, or says there is none', () => {
   it('answers null rather than a partial badge where the shape is not the two numbers', () => {
     expect(countsOf({ counts: { open: '3', total: 29 } })).toBeNull();
     expect(countsOf({ counts: { open: 3 } })).toBeNull();
+  });
+
+  it('answers null for the `counts: null` a cursored page now serves, rather than throwing', () => {
+    // Fix round 2, re-review Minor 1. `null` passes an `!== undefined` test and `null.open` throws,
+    // and this is not a hypothetical shape: fix round 1's own M-1 made the API serve exactly it on
+    // every page past the first. Only call order kept it unreached — the adapter asks once, on
+    // page 0, which always carries counts. A first page whose counts were unreadable (an older API
+    // answering mid-deploy) plus a second page would have thrown inside `list()`, fired A36.2's
+    // rejection arm and EMPTIED a tab that had just been read successfully.
+    expect(countsOf({ counts: null })).toBeNull();
+    expect(countsOf({ items: [], next_cursor: null, counts: null })).toBeNull();
   });
 });
 

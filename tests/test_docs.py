@@ -1126,7 +1126,14 @@ def test_the_admin_users_tables_match_the_api():
     have rendered its raw key. The design deliberately offers a SUBSET of the transitions (the
     API also allows `revoke` from five other states), so what is pinned is that the subset is
     legal — not that it is complete."""
-    from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+    from app.api.admin_users import (
+        ACCOUNT_STATES,
+        APPLICATION_ACTIONS,
+        DECIDABLE_STATES,
+        NOTE_REQUIRED,
+        OPEN_STATUSES,
+        TRANSITIONS,
+    )
     from app.auth.labels import role_label
 
     # Task A36: the tab names an account's VIN Foundation role under the applicant's name, and the
@@ -1139,6 +1146,21 @@ def test_the_admin_users_tables_match_the_api():
     assert sorted(labels) == ["admin", "staff"], (
         "the Admin Users table labels exactly the two VIN Foundation roles; a buyer's or a "
         "seller's standing is what the Status pill says"
+    )
+
+    # Fix round 2, re-review Minor 2. The two tables that decide WHICH FACT a row is about were
+    # mirrored client-side by hand, and the round's own claim — that the badge and the rows cannot
+    # disagree about what "open" means — was held by nothing. A third waiting status, or a widened
+    # state machine, must fail on both sides at once.
+    assert _users_ts_literal("OPEN_STATUSES") == list(OPEN_STATUSES)
+    assert _users_ts_literal("DECIDABLE_STATES") == list(DECIDABLE_STATES)
+    # And `DECIDABLE_STATES` is not a third list to keep by hand either: it is exactly the states
+    # the API accepts an APPLICATION action from — `TRANSITIONS`' union over `APPLICATION_ACTIONS`,
+    # plus the `active` a seller application is decided from and to (`_seller_decision`).
+    from_application_actions = set().union(*(TRANSITIONS[a][0] for a in APPLICATION_ACTIONS))
+    assert set(DECIDABLE_STATES) == from_application_actions | {"active"}, (
+        "DECIDABLE_STATES must be the states a staff decision on an APPLICATION is legal from; "
+        "outside it an open application is stale and the tab renders the account's own treatment"
     )
 
     assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)

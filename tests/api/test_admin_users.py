@@ -330,7 +330,9 @@ async def test_the_badge_count_is_asked_for_once_per_tab_load_and_never_once_per
     for one tab load and throws nineteen of the answers away.
 
     A page that carries a `cursor` is by definition not the first, so it serves `counts: null` and
-    runs no count at all — which `countsOf` already reads as "no counts on this page".
+    runs no count at all — the shape `countsOf` answers `null` for, which fix round 2 made true
+    rather than merely claimed (`null` passed its `!== undefined` test and `null.open` threw; only
+    call order kept it unreached, and `users.test.ts` now pins this exact body).
 
     Counted, not reasoned: a cursor proxy records every statement the route executes, and the
     assertion is on how many of them are the count."""
@@ -391,6 +393,105 @@ async def test_the_badge_count_is_asked_for_once_per_tab_load_and_never_once_per
 
     assert len(counted) == 1, "a cursored page must not pay for the count the caller already has"
     assert second["counts"] is None and second["items"]
+
+
+async def test_a_declined_seller_application_is_served_as_declined_on_an_account_still_active(client, conn, member):
+    """Fix round 2, re-review Important 1 — the row the Users tab printed as an APPROVAL.
+
+    A seller application is decided from `active` TO `active`, and a decline stamps
+    `status='declined'`, `decided_by` and `decided_at=now()` on the application row. `LIST_SQL`
+    serves the LATEST application's status, date and decider, so the served row is `state: active`
+    AND `application_status: declined` with a full decision stamp — every term the design's one
+    approved sentence was gated on, and none of them about an approval. The tab printed "Approved
+    <the decline date> by staff reviewer <the colleague who declined it>."
+
+    This pins the PAYLOAD, so the frontend case that stops printing it is anchored to a row the
+    API really serves rather than to a hand-written fixture."""
+    _sid, scookies, shdr = member(("staff",), email="decline-staff@example.org")
+    bid, bcookies, bhdr = member(("buyer",), email="declined-seller@example.org")
+    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+    assert (await client.post(f"/api/admin/users/{bid}/decide", headers=auth_headers(scookies, shdr),
+                              json={"action": "decline", "note": "Ownership unclear"})).status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(bid))
+    assert row["state"] == "active" and row["kind"] == "seller"
+    assert row["application_status"] == "declined"
+    # The stamp a decline leaves, which is what the sentence was composed from.
+    assert row["decided_at"] is not None and row["decided_by_name"] == "Dr. Rachel Mendes"
+    # And a closed application is not in the queue.
+    assert body["counts"]["open"] == 0
+
+
+async def test_a_suspended_or_revoked_account_is_not_decidable_and_is_not_in_the_open_queue(client, conn, member):
+    """Fix round 2, re-review Important 2 — the controller's ruling, narrowing fix round 1's union.
+
+    `suspend` and `revoke` are ACCOUNT actions: neither is in `APPLICATION_ACTIONS`, so `decide`
+    never closes the open application row, and `api/applications.py` says so in its own words. An
+    account suspended (or revoked) while holding an open application therefore arrives
+    `state: suspended` WITH `application_status: pending`, and keyed on the application alone the
+    tab offered Approve / Decline / Request info — each refused 409 STATE — hid Reinstate, the one
+    action the API accepts, and counted the row open for ever on a revoke.
+
+    So the open application governs the row only where `decide` will act on it. This pins that set
+    from the API's own side: every action the tab offers such a row is ACCEPTED, and the badge
+    counts only rows it renders as decidable."""
+    _sid, scookies, shdr = member(("staff",), email="suspend-staff@example.org")
+    seller, bcookies, bhdr = member(("buyer",), email="suspended-applicant@example.org")
+    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+
+    open_queue = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    assert open_queue["counts"]["open"] == 1, "the active seller applicant IS decidable"
+
+    assert (await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                              json={"action": "suspend", "note": "Under investigation"})).status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(seller))
+    # The stale open row is still there — `suspend` is not an application action and closes nothing.
+    assert row["state"] == "suspended" and row["application_status"] == "pending"
+    assert body["counts"]["open"] == 0, "a suspended account is not waiting on a reviewer's decision"
+
+    # Every application action the tab USED to offer this row is refused; the one it hid is taken.
+    from app.api.admin_users import APPLICATION_ACTIONS
+
+    for action in APPLICATION_ACTIONS:
+        refused = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                                    json={"action": action, "note": "n"})
+        assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE", action
+    reinstated = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                                   json={"action": "reinstate", "note": ""})
+    assert reinstated.status_code == 200
+
+
+async def test_the_open_queue_count_reads_the_same_application_row_the_list_shows(client, conn, member):
+    """Fix round 2, re-review Minor 3. The count and the row agreed only while at most one
+    application per account was open — an invariant `api/applications.py` enforces and the SCHEMA
+    does not, so a seed script or direct SQL could break it and leave the badge counting a row the
+    table renders as closed.
+
+    Rather than make the database hold the invariant (a partial unique index, which would have to
+    be true of every row already applied on QA and production before it could be added), the count
+    now reads the SAME `ORDER BY submitted_at DESC, id DESC LIMIT 1` lateral `LIST_SQL` does. The
+    two cannot disagree about which application a row is about, whatever the table holds."""
+    aid, _c, _h = member(("buyer",), email="two-applications@example.org")
+    _admin, cookies, _hdr = member(("admin",), email="latest-row-admin@example.org")
+    older, newer = "00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2"
+    with conn.cursor() as cur:
+        # Outside the API on purpose: this is the shape the invariant forbids and the schema allows.
+        cur.execute("""INSERT INTO application (id, account_id, kind, fields, status, submitted_at)
+                       VALUES (%s,%s,'buyer',%s,'pending', now() - interval '2 days'),
+                              (%s,%s,'seller',%s,'approved', now() - interval '1 day')""",
+                    (older, aid, json.dumps(FIELDS), newer, aid, json.dumps(SELLER_FIELDS)))
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(aid))
+    # The list shows the LATEST application, which is closed...
+    assert row["application_status"] == "approved"
+    # ...so the badge must not call the same row open on the strength of the older one.
+    assert body["counts"]["open"] == 0
 
 
 async def test_the_detail_view_carries_applications_grants_and_refuses_an_unknown_account(client, conn, member):

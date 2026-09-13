@@ -2204,19 +2204,22 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
 
   /** `GET /api/admin/users` as the REAL API serves it, over the oracle's design-fixture stub.
    *
-   *  `gets` records one entry per LIST request, which is how the reload seam is gated (fix round 1,
+   *  `log` records one `'GET'` per LIST request, which is how the reload seam is gated (fix round 1,
    *  review Important 2): the case that claims a decision re-reads the queue asserted only that a
-   *  row was still on screen, and a row that never left is no evidence at all. `queue` lets a case
-   *  answer the SECOND read with something different from the first. */
+   *  row was still on screen, and a row that never left is no evidence at all. It is ONE ORDERED
+   *  log shared with the decide route rather than a count (fix round 2, re-review Minor 4) — a
+   *  count that rises 1 → 2 is satisfied by a second BOOT load arriving late, which is the same
+   *  false green one door over, while `['GET', 'POST', 'GET']` says the re-read FOLLOWED the
+   *  decision. `queue` lets a case answer the SECOND read with something different from the first. */
   async function serveAccounts(
     page: Page,
-    opts: { gets?: string[]; queue?: () => { items: unknown[]; counts: { open: number; total: number } } } = {}
+    opts: { log?: string[]; queue?: () => { items: unknown[]; counts: { open: number; total: number } } } = {}
   ): Promise<void> {
     const href = new URL('/api/admin/users', appOrigin()).href;
     const answer = opts.queue ?? (() => ({ items: ACCOUNTS, counts: { open: 1, total: 2 } }));
     await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
       (route) => {
-        opts.gets?.push(route.request().url());
+        opts.log?.push('GET');
         return route.fulfill({
           status: 200, contentType: 'application/json',
           body: JSON.stringify({ ...answer(), next_cursor: null })
@@ -2266,25 +2269,30 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
 
   test('Approve posts the decision the API names, and re-reads the queue after it', async ({ page }) => {
     await prepare(page);
-    // COUNTED, not observed (fix round 1, review Important 2). This case used to end on "the row
-    // is still visible", which was true before the click and is answered by the same stub after
-    // it: cutting A36.2's `list(() => this.loadAdmin())` to `list(() => {})` left all three A36
-    // cases green. The reload is a REQUEST, so the assertion is on requests.
-    const gets: string[] = [];
-    await serveAccounts(page, { gets });
+    // ORDERED, not observed and not merely counted. This case used to end on "the row is still
+    // visible", which was true before the click and is answered by the same stub after it: cutting
+    // A36.2's `list(() => this.loadAdmin())` to `list(() => {})` left all three A36 cases green
+    // (fix round 1, review Important 2). And a bare count 1 → 2 would be satisfied by a second BOOT
+    // load arriving late (fix round 2, re-review Minor 4), so the two routes share ONE log and the
+    // assertion is that the re-read FOLLOWS the decision.
+    const log: string[] = [];
+    await serveAccounts(page, { log });
     const posted: unknown[] = [];
     await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      log.push('POST');
       posted.push(JSON.parse(route.request().postData() ?? 'null'));
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer'] }) });
     });
     await signInAs(page, 'design', '/admin');
     await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
-    expect(gets, 'the tab load reads the queue exactly once').toHaveLength(1);
+    expect(log, 'the tab load reads the queue exactly once, and writes nothing').toEqual(['GET']);
 
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect.poll(() => posted).toEqual([{ action: 'approve', note: '' }]);
-    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made AGAIN.
-    await expect.poll(() => gets.length, { message: 'the decision did not re-read the queue' }).toBe(2);
+    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made AGAIN —
+    // after the POST, which is the part a count cannot say.
+    await expect.poll(() => log, { message: 'the queue was not re-read AFTER the decision' })
+      .toEqual(['GET', 'POST', 'GET']);
     await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
   });
 
