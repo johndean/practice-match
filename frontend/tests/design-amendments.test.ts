@@ -401,6 +401,9 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A36 -- the Admin Users tab (Task A36, D-C53). A36.2 is CHAINED on A40.3's own
+    // `loadAdmin` body; the other four edit pristine lines.
+    'A36.1', 'A36.2', 'A36.3', 'A36.4', 'A36.5',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -591,7 +594,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(332);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

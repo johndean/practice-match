@@ -1091,8 +1091,9 @@ def _users_ts_literal(name: str) -> object:
         reason = str(exc)
     pytest.fail(
         f"frontend/src/admin/users.ts: {name} is no longer DOUBLE-QUOTED JSON on a single line, "
-        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS "
-        f"and PILLS is written that way for exactly that reason; the file says so beside them. "
+        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS, "
+        f"PILLS and ROLE_LABELS is written that way for exactly that reason; the file says so "
+        f"beside them. "
         f"Got: {match.group(1)[:120]}"
     )
 
@@ -1108,6 +1109,19 @@ def test_the_admin_users_tables_match_the_api():
     API also allows `revoke` from five other states), so what is pinned is that the subset is
     legal — not that it is complete."""
     from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+    from app.auth.labels import role_label
+
+    # Task A36: the tab names an account's VIN Foundation role under the applicant's name, and the
+    # product already has ONE place that turns a role into words — the label the header prints over
+    # this very screen. Pinned by asking `role_label` itself rather than by restating its strings,
+    # so a change to the vocabulary fails here instead of leaving two spellings of one role live at
+    # once. `affiliation=None`, because the tab states the affiliation in its own column.
+    labels = cast("dict[str, str]", _users_ts_literal("ROLE_LABELS"))
+    assert labels == {role: role_label(frozenset({role}), None) for role in labels}
+    assert sorted(labels) == ["admin", "staff"], (
+        "the Admin Users table labels exactly the two VIN Foundation roles; a buyer's or a "
+        "seller's standing is what the Status pill says"
+    )
 
     assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
     assert sorted(cast("dict[str, object]", _users_ts_literal("PILLS"))) == sorted(ACCOUNT_STATES)

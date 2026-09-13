@@ -410,14 +410,23 @@ def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | Non
     return value
 
 
+# The badge the Admin Users tab shows is the OPEN QUEUE — every account awaiting a decision, over
+# the whole table, never the filtered page (Task A36, the controller's ruling on the audit's first
+# Users item). One grouped scan, `admin_signups.COUNTS_SQL`'s own pattern: the two numbers the
+# response carries are read from the same rows, so they cannot disagree with each other.
+COUNTS_SQL = "SELECT state, count(*) FROM account GROUP BY 1"
+
 LIST_SQL = """
 SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at, a.last_sign_in_at,
-       ap.id, ap.kind, ap.fields, ap.flags, ap.status, ap.submitted_at,
-       COALESCE((SELECT jsonb_agg(jsonb_build_object('role', g.role, 'granted_by', g.granted_by, 'granted_at', g.granted_at)
+       ap.id, ap.kind, ap.fields, ap.flags, ap.status, ap.submitted_at, ap.decided_at, d.display_name,
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('role', g.role, 'granted_by', g.granted_by,
+                                                     'granted_by_name', gb.display_name, 'granted_at', g.granted_at)
                                   ORDER BY g.role)
-                   FROM role_grant g WHERE g.account_id = a.id AND g.revoked_at IS NULL), '[]'::jsonb)
+                   FROM role_grant g LEFT JOIN account gb ON gb.id = g.granted_by
+                  WHERE g.account_id = a.id AND g.revoked_at IS NULL), '[]'::jsonb)
   FROM account a
   LEFT JOIN LATERAL (SELECT * FROM application WHERE account_id = a.id ORDER BY submitted_at DESC, id DESC LIMIT 1) ap ON true
+  LEFT JOIN account d ON d.id = ap.decided_by
  WHERE (%(state)s::text IS NULL OR a.state = %(state)s)
    AND (%(kind)s::text IS NULL OR ap.kind = %(kind)s)
    AND (%(role)s::text IS NULL OR EXISTS (SELECT 1 FROM role_grant g
@@ -444,7 +453,16 @@ async def list_users(
     dropping a row (fix round 1, F3).
 
     Guarded by `users.review` and NOT audited (fix round 1, C2): spec §4 audits viewing an
-    application DETAIL, which is `users.view_detail` on the route below."""
+    application DETAIL, which is `users.view_detail` on the route below.
+
+    Task A36 added the three facts the Admin Users tab prints and this route did not serve.
+    `decided_at` and `decided_by_name` are the application's own decision provenance — the design's
+    approved row reads "Approved August 12 by staff reviewer K. Alvarez.", a date and a NAME, and
+    `application.decided_by` is an account id nobody can read; each grant gains `granted_by_name`
+    for the same reason, which is what lets the tab show an admin how another admin came to hold
+    the role (`_grants`'s own docstring). `counts` is the tab's badge: `open` is every account in
+    `OPEN_STATUSES` and `total` every account, over the WHOLE table and never the filtered page —
+    a reviewer who narrows to one applicant must not be told the queue is one deep."""
     keyset_at, keyset_id = _keyset(cursor)
     filters = {"state": _filter("state", state, ACCOUNT_STATES),
                "kind": _filter("kind", kind, APPLICATION_KINDS),
@@ -454,17 +472,22 @@ async def list_users(
         with conn.cursor() as cur:
             cur.execute(LIST_SQL, {**filters, "cursor_at": keyset_at, "cursor_id": keyset_id, "limit": capped + 1})
             rows = cur.fetchall()
+            cur.execute(COUNTS_SQL)
+            # Named `at_state`, not `state`: the query parameter of that name is still live above.
+            by_state = {at_state: n for at_state, n in cur.fetchall()}
         items = [
             {"account_id": str(r[0]), "email": r[1], "state": r[2], "name": r[3], "affiliation_label": r[4],
              "created_at": r[5].isoformat(), "last_sign_in_at": _iso(r[6]),
              "application_id": str(r[7]) if r[7] is not None else None, "kind": r[8], "fields": r[9],
              "flags": r[10] or [], "application_status": r[11], "submitted_at": _iso(r[12]),
-             "roles": [g["role"] for g in r[13]], "grants": r[13]}
+             "decided_at": _iso(r[13]), "decided_by_name": r[14],
+             "roles": [g["role"] for g in r[15]], "grants": r[15]}
             for r in rows[:capped]
         ]
     last = items[-1] if len(rows) > capped else None
     return {"items": items,
-            "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None}
+            "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None,
+            "counts": {"open": sum(by_state.get(s, 0) for s in OPEN_STATUSES), "total": sum(by_state.values())}}
 
 
 @router.get("/users/{account_id}")

@@ -2069,3 +2069,111 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A36 (Task A36, D-C53, 2026-09-13) — the Admin Users tab in a real browser: REAL-SHAPED
+// accounts render through `admin/users.ts`'s own derivation, and a decision reaches the API.
+//
+// The oracle's own stub answers this endpoint with the DESIGN's four rows (`DesignUserRow`), which
+// is what keeps the frozen `admin-users` capture — so these cases override it with the shape the
+// real API serves. That is the half no approved state can photograph: the design's fixtures are
+// prose, the live path is `UserItem`s, and the rows, the pills and the buttons below all come out
+// of `PILLS`/`ACTIONS` rather than out of a fixture's own words.
+// ---------------------------------------------------------------------------------------
+test.describe('A36 — the Admin Users tab reads accounts, and every decision reaches the API', () => {
+  const ACCOUNTS = [
+    {
+      account_id: 'aaaaaaaa-0000-4000-8000-000000000001', email: 'pending@example.test', state: 'pending',
+      name: 'Dr. Wanda Okafor', affiliation_label: null, kind: 'buyer', flags: [], roles: [], grants: [],
+      decided_at: null, decided_by_name: null,
+      fields: { school_year: 'Tufts, 2011', license_state: 'MA', employer: 'Associate, three-doctor practice', intent: 'Buying near Boston within a year.', vin_member_id: '884201' }
+    },
+    {
+      account_id: 'aaaaaaaa-0000-4000-8000-000000000002', email: 'approved@example.test', state: 'active',
+      name: 'Dr. Idris Calloway', affiliation_label: null, kind: 'seller', flags: [],
+      roles: ['admin', 'buyer'],
+      grants: [{ role: 'admin', granted_by_name: 'Dr. Wanda Okafor', granted_at: '2026-08-12T09:00:00+00:00' }],
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez',
+      fields: { school_year: 'Cornell, 2003', license_state: 'NY, NJ', employer: 'Owner, one practice', intent: 'Listing in 2027.' }
+    }
+  ];
+
+  /** `GET /api/admin/users` as the REAL API serves it, over the oracle's design-fixture stub. */
+  async function serveAccounts(page: Page): Promise<void> {
+    const href = new URL('/api/admin/users', appOrigin()).href;
+    await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ items: ACCOUNTS, next_cursor: null, counts: { open: 1, total: 2 } })
+      }));
+  }
+
+  const usersTab = (page: Page) => page.getByRole('button', { name: /^Users\s*\d/ });
+
+  test('renders the served accounts, their pills and the per-state buttons — and no Revoke anywhere', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveAccounts(page);
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+
+    // Nobody from the design's own fixture survives an adapter that answered (A36.1's ternary).
+    await expect(page.getByText('Dr. Priya Raghavan'), 'a design fixture row reached a real reviewer').toHaveCount(0);
+    await expect(page.getByText('Dr. Rachel Mendes')).toHaveCount(0);
+
+    // `PILLS`, and `ACTIONS` per state — pending offers three, an active account one.
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+    for (const label of ['Approve', 'Decline', 'Request info', 'Suspend']) {
+      await expect(page.getByRole('button', { name: label, exact: true }), label).toHaveCount(1);
+    }
+    // Ruling 6: the one decision in `permissions.REAUTH`, and V3 has no step-up element.
+    await expect(page.getByRole('button', { name: 'Revoke', exact: true }),
+      'Revoke cannot complete its action without a step-up dialog, so it is not rendered').toHaveCount(0);
+
+    // The three facts stated in the design's own ` · ` idiom (rulings 6, 7 and 8) and the
+    // provenance sentence the API now serves.
+    await expect(page.getByText('Tufts, 2011 · MA license · VIN member 884201')).toBeVisible();
+    await expect(page.getByText('Cornell, 2003 · NY, NJ licenses · VIN Foundation admin · granted by Dr. Wanda Okafor August 12')).toBeVisible();
+    await expect(page.getByText('Seller applicant · Approved August 12 by staff reviewer K. Alvarez.')).toBeVisible();
+
+    // A36.3: the badge is the served open count, not the design's literal 3.
+    await expect(usersTab(page)).toHaveText(/^Users\s*1$/);
+    expect(errors).toEqual([]);
+  });
+
+  test('Approve posts the decision the API names, and re-reads the queue after it', async ({ page }) => {
+    await prepare(page);
+    await serveAccounts(page);
+    const posted: unknown[] = [];
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer'] }) });
+    });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect.poll(() => posted).toEqual([{ action: 'approve', note: '' }]);
+    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made again.
+    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+  });
+
+  test('a blank decline note sends nothing at all — the API refuses one, so the click is not a decision', async ({ page }) => {
+    await prepare(page);
+    await serveAccounts(page);
+    const posted: string[] = [];
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      posted.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    // The browser's own prompt, cancelled — `window.prompt` answers null on a dismissed dialog.
+    page.on('dialog', (d) => void d.dismiss());
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Wanda Okafor')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Decline', exact: true }).click();
+    await page.waitForTimeout(300);
+    expect(posted, 'a cancelled note posted a decision the API would refuse').toEqual([]);
+  });
+});

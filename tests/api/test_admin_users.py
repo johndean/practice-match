@@ -196,6 +196,72 @@ async def test_admin_users_paginates_by_cursor_and_filters_by_kind(client, conn,
     assert bad.status_code == 422 and bad.json()["error"]["code"] == "BAD_CURSOR"
 
 
+async def test_the_list_carries_the_provenance_and_the_open_queue_count_the_users_tab_prints(client, conn, member):
+    """Task A36: the Admin Users tab prints two facts `GET /api/admin/users` did not serve.
+
+    The design's own approved row reads "Approved August 12 by staff reviewer K. Alvarez." —
+    a DATE and a NAME — and `LIST_SQL` selected neither: `application.decided_at` was never in
+    the select list and `decided_by` is an account id, so the only honest rendering was silence.
+    The design's Users tab badge is the literal "3", which equals its own open queue (two Pending
+    plus one Needs review), and the endpoint served no count at all, so an adapter had nothing to
+    put in the pill (`admin_signups.list_signups` has served its own `counts` beside `items`
+    since I5d — this is that pattern, narrowed to the one number the tab shows).
+
+    And the roles half of John's binding condition (2026-09-06) has the same shape of gap: every
+    grant already carries `granted_by`, which is a uuid nobody can read, so the tab could say a
+    staff account was granted BY somebody and not who."""
+    decided, _ = await _applicant(client, member, email="decided@example.org")
+    still_open, _ = await _applicant(client, member, email="still-open@example.org")
+    _admin, cookies, hdr = member(("admin",), email="decider@example.org")
+
+    approve = await client.post(f"/api/admin/users/{decided}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "approve", "note": ""})
+    assert approve.status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    listed = {item["account_id"]: item for item in body["items"]}
+    approved = listed[str(decided)]
+    assert approved["state"] == "active" and approved["application_status"] == "approved"
+    # The date the decision was actually stamped, and the decider's own display name — the two
+    # halves of the design's provenance sentence.
+    assert approved["decided_at"] and approved["decided_at"] == approved["decided_at"].strip()
+    assert approved["decided_by_name"] == "Dr. Rachel Mendes"
+    # An undecided application has no provenance, and says so with a null rather than a date.
+    assert listed[str(still_open)]["decided_at"] is None
+    assert listed[str(still_open)]["decided_by_name"] is None
+    # The grant the approval wrote names the admin who made it, not only their uuid.
+    grant = approved["grants"][0]
+    assert grant["role"] == "buyer" and grant["granted_by"] == str(_admin)
+    assert grant["granted_by_name"] == "Dr. Rachel Mendes"
+
+    # The badge: accounts awaiting a decision, over the whole table — three accounts exist, one of
+    # them still open.
+    assert body["counts"] == {"open": 1, "total": 3}
+
+
+async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(client, conn, member):
+    """The badge counts the QUEUE, not the page: `state=`, `kind=` and `role=` narrow `items`, and
+    a reviewer who filters to one account must not see the tab claim there is one account waiting.
+
+    `needs_review` counts with `pending` — `OPEN_STATUSES` is the one definition of "awaiting a
+    decision" this module already decides `decide`'s own application lookup with."""
+    pending, _ = await _applicant(client, member, email="open-pending@example.org")
+    needs_review, _ = await _applicant(client, member, email="open-needs-review@example.org")
+    _seller, scookies, shdr = member(("buyer",), email="open-seller@example.org")
+    await client.post("/api/applications", headers=auth_headers(scookies, shdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    _admin, cookies, hdr = member(("admin",), email="counter@example.org")
+    assert (await client.post(f"/api/admin/users/{needs_review}/decide", headers=auth_headers(cookies, hdr),
+                              json={"action": "request_info", "note": "Which hospital?"})).status_code == 200
+
+    every = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    assert {i["state"] for i in every["items"]} >= {"pending", "needs_review"}
+    assert every["counts"] == {"open": 2, "total": 4}
+    for query in ("?state=pending", "?kind=seller", "?role=admin", "?limit=1"):
+        narrowed = (await client.get(f"/api/admin/users{query}", headers=auth_headers(cookies))).json()
+        assert narrowed["counts"] == every["counts"], query
+    assert str(pending) in {i["account_id"] for i in every["items"]}
+
+
 async def test_the_detail_view_carries_applications_grants_and_refuses_an_unknown_account(client, conn, member):
     aid, _ = await _applicant(client, member, email="detail@example.org")
     _admin, cookies, _hdr = member(("admin",), email="detail-admin@example.org")
