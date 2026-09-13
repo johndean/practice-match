@@ -139,6 +139,39 @@ describe('the citation re-mapper', () => {
     expect(unresolved[0]).toMatch(/^A24\.4: the pinned anchor occurs \d+ times/);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A PIN IS AUTHORITATIVE (review, HOUSEKEEPING-C fix round 1, Important-1/Important-2). The
+  // unconditional snap in `remapCitations` re-derived `anchors` for every row, pinned or not, and
+  // applied `nearest` to the pin's own resolved line as if it were just another candidate — which
+  // crashes outright when the entry has no anchor at all (`nearest([])`, the case a pin exists
+  // FOR) and silently overrides a pin that lands more than one line from an anchor the entry does
+  // have (the log said one line, the file said another).
+  // ---------------------------------------------------------------------------------------
+  it('a pin for an entry with no distinctive anchor of its own writes the pinned line as-is', () => {
+    // Nothing this entry wrote is still distinctive anywhere — the fully-superseded case rung 1
+    // exists for. Before the fix this reduces() an empty anchor array and throws.
+    const ghost = [entry({ id: 'A98.2', replace: '\n' })];
+    expect(anchorLines('A98.2', { design, list: ghost, maxOccurrences: DISTINCTIVENESS_K })).toEqual([]);
+    const pins: PinTable = { 'A98.2': { anchor: '      areas: areaFc,', offset: 3, why: 'fixture: fully-superseded, pinned beside a neighbouring anchor' } };
+    const { md: next, unresolved, moves } = remapCitations({ ...input, md: row('A98.2', 'V3:1'), list: ghost, pins });
+    expect(unresolved).toEqual([]);
+    expect(moves).toEqual([{ id: 'A98.2', from: 1, to: 2545, rung: 'pin' }]);
+    expect(next).toBe(row('A98.2', 'V3:2545'));
+  });
+
+  it('a pin more than one line from every one of the entry\'s own anchors is refused, not silently moved', () => {
+    // A24.7's own output stands once, at 919 (the "ONE anchor" case below). A pin naming a
+    // completely unrelated line is not evidence of anything — silently snapping it onto 919 would
+    // make the printed move log ("to: 2542") disagree with the file it wrote, which is the exact
+    // defect measured on the review's own probe.
+    expect(anchorLines('A24.7', input)).toEqual([919]);
+    const pins: PinTable = { 'A24.7': { anchor: '      areas: areaFc,', offset: 0, why: 'fixture: nowhere near A24.7\'s own anchor at 919' } };
+    const { unresolved, moves, md: next } = remapCitations({ ...input, md: row('A24.7', 'V3:1'), pins });
+    expect(moves).toEqual([]);
+    expect(next).toBe(row('A24.7', 'V3:1'));
+    expect(unresolved[0]).toMatch(/^A24\.7: the pin resolves to V3:2542, which is not within ±1 of any of this entry's own anchors \(919\) — check the pin's anchor and offset$/);
+  });
+
   it('an entry with ONE anchor is re-mapped whatever the row says, and a range keeps its span', () => {
     // A24.7's own output stands once in the design, so the rung never consults the number.
     const one = remapCitations({ ...input, md: row('A24.7', 'V3:1') });
@@ -175,6 +208,30 @@ describe('the citation re-mapper', () => {
     expect(outputOf(first, [first, second])).toEqual(['what stands there now']);
     expect(outputOf(second, [first, second])).toEqual(['what stands there now']);
     expect(outputOf(first, [first])).toEqual(['the ruled line']);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Review, HOUSEKEEPING-C fix round 1, Minor-4: `anchorLines` — an O(entries × design-lines)
+  // scan with a `design.split` per candidate piece — was recomputed for every resolved row, once
+  // inside `homeLine` and again immediately after for the snap. A `design.split('\n')` subclass
+  // proves it: one resolved row must cost at most one scan of the whole design, not two.
+  // ---------------------------------------------------------------------------------------
+  it('anchorLines is computed at most once per resolved row', () => {
+    let splits = 0;
+    class CountingDesign extends String {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- String.split's overloads
+      // do not narrow through a subclass override; the counting is what this fixture is for.
+      split(separator?: any, limit?: number): string[] {
+        if (separator === '\n') splits++;
+        return super.split(separator, limit);
+      }
+    }
+    // A24.7 ('only') and A3 ('nearest') between them exercise every non-pin rung that resolves.
+    const md = [row('A24.7', 'V3:1'), row('A3', 'V3:859 and V3:873')].join('\n');
+    const counting = new CountingDesign(design) as unknown as string;
+    const { unresolved } = remapCitations({ ...input, md, design: counting });
+    expect(unresolved).toEqual([]);
+    expect(splits, 'anchorLines\' own design.split(\'\\n\') scan ran more than once per resolved row').toBe(2);
   });
 
   it('nearest takes the lower of two equidistant anchors, and onAnchor is the gate\'s own window', () => {

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
-import { DISTINCTIVENESS_K, citationFindings, commentCitations, ruledTextFindings } from './amend-guard';
+import { DISTINCTIVENESS_K, citationFindings, commentCitations, entriesFor, outputOf, ruledTextFindings } from './amend-guard';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -1358,21 +1358,16 @@ describe('local design amendments (spec D15)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
     const list = amendments();
-    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
-    /** What stands at this amendment's site in the amended file: its own `replace`, or — when a
-     *  later amendment's `find` swallowed that `replace` whole — whatever superseded it. */
-    const outputOf = (a: Amendment): string[] => {
-      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
-      return later ? outputOf(later) : trimmed(a.replace);
-    };
     // H3 (controller, 2026-09-11): every citation is checked and every stale one collected, so a
-    // single run names all of them rather than throwing on the first.
+    // single run names all of them rather than throwing on the first. `entriesFor`/`outputOf` are
+    // the gate's own (amend-guard.ts, review HOUSEKEEPING-C fix round 1, Important-4) — this case
+    // no longer keeps its own copy of "what stands at an amendment's site today".
     const { findings, checked } = citationFindings({
       rows: md.split('\n'),
       lines: design.split('\n'),
       outputFor: (id) => {
-        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-        return own.length === 0 ? null : own.flatMap(outputOf);
+        const own = entriesFor(id, list);
+        return own.length === 0 ? null : own.flatMap((a) => outputOf(a, list));
       },
       occurrences: (piece) => design.split(piece).length - 1,
       // MEASURED, not chosen — the case below re-derives the whole table on every run.
@@ -1426,17 +1421,13 @@ describe('local design amendments (spec D15)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
     const list = amendments();
-    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
-    const outputOf = (a: Amendment): string[] => {
-      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
-      return later ? outputOf(later) : trimmed(a.replace);
-    };
+    // The gate's own `entriesFor`/`outputOf` (amend-guard.ts) — no second copy here either.
     const staleAt = (k: number) => citationFindings({
       rows: md.split('\n'),
       lines: design.split('\n'),
       outputFor: (id) => {
-        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-        return own.length === 0 ? null : own.flatMap(outputOf);
+        const own = entriesFor(id, list);
+        return own.length === 0 ? null : own.flatMap((a) => outputOf(a, list));
       },
       occurrences: (piece) => design.split(piece).length - 1,
       maxOccurrences: k,

@@ -49,6 +49,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Amendment } from './design-amendments';
+// The gate's own output-and-distinctiveness derivation (review, HOUSEKEEPING-C fix round 1,
+// Important-4): this tool no longer keeps a second copy of `entriesFor`/`outputOf` or the
+// distinctiveness predicate, and re-exports them so its own public shape is unchanged.
+import { entriesFor, isDistinctivePiece, outputOf } from './amend-guard';
+export { entriesFor, outputOf };
 
 /** One committed pin: the line is named by a neighbouring DISTINCTIVE anchor, plus how many lines
  *  below it the entry's own output begins. `why` is required — a pin is a judgement and the file
@@ -77,26 +82,12 @@ export type RemapInput = {
 export type CitationMove = { id: string; from: number; to: number; rung: 'pin' | 'only' | 'nearest' };
 export type RemapResult = { md: string; moves: CitationMove[]; unresolved: string[]; rows: number };
 
-/** The entries a row's id owns. A1's 24 derived edits collapse to ONE row, exactly as the gate
- *  reads them. */
-export function entriesFor(id: string, list: Amendment[]): Amendment[] {
-  return id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-}
-
-/** What stands at this amendment's site today, one trimmed line per entry line: its own `replace`,
- *  or — where a later entry's `find` swallowed that `replace` whole — whatever superseded it.
- *  `design-amendments.test.ts`'s `outputOf`, which is the gate's own walk. */
-export function outputOf(a: Amendment, list: Amendment[]): string[] {
-  const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
-  return later === undefined ? a.replace.split('\n').map((s) => s.trim()).filter(Boolean) : outputOf(later, list);
-}
-
 /** Every line of the design a citation for `id` may legally name — the gate's own rule, read
  *  from one place so the tool and the gate cannot disagree about what "distinctive" means. */
 export function anchorLines(id: string, { design, list, maxOccurrences }: Omit<RemapInput, 'md' | 'pins'>): number[] {
   const own = entriesFor(id, list);
   const occurrences = (piece: string) => design.split(piece).length - 1;
-  const pieces = own.flatMap((a) => outputOf(a, list)).filter((p) => /[A-Za-z0-9]{2,}/.test(p) && occurrences(p) <= maxOccurrences);
+  const pieces = own.flatMap((a) => outputOf(a, list)).filter((p) => isDistinctivePiece(p, occurrences, maxOccurrences));
   return design.split('\n').flatMap((line, i) => (pieces.some((p) => line.includes(p)) ? [i + 1] : []));
 }
 
@@ -112,16 +103,35 @@ export function onAnchor(anchors: number[], n: number): boolean {
 
 type Home = { line: number; rung: CitationMove['rung'] } | { line: null; why: string };
 
-/** The three rungs, in order. */
-export function homeLine(id: string, cited: number, input: Omit<RemapInput, 'md'>): Home {
+/**
+ * The three rungs, in order.
+ *
+ * `anchorsFor` is a THUNK, not a value: `anchorLines` walks every entry the id owns and every
+ * line of the design, and both this function's own pin check and `remapCitations`'s snap need the
+ * SAME set for the SAME row — computing it here and again in the caller was measured as the exact
+ * duplication (review, HOUSEKEEPING-C fix round 1, Minor-4). The default recomputes on demand, so
+ * a caller with nothing to cache (every direct unit-test call) is unaffected; `remapCitations`
+ * passes a MEMOISING thunk so the one row that needs it twice pays for it once.
+ */
+export function homeLine(id: string, cited: number, input: Omit<RemapInput, 'md'>, anchorsFor: () => number[] = () => anchorLines(id, input)): Home {
   const pin = input.pins[id];
   if (pin !== undefined) {
     const occurrences = input.design.split(pin.anchor).length - 1;
     if (occurrences !== 1) return { line: null, why: `${id}: the pinned anchor occurs ${occurrences} times, so it names no line — pin a distinctive one` };
-    return { line: input.design.slice(0, input.design.indexOf(pin.anchor)).split('\n').length + pin.offset, rung: 'pin' };
+    const line = input.design.slice(0, input.design.indexOf(pin.anchor)).split('\n').length + pin.offset;
+    // A pin is authoritative, not merely a suggestion the snap may override — but where the entry
+    // DOES still have anchors of its own, a pin landing more than one line from every one of them
+    // is worth a human's eye, not a silent move onto the nearest of them (review, HOUSEKEEPING-C
+    // fix round 1, Important-2). Where the entry has NO anchor at all (the fully-superseded case a
+    // pin exists for), there is nothing to check it against, so the pin stands as written.
+    const anchors = anchorsFor();
+    if (anchors.length > 0 && !onAnchor(anchors, line)) {
+      return { line: null, why: `${id}: the pin resolves to V3:${line}, which is not within ±1 of any of this entry's own anchors (${anchors.join(', ')}) — check the pin's anchor and offset` };
+    }
+    return { line, rung: 'pin' };
   }
   if (entriesFor(id, input.list).length === 0) return { line: null, why: `${id}: the row cites a V3 line but no amendment carries that id` };
-  const anchors = anchorLines(id, input);
+  const anchors = anchorsFor();
   if (anchors.length === 0) return { line: null, why: `${id}: nothing this amendment wrote is still distinctive in the design — pin it` };
   if (anchors.length === 1) return { line: anchors[0], rung: 'only' };
   return { line: nearest(anchors, cited), rung: 'nearest' };
@@ -146,16 +156,29 @@ export function remapCitations(input: RemapInput): RemapResult {
     if (first === null) return row;
     rows++;
     const cited = Number(first[1]);
-    const home = homeLine(id, cited, input);
+    // MEMOISED, not recomputed: `homeLine`'s own check (the pin validation, or resolving 'only' /
+    // 'nearest') and this row's later snap both need the identical anchor set, and computing it
+    // twice per row was the exact duplication measured (review, HOUSEKEEPING-C fix round 1,
+    // Minor-4) — `anchorLines` walks every entry the id owns AND every line of the design.
+    let anchorsCache: number[] | undefined;
+    const anchorsFor = () => (anchorsCache ??= anchorLines(id, input));
+    const home = homeLine(id, cited, input, anchorsFor);
     if (home.line === null) {
       unresolved.push(home.why);
       return row;
     }
-    const anchors = anchorLines(id, input);
     const delta = home.line - cited;
     // Carry every number by the same delta, then SNAP any that the shift left off an anchor — the
-    // tail of a range a later entry rewrote is the case this catches.
-    const move = (n: number) => (onAnchor(anchors, n + delta) ? n + delta : nearest(anchors, n + delta));
+    // tail of a range a later entry rewrote is the case this catches. NEVER for a pin: `homeLine`
+    // has already resolved (and, where there was anything to check it against, validated) the
+    // pin's own line, and re-deriving anchors here to snap the BASE onto one of them is exactly
+    // what let the snap silently override a pin (review, HOUSEKEEPING-C fix round 1,
+    // Important-1/Important-2) — a pin is authoritative, so its span carries the same delta with
+    // no snap, the same "span is editorial, only the base moves" rule applied without a candidate
+    // set that has nothing to do with where the pin points.
+    const move = home.rung === 'pin'
+      ? (n: number) => n + delta
+      : (n: number) => (onAnchor(anchorsFor(), n + delta) ? n + delta : nearest(anchorsFor(), n + delta));
     const next = row.replace(CITATION, (_m, start: string, dash: string | undefined, end: string | undefined) =>
       `V3:${move(Number(start))}${dash === undefined ? '' : `${dash}${move(Number(end))}`}`);
     if (next !== row) moves.push({ id, from: cited, to: home.line, rung: home.rung });

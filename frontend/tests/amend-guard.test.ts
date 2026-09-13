@@ -376,4 +376,75 @@ describe('commentCitations', () => {
     expect(commentCitations('const a = b / c; // V3:9')).toEqual(['1: V3:9']);
     expect(commentCitations("// don't V3:9")).toEqual(['1: V3:9']);
   });
+
+  // Review, HOUSEKEEPING-C fix round 1, Minor-1: `design-amendments.ts:34`'s own STYLED regex,
+  // `/<(\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g`, carries THREE `"` characters — one
+  // in `style="`, one inside the character class `[^"]`, one closing it — and the scanner treats
+  // every `"` as a string delimiter with no notion of a regex literal at all. The first pair reads
+  // as a two-character "string" (`[^`) and is harmless; the THIRD `"` then opens a string with no
+  // partner on the rest of the line, so the scanner hunts forward for the next literal `"`
+  // anywhere in the file — past every `//` and `/*` it crosses on the way — and silently drops
+  // every `V3:` a comment in between carries. Measured against the real file: lines 34-58.
+  it('a regex literal carrying an odd number of quote characters does not desynchronise the scanner', () => {
+    const styled = 'const STYLED = /<(\\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g;';
+    expect(commentCitations(`${styled}\n// V3:999\n`)).toEqual(['2: V3:999']);
+  });
+
+  it('a bare division is still not mistaken for the start of a regex literal', () => {
+    // `/` after an identifier or a closing paren is division, not a regex — a scanner that opens a
+    // regex here would swallow the rest of the line (and beyond) looking for a closing `/`.
+    expect(commentCitations('const half = total / 2; // V3:1\n')).toEqual(['1: V3:1']);
+  });
+
+  it('division after a closing paren is not mistaken for a regex either', () => {
+    // Neither an operator/bracket nor a word character precedes this `/` — a scanner that only
+    // checked "is it a word character" would wrongly open a regex here, consume the FIRST `/` of
+    // the following `//` comment as this "regex"'s own closing delimiter, and the comment (and its
+    // V3:) would never be recognised as a comment at all.
+    expect(commentCitations('const x = (a + b) / 2; // V3:2\n')).toEqual(['1: V3:2']);
+  });
+
+  it('a regex literal at the very start of the file is still recognised as one', () => {
+    // Nothing precedes this `/` at all — the "walked back past the start of the file" case.
+    expect(commentCitations('/^x$/.test(1);\n// V3:3\n')).toEqual(['2: V3:3']);
+  });
+
+  it('a `/` that opens a regex context but never closes before the line ends falls back to an ordinary character', () => {
+    // `=` puts this `/` in regex context, but the line ends with no closing `/` — malformed, or a
+    // division whose left-hand side just happens to be spelled like a pattern start. Either way
+    // the scanner must not treat it as an unterminated regex and skip past everything after it.
+    expect(commentCitations('const s = /never closes\n// V3:5\n')).toEqual(['2: V3:5']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// ONE DEFINITION (review, HOUSEKEEPING-C fix round 1, Important-4). `entriesFor`, `outputOf` and
+// the distinctiveness predicate used to be a second copy in `citation-remap.ts` and a third in two
+// closures inside `design-amendments.test.ts`'s own citation cases. They live here now, and
+// `citation-remap.ts` imports and re-exports them rather than re-deriving its own — proved by
+// identity, not merely by behaviour, since two functions can behave alike and still be two
+// functions someone has to remember to change together.
+// ---------------------------------------------------------------------------------------
+describe('entriesFor, outputOf and isDistinctivePiece are shared, not duplicated', () => {
+  it('citation-remap.ts re-exports the SAME function objects, not a second copy', async () => {
+    const guard = await import('./amend-guard');
+    const remap = await import('./citation-remap');
+    expect(remap.entriesFor).toBe(guard.entriesFor);
+    expect(remap.outputOf).toBe(guard.outputOf);
+  });
+
+  it('no other test file under frontend/tests declares its own entriesFor or outputOf', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const dir = fileURLToPath(new URL('.', import.meta.url));
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts'));
+    const declares = (pattern: RegExp) => files.filter((f) => pattern.test(readFileSync(join(dir, f), 'utf8')));
+    expect(declares(/\bfunction entriesFor\(/).sort()).toEqual(['amend-guard.ts']);
+    expect(declares(/\bfunction outputOf\(/).sort()).toEqual(['amend-guard.ts']);
+    expect(declares(/\bfunction isDistinctivePiece\(/).sort()).toEqual(['amend-guard.ts']);
+    // The inline predicate itself is gone from everywhere but its one definition — a file could
+    // still keep the OLD literal expression under a different name and pass the checks above.
+    expect(declares(/\[\^A-Za-z0-9\]\{2,\}|A-Za-z0-9\]\{2,\}/).sort()).toEqual(['amend-guard.ts']);
+  });
 });
