@@ -6367,9 +6367,22 @@ const A35_4: Amendment = {
 };
 
 /** A35.5 — the MAP's own ceiling, so `getMaxZoom()` stops deriving it from whichever layers
- *  happen to be on and the + button stops in the same place on both basemaps. */
+ *  happen to be on and the + button stops in the same place on both basemaps.
+ *
+ *  BELT AND BRACES BY THE RULING, and recorded as such (fix round 1, Minor-4) so that nobody later
+ *  reads the e2e as proof of it: `Map.getMaxZoom()` (leaflet-src.js:3967-3971) returns the map's
+ *  own option where there is one and `_layersMaxZoom` where there is not, and A35.3 puts
+ *  `maxZoom: 20` on the base layer — so reverting THIS entry alone still lets the + button reach
+ *  20 while any layer carrying 20 is on the map, and reverting A35.3's ceiling alone does too.
+ *  D-C52's wording is what makes it a requirement rather than a duplicate: the MAP gets an
+ *  explicit `maxZoom: 20` so the + button's ceiling does not depend on which basemap is on, and a
+ *  ceiling that is a side effect of which layer happens to be added is not that. Its gate is
+ *  therefore the OPTIONS pin, in two places — `src/map/engines/leaflet.test.ts`'s mount contract
+ *  and `src/components/MarketMapView.test.ts`'s — and both were verified to go red when this entry
+ *  alone is reverted (fix round 1). */
 const A35_5: Amendment = {
   id: 'A35.5', ...ESRI_ZOOM,
+  ruling: 'the MAP carries the ceiling of 20 itself, so the + button does not depend on which basemap is on (D-C52)',
   find: '        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true });\n',
   replace: '        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true, maxZoom: 20 });\n',
   count: 1

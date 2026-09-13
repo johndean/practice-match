@@ -1791,13 +1791,17 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     const hits = recordTiles(page);
     await browseMap(page);
 
-    // Press + until the map stops. The count is bounded well above the ceiling so a map that keeps
-    // going says so by failing the equality below rather than by looping.
+    // Press + until the map stops, watching the LABEL pane on the way: A35.4 gives the reference
+    // layer its own `maxZoom: 18`, so a GridLayer draws nothing above it (`_setView` sets
+    // `_tileZoom` undefined and calls `_removeAllTiles`). Read from the shadow pane, which is where
+    // `pane: "shadowPane"` puts them — the tile pane can say nothing about it.
+    const labelsAt: Record<number, number> = {};
     let z = 10;
     for (let i = 0; i < 14; i++) {
       const next = await zoomInOnce(page, z);
       if (next === z) break;
       z = next;
+      if (z >= 18) labelsAt[z] = (await paneState(page, SHADOW_PANE)).count;
     }
     // Settled on the state the assertions are about, rather than on a timer.
     await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
@@ -1816,6 +1820,12 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     // (iii) The member gets the whole way there, and no further. Before this change Leaflet derived
     // the map's ceiling from the layers (`getMaxZoom` -> `_layersMaxZoom`) and it was 18.
     expect(z, 'the + button did not reach the map\'s own ceiling of 20').toBe(CEILING);
+
+    // (c) The labels soften to 18 and then HIDE. Stated as behaviour, on the pane they actually
+    // live in, rather than as an options value: 16x upscaled text is not legible.
+    expect(labelsAt[18], 'the reference labels are not drawn at z18, where Esri still has them').toBeGreaterThan(0);
+    expect(labelsAt[19], 'the reference labels are still drawn at z19, past their own maxZoom').toBe(0);
+    expect(labelsAt[20], 'the reference labels are still drawn at z20, past their own maxZoom').toBe(0);
 
     // (iv) The polygons are canvas layers with no zoom limit, and they still paint at 20 — the
     // upscaled basemap is underneath them, not instead of them.
@@ -1855,7 +1865,7 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
       const zs = hits.filter((h) => h.service === s).map((h) => h.z);
       return `${s}: z${Math.min(...zs)}–${Math.max(...zs)} (${zs.length} requests)`;
     });
-    console.log(`[A35] map zoom reached ${z}; ${byZoom.join('; ')}`);
+    console.log(`[A35] map zoom reached ${z}; labels drawn at 18/19/20: ${labelsAt[18]}/${labelsAt[19]}/${labelsAt[20]}; ${byZoom.join('; ')}`);
   });
 
   // -----------------------------------------------------------------------------------------
