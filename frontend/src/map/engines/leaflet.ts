@@ -102,6 +102,14 @@ export class LeafletMapEngine implements MapEngine {
     // was not paying anyway: `setUrl`'s redraw already removes every tile, and every tile of the
     // new service is a new request either way. The option is written FIRST, because the re-add is
     // what reads it.
+    //
+    // Fix round 1, Important-3: …but ONLY when the basemap actually changed. `MarketMapView`'s
+    // watcher carries `status` among its deps and fires this with the basemap the engine has just
+    // mounted; `setUrl(sameUrl)` used to be free (leaflet-src.js:12150-12152 sets `noRedraw`
+    // itself) and the reset is not, so every mount paid a second full basemap load — 24 tile
+    // `<img>` built against the label layer's 12. `_url` because `L.TileLayer` has no public
+    // reader for it and the layer is the only thing that knows which basemap it is showing.
+    if (this.tile._url === cfg.url && this.tile.options.maxNativeZoom === cfg.maxNativeZoom) return;
     this.tile.options.maxNativeZoom = cfg.maxNativeZoom;
     this.tile.setUrl(cfg.url, true);
     this.tile.remove();

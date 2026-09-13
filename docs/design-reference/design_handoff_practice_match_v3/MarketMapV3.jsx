@@ -188,6 +188,7 @@ function MarketMapV3(props) {
     const map = mapRef.current;
     if (!L || !map || !tileRef.current) return;
     const cfg = BASEMAPS[basemap] || BASEMAPS.map;
+    if (tileRef.current._url === cfg.url && tileRef.current.options.maxNativeZoom === cfg.maxNativeZoom) return;
     tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;
     tileRef.current.setUrl(cfg.url, true);
     tileRef.current.remove();

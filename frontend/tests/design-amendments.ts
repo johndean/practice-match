@@ -6377,8 +6377,9 @@ const A35_5: Amendment = {
 
 /** A35.6 — a basemap switch writes the new native max and then hands the layer a CLEAN RESET,
  *  because the two basemaps clamp to different tile zooms and `setUrl`'s own redraw cannot carry
- *  that. Revised in FIX ROUND 1 (2026-09-13) on the review's Important-1 and Important-2; the values
- *  D-C52 ruled are untouched, and what changed is where one assignment sits.
+ *  that. Revised in FIX ROUND 1 (2026-09-13) on the review's Important-1/2/3; the values D-C52
+ *  ruled are untouched, and what changed is the order of one assignment and a guard in front of
+ *  the whole thing.
  *
  *  MEASURED in real Chromium (this branch's own e2e, which is why it exists). `setUrl` ->
  *  `GridLayer.redraw()` moves `this._tileZoom` to the new clamp and calls `_updateLevels()` and
@@ -6409,13 +6410,26 @@ const A35_5: Amendment = {
  *  measured as "Tiles (c) Esri, Source: Esri, Vantor, Earthstar Geographics, and the GIS User
  *  Community" on the GRAY basemap, which is new on this branch and is the half that matters,
  *  attribution being legally load-bearing (CLAUDE.md). Assigned between the two, every add
- *  registers the credit the layer is about to show and every remove clears exactly that one. */
+ *  registers the credit the layer is about to show and every remove clears exactly that one.
+ *
+ *  FIX ROUND 1, Important-3 — A SETBASE FOR THE BASEMAP ALREADY ON THE MAP RETURNS. The port's
+ *  caller (`MarketMapView.vue`'s watcher) carries `status` among its deps, so it fires `setBase`
+ *  with the SAME basemap the engine has just mounted. Under the design's own previous line that
+ *  was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152) — and the
+ *  reset above is unconditional, so every mount paid a SECOND full basemap load: measured at 12
+ *  `createTile` calls at mount and 24 after the no-op, and 24 `<img>` built against the label
+ *  layer's 12 in the browser. On a project that ruled on exactly this class of waste (A32, "a
+ *  metro switch pulled the whole metro TWICE"), the reset is guarded on an actual change. The
+ *  guard reads `_url` because `L.TileLayer` has no public reader for it and the LAYER is the only
+ *  thing that knows which basemap it is currently showing — the same posture the design already
+ *  takes one line below, where it calls `map.attributionControl._update`. */
 const A35_6: Amendment = {
   id: 'A35.6', ...ESRI_ZOOM,
   find: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
     + '    tileRef.current.setUrl(cfg.url);\n'
     + '    tileRef.current.options.attribution = cfg.attribution;\n',
   replace: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
+    + '    if (tileRef.current._url === cfg.url && tileRef.current.options.maxNativeZoom === cfg.maxNativeZoom) return;\n'
     + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
     + '    tileRef.current.setUrl(cfg.url, true);\n'
     + '    tileRef.current.remove();\n'

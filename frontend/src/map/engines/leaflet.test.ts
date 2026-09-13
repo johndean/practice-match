@@ -121,6 +121,37 @@ describe('LeafletMapEngine — A35: the basemap never requests a tile Esri does 
     expect((stub.map as any).opts.maxZoom).toBe(20);
   });
 
+  // Fix round 1, Important-3. `MarketMapView`'s basemap watcher carries `status` among its deps, so
+  // it fires `setBase(props.basemap)` with the SAME basemap the engine has just mounted. Under the
+  // old code that was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152)
+  // — and A35.6's reset is unconditional, so every mount paid a SECOND full basemap tile load
+  // (measured with real Leaflet in a 900x700 map: 12 createTile calls at mount, 24 after the
+  // no-op setBase). On a project that ruled on exactly this class of waste (A32, "a metro switch
+  // pulled the whole metro TWICE"), the reset is guarded on an actual change of basemap.
+  it('a setBase for the basemap already on the map touches nothing at all', async () => {
+    const { stub, engine } = await mounted();
+    const tile = stub.tiles[0];
+    const attachedAtMount = tile.seq;
+    expect(tile.setUrlCalls, 'mount() must not call setUrl at all').toBe(0);
+
+    engine.setBase('map');
+    expect(tile.setUrlCalls, 'the layer was re-urled for the basemap it is already showing').toBe(0);
+    expect(tile.seq, 'the layer was removed and re-added for the basemap it is already showing').toBe(attachedAtMount);
+    expect((stub.map as any).attrUpdated ?? 0, 'the attribution control was rebuilt for nothing').toBe(0);
+    expect(tile.options.maxNativeZoom, 'the guard must leave the native cap exactly where it was').toBe(16);
+
+    // …and a REAL change still does all of it, so the guard cannot be satisfied by doing nothing.
+    engine.setBase('satellite');
+    expect(tile.setUrlCalls).toBe(1);
+    expect(tile.seq).toBeGreaterThan(attachedAtMount);
+    expect(tile.options.maxNativeZoom).toBe(19);
+    // Re-selecting the tab that is already pressed is the same no-op.
+    const attachedAfterSatellite = tile.seq;
+    engine.setBase('satellite');
+    expect(tile.setUrlCalls).toBe(1);
+    expect(tile.seq).toBe(attachedAfterSatellite);
+  });
+
   it('every basemap declares its own native max, and no layer can be asked past it', async () => {
     // Stated on the CONSTANTS as well as on the mount, because `setBase` reads them directly:
     // a basemap added without one would leave `maxNativeZoom` undefined and Leaflet would go

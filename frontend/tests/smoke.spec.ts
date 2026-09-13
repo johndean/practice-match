@@ -1887,4 +1887,47 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
   });
 
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-3. `MarketMapView`'s basemap watcher carries `status` among its deps, so
+  // it fires `setBase(props.basemap)` with the SAME basemap the engine has just mounted. Under the
+  // old code that was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152)
+  // — and A35.6's reset is unconditional, so every mount paid a second full basemap tile load.
+  // The base layer and the label layer cover the same view at the same tile size, so one load each
+  // means the SAME number of requests; a second load of the base alone breaks that equality, which
+  // is what makes this measurable without hard-coding a tile count for a viewport.
+  // -----------------------------------------------------------------------------------------
+  test('a mount loads the basemap ONCE — the no-op setBase the watcher fires costs nothing', async ({ page }) => {
+    // COUNTED IN THE DOM, not in the request log, and that is the whole design of this case: the
+    // second load asks for the SAME urls the first one is still fetching, so Chromium coalesces it
+    // and the network shows twelve requests either way (measured — the request counts are identical
+    // before and after the fix). What is not hidden is that Leaflet builds twelve more `<img>`
+    // elements, which a MutationObserver installed before the page's own scripts can count. The
+    // observer lives in the TEST, through addInitScript; no production code grows a seam for it.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __tileAdds: Record<string, number> };
+      w.__tileAdds = {};
+      new MutationObserver((records) => {
+        for (const r of records) {
+          for (const node of r.addedNodes) {
+            if (!(node instanceof HTMLImageElement) || !node.classList.contains('leaflet-tile')) continue;
+            const m = /\/services\/(.+?)\/MapServer\/tile\//.exec(node.src);
+            if (m) w.__tileAdds[m[1]] = (w.__tileAdds[m[1]] ?? 0) + 1;
+          }
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+    await browseMap(page);
+    await expect.poll(() => paneState(page, SHADOW_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+
+    const adds = await page.evaluate(() => (window as unknown as { __tileAdds: Record<string, number> }).__tileAdds);
+    const base = adds['Canvas/World_Light_Gray_Base'] ?? 0;
+    const labels = adds['Canvas/World_Light_Gray_Reference'] ?? 0;
+    // The base layer and the label layer cover the same view at the same tile size, so ONE load
+    // each is the same number of tiles. A second load of the base alone breaks that equality —
+    // which is what makes this measurable without hard-coding a tile count for a viewport.
+    expect(labels, 'the label layer built no tiles at all — the comparison below is vacuous').toBeGreaterThan(0);
+    expect(base, 'the basemap was built more than once at mount — the no-op setBase reset the layer')
+      .toBe(labels);
+    console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
+  });
 });

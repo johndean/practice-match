@@ -1520,11 +1520,14 @@ describe('local design amendments (spec D15)', () => {
     // never calls `_resetGrid()` (leaflet-src.js:11330-11341), so a redraw alone leaves the
     // previous zoom's `_globalTileRange` in place and `_isValidTile` rejects every tile at the new
     // tile zoom (measured in Chromium as a switch to Satellite at zoom 20 that requested NOTHING).
-    // The credit is assigned BETWEEN the remove and the add — Important-1/2: `Control.Attribution`
+    // The guard in front of it is Important-3: the caller fires this with the basemap already
+    // mounted, and an unconditional reset made every mount pay a second full basemap load. The
+    // credit is assigned BETWEEN the remove and the add — Important-1/2: `Control.Attribution`
     // rebuilds from a registry written at add time and cleared at remove time, so assigned after
     // `addTo` the footer ended up carrying BOTH basemaps' credits for the life of the map.
     expect(jsx).toContain(
       '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
+      + '    if (tileRef.current._url === cfg.url && tileRef.current.options.maxNativeZoom === cfg.maxNativeZoom) return;\n'
       + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
       + '    tileRef.current.setUrl(cfg.url, true);\n'
       + '    tileRef.current.remove();\n'
