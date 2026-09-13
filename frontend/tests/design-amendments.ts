@@ -6274,6 +6274,142 @@ const A31_12c: Amendment = {
   count: 1
 };
 
+/** A35 (John, 2026-09-13 — ruling D-C52). THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE,
+ *  AND THE MEMBER ZOOMS PAST IT. His words: "allow a user to zoom in BELOW the level of the last
+ *  actual map layer … the map allows user to zoom in as far as they want … this message is never
+ *  seen".
+ *
+ *  MEASURED 2026-09-13, every number re-fetched by an adversarial verifier. The Browse basemap is
+ *  Esri Canvas/World_Light_Gray_Base with Canvas/World_Light_Gray_Reference labels. Both services'
+ *  own `serviceDescription` says the cache runs "from Level 0 … through Level 13" worldwide and
+ *  "from Level 14 … through Level 16" in North America, and their tilemap inventory reports ZERO
+ *  cached tiles at 17+ at all nine US points probed (GHI Veterinary Hospital: z16 -> [1,1,1,1],
+ *  z17/z18 -> [0,0,0,0]). For any tile past 16 Esri answers **HTTP 200** with a constant
+ *  2,521-byte grey JPEG reading "Map data not yet available".
+ *
+ *  The design creates both layers with `maxZoom: 18` and NO `maxNativeZoom`, and the map with no
+ *  ceiling of its own. Leaflet 1.9.4 then derives the map's 18 from the layers
+ *  (`getMaxZoom` -> `_layersMaxZoom`), `_clampZoom` has nothing to clamp to, `_getZoomForUrl` puts
+ *  17 and 18 in the URL, and the placeholder loads as a SUCCESSFUL image — which is why
+ *  `errorTileUrl` and `tileerror`, both of which fire on an <img> ERROR, could never have seen it.
+ *  The tract polygons, the tooltip and the pin are canvas and marker layers with no zoom limit, so
+ *  they went on rendering over the grey: the screenshot exactly.
+ *
+ *  THE RULED VALUES, service by service (D-C52):
+ *    gray base    `maxNativeZoom: 16`, `maxZoom: 20` — requested at 16, upscaled 2x/4x/8x/16x
+ *                 above it, so the placeholder can never be requested at all.
+ *    gray labels  `maxNativeZoom: 16`, `maxZoom: 18` — the labels soften to 18 and then HIDE (a
+ *                 GridLayer draws nothing above its OWN maxZoom while the base keeps the map's
+ *                 ceiling). 16x upscaled text is not legible and hiding is honest; the z16
+ *                 reference tile at GHI is real but EMPTY (872 B, zero opaque pixels), so the
+ *                 labels contribute nothing there either way.
+ *    satellite    `maxNativeZoom: 19`, `maxZoom: 20` — Esri's published US floor (0.3 m),
+ *                 measured real at every probed point including rural Texas. Chicago and rural TX
+ *                 stop at 19; Dallas, New York, Atlanta and Denver reach 20; Austin, Sacramento
+ *                 and Orlando reach 21 — depth is per-area and NOT knowable client-side, so a
+ *                 city with deeper imagery gives up one level of native sharpness in exchange for
+ *                 a guarantee the placeholder cannot appear anywhere.
+ *  The MAP gets an explicit `maxZoom: 20` so the + button's ceiling does not depend on which
+ *  basemap is on. `detectRetina` stays unset, deliberately: it adds a zoomOffset WITHOUT touching
+ *  `maxNativeZoom`, which is z17 requests and the placeholder again by another door.
+ *
+ *  Six literal edits, all in `MarketMapV3.jsx` (`file: 'jsx'`, A28.1's precedent), none chained:
+ *  every `find` occurs exactly once in the pristine twin, measured before writing. The port
+ *  mirrors them literal for literal in `frontend/src/lib/leaflet.js` and
+ *  `frontend/src/map/engines/leaflet.ts` (spec §3), and `frontend/tests/smoke.spec.ts` walks real
+ *  Chromium from z10 to the ceiling and records every arcgisonline URL, on both basemaps, because
+ *  the harness blanks every tile and no approved state takes a zoom step. */
+const ESRI_ZOOM = { date: '2026-09-13', file: 'jsx' as AmendmentFile,
+  ruling: 'allow a user to zoom in BELOW the level of the last actual map layer — the map allows user to zoom in as far as they want, and this message is never seen (D-C52)' };
+
+/** A35.1 — the gray canvas declares the last level Esri actually caches it to. */
+const A35_1: Amendment = {
+  id: 'A35.1', ...ESRI_ZOOM,
+  find: '    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",\n',
+  replace: '    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",\n'
+    + '    maxNativeZoom: 16,\n',
+  count: 1
+};
+
+/** A35.2 — the same for World_Imagery, at Esri's published US floor of z19. */
+const A35_2: Amendment = {
+  id: 'A35.2', ...ESRI_ZOOM,
+  find: '    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",\n',
+  replace: '    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",\n'
+    + '    maxNativeZoom: 19,\n',
+  count: 1
+};
+
+/** A35.3 — the base tile layer REQUESTS at its basemap's native max and DISPLAYS to 20. The
+ *  option is read off `BASEMAPS[basemap]` rather than written as a number, so the two can never
+ *  disagree and a basemap added later carries its own. */
+const A35_3: Amendment = {
+  id: 'A35.3', ...ESRI_ZOOM,
+  find: '        tileRef.current = L.tileLayer(BASEMAPS[basemap].url, {\n'
+    + '          attribution: BASEMAPS[basemap].attribution,\n'
+    + '          maxZoom: 18\n'
+    + '        }).addTo(map);\n',
+  replace: '        tileRef.current = L.tileLayer(BASEMAPS[basemap].url, {\n'
+    + '          attribution: BASEMAPS[basemap].attribution,\n'
+    + '          maxZoom: 20,\n'
+    + '          maxNativeZoom: BASEMAPS[basemap].maxNativeZoom\n'
+    + '        }).addTo(map);\n',
+  count: 1
+};
+
+/** A35.4 — the labels keep their OWN `maxZoom: 18` and gain the same native cap: soften to 18,
+ *  then hide, rather than upscale 16x into illegibility. */
+const A35_4: Amendment = {
+  id: 'A35.4', ...ESRI_ZOOM,
+  find: '        labelRef.current = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: "shadowPane" });\n',
+  replace: '        labelRef.current = L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: "shadowPane" });\n',
+  count: 1
+};
+
+/** A35.5 — the MAP's own ceiling, so `getMaxZoom()` stops deriving it from whichever layers
+ *  happen to be on and the + button stops in the same place on both basemaps. */
+const A35_5: Amendment = {
+  id: 'A35.5', ...ESRI_ZOOM,
+  find: '        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true });\n',
+  replace: '        const map = L.map(hostRef.current, { center, zoom, zoomControl: false, attributionControl: true, maxZoom: 20 });\n',
+  count: 1
+};
+
+/** A35.6 — a basemap switch writes the new native max and then hands the layer a CLEAN RESET,
+ *  because the two basemaps clamp to different tile zooms and `setUrl`'s own redraw cannot carry
+ *  that.
+ *
+ *  MEASURED in real Chromium (this branch's own e2e, which is why it exists). `setUrl` ->
+ *  `GridLayer.redraw()` moves `this._tileZoom` to the new clamp and calls `_updateLevels()` and
+ *  `_update()` — but NOT `_resetGrid()` (leaflet-src.js:11330-11341), which is the only place
+ *  `_globalTileRange` is recomputed. Leaflet's own path for a tile-zoom change is `_setView`, and
+ *  that one does call it. So after a switch at map zoom 20 the layer asked for z19 coordinates
+ *  while still holding the z16 world range, `_isValidTile` rejected every one of them
+ *  (65,535 is the largest tile index at z16 and the smallest z19 index in view is far past it),
+ *  and the map went BLANK: zero tiles requested, zero `<img>` in the tile pane. The probe that
+ *  isolates it: the same switch at the design's own zoom 10 — where both services clamp to the
+ *  SAME tile zoom and `redraw()` leaves `_tileZoom` alone — asked for twelve imagery tiles.
+ *
+ *  So the url is set with `noRedraw` and the layer is removed and re-added: `GridLayer.onAdd`
+ *  clears `_levels`/`_tiles` and calls `_resetView()` -> `_setView()` with `_tileZoom` undefined,
+ *  which is the full, public reset including `_resetGrid()`. It costs nothing a switch was not
+ *  paying anyway — `setUrl`'s redraw already removes every tile, and every tile of the new service
+ *  is a new request either way — and it leaves the attribution exactly where it was, because
+ *  `options.attribution` is still assigned on the LINE BELOW this edit, so the control removes and
+ *  re-adds the one string it already held. The write stays BEFORE both, because the re-add is what
+ *  reads it. */
+const A35_6: Amendment = {
+  id: 'A35.6', ...ESRI_ZOOM,
+  find: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
+    + '    tileRef.current.setUrl(cfg.url);\n',
+  replace: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
+    + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
+    + '    tileRef.current.setUrl(cfg.url, true);\n'
+    + '    tileRef.current.remove();\n'
+    + '    tileRef.current.addTo(map);\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6425,5 +6561,10 @@ export function amendments(): Amendment[] {
     // A31.12b on A24.45's whole helper, so both run after the entries they read.
     A31_12, A31_12b, A31_12c,
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
-    A31_13, A31_13b];
+    A31_13, A31_13b,
+    // A35 -- the basemap never requests a tile Esri does not have, and the member zooms past it
+    // (John's ruling D-C52, 2026-09-13). Seven literal edits, all `file: 'jsx'` (A28.1's
+    // precedent) and none chained: every `find` occurs exactly once in the pristine twin.
+    // Appended last, as every family is. Definition order in this file matches this list (m8).
+    A35_1, A35_2, A35_3, A35_4, A35_5, A35_6];
 }

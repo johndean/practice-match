@@ -40,11 +40,18 @@ export class LeafletMapEngine implements MapEngine {
     // with nothing holding a reference to tear either down.
     if (this.destroyed) return;
     this.L = L;
-    this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true });
+    // A35 (ruling D-C52): the MAP carries the ceiling — `maxZoom: 20` — so `getMaxZoom()` stops
+    // deriving it from whichever layers are on and the + button stops in the same place on both
+    // basemaps. Each tile layer REQUESTS at its own service's `maxNativeZoom` and Leaflet upscales
+    // above it, so a tile Esri does not have is never asked for. `detectRetina` stays unset: it
+    // adds a zoomOffset WITHOUT touching maxNativeZoom, which is the same defect by another door.
+    this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true, maxZoom: 20 });
     const cfg = BASEMAPS[opts.basemap] || BASEMAPS.map;
-    this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 18 }).addTo(this.map);
+    this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 20, maxNativeZoom: cfg.maxNativeZoom }).addTo(this.map);
     // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
-    this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' });
+    // They keep their own `maxZoom: 18` and HIDE above it rather than upscale 16x into
+    // illegibility, while the base layer keeps the map's ceiling.
+    this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: 'shadowPane' });
     if (opts.basemap === 'map') this.labels.addTo(this.map);
     // ONE canvas renderer per mount, shared by every shaded area (MarketMapV3.jsx:248). A
     // renderer per polygon is what made the 12,560-rectangle mosaic unusable, and the rule
@@ -82,7 +89,23 @@ export class LeafletMapEngine implements MapEngine {
   setBase(kind: BaseKind): void {
     if (this.destroyed) return;
     const cfg = BASEMAPS[kind] || BASEMAPS.map;
-    this.tile.setUrl(cfg.url);
+    // A35.6 (ruling D-C52). The two basemaps clamp to DIFFERENT tile zooms (16 and 19), and
+    // `setUrl`'s own redraw cannot carry that: `GridLayer.redraw()` moves `_tileZoom` to the new
+    // clamp but never calls `_resetGrid()` (leaflet-src.js:11330-11341), which is the only place
+    // `_globalTileRange` is recomputed — so after a switch at map zoom 20 the layer asked for z19
+    // coordinates while still holding the z16 world range, `_isValidTile` rejected every one of
+    // them, and the map went BLANK. Measured in real Chromium by `tests/smoke.spec.ts`: zero tiles
+    // requested at z20, twelve at z10 (where both services clamp to the same tile zoom and
+    // `redraw()` leaves `_tileZoom` alone). So the url is set with `noRedraw` and the layer is
+    // removed and re-added — `GridLayer.onAdd` -> `_resetView()` -> `_setView()` with `_tileZoom`
+    // undefined is Leaflet's own full reset, `_resetGrid()` included. It costs nothing a switch
+    // was not paying anyway: `setUrl`'s redraw already removes every tile, and every tile of the
+    // new service is a new request either way. The option is written FIRST, because the re-add is
+    // what reads it.
+    this.tile.options.maxNativeZoom = cfg.maxNativeZoom;
+    this.tile.setUrl(cfg.url, true);
+    this.tile.remove();
+    this.tile.addTo(this.map);
     if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
     this.tile.options.attribution = cfg.attribution;
     if (this.map.attributionControl._update) this.map.attributionControl._update();

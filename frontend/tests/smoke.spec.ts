@@ -1636,3 +1636,176 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// A35 — THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE, AND THE MEMBER ZOOMS PAST IT.
+// John, 2026-09-13 (ruling D-C52): "allow a user to zoom in BELOW the level of the last actual
+// map layer … the map allows user to zoom in as far as they want … this message is never seen".
+//
+// WHY NO GATE CAUGHT IT, and why this one is in a real browser. `harness.ts` answers every
+// arcgisonline request with a transparent 1x1 GIF at any zoom, and every approved state captures
+// at z10 (desktop) / z9 (phone) with no zoom step — so the pixels could never show it. The unit
+// case (`src/map/engines/leaflet.test.ts`) owns the OPTIONS; what only Chromium can prove is what
+// Leaflet does WITH them: that `_clampZoom` holds the URL at the native max while `_limitZoom`
+// lets the map itself reach 20, on both basemaps, across a switch.
+//
+// The URLs are recorded rather than the tiles inspected: the stub deliberately answers 200 to
+// everything (an abort logs a console error the harness's own gate would fail on), which is
+// exactly what Esri does for a missing tile too. The REQUEST is the observable.
+// -------------------------------------------------------------------------------------------
+test.describe('A35 — the gray basemap never asks Esri for a tile it does not have (D-C52)', () => {
+  /** The last level each Esri service is actually cached to, MEASURED 2026-09-13 (the task brief's
+   *  own probe: the Canvas tilemaps report zero tiles at 17+ at all nine US points; World_Imagery
+   *  is real at z19 everywhere probed, rural Texas included). */
+  const NATIVE_MAX: Record<string, number> = { 'gray-base': 16, 'gray-labels': 16, imagery: 19 };
+  const CEILING = 20;
+
+  type TileHit = { service: string; z: number };
+  const SERVICE: Record<string, string> = {
+    'Canvas/World_Light_Gray_Base': 'gray-base',
+    'Canvas/World_Light_Gray_Reference': 'gray-labels',
+    World_Imagery: 'imagery'
+  };
+
+  /** Every basemap tile the page asks for, from before the first navigation — a tile requested at
+   *  mount counts as much as one requested after a click. */
+  function recordTiles(page: Page): TileHit[] {
+    const hits: TileHit[] = [];
+    page.on('request', (r) => {
+      const m = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//.exec(r.url());
+      if (m && SERVICE[m[1]]) hits.push({ service: SERVICE[m[1]], z: Number(m[2]) });
+    });
+    return hits;
+  }
+
+  /** The MAP's own zoom, read off Leaflet's own animation proxy — the element `Map._animMoveEnd`
+   *  transforms to `scale(getZoomScale(zoom, 1))`, i.e. 2^(zoom-1), on every `moveend`
+   *  (leaflet-src.js:4756). Read from the DOM rather than through a hook, because the production
+   *  code must not grow a test-only seam: the app exposes no zoom and this case does not ask it to.
+   *  The TILE z cannot stand in — separating the two is the whole point of the ruling.
+   *
+   *  `animating` comes back with it because Leaflet SWALLOWS a zoom request made during a zoom
+   *  animation (`Map._tryAnimatedZoom`: `if (this._animatingZoom) { return true; }`), and the proxy
+   *  carries the TARGET zoom from `zoomanim` onward — so a press timed off the proxy alone lands
+   *  inside the previous transition and is discarded, which is what held an early draft of this
+   *  case at zoom 11. `leaflet-zoom-anim` is on the MAP PANE, not on the container
+   *  (leaflet-src.js:4808/4834), and is carried for exactly the length of that transition. */
+  const mapState = (page: Page) => page.evaluate(() => {
+    const pane = document.querySelector('.leaflet-map-pane') as HTMLElement | null;
+    const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+    if (pane === null || proxy === null) return null;
+    const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+    return {
+      zoom: m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1,
+      animating: pane.classList.contains('leaflet-zoom-anim')
+    };
+  });
+  const mapZoom = async (page: Page) => (await mapState(page))?.zoom ?? null;
+
+  /** One press of the design's own "+" control, waited out rather than slept through — in the PAGE,
+   *  because every zoom step also settles a new viewport and pulls six layers of boundary polygons,
+   *  and a poll driven from the test would be spending its budget on those round trips. Returns the
+   *  zoom it settled on — equal to `from` when the map refused to move, which is the ceiling. */
+  const STEP_TIMEOUT_MS = 10_000;
+  async function zoomInOnce(page: Page, from: number): Promise<number> {
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    try {
+      await page.waitForFunction((prev) => {
+        const pane = document.querySelector('.leaflet-map-pane');
+        const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+        if (pane === null || proxy === null) return false;
+        const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+        if (m === null) return false;
+        return !pane.classList.contains('leaflet-zoom-anim')
+          && Math.round(Math.log2(Number(m[1]))) + 1 !== prev;
+      }, from, { timeout: STEP_TIMEOUT_MS, polling: 100 });
+    } catch {
+      return from;                       // the map did not move: this is the ceiling
+    }
+    return (await mapZoom(page)) as number;
+  }
+
+  /** Painted pixels on the polygon layer's own canvas — the shading must survive the whole climb,
+   *  because the canvas renderer has no zoom limit and the tiles beneath it now do. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  // Ten zoom steps, each settling a new viewport and pulling six layers of real boundary polygons
+  // through the harness — the cost of measuring the real chain rather than a stub of it.
+  test.setTimeout(180_000);
+
+  test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
+    const hits = recordTiles(page);
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(600);
+    expect(await mapZoom(page), 'the design opens Austin at zoom 10 — read through the same channel as the rest').toBe(10);
+
+    // Press + until the map stops. The count is bounded well above the ceiling so a map that keeps
+    // going says so by failing the equality below rather than by looping.
+    let z = 10;
+    for (let i = 0; i < 14; i++) {
+      const next = await zoomInOnce(page, z);
+      if (next === z) break;
+      z = next;
+    }
+
+    await page.waitForTimeout(1200);           // let the last level's tiles and the last boundary load fly
+
+    const gray = hits.filter((h) => h.service !== 'imagery');
+    expect(gray.length, 'the gray canvas asked for no tiles at all — the recorder is not watching').toBeGreaterThan(0);
+    // (i) The defect itself, stated as the thing that must never be requested: Esri answers 200 with
+    // a 2,521-byte "Map data not yet available" JPEG for any Canvas tile past 16.
+    expect([...new Set(gray.filter((h) => h.z > NATIVE_MAX['gray-base']).map((h) => h.z))].sort((a, b) => a - b),
+      'the gray canvas was asked for a level Esri answers with "Map data not yet available"').toEqual([]);
+    // (ii) …and it still asks AT the ceiling. A layer that quietly stopped drawing at 16 would pass
+    // the assertion above and leave the member on a blank map, which is not the ruling.
+    expect(Math.max(...gray.map((h) => h.z)), 'the gray canvas stopped short of its own native max').toBe(NATIVE_MAX['gray-base']);
+
+    // (iii) The member gets the whole way there, and no further. Before this change Leaflet derived
+    // the map's ceiling from the layers (`getMaxZoom` -> `_layersMaxZoom`) and it was 18.
+    expect(z, 'the + button did not reach the map\'s own ceiling of 20').toBe(CEILING);
+
+    // (iv) The polygons are canvas layers with no zoom limit, and they still paint at 20 — the
+    // upscaled basemap is underneath them, not instead of them.
+    expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
+
+    // (v) The other basemap, switched at the ceiling: imagery is real to 19 and is asked for at 19.
+    const beforeSat = hits.length;
+    const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
+    await satTab.click();
+    await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
+    await page.waitForTimeout(1500);
+    const imagery = hits.slice(beforeSat).filter((h) => h.service === 'imagery');
+    expect(imagery.length, 'switching to Satellite asked for no imagery at all').toBeGreaterThan(0);
+    expect([...new Set(imagery.filter((h) => h.z > NATIVE_MAX.imagery).map((h) => h.z))],
+      'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
+    expect(Math.max(...imagery.map((h) => h.z)), 'Satellite stopped short of its own native max').toBe(NATIVE_MAX.imagery);
+
+    const beforeMap = hits.length;
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await page.waitForTimeout(1500);
+    const backToGray = hits.slice(beforeMap).filter((h) => h.service === 'gray-base');
+    expect(backToGray.length, 'switching back to Map asked for no gray tiles at all').toBeGreaterThan(0);
+    expect([...new Set(backToGray.filter((h) => h.z > NATIVE_MAX['gray-base']).map((h) => h.z))],
+      'A35.6: the native max must be written BEFORE setUrl, or the redraw re-reads the old one').toEqual([]);
+
+    // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
+    // for a tile the service that serves it does not have.
+    const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
+    expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
+
+    const byZoom = [...new Set(hits.map((h) => h.service))].sort().map((s) => {
+      const zs = hits.filter((h) => h.service === s).map((h) => h.z);
+      return `${s}: z${Math.min(...zs)}–${Math.max(...zs)} (${zs.length} requests)`;
+    });
+    console.log(`[A35] map zoom reached ${z}; ${byZoom.join('; ')}`);
+  });
+});

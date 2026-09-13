@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { loadLeaflet, BASEMAPS, LABEL_TILES } from './leaflet.js';
+
+/** The amended design this file is a hand-written port of (spec §3). Read, never re-typed: the
+ *  basemap constants are the one thing both files spell out, so they are compared rather than
+ *  copied. */
+// `import.meta.dirname`, not `new URL(..., import.meta.url)`: this file runs under jsdom, where
+// `import.meta.url` is the served http URL and `fileURLToPath` refuses it (ImageSlot.test.ts's
+// own note).
+const DESIGN_JSX = join(import.meta.dirname, '../../../docs/design-reference/design_handoff_practice_match_v3/MarketMapV3.jsx');
 
 describe('loadLeaflet', () => {
   it('resolves the bundled Leaflet without injecting CDN tags', async () => {
@@ -42,5 +52,19 @@ describe('loadLeaflet', () => {
     expect(BASEMAPS.map.attribution).toBe('Tiles © Esri');
     expect(BASEMAPS.satellite.attribution).toBe('Imagery © Esri, Maxar, Earthstar Geographics');
     expect(LABEL_TILES).toContain('World_Light_Gray_Reference');
+  });
+
+  // A35.1/A35.2 — the last zoom level each service actually has a tile for. Esri publishes the
+  // gray Canvas basemaps "from Level 14 through Level 16" in North America and answers HTTP 200
+  // with a grey "Map data not yet available" JPEG past it; World_Imagery is real to z19 at every
+  // US point probed (0.3 m, Esri's published US floor) and deeper in some metros, which is not
+  // knowable client-side. These are the values Leaflet requests at; the DISPLAY ceiling is 20 and
+  // belongs to the map, not to a basemap.
+  it('declares the native zoom each Esri service is actually cached to (A35.1/A35.2)', () => {
+    expect(BASEMAPS.map.maxNativeZoom).toBe(16);
+    expect(BASEMAPS.satellite.maxNativeZoom).toBe(19);
+    const jsx = readFileSync(DESIGN_JSX, 'utf8');
+    expect(jsx).toContain('maxNativeZoom: 16');
+    expect(jsx).toContain('maxNativeZoom: 19');
   });
 });
