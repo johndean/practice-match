@@ -6003,11 +6003,16 @@ describe('A33.2 — the margin caveat counts the bands', () => {
 
   it('says nothing about bands for a polygon with no value to count them around', () => {
     // A suppressed polygon can arrive with a margin AND `band_ambiguous` true — the endpoint
-    // judges ambiguity on the RAW value and nulls the value separately — and its tip renders the
-    // suppression sentence, not the margin. The caveat needs a value, and with none it composes
-    // nothing rather than counting bands around zero.
+    // judges ambiguity on the RAW value and nulls the value separately. `areaTip` composes
+    // `margin` before it knows whether the tip will use it, so the caveat IS built for such a
+    // polygon (around `null + moe`, which is why it would read "undefined") and then discarded
+    // whole: the tip renders `shown ? margin : absent`, and `shown` is false here. The guard the
+    // first implementation added for this was removed on review — it changed no rendered byte and
+    // no test failed when it was reverted, which is the definition of a term that cannot be
+    // tested. What a member sees is asserted instead.
     const suppressed = tip({ value: null, moe: 22243, band_ambiguous: true });
     expect(suppressed).toContain('No data for this area');
     expect(suppressed).not.toContain('legend bands');
+    expect(suppressed, 'the discarded margin string reached the tip').not.toContain('undefined');
   });
 });

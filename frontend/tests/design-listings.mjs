@@ -18,7 +18,7 @@
 // it IS exactly what the server sends for a listing with no photographs. `photo_captions: []`
 // says the same about the descriptions amendment A15 reads (A-L11): the design's fixtures have
 // no words of their own, so every caption they render is the design's own fixed slot caption.
-import { ECON_K, P, VETS } from '../src/logic.js';
+import { Component, ECON_K, P, VETS } from '../src/logic.js';
 
 /**
  * One design fixture in the shape `GET /api/listings` returns.
@@ -88,16 +88,51 @@ export function toApiShape(p, i) {
     // what keeps `detail`'s frozen hash where it is. A non-null here would move it.
     growth_scope: null,
     income_note: null,
-    // A33.1: the design's fixtures carry no stored index and no approximate median, so the panel
-    // falls through to the design's OWN fixture arithmetic (`incomeNat`) and its own sub-line —
-    // which is what keeps every approved Browse state on its pixels. A non-null here would move
-    // `browse-market-panel`.
+    // A33.1: the design's fixtures carry no stored index and no approximate median. `income_note`
+    // and `income_approximate` therefore stay null here and the tile shows no qualifier, which is
+    // the design's own sub-line byte for byte. `income_vs_us_pct` is null in the ROW and supplied
+    // by `designListingsBody` instead — see its own note; putting it here would break this
+    // function's one promise, that it is the exact inverse of `toPractice`.
     income_vs_us_pct: null,
     income_approximate: null
   };
 }
 
-/** The whole design catalogue as one `GET /api/listings` page body. */
+//: The design's OWN fixture constant for the U.S. median household income, read out of the method
+//: that declares it rather than typed here — so if the design's constant ever moves, the stub
+//: moves with it instead of quietly disagreeing. `marketPanel`'s source is the declaration site
+//: (`const incomeNat = 75149;`), and reading it this way needs no file access and no second copy.
+const INCOME_NAT = Number(/const incomeNat = (\d+);/.exec(String(Component.prototype.marketPanel))[1]);
+
+/** The design's own index for one fixture: how far its median sits above or below the U.S. figure
+ *  the design itself divides by, ALREADY ROUNDED so `Math.round(sel.incomeVsUs)` in the panel and
+ *  the design's own `Math.round(((c.income - incomeNat) / incomeNat) * 100)` cannot differ by one
+ *  through double rounding. `null` for a fixture with no median, which is what the API sends. */
+export function designIncomeIndex(p) {
+  if (p.income == null) return null;
+  const income = Number(String(p.income).replace(/[^0-9.]/g, ''));
+  return Math.round(((income - INCOME_NAT) / INCOME_NAT) * 100);
+}
+
+/** The whole design catalogue as one `GET /api/listings` page body.
+ *
+ * A33.1c — WHY THIS BODY CARRIES ONE FIELD `toApiShape` DOES NOT. With the market adapter present
+ * the panel reads the SERVED index or nothing and never the design's own constant, and the app
+ * under test always has that adapter while the reference never does. So an API that answered
+ * `income_vs_us_pct: null` here would make the app render no index over a reference that renders
+ * one, and `browse-market-panel`, `browse-panel-lightbox` and `browse-market-strip-location`
+ * would diverge for a reason that is about the harness rather than about the design. The oracle
+ * answers the app with the DESIGN'S OWN number, which is exactly what `harness.ts` does for the
+ * seller's listings and the admin review queue (A16.1, A17.1): "the oracle answers the app with
+ * those same four rows".
+ *
+ * It is added HERE and not in `toApiShape` because that function has one promise — it is the
+ * exact inverse of `load.ts`'s `toPractice`, pinned fixture by fixture in
+ * `frontend/src/listings/load.test.ts` — and a field the design's own `P` cannot carry would
+ * break it. This function stands in for the SERVER, which does carry it. */
 export function designListingsBody() {
-  return JSON.stringify({ items: P.map(toApiShape), next_cursor: null });
+  return JSON.stringify({
+    items: P.map((p, i) => ({ ...toApiShape(p, i), income_vs_us_pct: designIncomeIndex(p) })),
+    next_cursor: null
+  });
 }

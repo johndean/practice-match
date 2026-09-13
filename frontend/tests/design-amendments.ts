@@ -6370,16 +6370,23 @@ const A33_1b: Amendment = {
  *  and the fill come from ONE function (spec 2.2's "one door" — a second copy of the loop is how
  *  the tip and the colour come to disagree about the same polygon); A33.2c is the sentence.
  *
- *  THE DOMAIN IS TOTAL, and the third term is what makes it so. `BAND_WORDS` covers 2…5: five is
- *  the widest legend the design has (income's), and two is the floor whenever the server's flag
- *  is true, because both sides read the same stops and `test_bands.py` pins both tables two ways.
- *  The `p.value != null` term is not defensive decoration — a SUPPRESSED polygon really does
- *  arrive with a margin and the flag set, the endpoint judging ambiguity on the raw value and
- *  nulling the value separately, and `areaTip` composes `margin` before it knows whether the tip
- *  will use it. Without the term that polygon would count bands around `null + moe`, reach
- *  `BAND_WORDS[1]` and compose the word "undefined" into a string that is then discarded. It
- *  renders NOTHING differently — such a tip shows the suppression sentence — which is why it is
- *  a term and not a restructuring. */
+ *  THE DOMAIN IS TOTAL where the sentence is RENDERED. `BAND_WORDS` covers 2…5: five is the
+ *  widest legend the design has (income's), and two is the floor whenever the server's flag is
+ *  true, because both sides read the same stops and `test_bands.py` pins both tables two ways.
+ *
+ *  The first implementation added a `p.value !== null && p.value !== undefined` term here, for a
+ *  real case — a SUPPRESSED polygon arrives with a margin and the flag set, the endpoint judging
+ *  ambiguity on the RAW value and nulling the value separately, and `areaTip` composes `margin`
+ *  before it knows whether the tip will use it, so that polygon counts bands around `null + moe`,
+ *  reaches `BAND_WORDS[1]` and composes the word "undefined". THE TERM IS REMOVED (review Minor 1,
+ *  2026-09-13) because that string is never rendered and the term was therefore unobservable: it
+ *  was measured, and reverting it failed no test. `areaTip` renders `shown ? margin : absent`
+ *  (`shown` being `p.value !== null && p.value !== undefined && !p.suppressed`), so such a polygon
+ *  shows the suppression sentence and the composed `margin` is discarded whole. A production term
+ *  no test can fail on is what this branch's own TDD rule asks to be named and removed rather than
+ *  kept, and `shown` was not used in its place for the same reason — `&& shown` is unobservable
+ *  too, `areaVals` being the only caller and passing exactly that predicate. What remains is
+ *  covered: reverting `BAND_WORDS`, `bucket()`'s `band`, or the sentence each fails a case. */
 const A33_2a: Amendment = {
   id: 'A33.2a', date: '2026-09-13',
   ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (Task SCREEN-LABELS)',
@@ -6408,7 +6415,7 @@ const A33_2c: Amendment = {
   id: 'A33.2c', date: '2026-09-13',
   ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (same ruling)',
   find: '      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")',
-  replace: '      ? "± " + this.fmtMetric(layer, p.moe) + ((p.band_ambiguous && p.value !== null && p.value !== undefined)\n'
+  replace: '      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous\n'
     + '          ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."\n'
     + '          : "")',
   count: 1
@@ -6446,9 +6453,17 @@ const A33_2c: Amendment = {
 const A33_3a: Amendment = {
   id: 'A33.3a', date: '2026-09-13',
   ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
-  // The one row the QA measurement started from: it read “by community” on a layer that shades Census tracts and whose own legend line beneath the map says “Census tract”. The statistic is renamed to the one LAYER_META.income.title already uses, so the row says what the number is as well as where it is drawn.
+  // The one row the QA measurement started from: it read “by community” on a layer that shades
+  // Census tracts and whose own legend line beneath the map says “Census tract”.
+  //
+  // The string is the D-C51 audit's own R13 proposal VERBATIM (review Minor 2, 2026-09-13). The
+  // first implementation renamed the statistic to `LAYER_META.income.title`'s own words — which
+  // made the drawer row repeat its title above it word for word, and deviated from ruled text
+  // under a comment rather than as a surfaced deviation. The audit's §3.1 puts the statistic on
+  // the TITLE, and the mid-task grammar ruling puts one in every caption too; "Household income"
+  // satisfies both without saying the same three words twice.
   find: 'sub: "Household income by community · ACS 5-year",',
-  replace: 'sub: "Median household income by Census tract · ACS 5-year",',
+  replace: 'sub: "Household income by Census tract · ACS 5-year",',
   count: 1
 };
 

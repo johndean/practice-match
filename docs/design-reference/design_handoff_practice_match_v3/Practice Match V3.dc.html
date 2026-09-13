@@ -1940,7 +1940,7 @@ const metaSource = (k, basis) => {
 const LAYER_META = {
   income: {
     title: "Median household income",
-    sub: "Median household income by Census tract · ACS 5-year",
+    sub: "Household income by Census tract · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
@@ -2394,7 +2394,7 @@ class Component extends DCLogic {
         : "Estimate too imprecise to show at this geography")
       : "No data for this area";
     const margin = (p.moe !== null && p.moe !== undefined)
-      ? "± " + this.fmtMetric(layer, p.moe) + ((p.band_ambiguous && p.value !== null && p.value !== undefined)
+      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous
           ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."
           : "")
       : (layer === "growth"

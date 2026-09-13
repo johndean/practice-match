@@ -838,7 +838,15 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('a listing with SOME figures shows those and fabricates none of the rest', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    await serveListings(page, { growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null });
+    // A33.1c: the index goes with the median it qualifies. `serve.py` never serves one without
+    // the other (`test_an_index_without_a_median_is_never_served_alone`), so an override that
+    // takes the median away and leaves the index behind would be stubbing a row the API cannot
+    // emit — and the D6 body now carries the design's own index by default (A33.1c's note in
+    // `design-listings.mjs`).
+    await serveListings(page, {
+      growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null,
+      income_vs_us_pct: null, income_approximate: null
+    });
     const panel = await openPanel(page);
 
     // "Median Income" is the design's own STATIC tile label and is always on this screen — the
@@ -1040,7 +1048,11 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('…and with the API serving no index the tile shows none, and Affluence goes to the design\'s own unavailable treatment', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    const panel = await openPanel(page);   // the D6 stub sends income_vs_us_pct: null
+    // The D6 body now serves the DESIGN'S own index, so that the app and the reference agree on
+    // the approved Browse captures (A33.1c's own note in `design-listings.mjs`). This case is
+    // about the state where the API has none, so it says so explicitly.
+    await serveListings(page, { income_vs_us_pct: null });
+    const panel = await openPanel(page);
 
     const tile = await overviewTile(panel, 'Median Income');
     expect(tile, 'the median itself still renders').toMatch(/\$\d+K/);
