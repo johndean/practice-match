@@ -45,6 +45,8 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     community_label: null,
     growth_scope: null,
     income_note: null,
+    income_vs_us_pct: null,
+    income_approximate: null,
     ...over
   };
 }
@@ -279,6 +281,25 @@ describe('applyListings', () => {
       .toBe('Within about 5 miles of the practice \u00b7 approximate');
     expect('growthScope' in toPractice(row({ growth_scope: null }))).toBe(false);
     expect('incomeNote' in toPractice(row({ income_note: null }))).toBe(false);
+  });
+
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13): the pipeline's own index and the fact behind
+  // `income_note`, under the design's own camel-case names. The same absence rule as every field
+  // above it — the design's fixtures carry neither, and the docked panel's `sel.incomeVsUs !=
+  // null` and `sel.incomeApproximate` guards both have to fall through to the design's own
+  // arithmetic and its own sub-line for the approved states to keep their pixels.
+  it('carries income_vs_us_pct and income_approximate under the design\'s own names, and omits each when the API sent none', () => {
+    expect(toPractice(row({ income_vs_us_pct: 19.4 })).incomeVsUs).toBe(19.4);
+    expect(toPractice(row({ income_approximate: true })).incomeApproximate).toBe(true);
+    expect('incomeVsUs' in toPractice(row({ income_vs_us_pct: null }))).toBe(false);
+    expect('incomeApproximate' in toPractice(row({ income_approximate: null }))).toBe(false);
+    // A NEGATIVE index and a FALSE flag are both real answers and must survive `!= null`, which
+    // `!` or a truthiness test would drop: a community below the US median reads "-13.7% vs US",
+    // and a published median is a fact the payload states rather than omits.
+    expect(toPractice(row({ income_vs_us_pct: -13.7 })).incomeVsUs).toBe(-13.7);
+    expect(toPractice(row({ income_approximate: false })).incomeApproximate).toBe(false);
+    // …and zero, the sentinel D-C31 exists for: a community exactly on the US median.
+    expect(toPractice(row({ income_vs_us_pct: 0 })).incomeVsUs).toBe(0);
   });
 
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the
@@ -517,6 +538,34 @@ describe('the design-fixture stub round-trips exactly (spec D6)', () => {
     for (const [i, p] of (P as unknown as Practice[]).entries()) {
       expect(toPractice(toApiShape(p, i) as ApiListing)).toEqual(p);
     }
+  });
+
+  // Fix round 2, review Minor — THE STUB PARSES A MEDIAN THE WAY THE DESIGN DOES. A33.1c gave the
+  // oracle body the design's own income index, and its first implementation re-derived the number
+  // with `String(p.income).replace(/[^0-9.]/g, '')` — the strip-every-non-digit form A24.43 and
+  // A24.58 REMOVED from the product for losing a leading minus and gluing on a trailing year.
+  // Unreachable against today's fixtures (every median is a positive "$118,400"-shaped string),
+  // but the stub's whole claim is that it is derived from `logic.js` and cannot drift, and `num`
+  // changed twice in one week. It now evaluates `logic.js`'s OWN `num` declaration rather than
+  // re-implementing it, so these two cases are about the design's parser, not about a copy of it.
+  it('the oracle parses a median exactly as the design\'s own num() does', async () => {
+    const { designIncomeIndex } = await import('../../tests/design-listings.mjs');
+    // The constant the design divides by, so the expectations below are arithmetic and not magic.
+    const NAT = 75149;
+    const idx = (v: number) => Math.round(((v - NAT) / NAT) * 100);
+
+    // The shape every fixture actually carries.
+    expect(designIncomeIndex({ income: '$118,400' })).toBe(idx(118400));
+    // A TRAILING YEAR — `num` reads the first number token and nothing after it. The old parser
+    // glued the year on: "$67,760 since 2018" became 67760.2018.
+    expect(designIncomeIndex({ income: '$67,760 since 2018' })).toBe(idx(67760));
+    // A LEADING MINUS survives — the old parser stripped it, which is the exact defect MS1
+    // (A24.43) was raised for on the snapshot strip.
+    expect(designIncomeIndex({ income: '-1,500' })).toBe(idx(-1500));
+    // …and the design's own contract for a string carrying no number at all: zero, not NaN.
+    expect(designIncomeIndex({ income: 'unknown' })).toBe(idx(0));
+    // No median, no index — what the API sends and what the tile needs.
+    expect(designIncomeIndex({ income: null })).toBeNull();
   });
 
   // B10: the stub sends `vets` and `econ_k` too. B7 added both fields to the endpoint and this

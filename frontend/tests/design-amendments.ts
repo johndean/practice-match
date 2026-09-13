@@ -6274,6 +6274,305 @@ const A31_12c: Amendment = {
   count: 1
 };
 
+/** A33 — three label defects on the Browse screen, measured on QA 0.1.21 and ruled by the
+ *  controller on 2026-09-13 (Task SCREEN-LABELS, decide-and-surface). Each one is a caption that
+ *  states something the data does not support, which is the class D-C38/D-C39 opened and A27
+ *  worked through one tile at a time; A33 applies the same rule — a figure names its own basis —
+ *  to the three places on Browse that still did not.
+ *
+ *  A33.1 — THE PANEL'S INDEX IS THE PIPELINE'S OWN, AT THE SAME VINTAGE. With DEF Veterinary
+ *  Hospital selected, the docked panel's Median Income tile read "$94K · +25% vs US". The $94K is
+ *  correct — DEF's own 8 km ring, a household-weighted median of 99 tract medians, 93,750 — and
+ *  the "+25%" is the design dividing it by incomeNat = 75149, a constant its own comment calls
+ *  "ACS 2023 U.S. median household income". QA's database holds the US median for the SAME
+ *  2019-2023 release the $94K comes from (acs_measure, summary level 010, geo_id 1,
+ *  B19013_001E = 78,538 ± 176), against which DEF is +19 %. And the pipeline already STORED that
+ *  index, per listing and per band — market_metric.income_index_vs_us, DEF's drive_10 =
+ *  19.368967888156053 (materialize.py:294) — where nothing served it and nothing read it.
+ *
+ *  So the API serves it (income_vs_us_pct, from the band the median itself came from) and the
+ *  panel prefers it. The tile's other missing fact goes with it: the API has served income_note
+ *  since D-C38 and the DETAIL card renders it (A27.1), while the panel's tile — the one a buyer
+ *  reaches first, from Browse — showed a derived median with no qualifier at all. The panel says
+ *  "approximate" from the served FACT (income_approximate) rather than by reading the end of the
+ *  detail card's sentence: two surfaces, one fact, different copy, which is metaSource's own rule
+ *  (A24 fix round 2).
+ *
+ *  THE CONSTANT STAYS, and it is measured rather than assumed. The brief asked for it to be
+ *  deleted if nothing else read it; incomeIdx has a SECOND reader — oppTiles[0], the Affluence
+ *  opportunity tile — so deleting it would blank an element of the approved design on the
+ *  reference path, which has no API and no ruling to do that under. It is demoted instead: the
+ *  comment now says what it is (the design's own FIXTURE arithmetic, at the vintage the design
+ *  shipped) and that a served index supersedes it. Its one remaining live-data reach is recorded
+ *  rather than hidden — a listing WITH a median and no stored index (a database with no
+ *  summary-level-010 ACS row) still falls back to it — and that is in the task report as a
+ *  concern, not silently left as a fact about a screen.
+ *
+ *  Preferring the served index also corrects the Affluence tile in the same stroke, because both
+ *  read one binding. The design's own fixtures carry neither incomeVsUs nor incomeApproximate
+ *  (design-listings.mjs sends both as null, as it does for community_label), so the reference
+ *  path is byte-identical and no approved state re-bases. */
+const A33_1a: Amendment = {
+  id: 'A33.1a', date: '2026-09-13',
+  ruling: "the panel's income index is the pipeline's own, at the same vintage as the median it qualifies (Task SCREEN-LABELS)",
+  find: '    const incomeNat = 75149; // ACS 2023 U.S. median household income\n'
+    + '    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;',
+  replace: "    // The DESIGN'S OWN FIXTURE ARITHMETIC, at the vintage the design shipped: the ACS 2023\n"
+    + '    // U.S. median household income. It is not a live figure and is not read where the API\n'
+    + "    // has one — `income_vs_us_pct` is the pipeline's own `income_index_vs_us`, taken from\n"
+    + '    // the same band the median above it came from and measured against the stored US median\n'
+    + '    // for that same ACS release. Kept because `incomeIdx` also feeds the Affluence tile\n'
+    + '    // below, which the reference — no API, no served index — still has to render.\n'
+    + '    const incomeNat = 75149;\n'
+    + '    const incomeIdx = sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  count: 1
+};
+
+/** A33.1b — the tile's one sub-line, composed from the two facts the API now serves rather than
+ *  from one of them. The index leads and the qualifier follows, joined by the design's own " · "
+ *  — A27.8's shape, and for A27.8's reason: this line BEGINS with a number.
+ *
+ *  CHAINED on A21.2d, whose `replace` this `find` is part of: A21.2d already rewrote this tile to
+ *  render nothing rather than a dangling unit where the API sent no figure, and the qualifier
+ *  sits INSIDE that guard — no figure is still no sub-line, exactly as A27.8's own term does.
+ *
+ *  The qualifier RIDES ON THE INDEX rather than being a second arm of its own, and that is a
+ *  measured choice, not a shortcut: A33.1a leaves the design's fixture arithmetic as the
+ *  fallback, so `incomeIdx` is defined WHENEVER `c.income` is — with a served index or without
+ *  one — and "a median with no index to hang the word on" is a state neither the reference nor
+ *  the API can produce. An arm for it would be unreachable code carrying approved copy, which is
+ *  the thing the bundle's own dead-code rule removes elsewhere in this file. If A33.1a's constant
+ *  is ever retired, this entry gains that arm in the same change. */
+const A33_1b: Amendment = {
+  id: 'A33.1b', date: '2026-09-13',
+  ruling: "the panel's income index is the pipeline's own, and says approximate when the API does (same ruling)",
+  find: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },',
+  replace: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : undefined },',
+  count: 1
+};
+
+/** A33.2 — THE CAVEAT COUNTS THE BANDS IT SPANS. Measured on QA 0.1.21: the income layer's
+ *  hover tip on Census Tract 303 read "± $22K — this margin spans two legend bands." The interval
+ *  is 61,320…105,806 and the income legend's stops are [50000, 75000, 100000, 150000], so it
+ *  spans THREE — $50–75K, $75–100K, $100–150K.
+ *
+ *  The copy was FIXED and the server's own flag carries no number: `app/census/bands.py`'s
+ *  `band_ambiguous` asks only whether the two ends land in DIFFERENT bands. Nothing was wrong
+ *  with the flag — it is the right question for "is this figure's band certain?" — and nothing
+ *  needs to be added to the payload for the answer, because the COUNT is a statement about the
+ *  legend the CLIENT draws, from the stops the client already owns. `bands.py`'s `band_index` is
+ *  the same arithmetic on the other side of the wire, and
+ *  `tests/census/test_bands.py::test_the_client_counts_the_bands_the_server_calls_ambiguous`
+ *  pins the two together on the case the flag itself is defined by.
+ *
+ *  Three literal edits. A33.2a declares the word table beside `AREA_LAYERS`, whose breaks the
+ *  count is taken against; A33.2b gives `bucket()` the index it already computes, so the count
+ *  and the fill come from ONE function (spec 2.2's "one door" — a second copy of the loop is how
+ *  the tip and the colour come to disagree about the same polygon); A33.2c is the sentence.
+ *
+ *  THE DOMAIN IS TOTAL where the sentence is RENDERED. `BAND_WORDS` covers 2…5: five is the
+ *  widest legend the design has (income's), and two is the floor whenever the server's flag is
+ *  true, because both sides read the same stops and `test_bands.py` pins both tables two ways.
+ *
+ *  The first implementation added a `p.value !== null && p.value !== undefined` term here, for a
+ *  real case — a SUPPRESSED polygon arrives with a margin and the flag set, the endpoint judging
+ *  ambiguity on the RAW value and nulling the value separately, and `areaTip` composes `margin`
+ *  before it knows whether the tip will use it, so that polygon counts bands around `null + moe`,
+ *  reaches `BAND_WORDS[1]` and composes the word "undefined". THE TERM IS REMOVED (review Minor 1,
+ *  2026-09-13) because that string is never rendered and the term was therefore unobservable: it
+ *  was measured, and reverting it failed no test. `areaTip` renders `shown ? margin : absent`
+ *  (`shown` being `p.value !== null && p.value !== undefined && !p.suppressed`), so such a polygon
+ *  shows the suppression sentence and the composed `margin` is discarded whole. A production term
+ *  no test can fail on is what this branch's own TDD rule asks to be named and removed rather than
+ *  kept, and `shown` was not used in its place for the same reason — `&& shown` is unobservable
+ *  too, `areaVals` being the only caller and passing exactly that predicate. What remains is
+ *  covered: reverting `BAND_WORDS`, `bucket()`'s `band`, or the sentence each fails a case. */
+const A33_2a: Amendment = {
+  id: 'A33.2a', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (Task SCREEN-LABELS)',
+  find: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n};\n',
+  replace: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n};\n'
+    + '// A33.2: how many legend bands a margin spans, spelled out. The domain is 2 to 5 and is\n'
+    + '// total: five is the widest ramp the design has (income\'s) and two is the floor whenever\n'
+    + '// the API sets `band_ambiguous`, which is judged against these same stops\n'
+    + '// (`app/census/bands.py`, pinned two ways by `tests/census/test_bands.py`).\n'
+    + 'const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };\n',
+  count: 1
+};
+
+const A33_2b: Amendment = {
+  id: 'A33.2b', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (same ruling)',
+  find: '    return { color: ramp[i], t: i / (ramp.length - 1) };',
+  replace: '    // `band` is the index the loop above already found. Returned rather than recomputed by a\n'
+    + '    // second copy of the same loop, so the caveat below and the fill colour cannot disagree\n'
+    + '    // about which band a value is in (spec 2.2, the one door every polygon enters by).\n'
+    + '    return { color: ramp[i], t: i / (ramp.length - 1), band: i };',
+  count: 1
+};
+
+const A33_2c: Amendment = {
+  id: 'A33.2c', date: '2026-09-13',
+  ruling: 'the margin caveat counts the legend bands it spans, from the layer\'s own stops (same ruling)',
+  find: '      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")',
+  replace: '      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous\n'
+    + '          ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."\n'
+    + '          : "")',
+  count: 1
+};
+
+/** A33.3 — THE LAYER ROWS NAME THE GEOGRAPHY THEY SHADE. Ruled 2026-09-13 on the D-C51 caption
+ *  audit (`one-vocabulary-audit.md` §3.2, rows R13–R18), widening the brief's single income row
+ *  to all six: `LAYER_META.income.sub` read "Household income by community · ACS 5-year" on a
+ *  layer that shades Census tracts and whose own legend line says "Census tract", and the other
+ *  five named no geography at all — so five rows were silent and the sixth was wrong.
+ *
+ *  MEASURED, not assumed: `.sub` is rendered in exactly TWO places, both the "Market data layers"
+ *  drawer's own rows — `layerChoices[].sub` at `App.vue:575` (desktop) and `:1565` (the phone
+ *  frame's sheet). `md.active.sub` is computed and rendered NOWHERE, so the legend under the map
+ *  does not print this string and takes its geography from `AREA_LABEL` through `geoLine`. That
+ *  is why these are literal strings rather than a per-surface composition in `metaSource`'s shape
+ *  (A24 fix round 2): there is one surface, and it is the map's own drawer, so one string is one
+ *  fact. `tests/census/test_design_shading_labels.py` pins each row's geography phrase against
+ *  `app.api.market.SHADING[layer]["label"]`, which is the SAME table the legend, the tip and the
+ *  route all read — so a layer that moves geography again (income moved 860 → 140 on 2026-09-12,
+ *  which is how this row came to be wrong) fails on both sides at once instead of leaving a
+ *  drawer row describing a map nobody draws any more.
+ *
+ *  The grammar is one sentence for all six — `<statistic> by <geography> · <dataset>` — and the
+ *  geography is the ruled label, lower-cased where the sentence demands it ("by place
+ *  (city/town)", "by county"). Six entries, one per string, so each row carries its own
+ *  `LOCAL_AMENDMENTS.md` row and its own reason; they are independent literals and the count is
+ *  what says how many strings the ruling reached.
+ *
+ *  RE-BASED, measured rather than reasoned: baselines were regenerated from the pre-change
+ *  design and from this one and the PNG hashes diffed. Exactly ONE of the 54 approved states
+ *  moves — `browse-layers-open`, the desktop drawer. `mobile-sheet` does not: the phone
+ *  frame's own copy of these rows is behind a control no approved state opens. None of
+ *  `baseline-manifest.json`'s thirteen frozen hashes moves. */
+const A33_3a: Amendment = {
+  id: 'A33.3a', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // The one row the QA measurement started from: it read “by community” on a layer that shades
+  // Census tracts and whose own legend line beneath the map says “Census tract”.
+  //
+  // The string is the D-C51 audit's own R13 proposal VERBATIM (review Minor 2, 2026-09-13). The
+  // first implementation renamed the statistic to `LAYER_META.income.title`'s own words — which
+  // made the drawer row repeat its title above it word for word, and deviated from ruled text
+  // under a comment rather than as a surfaced deviation. The audit's §3.1 puts the statistic on
+  // the TITLE, and the mid-task grammar ruling puts one in every caption too; "Household income"
+  // satisfies both without saying the same three words twice.
+  find: 'sub: "Household income by community · ACS 5-year",',
+  replace: 'sub: "Household income by Census tract · ACS 5-year",',
+  count: 1
+};
+
+const A33_3b: Amendment = {
+  id: 'A33.3b', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // Households moved to the tract with income on 2026-09-12 (D-L1) and its row never named a geography at all.
+  find: 'sub: "Total households · ACS 5-year",',
+  replace: 'sub: "Total households by Census tract · ACS 5-year",',
+  count: 1
+};
+
+const A33_3c: Amendment = {
+  id: 'A33.3c', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // Pets is households × 0.57 and is drawn at the same tract; the modelled-estimate caveat stays where it is, in `means` and in the map tip (§9).
+  find: 'sub: "Estimated pet households · derived from ACS households",',
+  replace: 'sub: "Estimated pet households by Census tract · derived from ACS households",',
+  count: 1
+};
+
+const A33_3d: Amendment = {
+  id: 'A33.3d', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // The one layer whose geography is the dataset's own authoritative one (§6's single exception), which the row now says rather than leaving to the legend.
+  find: 'sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",',
+  replace: 'sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",',
+  count: 1
+};
+
+const A33_3e: Amendment = {
+  id: 'A33.3e', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // “Change” alone named neither the statistic nor its geography. It is the one layer whose geography is NOT the tract and cannot be until the 2010→2020 crosswalk lands (D12), so naming it here is what keeps a reader from carrying the tract across from the rows above.
+  find: 'sub: "Change · ACS population estimates",',
+  replace: 'sub: "Population change by place (city/town) · ACS population estimates",',
+  count: 1
+};
+
+const A33_3f: Amendment = {
+  id: 'A33.3f', date: '2026-09-13',
+  ruling: 'every Market data layer row names the geography it shades, in one grammar (D-C51 caption audit, rows R13\u2013R18)',
+  // “Derived” alone said only that it is a derivation. The statistic is the one `short` already uses, the geography is the county, and the word “derived” survives in front of the formula.
+  find: 'sub: "Derived · total CBP payroll ÷ establishments",',
+  replace: 'sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",',
+  count: 1
+};
+
+/** A33.1c — WITH THE API PRESENT THE INDEX IS THE API'S OR NOTHING (fix round 1, controller
+ *  ruling on the review's Important, 2026-09-13).
+ *
+ *  A33.1a kept `incomeNat = 75149` as the fallback, measured: `incomeIdx` has a SECOND reader,
+ *  the Affluence opportunity tile, so deleting the constant outright would blank an element of
+ *  the approved design on the reference path. What that left is the defect one door along: a
+ *  listing WITH a median and no served index still divides by the constant, and on a real
+ *  database that is a missing `acs_measure` summary-level-010 row — `materialize._Ctx.us_income`
+ *  is then None and `income_index_vs_us` is null for EVERY listing in the country at once. The
+ *  panel would print an index, and an Affluence verdict, against a 2023 constant with nothing
+ *  saying so.
+ *
+ *  THE GATE IS ADAPTER PRESENCE, NEVER DATA — A16.1's own idiom, and the same seam A24.14-A24.18
+ *  opened. `this.props.market` is the app-only Browse adapter: the app hands one to every render
+ *  (`app.setup.js`'s own default factory) and the reference is never given one — this file's own
+ *  test pins `market` OUT of the design's declared `data-props`, so the reference cannot receive
+ *  it even by accident. `this.props.listings` was the other candidate and is wrong: it names the
+ *  SELLER adapter, and the design has no Browse-listings adapter at all because `load.ts`
+ *  replaces `P` in place.
+ *
+ *  So: with an adapter the index is the SERVED one or nothing, and the Affluence tile falls to
+ *  the design's OWN unavailable treatment (`label: ""`, `on: false`, `tone()`'s `#8d99a6`) —
+ *  identical to what its Population-Growth and Sector-Payroll neighbours already do for an
+ *  absent figure, so no copy is invented for it and no third entry is needed. Without an
+ *  adapter — the reference, the Claude Design preview — the design's constant stands and every
+ *  approved state keeps its pixels. The constant is NOT deleted and its comment still names the
+ *  vintage it belongs to.
+ *
+ *  CHAINED on A33.1a, whose `replace`'s second line is this entry's whole `find`. */
+const A33_1c1: Amendment = {
+  id: 'A33.1c.1', date: '2026-09-13',
+  ruling: "with the API present the panel's income index is the API's or nothing, never the design's fixture constant (fix round 1, review Important)",
+  find: '    const incomeIdx = sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  replace: '    const incomeIdx = this.props.market\n'
+    + '      ? (sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : undefined)\n'
+    + '      : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  count: 1
+};
+
+/** A33.1c.2 — the sub-line's second arm, which A33.1b's own docstring promised and A33.1c.1
+ *  makes reachable: with a median, `incomeApproximate` true and NO index, today's expression
+ *  drops the qualifier entirely. A33.1b reasoned that state away on the ground that an index
+ *  exists whenever a median does — true while the constant was the fallback on every path, and
+ *  false the moment A33.1c.1 gates it. The two ship together for exactly that reason.
+ *
+ *  The arm is the detail card's own treatment (`income_note` == "Approximate", A27.1) in the
+ *  panel's own lower-case voice, beside "ACS 5-year" and "derived estimate". It carries no
+ *  second guard on the median: the payload pairs the two — `income_approximate` is `null`, never
+ *  `false`, where there is no median at all
+ *  (`tests/census/test_serve.py::test_no_median_means_nothing_to_say_about_it`) — and a guard
+ *  the producer makes unreachable is the inert kind this codebase removes rather than adds.
+ *
+ *  CHAINED on A33.1b, whose whole `replace` is this entry's `find`. */
+const A33_1c2: Amendment = {
+  id: 'A33.1c.2', date: '2026-09-13',
+  ruling: "with the API present the panel's income index is the API's or nothing, never the design's fixture constant (same ruling)",
+  find: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : undefined },',
+  replace: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : (sel.incomeApproximate ? "approximate" : undefined) },',
+  count: 1
+};
+
 /** A35 (John, 2026-09-13 — ruling D-C52). THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE,
  *  AND THE MEMBER ZOOMS PAST IT. His words: "allow a user to zoom in BELOW the level of the last
  *  actual map layer … the map allows user to zoom in as far as they want … this message is never
@@ -6756,6 +7055,16 @@ export function amendments(): Amendment[] {
     A31_12, A31_12b, A31_12c,
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     A31_13, A31_13b,
+    // A33 -- three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
+    // 2026-09-13). Three of them are CHAINED: A33.1b on A21.2d, A33.2a on A24.25/A24.37 (the
+    // `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the margin
+    // expression it rewrites). None reads an A31 entry's output and none is read by one, so the
+    // two families are independent; A33 is appended last, as every family is.
+    A33_1a, A33_1b, A33_2a, A33_2b, A33_2c,
+    A33_3a, A33_3b, A33_3c, A33_3d, A33_3e, A33_3f,
+    // A33.1c (fix round 1, 2026-09-13) -- both CHAINED on A33.1's own output: A33.1c.1 reads
+    // A33.1a's `incomeIdx` line and A33.1c.2 reads A33.1b's whole tile, so both run after them.
+    A33_1c1, A33_1c2,
     // A35 -- the basemap never requests a tile Esri does not have, and the member zooms past it
     // (John's ruling D-C52, 2026-09-13). Seven literal edits, all `file: 'jsx'` (A28.1's
     // precedent) and none chained: every `find` occurs exactly once in the pristine twin.

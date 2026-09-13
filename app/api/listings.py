@@ -302,6 +302,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     community_label = None
     growth_scope = None
     income_note = None
+    income_vs_us_pct = None
+    income_approximate = None
     if community is not None:
         pop = community.get("pop")
         growth = community.get("growth")
@@ -312,6 +314,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         community_label = community.get("label")
         growth_scope = community.get("growth_scope")
         income_note = community.get("income_note")
+        income_vs_us_pct = community.get("income_vs_us_pct")
+        income_approximate = community.get("income_approximate")
 
     return {
         "id": listing_id,
@@ -345,6 +349,14 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # rather than a published Census figure. Both `null` when there is nothing to say.
         "growth_scope": growth_scope,
         "income_note": income_note,
+        # A33.1 (Task SCREEN-LABELS, 2026-09-13): the two fields the docked panel's Median Income
+        # tile composes its ONE sub-line from. `income_vs_us_pct` is the pipeline's own
+        # `income_index_vs_us`, from the same band the median came from and against the same ACS
+        # release — the panel used to compute its own against a constant in the design's script.
+        # `income_approximate` is the FACT `income_note` states in prose, served beside it so the
+        # panel is not reading the end of the detail card's sentence.
+        "income_vs_us_pct": income_vs_us_pct,
+        "income_approximate": income_approximate,
         # GEO-WIRE (4): how precisely this listing's point is known — 'rooftop', 'tract', 'zcta',
         # 'place', 'county' (`migrations/061`'s own CHECK), or `null` where it has never been
         # geocoded. The contract's copy rule keys on exactly this ("`geo_precision != \"rooftop\"`

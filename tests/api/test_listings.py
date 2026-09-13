@@ -18,6 +18,7 @@ from app.api.listings import (
     relative_listed,
     serialise,
 )
+from app.census.serve import CommunityRow
 from tests.api.conftest import auth_headers
 
 INSERT = (
@@ -1127,8 +1128,45 @@ async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
         if i["id"] == listing_id
     )
     for payload in (single, listed):
-        for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label", "growth_scope", "income_note"):
+        # DERIVED, never typed: the list is `CommunityRow`'s own annotations, so a field added to
+        # the producer is asserted here by existing rather than by somebody remembering — and the
+        # route's own answer is what it is compared against, so the check can fail.
+        _assert_serves_every_community_field(payload)
+        for field in COMMUNITY_PAYLOAD_FIELDS:
             assert payload[field] is None, field
+
+
+#: Every community-derived key `serialise` emits, DERIVED from the producer rather than typed here
+#: (review Minor 3, 2026-09-13). Both "every community field is None" assertions below used to
+#: hard-code the nine pre-A33 names, so neither noticed `income_vs_us_pct` or `income_approximate`
+#: arriving and both went on claiming to check "every" field. `CommunityRow`'s annotations are the
+#: producer's own list and `serialise`'s mapping renames exactly one of them, so a tenth field
+#: joins these assertions by existing. The same discipline
+#: `tests/api/test_contract_doc.py::test_contract_doc_names_every_community_field_the_listing_serialiser_emits`
+#: already applies to the CONTRACT DOC, applied here to the payload.
+COMMUNITY_PAYLOAD_FIELDS = tuple(
+    "community_label" if k == "label" else k for k in CommunityRow.__annotations__
+)
+
+
+def _assert_serves_every_community_field(payload: dict[str, Any]) -> None:
+    """Every field the PRODUCER declares is actually on the wire.
+
+    Fix round 2, review Minor: this used to read
+    `assert len(COMMUNITY_PAYLOAD_FIELDS) == len(CommunityRow.__annotations__)`, which cannot
+    fail — the tuple is a 1:1 comprehension over the very thing it was compared against, so the
+    two lengths are equal by construction. The branch's own rule is that a gate must be able to
+    fail, so the comparison is made against something INDEPENDENT: the keys of a real answer.
+    A tenth field added to `CommunityRow` and forgotten in `serialise` fails here, named, instead
+    of passing in silence.
+
+    The `KeyError` the loops below would raise is the same fact; this states it as a set, so the
+    message names every missing field at once rather than the first."""
+    missing = sorted(f for f in COMMUNITY_PAYLOAD_FIELDS if f not in payload)
+    assert missing == [], (
+        f"`CommunityRow` declares {len(COMMUNITY_PAYLOAD_FIELDS)} community fields and the served "
+        f"payload carries no key for: {', '.join(missing)}"
+    )
 
 
 def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
@@ -1150,23 +1188,33 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
         "pop": "167,997", "growth": "+9.0% since 2018", "income": "$69,780", "hh": None, "vets": None,
         "econ_k": None, "label": "Within about 5 miles of the practice",
         "growth_scope": "Orange County", "income_note": "Within about 5 miles of the practice \u00b7 approximate",
+        "income_vs_us_pct": -13.7, "income_approximate": True,
     })
     assert labelled["community_label"] == "Within about 5 miles of the practice"
     # D-C38: the two per-figure fields pass through the same way — one place, no invention.
     assert labelled["growth_scope"] == "Orange County"
     assert labelled["income_note"] == "Within about 5 miles of the practice \u00b7 approximate"
+    # A33.1: the index and the flag pass through the same way, and a NEGATIVE index and a TRUE
+    # flag both survive — `serialise` reads them with `.get`, never with a truthiness test.
+    assert labelled["income_vs_us_pct"] == -13.7
+    assert labelled["income_approximate"] is True
     assert labelled["hh"] is None
 
     unlabelled = serialise(row, now, community={
         "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
         "econ_k": None, "label": None, "growth_scope": None, "income_note": None,
+        "income_vs_us_pct": None, "income_approximate": None,
     })
     assert unlabelled["community_label"] is None
     assert unlabelled["growth_scope"] is None
     assert unlabelled["income_note"] is None
+    assert unlabelled["income_vs_us_pct"] is None
+    assert unlabelled["income_approximate"] is None
 
     absent = serialise(row, now)
-    for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label", "growth_scope", "income_note"):
+    _assert_serves_every_community_field(absent)
+    _assert_serves_every_community_field(labelled)
+    for field in COMMUNITY_PAYLOAD_FIELDS:
         assert absent[field] is None, field
 
 

@@ -33,6 +33,19 @@ class CommunityRow(TypedDict):
       * `income_note` replaces the median-income tile's sub-line when that median is an
         approximation rather than a published Census figure.
 
+    A33.1 (Task SCREEN-LABELS, 2026-09-13) adds the two fields the DOCKED PANEL's own Median
+    Income tile needs, which has one sub-line and composes it rather than being handed a sentence:
+
+      * `income_vs_us_pct` is the pipeline's own `income_index_vs_us`, taken from the SAME band
+        the median above it came from, at the same ACS vintage. Until this the panel computed its
+        own index against a hard-coded US median in `logic.js` (`incomeNat = 75149`, the ACS 2023
+        figure), which read "+25% vs US" for a Dallas listing whose real index against the stored
+        2019-2023 US median is +19 %.
+      * `income_approximate` is the FACT `income_note` states in prose. Two readers, one fact:
+        the detail card takes the composed sentence and the panel takes the flag, rather than the
+        panel sniffing the word off the end of someone else's copy — the coupling `metaSource`
+        was introduced to remove (A24 fix round 2).
+
     `econ_k` is county everywhere and always (`materialize.py` writes `ctx.cbp` into all three
     bands), and the card does not render it — it feeds the Browse Payroll layer."""
     pop: str | None
@@ -44,6 +57,8 @@ class CommunityRow(TypedDict):
     label: str | None
     growth_scope: str | None
     income_note: str | None
+    income_vs_us_pct: float | None
+    income_approximate: bool | None
 
 
 async def _active(conn: AsyncConnection) -> dict[str, str]:
@@ -429,9 +444,31 @@ def community_rows(
         #
         # With no label there is no area to name, so the note is the qualifier alone: the tile has
         # one sub-line and it says the number is approximate and nothing it cannot support.
+        #
+        # A33.1: the same guard decides the FLAG the docked panel composes its own sub-line from.
+        # `None` where there is no median at all — "there is nothing to say about a figure nobody
+        # has" — and `False`, not `None`, for a published one, which is a fact worth stating.
         income_note = None
-        if area["income"] is not None and area_metrics["median_hh_income"]["is_derived"]:
-            income_note = f"{label} · approximate" if label is not None else "Approximate"
+        income_approximate = None
+        if area["income"] is not None:
+            income_approximate = bool(area_metrics["median_hh_income"]["is_derived"])
+            if income_approximate:
+                income_note = f"{label} · approximate" if label is not None else "Approximate"
+
+        # A33.1 — the index the pipeline already stores, from the band the median came from.
+        # `materialize.py:294` writes `income_index_vs_us` in every band it computes, against
+        # `acs_measure` summary level 010's own B19013_001E at the listing's own ACS vintage; the
+        # design had no way to reach it and computed its own against a constant instead.
+        #
+        # Gated on the MEDIAN as well as on `_servable`: the index qualifies the figure above it,
+        # and a bare "+39.5% vs US" under no median is a percentage of a number the buyer cannot
+        # see. Read from `area_metrics`, never from the other band — an index measured on the
+        # city under the ring's median would be a ratio of two different places.
+        income_vs_us_pct = None
+        if area["income"] is not None and "income_index_vs_us" in area_metrics:
+            m = area_metrics["income_index_vs_us"]
+            if _servable(m, reg):
+                income_vs_us_pct = round(float(m["value_num"]), 1)
 
         # Growth and payroll are byte-identical in every band by construction, so "whichever band
         # carries it" is a choice between two copies of one number — but the GEOGRAPHY it was
@@ -475,6 +512,8 @@ def community_rows(
             "label": label,
             "growth_scope": growth_scope,
             "income_note": income_note,
+            "income_vs_us_pct": income_vs_us_pct,
+            "income_approximate": income_approximate,
         }
 
     return result

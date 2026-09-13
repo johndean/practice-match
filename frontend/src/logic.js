@@ -150,6 +150,11 @@ const AREA_LAYERS = {
   pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },
   competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }
 };
+// A33.2: how many legend bands a margin spans, spelled out. The domain is 2 to 5 and is
+// total: five is the widest ramp the design has (income's) and two is the floor whenever
+// the API sets `band_ambiguous`, which is judged against these same stops
+// (`app/census/bands.py`, pinned two ways by `tests/census/test_bands.py`).
+const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
 const SYMBOL_KEYS = ["pets", "households", "competition"];
@@ -188,7 +193,7 @@ const metaSource = (k, basis) => {
 const LAYER_META = {
   income: {
     title: "Median household income",
-    sub: "Household income by community · ACS 5-year",
+    sub: "Household income by Census tract · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
@@ -196,7 +201,7 @@ const LAYER_META = {
   },
   pets: {
     title: "Pet ownership (estimated)",
-    sub: "Estimated pet households · derived from ACS households",
+    sub: "Estimated pet households by Census tract · derived from ACS households",
     updated: "Updated: derived Jan 2025 from ACS 2023",
     source: "Derived estimate from ACS household counts (2023) · not an observed count",
     means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
@@ -204,7 +209,7 @@ const LAYER_META = {
   },
   competition: {
     title: "Veterinary competition",
-    sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",
+    sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
     dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
     means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
@@ -212,7 +217,7 @@ const LAYER_META = {
   },
   growth: {
     title: "Population growth",
-    sub: "Change · ACS population estimates",
+    sub: "Population change by place (city/town) · ACS population estimates",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS population estimates, 2015–2023",
     means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
@@ -220,7 +225,7 @@ const LAYER_META = {
   },
   households: {
     title: "Households",
-    sub: "Total households · ACS 5-year",
+    sub: "Total households by Census tract · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "The count of occupied housing units in each community — the denominator behind most other figures here.",
@@ -228,7 +233,7 @@ const LAYER_META = {
   },
   econ: {
     title: "Average practice payroll",
-    sub: "Derived · total CBP payroll ÷ establishments",
+    sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",
     updated: "Updated: derived from CBP 2023 (Nov 2024)",
     source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",
     means: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures.",
@@ -643,7 +648,9 @@ class Component extends DCLogic {
         : "Estimate too imprecise to show at this geography")
       : "No data for this area";
     const margin = (p.moe !== null && p.moe !== undefined)
-      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")
+      ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous
+          ? " — this margin spans " + BAND_WORDS[this.bucket(layer, p.value + p.moe, true).band - this.bucket(layer, p.value - p.moe, true).band + 1] + " legend bands."
+          : "")
       : (layer === "growth"
           ? "Derived from two ACS 5-year periods. No combined margin of error is published."
           : layer === "econ"
@@ -685,7 +692,10 @@ class Component extends DCLogic {
     const ramp = pal[metric === "vets" ? "competition" : metric] || BRAND_RAMP;
     let i = 0;
     while (i < cfg.stops.length && v >= cfg.stops[i]) i++;
-    return { color: ramp[i], t: i / (ramp.length - 1) };
+    // `band` is the index the loop above already found. Returned rather than recomputed by a
+    // second copy of the same loop, so the caveat below and the fill colour cannot disagree
+    // about which band a value is in (spec 2.2, the one door every polygon enters by).
+    return { color: ramp[i], t: i / (ramp.length - 1), band: i };
   }
 
   fmtMetric(metric, v) {
@@ -1311,8 +1321,16 @@ class Component extends DCLogic {
     const s = this.state;
     const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };
     const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;
-    const incomeNat = 75149; // ACS 2023 U.S. median household income
-    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
+    // The DESIGN'S OWN FIXTURE ARITHMETIC, at the vintage the design shipped: the ACS 2023
+    // U.S. median household income. It is not a live figure and is not read where the API
+    // has one — `income_vs_us_pct` is the pipeline's own `income_index_vs_us`, taken from
+    // the same band the median above it came from and measured against the stored US median
+    // for that same ACS release. Kept because `incomeIdx` also feeds the Affluence tile
+    // below, which the reference — no API, no served index — still has to render.
+    const incomeNat = 75149;
+    const incomeIdx = this.props.market
+      ? (sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : undefined)
+      : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);
     const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;
     const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;
     const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(
@@ -1375,7 +1393,7 @@ class Component extends DCLogic {
       overviewTiles: [
         { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " · " + sel.growthScope : "")) : undefined },
         { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
-        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },
+        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : (sel.incomeApproximate ? "approximate" : undefined) },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
       compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,

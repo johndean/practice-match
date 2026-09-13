@@ -104,6 +104,16 @@ export interface ApiListing {
   // must carry the area and the qualifier together. `null` for a published place median, and the
   // design's own "Household, 2023" then stands.
   income_note: string | null;
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13): the pipeline's own `income_index_vs_us`, from the
+  // SAME band `income` came from and measured against the stored US median at the listing's own
+  // ACS vintage — the figure the docked panel's Median Income tile used to compute for itself
+  // against a hard-coded 75149 in the design's script. `null` when it is absent or suppressed,
+  // and `null` whenever `income` is, because the index qualifies the figure above it.
+  income_vs_us_pct: number | null;
+  // A33.1: whether that median is an approximation rather than a published Census figure — the
+  // FACT `income_note` states in prose, served beside it because the two surfaces compose
+  // different copy from it. `null` where there is no median at all.
+  income_approximate: boolean | null;
 }
 
 export interface Practice {
@@ -145,6 +155,11 @@ export interface Practice {
   // own literals and every approved state keeps its pixels.
   growthScope?: string;
   incomeNote?: string;
+  // A33.1: the same absence rule again. The design's own fixtures carry neither key, so
+  // `sel.incomeVsUs != null` falls through to the design's own fixture arithmetic and
+  // `sel.incomeApproximate` is falsey — which is what keeps every approved state on its pixels.
+  incomeVsUs?: number;
+  incomeApproximate?: boolean;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -209,6 +224,11 @@ export function toPractice(row: ApiListing): Practice {
   // D-C38: `!= null`, the same rule as `community_label` above and for the same M7 reason.
   if (row.growth_scope != null) p.growthScope = row.growth_scope;
   if (row.income_note != null) p.incomeNote = row.income_note;
+  // A33.1: `!= null` again, and it is load-bearing on BOTH of these in a way it is not on the
+  // strings above — a truthiness test would drop a `0` index (a community exactly on the US
+  // median) and a `false` flag (a published median, which is a statement the payload makes).
+  if (row.income_vs_us_pct != null) p.incomeVsUs = row.income_vs_us_pct;
+  if (row.income_approximate != null) p.incomeApproximate = row.income_approximate;
   return p;
 }
 

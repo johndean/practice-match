@@ -375,6 +375,19 @@ describe('local design amendments (spec D15)', () => {
     'A31.12', 'A31.12b', 'A31.12c',
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
     'A31.13', 'A31.13b',
+    // A33 — three Browse labels that stated more than the data supports (Task SCREEN-LABELS,
+    // 2026-09-13). A33.1b is CHAINED on A21.2d, whose `replace` its `find` is part of.
+    'A33.1a', 'A33.1b',
+    // A33.2 — the margin caveat counts the bands it spans. A33.2a is CHAINED on A24.25/A24.37
+    // (the `AREA_LAYERS` literal it declares the word table beside) and A33.2c on A24.3 (the
+    // margin expression it rewrites); A33.2b's `find` is the pristine bundle's own `bucket`.
+    'A33.2a', 'A33.2b', 'A33.2c',
+    // A33.3 — every Market data layer row names the geography it shades (D-C51 caption audit,
+    // rows R13–R18). Six independent literals, one per row, each measured in the pristine bundle.
+    'A33.3a', 'A33.3b', 'A33.3c', 'A33.3d', 'A33.3e', 'A33.3f',
+    // A33.1c (fix round 1, 2026-09-13) — with the API present the index is the API's or nothing.
+    // Both CHAINED on A33.1's own output, so both are appended after the whole family.
+    'A33.1c.1', 'A33.1c.2',
     // A35 — the basemap never requests a tile Esri does not have, and the member zooms past it
     // (John's ruling D-C52, 2026-09-13). Seven literal edits, all in `MarketMapV3.jsx` (`file:
     // 'jsx'`, A28.1's precedent), none chained: every `find` occurs exactly once in the pristine
@@ -578,7 +591,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(314);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1377,9 +1390,12 @@ describe('local design amendments (spec D15)', () => {
   // a comment: the case runs the same rule at every threshold below the shipped one and pins how
   // many correct citations each would reject. Run it alone with
   //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
-  // The residue below 4 is text the design genuinely repeats: the three shared dismissal closures'
-  // identical `if (this.state.giveMenu) {` heads (3), and the `tickStyle:` declaration A26.2 and
-  // A26.3's filter families share (4).
+  // The residue below 4 is text the design genuinely repeats. RE-MEASURED after A33 (fix round 2,
+  // 2026-09-13): the family's insertions moved every line below V3:1892, so 132 citations were
+  // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
+  // left — which is why the residue FELL from {1: 28, 2: 7, 3: 4} to {1: 21, 2: 4, 3: 2} without
+  // any threshold being relaxed. What is left at 3 is A26.10 and A26.11, the two filter popover
+  // panels whose `panelStyle` string A26.16 unified, so the design carries it four times.
   it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
@@ -1401,11 +1417,14 @@ describe('local design amendments (spec D15)', () => {
     }).findings.filter((f) => f.includes('is stale')).length;
     // RE-TAKEN whenever the ledger grows — this is a measurement of THIS ledger, not a
     // constant. Task ADMIN-GATE (2026-09-13) added four rows and moved it from
-    // { 1: 28, 2: 7, 3: 4, 4: 0 }: A40.4's own output is the line `this.loadAdmin();`, which
-    // A40.6 also writes inside its own line, so that citation is distinctive at 2 and not at 1.
-    // What the case asserts is unchanged and is the whole point: 4 accepts every citation, and
-    // 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 29, 2: 8, 3: 4, 4: 0 });
+    // { 1: 28, 2: 7, 3: 4, 4: 0 } to { 1: 29, 2: 8, 3: 4, 4: 0 }: A40.4's own output is the line
+    // `this.loadAdmin();`, which A40.6 also writes inside its own line, so that citation is
+    // distinctive at 2 and not at 1. Task SCREEN-LABELS (A33, 2026-09-13) moves it again, and
+    // DOWNWARD: its insertions shifted every design line below V3:1892, so 136 citations were
+    // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
+    // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
+    // and 3 does not, so 4 is the smallest threshold that can ship.
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
     expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
   });
 

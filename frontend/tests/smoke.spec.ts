@@ -1,4 +1,4 @@
-import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
@@ -814,7 +814,7 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     );
   }
 
-  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null };
+  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null, income_vs_us_pct: null, income_approximate: null };
 
   /** Cedar Park's docked panel, opened the way `browse-market-panel` opens it: a card click. */
   async function openPanel(page: Page) {
@@ -864,7 +864,15 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('a listing with SOME figures shows those and fabricates none of the rest', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    await serveListings(page, { growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null });
+    // A33.1c: the index goes with the median it qualifies. `serve.py` never serves one without
+    // the other (`test_an_index_without_a_median_is_never_served_alone`), so an override that
+    // takes the median away and leaves the index behind would be stubbing a row the API cannot
+    // emit — and the D6 body now carries the design's own index by default (A33.1c's note in
+    // `design-listings.mjs`).
+    await serveListings(page, {
+      growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null,
+      income_vs_us_pct: null, income_approximate: null
+    });
     const panel = await openPanel(page);
 
     // "Median Income" is the design's own STATIC tile label and is always on this screen — the
@@ -1003,6 +1011,100 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     // its frozen hash.
     await expect(detail.getByText('Household, 2023').first()).toBeVisible();
     await expect(detail.getByText('Since 2015', { exact: true }).first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13) — the docked panel's Median Income tile, in a real
+  // browser and through the real payload.
+  //
+  // Measured on QA 0.1.21 (Austin, DEF Veterinary Hospital): "$94K · +25% vs US", where the +25 %
+  // was the design dividing its own fixture median by a hard-coded `incomeNat = 75149` while the
+  // pipeline's own index for the same listing and band was +19.4 — stored in `market_metric` and
+  // served by nothing. The tile also showed a DERIVED median with no qualifier, while the detail
+  // card behind it has carried one since D-C38 (A27.1).
+  //
+  // Its oracle is here rather than an approved state, for A27.7's own measured reason: the
+  // design's fixtures carry neither `incomeVsUs` nor `incomeApproximate`, `design-listings.mjs`
+  // sends both null, and the reference has no way to be handed either without editing approved
+  // fixture data or declaring a ninth prototype prop. So the assertion is on the RENDERED DOM
+  // under a stubbed API.
+  // -----------------------------------------------------------------------------------------
+  /** The docked panel's overview tile whose key is `key`, as one flattened string. */
+  async function overviewTile(panel: Locator, key: string): Promise<string | null> {
+    return panel.evaluate((root, k) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === k);
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : null;
+    }, key);
+  }
+
+  test('the Median Income tile renders the served index and the served qualifier', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, {
+      community_label: LABEL,
+      income_vs_us_pct: 19.4,
+      income_approximate: true,
+      income_note: `${LABEL} \u00b7 approximate`,
+    });
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    expect(tile, 'the panel has no Median Income tile').toBeTruthy();
+    // The SERVED index, rounded, and the qualifier joined to it by the design's own middot.
+    expect(tile).toContain('+19% vs US · approximate');
+    // …and NOT the design's own arithmetic against the constant, which for this fixture median
+    // reads +57 %: the number that made the QA panel say +25 % about a listing that is +19 %.
+    expect(tile, 'the tile still divides by the hard-coded incomeNat').not.toContain('+57% vs US');
+    expect(errors).toEqual([]);
+  });
+
+  // A33.1c (fix round 1, ruled on the review's Important) — WITH THE API PRESENT THE INDEX IS
+  // THE API'S OR NOTHING. The app hands `marketPanel` the Browse market adapter on every render,
+  // so the design's own `incomeNat = 75149` is not read here at all: a listing with a median and
+  // no served index shows its median and NO index, rather than a percentage against a 2023
+  // constant with nothing saying so. This is the state a real database with no `acs_measure`
+  // summary-level-010 row puts every listing in the country into at once.
+  //
+  // The Affluence opportunity tile beside it is the same statement in the design's own
+  // vocabulary and NO new copy: an empty label in `tone(false)`'s `#8d99a6`, exactly what its
+  // Population-Growth and Sector-Payroll neighbours already render for an absent figure.
+  test('…and with the API serving no index the tile shows none, and Affluence goes to the design\'s own unavailable treatment', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The D6 body now serves the DESIGN'S own index, so that the app and the reference agree on
+    // the approved Browse captures (A33.1c's own note in `design-listings.mjs`). This case is
+    // about the state where the API has none, so it says so explicitly.
+    await serveListings(page, { income_vs_us_pct: null });
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    expect(tile, 'the median itself still renders').toMatch(/\$\d+K/);
+    expect(tile, 'an index was rendered for a listing the API served none for').not.toContain('vs US');
+    expect(tile, 'a qualifier appeared for a median the API did not call approximate').not.toContain('approximate');
+
+    const affluence = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Affluence');
+      const box = label && (label.parentElement as HTMLElement | null);
+      if (!box) return null;
+      const rows = Array.from(box.querySelectorAll('div')).map((d) => ({
+        text: (d.textContent || '').trim(), color: getComputedStyle(d).color
+      }));
+      return { text: (box.textContent || '').replace(/\s+/g, ' ').trim(), rows };
+    });
+    expect(affluence, 'the panel has no Affluence tile').toBeTruthy();
+    // The design's own `$` icon, its own caption, and NO verdict — `oppTiles[0].label` is "" for
+    // an undefined index, so the tile carries the two things it always carries and nothing else.
+    expect(affluence!.text, 'Affluence still carries a verdict with no index behind it').toBe('$ Affluence');
+    for (const verdict of ['High', 'Above avg.', 'Median']) {
+      expect(affluence!.text, `Affluence reads "${verdict}" with no index behind it`).not.toContain(verdict);
+    }
+    // `tone(false)` is #8d99a6 — rgb(141, 153, 166). Read off the computed style rather than the
+    // attribute, so this is the colour a member actually sees.
+    expect(affluence!.rows.some((r) => r.color === 'rgb(141, 153, 166)'),
+      'the Affluence tile is still painted as though it had a figure').toBe(true);
     expect(errors).toEqual([]);
   });
 
