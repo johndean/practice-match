@@ -511,11 +511,20 @@ POST /api/admin/data-sources/{dataset_key}/license
 → { "dataset_key": "…", "license_status": "…" }
 ```
 
-Only `status` is required — every other field `COALESCE`s onto what is already recorded, so
-blocking a source does not mean retyping its licence name and URL. `url`, if given, must be
-`https://` (`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what
-comes back, and clear text lets anything on the path rewrite the page that comparison relies on).
+Only `status` is required — `name` and `url` `COALESCE` onto what is already recorded, so blocking
+a source does not mean retyping its licence name and URL. `url`, if given, must be `https://`
+(`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what comes back,
+and clear text lets anything on the path rewrite the page that comparison relies on).
 Unknown `dataset_key` is `404 NOT_FOUND`.
+
+`notes` is the operator's RATIONALE and is **not** written to `dataset_registry.notes` (A38 fix
+round 2, 2026-09-14): it reaches `audit_log.reason` and the licence ledger row and stops there.
+That column is rendered verbatim by the admin Data Sources tab inside the approved design's own
+row, and its contents are owned by migrations, which are held to a measured character cap
+(`app.census.registry.SOURCE_SUBLINE_CAP`). For the same reason `name`, which IS rendered, is
+refused with `422 BAD_FIELD` above that cap — the message names the number — while its own field
+bound (`MAX_NAME`, 200) still applies; `notes` keeps its 4,000, because a rationale nobody renders
+is not bounded by a layout.
 
 **Two ledgers, and they record different things.** `audit_log` (`app.auth.audit`) records WHO
 changed the gate, from what to what, for the standing "who did this" trail every admin action

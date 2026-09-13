@@ -2390,12 +2390,12 @@ test.describe('admin data sources', () => {
     ...Array.from({ length: 15 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
     registryRow({
       dataset_key: 'esri_tiles', display_name: 'Base map and tiles (Esri Light Gray Canvas)',
-      license_status: 'unresolved', license_name: null, refresh_cadence: 'Live tiles',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
       license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement', attribution_text: 'Tiles © Esri'
     }),
     registryRow({
       dataset_key: 'esri_imagery', display_name: 'Satellite imagery (Esri World Imagery)',
-      license_status: 'unresolved', license_name: null, refresh_cadence: 'Live tiles',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
       license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement',
       attribution_text: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
     }),
@@ -2497,5 +2497,93 @@ test.describe('admin data sources', () => {
     // The footnote — the sentence the whole gate rests on — is the design's own and still there.
     await expect(page.getByText(/No dataset reaches production until its license is recorded here/).first()).toBeVisible();
     await settleExpectedApiFailures(page);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// A38 review F11 — the committed re-derivation of the two layout caps.
+//
+// `app/census/registry.py` holds `SOURCE_SUBLINE_CAP` and `DATASET_SUBLINE_CAP` with their
+// measurements in prose, and `tests/census/test_registry.py` holds every registry row to them. A
+// number measured once in a browser and then written down is a number that goes stale the day the
+// admin table's grid, its padding, the design's 12.5 px/1.5 sub-line type or the card's own
+// max-width moves — so the probe that produced them is committed, runs in the same real Chromium
+// at the same 1440 x 940, and FAILS if either cap no longer buys two lines.
+//
+// `scripts/measure_source_subline_cap.py` runs this case and compares what it prints with the two
+// constants, the way `scripts/measure_area_breaks.py` re-derives `AREA_LAYERS`.
+// ---------------------------------------------------------------------------------------
+test.describe('A38 — the measured sub-line caps', () => {
+  // The registry's own longest `license_name`, which the Source sub-line carries in front of the
+  // note, and the design's own tallest fixture row, which is the budget both caps are cut to.
+  const LONGEST_LICENCE = 'CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)';
+  const TWO_SUBLINES_PX = 61;
+
+  const words = (w: number, n: number) =>
+    Array.from({ length: Math.ceil(n / (w + 1)) }, () => 'abcdefghijklmnopqrstuvwxyz'.slice(0, w)).join(' ').slice(0, n).trim();
+
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'probe', display_name: 'D', api_dataset_id: null, vintage: null,
+    refresh_cadence: 'n/a', license_status: 'cleared', license_name: null, license_url: null,
+    attribution_text: 'A', last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  /** Each cell's height for a page of probe rows, in the app's own admin table. */
+  async function heights(page: Page, rows: object[], cell: 0 | 1): Promise<number[]> {
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    return page.evaluate((which) => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => Math.round(e.children[which].getBoundingClientRect().height)), cell);
+  }
+
+  test('the Source column still holds 115 characters of sub-line on two lines', async ({ page }) => {
+    // The sub-line is `license_name · notes`, so the note carries the cap minus the licence name
+    // and the separator. Word lengths 5 to 22: the note text that packs worst is what the cap has
+    // to survive, not the average.
+    const CAP = 115;
+    const lengths = [CAP, CAP + 10];
+    const rows = [5, 8, 12, 16, 22].flatMap((w) =>
+      lengths.map((n) => registryRow({ license_name: LONGEST_LICENCE, notes: words(w, n - LONGEST_LICENCE.length - 3) })));
+    const got = await heights(page, rows, 1);
+    const atCap = rows.map((_r, i) => got[i]).filter((_h, i) => i % lengths.length === 0);
+    expect(Math.max(...atCap), `SOURCE_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] SOURCE_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the Dataset column still holds 78 characters of sub-line on two lines', async ({ page }) => {
+    // `refresh_cadence` is printed verbatim as the first clause, which is the cheapest way to
+    // drive a sub-line of an exact length; ` · Terms verified never` (23) is always appended.
+    // Word lengths 4 to 16 — the range this sub-line's own vocabulary spans, its longest token
+    // being `Current_Current` at 15.
+    const CAP = 78;
+    const TAIL = ' · Terms verified never'.length;
+    const rows = [4, 5, 6, 8, 10, 12, 16].map((w) => registryRow({ refresh_cadence: words(w, CAP - TAIL) }));
+    const got = await heights(page, rows, 0);
+    expect(Math.max(...got), `DATASET_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] DATASET_SUBLINE_CAP=${CAP} maxPx=${Math.max(...got)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the design\'s own tallest fixture row is still the 94 px budget both caps are cut to', async ({ page }) => {
+    const { designAdminDataSourcesBody } = await import('./design-admin-data-sources.mjs');
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: designAdminDataSourcesBody() }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => [Math.round(e.getBoundingClientRect().height),
+                   Math.round(e.children[0].getBoundingClientRect().width),
+                   Math.round(e.children[1].getBoundingClientRect().width)]));
+    expect(Math.max(...rows.map((r) => r[0]))).toBe(94);
+    expect(rows[0][1]).toBe(258);  // Dataset column
+    expect(rows[0][2]).toBe(376);  // Source column
+    console.log(`[A38-CAPS] designTallestPx=${Math.max(...rows.map((r) => r[0]))} datasetPx=${rows[0][1]} sourcePx=${rows[0][2]}`);
   });
 });

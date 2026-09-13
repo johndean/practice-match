@@ -1,3 +1,4 @@
+from app.census import registry as reg
 from app.census.registry import attribution, is_cleared, load
 
 SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership", "practice_locations",
@@ -84,73 +85,215 @@ def test_dataset_cleared_property_reflects_license_status(conn):
     assert reg["acs5"].cleared is True
     assert reg["pet_ownership"].cleared is False
 
+
 # ---------------------------------------------------------------------------------------
-# A38 fix round 1, review I1 / controller ruling (2026-09-13): a note that does not fit the
-# approved design's row.
+# A38, review I1 (Source column) and F1 (Dataset column): a value that does not fit the approved
+# design's row.
 #
-# The admin Data Sources tab prints `notes` VERBATIM into the Source column's sub-line -- no
-# truncation and no clamping, by ruling: this is the platform's legal gate and hidden text is not
-# an option there. So the fit has to be true of the DATA, and this is where it is made true.
-#
-# MEASURED, not chosen, in real Chromium at the design's own 1440x940 with the design's own three
-# stylesheets, against the app's own markup (`frontend/src/App.vue`'s admin table, grid
-# `1.1fr 1.6fr .8fr .8fr`, `gap: 20px`, row `padding: 16px 20px`, card `max-width: 1180px`):
-#
-#   * the Source column is **376 px** wide;
-#   * the design's own five fixture rows are 75, 94, 75, 94 and 93 px tall, and the tallest of them
-#     is **94 px** -- a 61 px Source cell, which is one line of `attribution_text` at 14 px plus
-#     TWO lines of sub-line at 12.5 px/1.5;
-#   * probing the composed sub-line at word lengths 4, 5, 6, 8, 10 and 12 characters, the first
-#     length to need a THIRD line was 120 characters (five-letter words). **115** is the largest
-#     that stayed on two lines for every mix probed, and that is the cap below. A second probe, at
-#     word lengths 5 to 22 behind the registry's own longest `license_name`
-#     ("CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)", 57 characters), put nothing
-#     over two lines up to 120 either, so 115 is a floor under both.
-#
-# WHAT THIS CAP CANNOT FIX, recorded rather than implied: `attribution_text` is the Source cell's
-# MAIN line and is legally verbatim (spec §12), so a long credit takes two or three lines of its
-# own -- `overture_places`' 117-character credit renders three, and its row is 136 px whatever its
-# note says. Measured after these migrations, every row's SUB-LINE is at most the design's own two
-# lines and the tallest row is 136 px, against 226 px before (zbp). The rows still over 94 px are
-# over it on a string no one may shorten.
-#
-# The sub-line is `license_name or "Licence not recorded"`, then ` · ` and the note, then
-# ` · Terms drift flagged` while the quarterly sweep has the row flagged
-# (`frontend/src/admin/data_sources.ts`'s own composition, restated here because this is a
-# cross-language pin and there is no way to import it). The drift clause is counted only when the
-# row actually carries the flag, as the tab renders it -- and it costs 22 characters, which is why
-# the migrations leave headroom where a row can afford it.
+# The tab prints `notes`, `license_name`, `refresh_cadence` and the vintages VERBATIM -- no
+# truncation and no clamping, by ruling, because this is the platform's legal gate and hidden text
+# on it is not an option. So the fit is a property of the DATA, and this is where it is made true.
+# Both caps and both vocabularies live in `app.census.registry` with their measurements, imported
+# here so there is ONE copy; `scripts/measure_source_subline_cap.py` re-derives them in a real
+# browser and fails if either has moved.
 #
 # A character count is a PROXY for a wrap: the same 115 characters of longer words can still take a
-# third line, which is why the probe took the worst mix rather than an average. It is the cap the
-# ruling asked for, and it is the one thing a migration can be held to.
-SOURCE_SUBLINE_CAP = 115
-DRIFT_CLAUSE = " · Terms drift flagged"
+# third line, which is why each probe took the worst word mix rather than an average.
+# ---------------------------------------------------------------------------------------
+
+
+def _sublines(conn):
+    """Every registry row as the tab composes its two sub-lines, from the database's own state.
+
+    The Python here is `frontend/src/admin/data_sources.ts`'s composition restated -- a
+    cross-language pin, the way `PILLS` and the attribution strings already are, because there is
+    no way to import a TypeScript module into pytest. `data_sources.test.ts` pins the TypeScript
+    side against the same strings."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT r.dataset_key, r.license_name, r.notes, r.license_url, r.refresh_cadence,
+                      r.vintage, a.vintage, a.note,
+                      (SELECT json_build_object('status', i.status, 'finished_at', i.finished_at, 'rows_written', i.rows_written)
+                         FROM ingest_run i WHERE i.dataset_key = r.dataset_key ORDER BY i.id DESC LIMIT 1)
+                 FROM dataset_registry r LEFT JOIN active_vintage a USING (dataset_key)
+                ORDER BY r.dataset_key"""
+        )
+        rows = cur.fetchall()
+
+    def real(v: str | None) -> str | None:
+        return v if v is not None and v not in reg.PLACEHOLDER_VINTAGES else None
+
+    out = []
+    for key, name, notes, url, cadence, vintage, live_vintage, live_note, run in rows:
+        source = [name or "Licence not recorded"]
+        if notes:
+            source.append(notes)
+        # The sweep's own clause, counted for every row it CAN reach -- `license.py`'s
+        # `WHERE license_url IS NOT NULL`. A row it can never flag never renders it.
+        drift = reg.DRIFT_CLAUSE if url is not None else ""
+
+        dataset = [cadence]
+        declared, live = real(vintage), real(live_vintage)
+        note = f" ({live_note})" if live_note else ""
+        if live is not None:
+            dataset.append((f"Declared {declared} · live {live}" if declared is not None and declared != live else f"Live vintage {live}") + note)
+        elif live_note:
+            dataset.append(live_note)
+        dataset.append("Terms verified never")
+        out.append((key, " · ".join(source) + drift, " · ".join(dataset), run))
+    return out
 
 
 def test_every_registry_note_fits_the_design_s_source_column(conn):
     """Every `dataset_registry.notes` value, after every migration, renders inside the approved
-    design's own row height.
+    design's own row height -- in the WORST state the quarterly sweep can put it in.
 
     RED before migrations 092 (rewritten) and 093: `zbp` carried a 458-character note that rendered
     226 px tall against the design's 94, with `practice_locations` at 187 px,
-    `google_places_aggregate` at 190 px and six more over the design -- measured, on the real
-    registry, in the browser."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT dataset_key, license_name, notes, drift_flagged FROM dataset_registry "
-            "WHERE notes IS NOT NULL AND notes <> '' ORDER BY dataset_key"
-        )
-        rows = cur.fetchall()
-    assert rows, "no registry row carries a note, so this pin measures nothing"
-    over = []
-    for key, license_name, notes, drift in rows:
-        sub = f"{license_name or 'Licence not recorded'} · {notes}" + (DRIFT_CLAUSE if drift else "")
-        if len(sub) > SOURCE_SUBLINE_CAP:
-            over.append(f"{key}: {len(sub)} characters, {len(sub) - SOURCE_SUBLINE_CAP} over")
+    `google_places_aggregate` at 190 px and six more over the design. RED again in fix round 2 with
+    the drift clause counted (review F4): `google_places_aggregate` 137, `overture_places` 134,
+    `zbp` 124, `osm_tiles` 119, `fsq_os_places` 116 -- five rows that fitted only until their terms
+    page was edited, in an arm no test database could ever execute."""
+    rows = _sublines(conn)
+    assert rows, "no registry row was read, so this pin measures nothing"
+    over = [
+        f"{key}: {len(sub)} characters, {len(sub) - reg.SOURCE_SUBLINE_CAP} over"
+        for key, sub, _dataset, _run in rows
+        if len(sub) > reg.SOURCE_SUBLINE_CAP and key not in reg.LEGAL_NOTE_ROWS
+    ]
     assert not over, (
         "these registry notes do not fit the approved design's Source column "
-        f"({SOURCE_SUBLINE_CAP} characters of sub-line, measured): " + "; ".join(over) +
+        f"({reg.SOURCE_SUBLINE_CAP} characters of sub-line, measured): " + "; ".join(over) +
         ". The tab prints notes verbatim by ruling, so shorten the note in a migration -- never the "
         "rendering."
+    )
+
+
+def test_the_legal_rows_are_the_only_ones_allowed_past_the_source_cap(conn):
+    """The allow-list is an exception, and an exception nobody checks becomes a habit.
+
+    Controller ruling F2 (2026-09-14): legally material text is never shortened to fit a layout, so
+    `practice_locations` (the blocked 2017 Google Places export, plan D15, and the Google Maps
+    Platform terms that forbid storing or rendering it) and `google_places_aggregate` (the SST
+    §13.2 condition its block rests on) may wrap to a third line. This asserts they are the ONLY
+    two, that both really are over the cap -- an allow-list entry for a row that fits is a licence
+    nobody needs -- and that each still says the thing it is exempt for."""
+    subs = {key: sub for key, sub, _d, _r in _sublines(conn)}
+    assert set(reg.LEGAL_NOTE_ROWS) <= set(subs), "the allow-list names a dataset the registry does not hold"
+    for key, reason in reg.LEGAL_NOTE_ROWS.items():
+        assert len(subs[key]) > reg.SOURCE_SUBLINE_CAP, f"{key} fits the cap; it does not need an exception ({reason})"
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'practice_locations'")
+        note = cur.fetchone()[0]
+    # Plan D15's own sentence -- "The registry's `practice_locations` row names the file as blocked"
+    # -- is true only while this row names it.
+    assert "Report_Hospital_Competitor_All_US_ZipCode_FULL.csv" in note
+    assert "Google Maps Platform Terms" in note and "forbid storing or rendering" in note
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'google_places_aggregate'")
+        assert "SST §13.2" in cur.fetchone()[0]
+
+
+def test_every_registry_row_fits_the_design_s_dataset_column(conn):
+    """The Dataset sub-line, the same way (review F1).
+
+    RED before this round: fix round 1's M6 pushed `Declared vintage <v>` on EVERY row --
+    `dataset_registry.vintage` is NOT NULL -- so `acs5` composed
+    `Annual (Dec) · Declared vintage 2019–2023 · Terms verified never`, and on a loaded row (QA has
+    a completed run and a live vintage for every Census dataset) `Annual (Dec) · Loaded September
+    2026 (85,381 rows) · Declared vintage 2019–2023 · Terms verified never` -- 102 characters,
+    THREE lines, 112 px against the design's tallest 94, and four lines at 131 px with an
+    activation note. The ruling names the live vintage only, the declared one only where it
+    differs, and never a placeholder.
+
+    WHAT THIS PIN CANNOT HOLD, recorded rather than implied: a COMPLETED LOAD adds about 35
+    characters (`Loaded September 2026 (85,381 rows)`), and 73 of the cap's 78 are spent by that
+    clause and `Terms verified …` alone -- so a loaded row that also names a live vintage is 98
+    characters and takes a third line at this width whatever the vintage says. That is measured,
+    it is the `overture_places` precedent one column over, and no cap can fix it without a
+    restructure nobody has ruled. The pin therefore holds what the REGISTRY owns; the load clause
+    is excluded and named here."""
+    rows = _sublines(conn)
+    over = [
+        f"{key}: {len(sub)} characters, {len(sub) - reg.DATASET_SUBLINE_CAP} over"
+        for key, _source, sub, _run in rows
+        if len(sub) > reg.DATASET_SUBLINE_CAP
+    ]
+    assert not over, (
+        "these Dataset sub-lines do not fit the approved design's Dataset column "
+        f"({reg.DATASET_SUBLINE_CAP} characters, measured at 258 px): " + "; ".join(over)
+    )
+
+
+# The measured residue on the Dataset column, pinned so it cannot grow silently. `Loaded September
+# 2026 (85,381 rows)` is 35 characters; with `Terms verified never` it is 73 of the cap's 78 on its
+# own, so a loaded row that also names its live vintage is 98 and takes a third line at 258 px
+# whatever the vintage says. The controller accepted and RECORDED that (the `overture_places`
+# precedent on the Source column); fix round 1's own composition was 102, and 131 px with an
+# activation note beside it.
+LOADED_ACS5_DATASET_SUBLINE = 98
+
+
+def test_a_loaded_row_is_the_one_measured_exception_on_the_dataset_column(conn):
+    """The state QA is actually in, driven rather than reasoned about.
+
+    Every Census dataset on QA has a completed `ingest_run` and an `active_vintage` row
+    (`app/census/census_load.py` refuses to materialise without one), which is the state fix round
+    1's `Declared vintage` clause pushed to FOUR lines. No test database has a run or an activation
+    of its own, so this case makes one -- otherwise the arm the cap exists for is dead, which is
+    exactly what review F4 caught in the drift clause.
+
+    RED before the ruling: `Annual (Dec) · Loaded September 2026 (85,381 rows) · Declared vintage
+    2019–2023 · Terms verified never`, 102 characters."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, status, started_at, finished_at, rows_written) "
+            "VALUES ('acs5', '2019–2023', 'succeeded', now(), timestamptz '2026-09-20 00:00+00', 85381)"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) VALUES ('acs5', '2019–2023', now(), 'census_load', NULL)")
+    key, _source, dataset, run = next(r for r in _sublines(conn) if r[0] == "acs5")
+    assert key == "acs5" and run is not None and run["status"] == "succeeded"
+    # The tab composes the load clause between the cadence and the vintage
+    # (`frontend/src/admin/data_sources.ts`); `_sublines` leaves it out so the cap above holds what
+    # the REGISTRY owns, and it is put back here because this is the case that measures it.
+    loaded = dataset.replace(
+        "Annual (Dec) · ", f"Annual (Dec) · Loaded September 2026 ({run['rows_written']:,} rows) · ", 1
+    )
+    assert "Declared vintage" not in loaded
+    assert loaded == "Annual (Dec) · Loaded September 2026 (85,381 rows) · Live vintage 2019–2023 · Terms verified never"
+    assert len(loaded) == LOADED_ACS5_DATASET_SUBLINE, (
+        f"the loaded Dataset sub-line is {len(loaded)} characters against the recorded "
+        f"{LOADED_ACS5_DATASET_SUBLINE}; it is already past the {reg.DATASET_SUBLINE_CAP}-character "
+        "two-line cap by ruling, and it may not grow further without one"
+    )
+
+
+def test_a_live_vintage_is_named_once_and_a_placeholder_never(conn):
+    """The ruling's own three clauses, driven against the real registry rather than a fixture.
+
+    `vintage` is NOT NULL (017:14) and holds `n/a`, `live`, `TBD` and `Current_Current` -- the
+    Census Geocoder's benchmark identifier -- for datasets that have no vintage at all, so the
+    clause the fix round added printed "Declared vintage n/a" on a blocked row."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT dataset_key, vintage FROM dataset_registry ORDER BY dataset_key")
+        vintages = cur.fetchall()
+    placeholders = [k for k, v in vintages if v in reg.PLACEHOLDER_VINTAGES]
+    assert placeholders, "no registry row carries a placeholder vintage, so this pin measures nothing"
+    for key, dataset_sub in ((k, d) for k, _s, d, _r in _sublines(conn)):
+        assert "Declared vintage" not in dataset_sub, f"{key}: the retired fix-round-1 clause is back"
+        if key in placeholders:
+            assert "vintage" not in dataset_sub.lower(), f"{key} names a placeholder as a vintage: {dataset_sub!r}"
+
+
+def test_the_refresh_cadence_vocabulary_is_017s_own(conn):
+    """Review F7 / M9. `refresh_cadence` is free text and the tab prints it verbatim as the Dataset
+    sub-line's first clause, so a second spelling of one cadence -- 092's original `Live tiles`
+    beside 017's `live` -- reads as two different things on one table. 092 was corrected; this is
+    the gate that was missing, and it reads the vocabulary from `app.census.registry` so the
+    renderer's fixtures and the database cannot drift apart silently."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT refresh_cadence FROM dataset_registry ORDER BY 1")
+        found = {row[0] for row in cur.fetchall()}
+    assert found <= set(reg.REFRESH_CADENCES), (
+        f"the registry holds a cadence outside 017's vocabulary: {sorted(found - set(reg.REFRESH_CADENCES))}"
     )

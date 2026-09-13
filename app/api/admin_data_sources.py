@@ -66,6 +66,7 @@ from app.auth import sessions as S
 from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
+from app.census.registry import SOURCE_SUBLINE_CAP
 from app.db import sync_conn
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,14 @@ def list_data_sources() -> list[dict[str, Any]]:
 
 class LicenseDecision(BaseModel):
     """A human licence decision. Only `status` is required: every other field COALESCEs onto what
-    is already recorded, so blocking a source does not mean retyping its licence name and URL."""
+    is already recorded, so blocking a source does not mean retyping its licence name and URL.
+
+    `notes` is the operator's RATIONALE and is NOT one of those fields any more (A38 fix round 2,
+    controller re-ruling of brief item I7, 2026-09-14). It reaches `audit_log.reason` and the
+    licence ledger and stops there; it is no longer COALESCEd into `dataset_registry.notes`, which
+    the Data Sources tab renders verbatim into a row of the approved design. That is why its 4,000
+    characters can stay 4,000: a rationale nobody renders is not bounded by a layout. `name` IS
+    rendered, so the route bounds it by the measured cap below."""
 
     status: Literal["cleared", "unresolved", "blocked"]
     name: str | None = Field(default=None, max_length=MAX_NAME)
@@ -160,7 +168,25 @@ def decide_license(dataset_key: str, body: LicenseDecision, request: Request, pr
 
     `drift_flagged` comes down and `last_verified_at` goes to now: the admin has just looked at the
     terms, which is the only event in this system besides the sweep that counts as a verification
-    (see the `last_verified_at` paragraph above — this handler is its second author)."""
+    (see the `last_verified_at` paragraph above — this handler is its second author).
+
+    **This is the ONE runtime writer of the columns the Data Sources tab renders, and fix round 2
+    closed it (review F3, a re-ruling of brief item I7).** Migrations 092 and 093 made every seeded
+    `notes` value fit the approved design's row, and `tests/census/test_registry.py` pins that —
+    but the pin reads a migrated test database, so a write through this door was structurally
+    invisible to it, and `notes = COALESCE(%s, notes)` admitted 4,000 characters into a column
+    printed verbatim at 376 px. Two changes: the decision's rationale no longer touches that column
+    at all (it is the audit trail's, and `license_audit_log` carries the decision row), and a
+    `name` longer than `SOURCE_SUBLINE_CAP` is refused with a 422 that names the cap rather than
+    written and rendered. `MAX_NAME` (200) stays as the field's own bound; the cap is the stricter
+    of the two and is the one a licence name meets first."""
+    if body.name is not None and len(body.name) > SOURCE_SUBLINE_CAP:
+        # Review F3. The tab prints `license_name` verbatim as the Source sub-line's first clause
+        # and the design gives that line two rows at 376 px; the cap is measured
+        # (`app.census.registry.SOURCE_SUBLINE_CAP`, re-derived by
+        # `scripts/measure_source_subline_cap.py`). Refused at the door rather than truncated at
+        # the renderer, which is the ruling 092 and 093 already follow for the seeded rows.
+        return _error("BAD_FIELD", f"A licence name must be at most {SOURCE_SUBLINE_CAP} characters: the admin Data Sources tab renders it in full.", 422)
     if body.url is not None and body.url.scheme != "https":
         # A-C9 (5). `app/census/license.py` re-fetches this URL quarterly and hashes what comes
         # back; over clear text anything on the path can rewrite the page the drift check compares.
@@ -183,12 +209,11 @@ def decide_license(dataset_key: str, body: LicenseDecision, request: Request, pr
                       SET license_status = %s,
                           license_name = COALESCE(%s, license_name),
                           license_url = COALESCE(%s, license_url),
-                          notes = COALESCE(%s, notes),
                           drift_flagged = false,
                           last_verified_at = now()
                     WHERE dataset_key = %s
                 RETURNING license_status, drift_flagged""",
-                (body.status, body.name, url, body.notes, dataset_key),
+                (body.status, body.name, url, dataset_key),
             )
             # The row exists and is locked, so the UPDATE matched it; the cast is what that
             # guarantees already, and a branch that can never be taken is one no test could close.

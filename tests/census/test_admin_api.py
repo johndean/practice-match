@@ -21,6 +21,7 @@ import redis as redis_sync
 from httpx import ASGITransport
 
 from app.api import admin_data_sources
+from app.census.registry import SOURCE_SUBLINE_CAP
 from app.auth import deps
 from app.census import gate, license
 from app.config import settings
@@ -226,8 +227,11 @@ async def test_the_decision_records_the_operators_url_and_note_in_the_licence_le
     with conn.cursor() as cur:
         cur.execute("""SELECT license_status, license_name, license_url, notes, drift_flagged, last_verified_at IS NOT NULL
                          FROM dataset_registry WHERE dataset_key = 'imagery'""")
+        # `notes` is the row's OWN seeded note, untouched: the decision's rationale goes to the
+        # audit trail and the licence ledger and never into the column the tab renders
+        # (A38 fix round 2, review F3 — a re-ruling of brief item I7).
         assert cur.fetchone() == ("cleared", "Esri Imagery — commercial web display", "https://example.test/terms",
-                                  "signed 2026-09-05", False, True)
+                                  "Satellite toggle stays flagged off until a written licence names commercial web display.", False, True)
         cur.execute("SELECT url, content_sha256, http_status, changed FROM license_audit_log WHERE dataset_key = 'imagery'")
         assert cur.fetchall() == [("https://example.test/terms", None, None, False)]
 
@@ -516,17 +520,45 @@ async def test_the_stored_licence_url_is_pydantics_canonical_form(client, conn, 
         assert cur.fetchall() == [(stored,)]
 
 
-@pytest.mark.parametrize(("field", "limit"), [("name", 200), ("notes", 4_000)])
+@pytest.mark.parametrize(("field", "limit"), [("name", SOURCE_SUBLINE_CAP), ("notes", 4_000)])
 async def test_the_free_text_bounds_bite_exactly_at_their_limit(client, member, field, limit):
-    """A-C9 (8) / review I7. `notes` reaches `audit_log.reason`, a table whose triggers refuse
-    DELETE, so the bound is not decoration — and a bound nothing exercises is a claim, not a
-    limit. Asserted on both sides of it."""
-    assert {"name": admin_data_sources.MAX_NAME, "notes": admin_data_sources.MAX_NOTES}[field] == limit
+    """A-C9 (8) / review I7, RE-RULED by A38 fix round 2 (review F3, 2026-09-14).
+
+    `notes` reaches `audit_log.reason`, a table whose triggers refuse DELETE, so the bound is not
+    decoration — and a bound nothing exercises is a claim, not a limit. Asserted on both sides of
+    it. `notes` keeps its 4,000 because the rationale is no longer written into the column the
+    Data Sources tab renders; `name` IS rendered, so its operative bound is the measured
+    `SOURCE_SUBLINE_CAP`, not the field's own `MAX_NAME` — the cap is the stricter of the two and
+    the one a licence name meets first. Both are still asserted: `MAX_NAME` bounds the field, the
+    cap bounds what reaches the tab."""
+    assert {"name": SOURCE_SUBLINE_CAP, "notes": admin_data_sources.MAX_NOTES}[field] == limit
+    assert admin_data_sources.MAX_NAME == 200 and SOURCE_SUBLINE_CAP < admin_data_sources.MAX_NAME
     _account_id, headers = await _admin(client, member)
     ok = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * limit})
     assert ok.status_code == 200, ok.text
     over = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * (limit + 1)})
     assert over.status_code == 422
+
+
+async def test_a_licence_name_over_the_measured_cap_is_refused_with_the_cap_named(client, conn, member):
+    """Review F3: the ONE runtime writer of a column the tab renders verbatim, closed at the door.
+
+    `tests/census/test_registry.py` pins every MIGRATED note against the measured cap, but it reads
+    a migrated test database — a write through this route was structurally invisible to it, and
+    `MAX_NAME` alone (200) is nearly twice the cap. The refusal names the number so an operator can
+    act on it, and the row is left exactly as it was."""
+    _account_id, headers = await _admin(client, member)
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_name, license_status FROM dataset_registry WHERE dataset_key = 'imagery'")
+        before = cur.fetchone()
+    over = await client.post(f"{PATH}/imagery/license", headers=headers,
+                             json={"status": "cleared", "name": "x" * (SOURCE_SUBLINE_CAP + 1)})
+    assert over.status_code == 422
+    body = over.json()["error"]
+    assert body["code"] == "BAD_FIELD" and str(SOURCE_SUBLINE_CAP) in body["message"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_name, license_status FROM dataset_registry WHERE dataset_key = 'imagery'")
+        assert cur.fetchone() == before, "a refused decision changed the row"
 
 
 # --- wiring -------------------------------------------------------------------------------------

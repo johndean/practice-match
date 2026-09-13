@@ -65,8 +65,9 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines,
 // that card. A34's other twenty-two entries touch Browse surfaces (the Market data card's source
 // line, the docked panel, the snapshot strip, Compare) and four computed values with no template
 // reader at all, none of which is in this manifest.
-// Amendment A38 (Task A38, D-C53, 2026-09-13; controller ruling 18) re-based ONE row, the fourth
-// ruled re-pin. `admin-data-sources` is the Admin screen's Data Sources tab, and A38.4/A38.5 take
+//
+// Amendment A38 (Task A38, D-C53, 2026-09-13; controller ruling 18) re-based ONE row, as A18 and
+// A34 each did. `admin-data-sources` is the Admin screen's Data Sources tab, and A38.4/A38.5 take
 // two buttons out of the design's own table — "Assign review" on the pet-ownership row and "Open
 // question" on the practice-locations one — under D-C53's rule that a button which calls nothing is
 // REMOVED by amendment rather than shipped as a no-op: neither had a route, a table or a status

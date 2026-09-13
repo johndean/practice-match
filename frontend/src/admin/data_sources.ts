@@ -91,6 +91,19 @@ export function cell(main: string | null, sub?: string | null, pill?: string | n
  *  `toDataSourceRows`'s fallback below. */
 export const PILLS: Record<string, [string, string]> = { "cleared": ["Cleared", "ok"], "unresolved": ["Unresolved", "bad"], "blocked": ["Blocked", "bad"] };
 
+/** Values `dataset_registry.vintage` and `active_vintage.vintage` hold where the dataset HAS no
+ *  vintage — placeholders and machine identifiers, never something anyone declared (review F10).
+ *  `vintage` is NOT NULL, so without this the tab printed "Declared vintage n/a" on a blocked row
+ *  and "Declared vintage Current_Current", the Census Geocoder's own benchmark identifier, on
+ *  another. Pinned against `app.census.registry.PLACEHOLDER_VINTAGES` by pytest, so one table
+ *  governs the renderer and the pin. */
+export const PLACEHOLDER_VINTAGES: string[] = ["n/a", "live", "TBD", "Current_Current", "latest", "latest quarter", "monthly release"];
+
+/** A vintage, or null where the column holds a placeholder instead of one. */
+function realVintage(v: string | null): string | null {
+  return v !== null && !PLACEHOLDER_VINTAGES.includes(v) ? v : null;
+}
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 /** "June 2026" from an ISO timestamp. The design's own date vocabulary ON THIS TAB — its
@@ -205,19 +218,27 @@ export function toDataSourceRows(items: (DataSourceItem | DesignDataSourceRow)[]
     }
     const [pill, tone] = PILLS[item.license_status] ?? [item.license_status, 'mute'];
     const dataset = [item.refresh_cadence];
-    const note = loadNote(item.last_run);
-    if (note !== null) dataset.push(note);
-    // Fix round 1 (review M6, D-C53's "everything must be surfaced"): the DECLARED vintage beside
-    // the live one. They are two different facts — what the platform registered and what the app is
-    // allowed to read today — and a row where they differ is an activation that has not happened.
-    if (item.vintage !== null) dataset.push(`Declared vintage ${item.vintage}`);
+    const loaded = loadNote(item.last_run);
+    if (loaded !== null) dataset.push(loaded);
+    // Fix round 2 (review F1/F10, controller ruling D-C51 "one fact per string"): ONE vintage
+    // clause, and only where there is a vintage to name. Fix round 1 pushed `Declared vintage <v>`
+    // on every row — `dataset_registry.vintage` is NOT NULL — which on a loaded row put the
+    // Dataset sub-line on a third line in the 258 px column: the I1 defect one column over, made
+    // by the fix for it. The LIVE vintage is what the app is allowed to read, so it is what the
+    // tab names; the declared one is added only where it DIFFERS, which is the one state that
+    // carries information (an activation that has not happened). Where they agree it is the same
+    // fact printed twice, and where there is no live vintage there is nothing to name.
+    //
     // The operator's activation note (A-C7 (6)) rides in the design's OWN parenthesis, the one this
     // sub-line already uses for "Loaded June 2026 (4,200 rows)", beside the vintage it explains.
     // `app/api/admin_data_sources.py`'s own docstring says this tab is its only intended reader.
-    // `active_vintage.vintage` is NOT NULL so the second arm cannot be reached through the CLI, but
+    // `active_vintage.vintage` is NOT NULL so the last arm cannot be reached through the CLI, but
     // a written note is never dropped on the one surface that shows it.
-    if (item.active_vintage !== null) {
-      dataset.push(`Live vintage ${item.active_vintage}` + (item.active_vintage_note ? ` (${item.active_vintage_note})` : ''));
+    const declared = realVintage(item.vintage);
+    const live = realVintage(item.active_vintage);
+    const note = item.active_vintage_note ? ` (${item.active_vintage_note})` : '';
+    if (live !== null) {
+      dataset.push((declared !== null && declared !== live ? `Declared ${declared} · live ${live}` : `Live vintage ${live}`) + note);
     } else if (item.active_vintage_note) {
       dataset.push(item.active_vintage_note);
     }
@@ -225,7 +246,11 @@ export function toDataSourceRows(items: (DataSourceItem | DesignDataSourceRow)[]
     // simply omitted the line would read as "recently verified" to anyone skimming.
     dataset.push(`Terms verified ${item.last_verified_at === null ? 'never' : formatMonth(item.last_verified_at)}`);
 
-    const source = [item.license_name ?? 'Licence not recorded'];
+    // `||`, not `??` (review F9): `LicenseDecision.name` carries no `min_length`, so
+    // `COALESCE('', license_name)` can blank the column, and `??` kept the empty string and
+    // printed a dangling " · <notes>" while `test_registry.py`'s pin composed "Licence not
+    // recorded" for the same row. The renderer and the cross-language pin agree about one string.
+    const source = [item.license_name || 'Licence not recorded'];
     if (item.notes) source.push(item.notes);
     // `drift_flagged` is its own field and is never derived from `last_verified_at` (the two are
     // independent; `app/api/admin_data_sources.py` records why). No new pill — the design has

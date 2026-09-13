@@ -55,7 +55,7 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
     // `last_verified_at` is null for every dataset the quarterly sweep has not read a body for,
     // and "never" is what that means — never the date of a failed attempt
     // (`app/api/admin_data_sources.py`'s own note on the field's two authors).
-    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Terms verified never');
   });
 
   it('serves the attribution string VERBATIM — it is never composed here (spec §12)', () => {
@@ -76,38 +76,56 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
 
   it('reports a successful load with its month and its row count', () => {
     const [row] = rows([item({ last_run: { status: 'succeeded', finished_at: '2026-06-14T09:12:00+00:00', rows_written: 4200 } })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Loaded June 2026 (4,200 rows) · Declared vintage 2019–2023 · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Loaded June 2026 (4,200 rows) · Terms verified never');
   });
 
   it('never reports a load that did not succeed as a load', () => {
     const [row] = rows([item({ last_run: { status: 'failed', finished_at: '2026-06-14T09:12:00+00:00', rows_written: 0 } })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Last load failed June 2026 · Declared vintage 2019–2023 · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Last load failed June 2026 · Terms verified never');
   });
 
   it('omits the month of a run that has not finished, and counts a null row tally as none', () => {
     expect(rows([item({ last_run: { status: 'running', finished_at: null, rows_written: null } })])[0][0].sub)
-      .toBe('Annual (Dec) · Last load running · Declared vintage 2019–2023 · Terms verified never');
+      .toBe('Annual (Dec) · Last load running · Terms verified never');
     expect(rows([item({ last_run: { status: 'succeeded', finished_at: null, rows_written: null } })])[0][0].sub)
-      .toBe('Annual (Dec) · Loaded (0 rows) · Declared vintage 2019–2023 · Terms verified never');
+      .toBe('Annual (Dec) · Loaded (0 rows) · Terms verified never');
   });
 
   it('names the vintage the app is actually allowed to read, and when the terms were verified', () => {
     const [row] = rows([item({ active_vintage: '2019–2023', last_verified_at: '2026-06-02T00:00:00+00:00' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2019–2023 · Terms verified June 2026');
+    expect(row[0].sub).toBe('Annual (Dec) · Live vintage 2019–2023 · Terms verified June 2026');
   });
 
-  // A38 fix round 1 (review M6, D-C53's "everything must be surfaced"): three fields the route
-  // serves were not on the tab. TWO of them are now, and the third is recorded as deliberately not.
-  it('names the DECLARED vintage beside the live one, so the two can be read against each other', () => {
-    // `dataset_registry.vintage` is what the platform registered; `active_vintage.vintage` is what
-    // the app is allowed to read today. A row where they differ is a real operational state — an
-    // activation that has not happened — and before this the tab showed only the second of them.
-    const [row] = rows([item({ vintage: '2019–2023', active_vintage: '2014–2018' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2014–2018 · Terms verified never');
+  // A38 fix round 2 (review F1/F10, controller ruling D-C51 "one fact per string"): the Dataset
+  // sub-line names the LIVE vintage only, the declared one only when it DIFFERS, and never a
+  // placeholder. Fix round 1's `Declared vintage <v>` landed on EVERY row — `vintage` is NOT NULL
+  // — and put 15 of 19 loaded rows on a third line in the 258 px column, which is the I1 defect
+  // one column over, made by the fix for it.
+  it('names the live vintage, and says nothing about a declared one that agrees with it', () => {
+    const [row] = rows([item({ vintage: '2019–2023', active_vintage: '2019–2023' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Live vintage 2019–2023 · Terms verified never');
   });
 
-  it('has no vintage clause where the registry declares none', () => {
-    expect(rows([item({ vintage: null })])[0][0].sub).toBe('Annual (Dec) · Terms verified never');
+  it('names BOTH when the live vintage is not the one the registry declares', () => {
+    // The one state where the declared vintage carries information: an activation that has not
+    // happened, or one held back deliberately. Anything else is the same fact printed twice.
+    const [row] = rows([item({ vintage: '2023', active_vintage: '2022' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Declared 2023 · live 2022 · Terms verified never');
+  });
+
+  it('prints no vintage clause where the row has no live vintage at all', () => {
+    expect(rows([item({ vintage: '2019–2023', active_vintage: null })])[0][0].sub)
+      .toBe('Annual (Dec) · Terms verified never');
+  });
+
+  it('never prints a placeholder or a machine identifier as a vintage', () => {
+    // `vintage` is NOT NULL, so the column holds `n/a` for a blocked dataset, `live` for a tile
+    // service, `TBD` for an unconfirmed one and `Current_Current` — the Census Geocoder's own
+    // benchmark identifier — for the geocoder. None of them is a vintage anyone declared.
+    for (const v of ['n/a', 'live', 'TBD', 'Current_Current', 'latest', 'latest quarter', 'monthly release']) {
+      expect(rows([item({ vintage: v, active_vintage: v })])[0][0].sub, v)
+        .toBe('Annual (Dec) · Terms verified never');
+    }
   });
 
   it('carries the operator\'s activation note, in the design\'s own parenthesis, beside the vintage it explains', () => {
@@ -115,8 +133,8 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
     // row-count guard, and `app/api/admin_data_sources.py`'s own docstring says this tab is the
     // only surface that reads it back. The parenthesis is the design's own idiom on this very
     // sub-line ("Loaded June 2026 (4,200 rows)"), so it needs no word the design does not have.
-    const [row] = rows([item({ active_vintage: '2022', active_vintage_note: 'forced past the row-count guard' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2022 (forced past the row-count guard) · Terms verified never');
+    const [row] = rows([item({ vintage: '2022', active_vintage: '2022', active_vintage_note: 'forced past the row-count guard' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Live vintage 2022 (forced past the row-count guard) · Terms verified never');
   });
 
   it('still shows an activation note where the live vintage itself is missing', () => {
@@ -124,7 +142,14 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
     // an operator's written note on the tab that IS its only reader is the one outcome this
     // module must not have, so the note takes its own clause rather than vanishing with its host.
     const [row] = rows([item({ active_vintage: null, active_vintage_note: 'why' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · why · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · why · Terms verified never');
+  });
+
+  // Review F9: the renderer and the pytest pin must agree about one string. `LicenseDecision.name`
+  // carries no `min_length`, so `COALESCE('', license_name)` can blank the column; `??` kept the
+  // empty string and printed a dangling " · <notes>" while the pin composed "Licence not recorded".
+  it('treats an EMPTY licence name as no licence name, which is what the pin composes', () => {
+    expect(rows([item({ license_name: '', notes: 'note' })])[0][1].sub).toBe('Licence not recorded · note');
   });
 
   it('reads a date in UTC, so a reviewer\'s own browser offset cannot move the month', () => {

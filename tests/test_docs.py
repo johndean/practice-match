@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 import yaml
 
+from app.census import registry as PM_REGISTRY
 from app.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1215,6 +1216,23 @@ def test_the_admin_data_sources_table_matches_the_registry():
     allowed = {v.strip().strip("'") for v in match.group(1).split(",")}
     assert allowed == {"cleared", "unresolved", "blocked"}, allowed
     assert set(cast("dict[str, object]", _data_sources_ts_literal("PILLS"))) == allowed
+
+
+def test_the_placeholder_vintages_are_one_table_on_both_sides():
+    """A38 fix round 2, review F10. `dataset_registry.vintage` is NOT NULL, so the column holds
+    `n/a` for a blocked dataset, `live` for a tile service and `Current_Current` — the Census
+    Geocoder's own benchmark identifier — for the geocoder. None of them is a vintage anyone
+    declared, and fix round 1 printed every one of them under the label "Declared vintage".
+
+    The renderer decides what to suppress and the pytest pin decides what to measure, so the two
+    read ONE table: a value added on one side and not the other would put a placeholder back on
+    the tab with the pin still green. Same convention as `PILLS`: single-line double-quoted JSON
+    in the TypeScript, parsed here."""
+    ts = cast("list[str]", _data_sources_ts_literal("PLACEHOLDER_VINTAGES"))
+    assert sorted(ts) == sorted(PM_REGISTRY.PLACEHOLDER_VINTAGES), (
+        "frontend/src/admin/data_sources.ts and app/census/registry.py disagree about which "
+        f"vintage values are placeholders: {sorted(set(ts) ^ set(PM_REGISTRY.PLACEHOLDER_VINTAGES))}"
+    )
 
 
 ESRI_REGISTRY_MIGRATION = "092_esri_basemap_registry.sql"
