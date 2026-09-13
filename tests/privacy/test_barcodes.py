@@ -3,6 +3,7 @@ under NOT_SHOW regardless of payload: a QR cannot be reviewed by eye, and the wo
 one -- no egress, no SSRF. The payload is classified offline and the STRING is never stored."""
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import sys
 import types
@@ -124,6 +125,25 @@ def test_a_module_without_an_engine_class_is_unavailable_not_an_attribute_error(
     with pytest.raises(barcodes.BarcodeUnavailable) as caught:
         barcodes.read_symbols(Image.new("RGB", (200, 200)))
     assert isinstance(caught.value.__cause__, AttributeError)
+
+
+def test_an_absent_distribution_leaves_the_module_importable_and_the_reason_code_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review N1, the twin of `test_ocr.py`'s own case: importing an adapter never raises, and
+    `BARCODE_UNAVAILABLE` stays reachable for the deployment it describes."""
+    def raiser(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr("importlib.metadata.version", raiser)
+    monkeypatch.delitem(sys.modules, "app.privacy.barcodes")
+    fresh = importlib.import_module("app.privacy.barcodes")
+
+    assert fresh.ENGINE == "zxing-cpp/unavailable"
+    monkeypatch.setattr(fresh.settings, "privacy_engine_module", None)
+    monkeypatch.setitem(sys.modules, "zxingcpp", None)
+    with pytest.raises(fresh.BarcodeUnavailable):
+        fresh.read_symbols(Image.new("RGB", (200, 200)))
 
 
 def test_the_engine_name_and_the_expansion_are_recorded_for_the_privacy_row() -> None:

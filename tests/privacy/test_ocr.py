@@ -5,7 +5,10 @@ No model is downloaded and no network is touched: every case loads the stub engi
 `PRIVACY_ENGINE_MODULE`, which is the same seam the Playwright launcher uses."""
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
+import itertools
+import math
 import sys
 import types
 from typing import Any
@@ -175,6 +178,78 @@ def test_a_module_without_an_engine_class_is_unavailable_not_an_attribute_error(
     assert isinstance(caught.value.__cause__, AttributeError)
 
 
+def _rotated(x0: float, y0: float, x1: float, y1: float, degrees: float) -> list[tuple[float, float]]:
+    """`_quad` turned about its own centre — a sign photographed at an angle, which is the only
+    thing the four-point quad exists for and the one shape the suite never had."""
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    angle = math.radians(degrees)
+    cos, sin = math.cos(angle), math.sin(angle)
+    return [(cx + (x - cx) * cos - (y - cy) * sin, cy + (x - cx) * sin + (y - cy) * cos)
+            for x, y in _quad(x0, y0, x1, y1)]
+
+
+def test_two_stacked_lines_on_an_angled_sign_are_both_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N2. A practice name and the line beneath it, on a sign photographed at 45 degrees:
+    their polygons do not touch — the true intersection is exactly zero — but their AXIS-ALIGNED
+    bounding boxes overlap by 0.636, so a bbox rule merged them and the second line produced no
+    redaction region. The same miss as I1 (a), reached by rotation instead of by identical text.
+
+    De-duplication is therefore on the QUADS themselves; the bounding boxes survive only as a cheap
+    pre-check that can answer "no" and never "yes"."""
+    top = _rotated(10.0, 10.0, 210.0, 30.0, 45.0)
+    below = _rotated(10.0, 56.0, 210.0, 76.0, 45.0)
+    assert ocr._iou(top, below) == 0.0, "the two lines do not overlap at all"
+
+    # Nothing at display size and both lines on the 2x pass — `read_text`'s own second trigger,
+    # and the realistic one for small angled text.
+    engine = _TwoPass([], [ocr.Line("TOP LINE", 0.9, [(x * 2, y * 2) for x, y in top]),
+                           ocr.Line("SECOND LINE", 0.9, [(x * 2, y * 2) for x, y in below])])
+    monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
+    assert [line.text for line in ocr.read_text(_image())] == ["TOP LINE", "SECOND LINE"]
+
+
+def test_two_lines_that_merely_graze_each_other_are_both_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N3, the over-merge half of the threshold, which nothing gated: every de-dup case used
+    either a near-exact pair (IoU 0.91) or a fully disjoint one, and a disjoint pair short-circuits
+    before the ratio is ever computed. A pair that genuinely overlaps BELOW the threshold is the
+    whole reason `DUPLICATE_IOU` is 0.5 rather than 0.01 — two lines of a stacked sign whose
+    ascenders clip each other are two regions, not one."""
+    upper = _quad(10.0, 10.0, 210.0, 40.0)
+    lower = _quad(10.0, 26.0, 210.0, 56.0)
+    assert ocr._iou(upper, lower) == pytest.approx(0.3043, abs=1e-4)
+
+    engine = _TwoPass([], [ocr.Line("UPPER", 0.9, [(x * 2, y * 2) for x, y in upper]),
+                           ocr.Line("LOWER", 0.9, [(x * 2, y * 2) for x, y in lower])])
+    monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
+    assert [line.text for line in ocr.read_text(_image())] == ["UPPER", "LOWER"]
+
+
+def test_a_chain_of_overlapping_detections_answers_the_same_whatever_order_it_arrives_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review N4. The greedy first-wins loop this replaces compared each second-pass line against
+    the lines it had ALREADY kept, so with three chained detections of one region — A overlaps B, B
+    overlaps C, A does not overlap C — the answer depended on the order the engine happened to
+    return them in: A,B,C kept two lines and B,A,C kept one, from the same input.
+
+    Clusters are built by transitive overlap and the most confident member of each survives, so the
+    answer is a function of the SET of detections and of nothing else."""
+    a = _quad(10.0, 10.0, 210.0, 40.0)
+    b = _quad(10.0, 19.0, 210.0, 49.0)
+    c = _quad(10.0, 28.0, 210.0, 58.0)
+    assert ocr._iou(a, b) >= ocr.DUPLICATE_IOU and ocr._iou(b, c) >= ocr.DUPLICATE_IOU
+    assert ocr._iou(a, c) < ocr.DUPLICATE_IOU
+
+    detections = {"A": (0.70, a), "B": (0.90, b), "C": (0.80, c)}
+    answers = set()
+    for order in itertools.permutations("ABC"):
+        engine = _TwoPass([], [ocr.Line(name, conf, [(x * 2, y * 2) for x, y in quad])
+                               for name in order for conf, quad in [detections[name]]])
+        monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
+        answers.add(tuple(sorted(line.text for line in ocr.read_text(_image()))))
+    assert answers == {("B",)}, answers
+
+
 def test_the_engine_is_built_once_per_process() -> None:
     first = ocr._engine()
     assert ocr._engine() is first
@@ -244,6 +319,33 @@ def test_a_missing_wheel_is_unavailable_rather_than_a_traceback(monkeypatch: pyt
     monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
     with pytest.raises(ocr.OcrUnavailable):
         ocr.read_text(_image())
+
+
+def test_an_absent_distribution_leaves_the_module_importable_and_the_reason_code_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review N1. `ENGINE` reads the installed version (I2), and reading it at import meant that a
+    process whose image does not carry the wheel died on `import app.privacy.ocr` with a raw
+    `PackageNotFoundError` — so `OcrUnavailable`, the reason code that exists to REPORT exactly that
+    deployment, became unreachable. `test_a_missing_wheel_is_unavailable_rather_than_a_traceback`
+    cannot see it: it simulates a missing MODULE (`sys.modules[...] = None`), not a missing
+    DISTRIBUTION.
+
+    Importing an adapter never raises. The version is looked up behind a guard, the constant keeps
+    its `<name>/<version>` shape with `unavailable` where a version would be, and the engine's
+    absence is still reported through the reason code."""
+    def raiser(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr("importlib.metadata.version", raiser)
+    monkeypatch.delitem(sys.modules, "app.privacy.ocr")
+    fresh = importlib.import_module("app.privacy.ocr")
+
+    assert fresh.ENGINE == "rapidocr-onnxruntime/unavailable"
+    monkeypatch.setattr(fresh.settings, "privacy_engine_module", None)
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
+    with pytest.raises(fresh.OcrUnavailable):
+        fresh.read_text(_image())
 
 
 def test_the_engine_name_is_recorded_for_the_privacy_row() -> None:

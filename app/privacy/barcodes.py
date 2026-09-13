@@ -16,10 +16,23 @@ from PIL import Image
 
 from app.config import settings
 
-#: Read from the installed distribution, never written down, for the reason `ocr.ENGINE` gives:
-#: `pyproject.toml` admits anything below 4.0.0, and a privacy row may not name a version nothing
-#: checked (review I2).
-ENGINE = f"zxing-cpp/{importlib.metadata.version('zxing-cpp')}"
+#: The distribution this adapter drives, named once so the constant and its guard agree.
+_DIST = "zxing-cpp"
+
+
+def _engine_name() -> str:
+    """`<distribution>/<installed version>`, or `<distribution>/unavailable` when the distribution
+    is not installed. `ocr._engine_name` carries the full reasoning for both halves -- read rather
+    than written down (review I2), and guarded because importing an adapter never raises (review
+    N1). Deliberately duplicated rather than shared: these two modules import no `app.privacy`
+    sibling, which is what keeps them the only importers of an engine."""
+    try:
+        return f"{_DIST}/{importlib.metadata.version(_DIST)}"
+    except importlib.metadata.PackageNotFoundError:
+        return f"{_DIST}/unavailable"
+
+
+ENGINE = _engine_name()
 #: Each symbol's four corners, expanded about their centroid by this factor before the fill.
 EXPAND = 1.15
 
