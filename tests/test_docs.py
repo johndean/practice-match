@@ -31,7 +31,14 @@ REQUIRED_CI_COMMANDS = (
     # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
     # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
     # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py tests/e2e/api_under_test.py --strict",
+    # Shading Task 3 (2026-09-11): scripts/export_design_boundaries.py joins it, and it cost a
+    # second red run to learn that this line carries TWO pins that disagree about maintenance —
+    # the derived one above demands every scripts/*.py be present, this literal one demands an
+    # exact adjacency. Adding a script means editing the workflow AND this string, always both.
+    # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
+    # report predicted it would have to — the plan's own file list for this task names neither
+    # file, which is why the note above is here rather than in the plan.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -186,7 +193,11 @@ def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
     `scripts/`). So every non-test module under `tests/e2e/` is named in the strict mypy line, and
     `--cov=tests/e2e` is in the backend gate wherever the gate is spelled as a rule — CI, CLAUDE.md's
     Common operations, and the seller lifecycle plan's policy line and gate tables. Derived from the
-    directory, not from a list, for the reason the `scripts/` pin gives."""
+    directory, not from a list, for the reason the `scripts/` pin gives.
+
+    Task CI-TIMING fix round 1: the seller plan's two pinned spots (the policy line and the gate
+    tables) now show the gate's two steps — `gate_step1`/`gate_step2` below — rather than the one
+    invocation the round-0 pin checked; `tests/test_timing_marker.py`'s docstring records why."""
     modules = sorted(p.name for p in (ROOT / "tests" / "e2e").glob("*.py")
                      if p.name != "__init__.py" and not p.name.startswith("test_"))
     assert modules, "tests/e2e/ carries no launcher module to gate"
@@ -199,12 +210,15 @@ def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
     claude_gate = next(line for line in (ROOT / "CLAUDE.md").read_text().splitlines() if "--cov=app" in line)
     assert "--cov=tests/e2e" in claude_gate, "CLAUDE.md's backend gate line does not measure tests/e2e"
     plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-seller-listing-lifecycle.md").read_text()
-    gate = "--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100"
+    gate_step1 = '--cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"'
+    gate_step2 = "-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100"
     policy_line = next(line for line in plan.splitlines() if line.startswith("- **(a) 100 % lines AND branches, backend.**"))
-    assert gate in policy_line, "the seller plan's policy line (a) does not measure tests/e2e"
+    assert gate_step1 in policy_line and gate_step2 in policy_line, "the seller plan's policy line (a) does not state the gate's two steps"
     table_rows = [line for line in plan.splitlines() if line.startswith("|") and "100 % backend" in line]
     assert table_rows, "the seller plan's gate tables no longer carry a '100 % backend' row"
-    assert all(gate in row for row in table_rows), [row[:80] for row in table_rows if gate not in row]
+    assert all(gate_step1 in row and gate_step2 in row for row in table_rows), [
+        row[:100] for row in table_rows if gate_step1 not in row or gate_step2 not in row
+    ]
 
 
 def test_no_test_under_tests_spawns_node():
@@ -240,36 +254,153 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     reintroduces A7's bold marker a second time ("widened **A7** with A7.3-A7.4") with no count
     clause of its own, so a family's block runs from ONE of its `**A<n>**` markers to the very NEXT
     such marker of ANY family — a phrase found in that span belongs to the family whose marker
-    opened it, never to whatever other family's clause happens to follow it in the file."""
+    opened it, never to whatever other family's clause happens to follow it in the file.
+
+    D-C38/D-C39 fix round 1, finding 1 — THE GATE WAS BLIND AND SILENT ABOUT IT. Two defects, one
+    cause. (a) The clause regex was built from a lowercase word tuple and run WITHOUT
+    `re.IGNORECASE`, and it matched only the plural "literal edits" / "literal script edits", so a
+    sentence-initial "Eight literal edits:" (A14), "Twelve literal edits" (A19), "Two literal
+    TEMPLATE edits" (A18), "One literal edit." (A23), "Six literal script edits:" (A25) and "Five
+    literal edits:" (A27) were all invisible: the families actually checked were 8, 12, 13, 15, 16
+    and 17, six of the twelve that carry a clause. CLAUDE.md said "Four literal edits" for A27's
+    five entries and this test passed. (b) It reported nothing about the six it skipped, which is
+    what let (a) live: `assert len(checked) >= 4` is satisfied by any four.
+
+    So the clause form is matched case-insensitively, singular or plural, with the family's own
+    qualifier ("script", "template") optional, and EVERY occurrence in every span of the family is
+    compared — not just the first — so the two copies of the amendment paragraph cannot disagree.
+    And the skip is no longer silent: the families that carry NO clause at all are DECLARED below,
+    and the scan asserts that the declared set and the checked set together account for every
+    family `design-amendments.ts` knows about, with no overlap. A new family whose clause this
+    cannot parse is then a failure ("carries no literal-count clause this scan can read") rather
+    than a hole, and a declared family that grows a clause fails too, so the declaration cannot go
+    stale in either direction. Chosen over asserting the checked set by name because asserting the
+    checked set is satisfied by silence: an unparseable clause simply does not join it."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    # A18 (2026-09-09) stopped this tuple at "Fifteen" and the assertion failed on its own
+    # vocabulary before it compared anything; D-L1 (2026-09-12) took A24 to thirty-three entries
+    # and did it again, and its own fix rounds to forty-six and then sixty-one the same day. Extended to "seventy",
+    # which is past `NUMBER_WORDS` below — that table is the FAMILY count's vocabulary (27 today)
+    # and this one is the largest family's ENTRY count, so they grow at different rates and the
+    # second has now outrun the first.
     words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
              "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
-             "twenty-two", "twenty-three", "twenty-four", "twenty-five")
+             "twenty-two", "twenty-three", "twenty-four", "twenty-five", "twenty-six", "twenty-seven", "twenty-eight",
+             "twenty-nine", "thirty", "thirty-one", "thirty-two", "thirty-three", "thirty-four", "thirty-five",
+             "thirty-six", "thirty-seven", "thirty-eight", "thirty-nine", "forty", "forty-one",
+             "forty-two", "forty-three", "forty-four", "forty-five", "forty-six", "forty-seven",
+             "forty-eight", "forty-nine", "fifty", "fifty-one", "fifty-two", "fifty-three",
+             "fifty-four", "fifty-five", "fifty-six", "fifty-seven", "fifty-eight", "fifty-nine",
+             "sixty", "sixty-one", "sixty-two", "sixty-three", "sixty-four", "sixty-five",
+             "sixty-six", "sixty-seven", "sixty-eight", "sixty-nine", "seventy")
     markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
     assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
     # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more
     # families **of literal** edits", "the other three families are literal script or template
     # edits") reads as a false per-family clause under a bare `\w+`, which is how this first found
     # A4's block: the next family's own preamble ("... of literal edits: **A5** (...") sits inside
-    # A4's span and `\w+` happily captured "of".
+    # A4's span and `\w+` happily captured "of". Those two descriptors survive the widening below
+    # because the number and the word "literal" must be ADJACENT: "three MORE FAMILIES OF literal
+    # edits" and "three FAMILIES ARE literal script or template edits" both fail on that, and so
+    # does A16's "one TEMPLATE literal wires the tile's onClick" and A17's "five literal ROWS".
     number = "|".join(words)
+    clause_re = re.compile(rf"\b({number}) literal (?:script |template )?edits?\b", re.IGNORECASE)
+    families = sorted({n for n in re.findall(r"id: 'A(\d+)", ts)}, key=int)
+    assert families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+
+    # The families whose CLAUDE.md prose states no per-family literal-edit count at all. Declared,
+    # never inferred: an undeclared family with no readable clause is the hole this test exists to
+    # close, so it has to be a failure rather than a skip. A1's block carries the derived-edit
+    # sentence instead ("A1's 24 derived edits plus N literals"), which the family/entry-count test
+    # below owns; A2-A7, A9-A11, A21, A22 and A26 describe their edits in prose without counting
+    # them.
+    no_clause = {"1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "21", "22", "26"}
+
+    # H1 (the fix-round re-review's own finding, 2026-09-11). `no_clause` was read as "this family
+    # states no count"; what the scan actually proved was "this family states no count THE REGEX
+    # ABOVE CAN READ" — the same silence moved one line down. The re-reviewer measured it: inserting
+    # `Sixteen literal in-place edits.` into A26's block left every assertion here green, because
+    # `clause_re` requires "literal edits" to be adjacent and that wording separates them. A
+    # declared clause-free family is therefore also checked to state NO count at all: any number —
+    # spelled out or in digits — within three words of `edits`/`entries`. `clause_re` stays the
+    # strict reader (it is what a count is COMPARED against); this one only asks whether a count is
+    # being stated, so it is deliberately the looser of the two and never reads a value.
+    #
+    # Calibrated against the file rather than guessed: at three words it fires on A21's clause
+    # alone. The two GROUP descriptors the docstring above names — A1's "three families are literal
+    # script or template edits" and A4's "three more families of literal edits" — put six and four
+    # words between the number and the noun, so the same adjacency rule that keeps them out of
+    # `clause_re` keeps them out of this.
+    # The class carries the typographic apostrophe as the escape \u2019 rather than the literal
+    # character: ruff's RUF001/RUF003 flag the raw glyph as ambiguous and this file is linted by
+    # `quality.yml`. Migrations 062 and 063 write their en dash the same way. The class still
+    # matches a possessive spelled with either apostrophe, which is the whole reason it is here.
+    loose_count_re = re.compile(rf"\b(?:{number}|\d+)\b(?:\s+[\w\u2019'-]+){{0,3}}\s+(?:edits?|entries)\b", re.IGNORECASE)
+
+    # A21, exempt with a reason rather than by widening the regex until it passes. Its clause is
+    # "Task B10 … adds thirteen more A21 entries", a PARTIAL count: thirteen on top of the entries
+    # A-C28/A-C29 had already added, never the family's total. There is nothing in
+    # `design-amendments.ts` for it to be compared with — the family has 30 entries and the
+    # sentence is true — so no scan can check it, and pretending otherwise would mean either a
+    # wrong assertion or a regex bent to make a true sentence readable. It is the only family in
+    # the file that states its count that way.
+    partial_count = {"21"}
+
+    spans: dict[str, list[str]] = {}
     checked = []
     for i, marker in enumerate(markers):
         family = marker.group(1)
         end = markers[i + 1].start() if i + 1 < len(markers) else len(claude)
-        clause = re.search(rf"\b({number}) literal (?:script )?edits\b", claude[marker.start():end])
-        if clause is None:
+        spans.setdefault(family, []).append(claude[marker.start():end])
+        clauses = clause_re.findall(claude[marker.start():end])
+        if not clauses:
             continue
-        entries = len(set(re.findall(rf"id: 'A{family}\.[^']+'", ts)))
+        # The BARE id counts too: a one-entry family is declared `id: 'A23'`, not `id: 'A23.1'`
+        # (A22 and A23 are both shaped that way), and the dot-only form this used to require read
+        # zero entries for them. The optional-dot group cannot bleed across families — after
+        # `A2` the next character must be `'` or `.`, so `A21.1` is not an A2 entry.
+        entries = len(set(re.findall(rf"id: 'A{family}(?:\.[^']+)?'", ts)))
         assert entries, f"A{family}'s clause names literal edits but design-amendments.ts declares no A{family} entries"
         assert entries < len(words), f"no spelled-out word on hand for {entries} A{family} entries"
-        assert clause.group(1) == words[entries], (
-            f"CLAUDE.md's A{family} clause says '{clause.group(1)} literal edits'; the family has "
-            f"{entries} entries ('{words[entries]}')"
-        )
+        for word in clauses:
+            assert word.lower() == words[entries], (
+                f"CLAUDE.md's A{family} clause says '{word} literal edits'; the family has "
+                f"{entries} entries ('{words[entries]}')"
+            )
         checked.append(family)
-    assert len(checked) >= 4, f"only {checked} families carry a literal-count clause — the scan may have broken"
+
+    unreadable = sorted(set(families) - set(checked) - no_clause, key=int)
+    assert unreadable == [], (
+        f"A{', A'.join(unreadable)} carries no literal-count clause this scan can read. Either the "
+        "clause is worded in a form the regex above does not match — which is the silent hole that "
+        "let A27 ship as 'Four literal edits' — or the family genuinely states no count and belongs "
+        "in `no_clause`."
+    )
+    stale = sorted(set(checked) & no_clause, key=int)
+    assert stale == [], (
+        f"A{', A'.join(stale)} is declared in `no_clause` but now carries a readable literal-count "
+        "clause; drop it from the declaration so the count is gated."
+    )
+
+    # H1: every declared clause-free family genuinely states no count.
+    for family in sorted(no_clause, key=int):
+        found = sorted({m.group(0) for span in spans.get(family, []) for m in loose_count_re.finditer(span)})
+        if family in partial_count:
+            # The exemption cannot go stale in the other direction either: if A21's partial count
+            # ever leaves the prose, this says so instead of quietly protecting nothing.
+            assert found, (
+                f"A{family} is exempted from the clause-free scan as a PARTIAL count, and its block "
+                "no longer states one. Drop it from `partial_count` — the exemption is now dead."
+            )
+            continue
+        assert found == [], (
+            f"A{family} is declared in `no_clause` — no per-family count — but its block states "
+            f"{found}. Either the clause is real, in which case word it so `clause_re` reads it "
+            f"and drop A{family} from `no_clause` so the number is checked, or it is a group "
+            "descriptor that has drifted next to a count noun. A count nothing compares against "
+            "is the hole this scan closes."
+        )
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
@@ -432,6 +563,36 @@ def test_deploy_md_says_the_api_container_runs_migrations_at_start():
     assert "keeps serving" not in text
 
 
+def test_deploy_md_carries_the_national_census_loads_runbook():
+    """Fix round 2, F (re-review finding). The seven rules were drafted in the controller's own
+    workspace under `.superpowers/` — which is git-ignored — and the `zbp` reload they carry is a
+    PRECONDITION of the competition layer telling a withheld ZIP count from an uncovered one. A
+    precondition that lives only in a scratch directory can be forgotten by the next person, and
+    was: the re-review looked for the file in the repository and did not find it.
+
+    Every rule below was learned by breaking it, so each is named here rather than counted: a
+    renumbering that dropped one would otherwise pass."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## National Census loads and the `geo_metric` materialise" in text
+    for rule in (
+        "Rule 1 — a long load runs detached, or the ssh session kills it",
+        "Rule 2 — poll the LEDGER, not the process",
+        "Rule 3 — activation is usually not needed, and forcing it would be wrong",
+        "Rule 4 — growth needs BOTH vintages at the SAME level",
+        "Rule 5 — the national numbers, measured 2026-09-12",
+        "Rule 6 — do not redeploy the worker inside the five minutes before a beat entry fires",
+        "Rule 7 — a manual `geo_metric` materialise runs DETACHED on the worker",
+    ):
+        assert rule in text, f"DEPLOY.md has lost the runbook's {rule!r}"
+    # The precondition itself, verbatim: the loader gained a fourth NAICS key and the layer cannot
+    # tell a withheld count from an uncovered ZIP until those rows exist.
+    assert "`zbp` MUST BE RELOADED after `feat/layers` deploys" in text
+    # And the two forms that were MEASURED rather than reasoned about, which is why they are
+    # copied exactly: `nohup` inside a single-quoted `bash -c`, and the base64 launch.
+    assert "nohup env PYTHONPATH=/app python scripts/census_load.py zbp" in text
+    assert "base64" in text
+
+
 def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "first X-Forwarded-For hop" in text
@@ -577,6 +738,22 @@ def test_claude_md_local_backend_gate_is_the_one_ci_runs():
     for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
         assert "--cov-fail-under=100" in text, doc
         assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
+
+
+def test_quality_policy_records_the_timing_split_as_a_dated_note():
+    """Task CI-TIMING fix round 1 (John's ruling): the policy's "Backend tests" row is a RULED
+    paragraph (P14, 2026-09-07's 100 % raise) and stays byte-identical rather than being silently
+    rewritten — the split is recorded as an appended, dated note instead, so a reader sees both what
+    was ruled and what changed since. This pins that the note exists and actually states the two
+    real invocations, not just a date."""
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    assert "**Task CI-TIMING (2026-09-12).**" in policy, "the dated note is missing"
+    assert 'poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"' in policy
+    assert ("poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e "
+            "-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100") in policy
+    # The original ruled row itself must survive untouched beside the note — this is an ADDITION.
+    assert ("`poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml "
+            "--cov-fail-under=100`") in policy, "the original P14 row was rewritten, not appended beside"
 
 
 # The four sub-project plans whose policy-summary line quoted the backend CI gate. P14 raised
@@ -1358,6 +1535,24 @@ def test_runbook_names_the_five_account_routes():
     assert missing == [], f"docs/RUNBOOK-identity.md does not name these account routes: {missing}"
 
 
+# The spelled-out family count CLAUDE.md's "Source of truth" paragraph uses. Module level, not a
+# local, so the case below can prove it maps each number to its OWN word without copying it.
+#
+# THIS TUPLE HAS RUN OUT THREE TIMES, and each time the count test failed on its own vocabulary
+# before it ever compared a string: A18 (2026-09-09) made sixteen families and it stopped at
+# "Fifteen"; `feat/card-geography` hit it at A27; and A24 — real Census boundary polygons,
+# 2026-09-11 — makes TWENTY-FIVE against a tuple that stopped at "Twenty-four". It now runs to
+# thirty-nine, which is roughly a year of families at the current rate. When it runs out again,
+# extend it: an index error here is never evidence about CLAUDE.md.
+NUMBER_WORDS = {n: w for n, w in enumerate(
+    ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+     "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
+     "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
+     "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
+     "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
+     "Thirty-seven", "Thirty-eight", "Thirty-nine"))}
+
+
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     """The merge of this branch's account-screen amendments (A8, A9) with `main`'s A10/A11 grew
     both the family count and the entry count `CLAUDE.md`'s "Source of truth" paragraph states by
@@ -1387,18 +1582,55 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     a1_count = int(a1_match.group(1))
     entry_count = literal_count + a1_count
 
-    number_words = {n: w for n, w in enumerate(
-        ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four"))}
-    assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
+    assert family_count in NUMBER_WORDS, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()
-    assert f"{number_words[family_count]} families, {entry_count} entries" in claude, (
+    assert f"{NUMBER_WORDS[family_count]} families, {entry_count} entries" in claude, (
         f"CLAUDE.md's family/entry count sentence does not match design-amendments.ts: "
         f"{family_count} families, {entry_count} entries ({a1_count} derived + {literal_count} literals)"
     )
     assert f"A1's {a1_count} derived edits plus {literal_count} literals" in claude
+
+
+def test_the_family_count_sentence_still_discriminates_after_the_vocabulary_was_extended():
+    """A vocabulary fix can hide a gate that stopped checking anything, and this tuple has now been
+    extended three times (A18, A27, A24). Extending it makes `family_count in NUMBER_WORDS` pass
+    again by construction — so this proves the ASSERTION ABOVE IT still fails on a wrong word and a
+    wrong number, rather than merely passing because CLAUDE.md contains the phrase "families".
+
+    Perturbation, not inspection: the neighbouring word and the neighbouring count are built from
+    the same derivation the gate uses and looked for in the real CLAUDE.md."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = re.findall(r"id: 'A(\d+)", ts)
+    family_count = len({int(n) for n in literal_families}) + 1
+    a1_count = int(re.search(r"Array\.from\(\{ length: (\d+) \}, \(_, i\) => `A1\.\$\{i \+ 1\}`\)",
+                             (ROOT / "frontend" / "tests" / "design-amendments.test.ts").read_text()).group(1))
+    entry_count = literal_families and len(literal_families) + a1_count
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    right = f"{NUMBER_WORDS[family_count]} families, {entry_count} entries"
+    assert right in claude, "the gate's own subject is missing — fix the count test, not this one"
+
+    # The word one short and one long, and the entry count one either side. Every one of these is
+    # what the sentence would read if the family were miscounted or an entry were lost, and none
+    # of them may be findable in CLAUDE.md.
+    for wrong in (
+        f"{NUMBER_WORDS[family_count - 1]} families, {entry_count} entries",
+        f"{NUMBER_WORDS[family_count + 1]} families, {entry_count} entries",
+        f"{NUMBER_WORDS[family_count]} families, {entry_count - 1} entries",
+        f"{NUMBER_WORDS[family_count]} families, {entry_count + 1} entries",
+    ):
+        assert wrong not in claude, f"the family/entry gate does not discriminate: {wrong!r} is also in CLAUDE.md"
+
+    # And the vocabulary really is a mapping from a number to its OWN word, in order, with no
+    # duplicate — a tuple extended by pasting the wrong run of words would still satisfy the `in`
+    # check the gate makes, and would then put the wrong word in a sentence nobody re-reads.
+    assert list(NUMBER_WORDS) == list(range(len(NUMBER_WORDS)))
+    assert len(set(NUMBER_WORDS.values())) == len(NUMBER_WORDS)
+    assert (NUMBER_WORDS[0], NUMBER_WORDS[13], NUMBER_WORDS[20], NUMBER_WORDS[25], NUMBER_WORDS[30]) == (
+        "Zero", "Thirteen", "Twenty", "Twenty-five", "Thirty")
+    # Headroom, so the NEXT family is not blocked on this tuple the way A18, A24 and A27 were.
+    assert len(NUMBER_WORDS) > family_count + 1, "extend NUMBER_WORDS before the next family needs it"
 
 
 def test_local_amendments_row_count_matches_design_amendments():
@@ -1431,15 +1663,46 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     Family identifiers are read from `design-amendments.ts`'s own literal ids (`id: 'A<n>...'`) —
     the same source the family/entry-count test above reads — never hand-typed here: for every
     distinct family number found there, CLAUDE.md must carry that family's own bold marker,
-    `**A<n>**`, opening a prose section."""
+    `**A<n>**`, opening a prose section.
+
+    I1 (whole-branch review, 2026-09-11) — CHECKED PER COPY, and the copies must AGREE.
+    CLAUDE.md carries its ~35 KB amendment paragraph TWICE, on two adjacent lines, and the two
+    copies had silently diverged: one documented A22 and omitted A21, the other documented A21
+    and omitted A22. Every doc gate stayed green because every one of them — this test included,
+    and the literal-edit clause scan, and the family/entry-count sentence check — read the WHOLE
+    FILE, so the UNION of the two copies satisfied all of them. The reviewer proved it by
+    deleting A27's entire 6,672-character section from one copy only and watching all 99 doc
+    gates pass.
+
+    A union is not a document. Each copy is read on its own here, and then the copies are
+    required to be byte-identical, which is the invariant that makes every OTHER whole-file
+    substring check in this module honest again: where the copies agree, the union IS each copy.
+    A second paragraph that deliberately says something different is not a copy and must not be
+    written in the amendment ledger's own shape."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = sorted({int(n) for n in re.findall(r"id: 'A(\d+)", ts)})
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
-    missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", claude)]
-    assert missing == [], (
-        "CLAUDE.md's amendment paragraph carries no prose section (no **A<n>** marker) for: "
-        f"{', '.join(missing)}"
+
+    # A copy of the amendment paragraph is any line carrying at least one family marker. Found by
+    # the marker rather than by an opening phrase, so a copy cannot escape by being re-worded.
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all (no **A<n>** marker anywhere)"
+
+    for i, copy in enumerate(copies, start=1):
+        missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", copy)]
+        assert missing == [], (
+            f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph carries no prose "
+            f"section (no **A<n>** marker) for: {', '.join(missing)}"
+        )
+
+    distinct = sorted(set(copies), key=copies.index)
+    assert len(distinct) == 1, (
+        f"CLAUDE.md carries {len(copies)} copies of the amendment paragraph and "
+        f"{len(distinct)} of them differ. They must be byte-identical: every other gate in this "
+        "module reads the whole file, so a disagreement between copies is invisible to all of "
+        "them. First divergence at character "
+        f"{next(j for j in range(max(map(len, distinct))) if len({d[j:j + 1] for d in distinct}) > 1)}."
     )
 
 
@@ -1467,6 +1730,38 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (
         f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} of thirty sign-ins; "
         f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
+    )
+
+    # Task ADMIN-GATE fix round 1 (2026-09-13, review Minor 1). The WORD was the only thing pinned,
+    # and both documents also state the TERMS the word adds up — so when the budget went fourteen ->
+    # fifteen, the runbook's parenthesised arithmetic stayed "(7 + 2 + 3 + 1 + 1)", fourteen, and
+    # passed the gate written for exactly this drift. A word is not a sum: both sums are added up
+    # here and compared with the word, so a term that changes has to be carried into the arithmetic
+    # or this fails.
+    word_to_number = {word.lower(): n for n, word in NUMBER_WORDS.items()}
+    stated = word_to_number[runbook_match.group(1).lower()]
+
+    runbook_terms = re.search(r"traced\s+budget:\s*([\d\s+]+?)\)", _collapse_whitespace(runbook))
+    assert runbook_terms, "docs/RUNBOOK-identity.md no longer itemises the traced budget as `budget: a + b + …)`"
+    runbook_sum = sum(int(t) for t in re.findall(r"\d+", runbook_terms.group(1)))
+    assert runbook_sum == stated, (
+        f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} sign-ins but its own arithmetic "
+        f"({runbook_terms.group(1).strip()}) adds up to {runbook_sum}"
+    )
+
+    # The harness's own trace, the thing both words are ultimately claims about: one line per spec
+    # file, each naming how many of `SIGNIN_IP`'s thirty it spends.
+    lines = harness.splitlines()
+    start = lines.index(budget_line)
+    end = next(i for i in range(start, len(lines)) if "accounts are seeded" in lines[i])
+    harness_terms = [int(m.group(1)) for line in lines[start:end]
+                     if (m := re.match(r"\s*\*\s+[a-z-]+\s+\+?(\d+)\s", line))]
+    assert len(harness_terms) >= 5, (
+        "frontend/tests/harness.ts's THE BUDGET block no longer itemises one line per spec file"
+    )
+    assert sum(harness_terms) == stated, (
+        f"frontend/tests/harness.ts says {harness_match.group(1)!r} but its own trace "
+        f"({' + '.join(map(str, harness_terms))}) adds up to {sum(harness_terms)}"
     )
 
 
@@ -2350,3 +2645,196 @@ def test_seeding_section_pins_the_geocode_requirement():
         "seeding section must mention geocoding — "
         "the pointer to the manual step is only meaningful if it says why it's needed"
     )
+
+
+def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
+    """Task GEO-WIRE. The operator page already said a listing published through the API is
+    geocoded automatically and a seeded one is not. What it could not say, because none of it
+    existed, is what re-triggers a geocode, what suppresses one, and that the geocode now writes
+    the pin `GET /api/listings` serves — which is the difference between "re-run the command" and
+    "wait ten minutes" when a seller reports a listing in the wrong place."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    flat = re.sub(r"\s+", " ", text)
+    # The dedupe, named with its own window, so an operator watching the queue knows why a second
+    # publish inside it enqueued nothing.
+    assert "deduped on the listing id for 600 seconds" in flat
+    # The one event that re-arms it.
+    assert "changes the city or the ZIP" in flat
+    # The second column the geocode now writes, and the one it does not replace.
+    assert "`listing.geom`" in text
+    assert "`scripts/seed_listings.py` still writes the seeds' own points" in flat
+    # Controller ruling, fix round 1: what a seller's own listing is served, and why the demo
+    # hospitals are not affected by it — the operator needs both to read a QA card correctly.
+    assert "resolves at `zcta` — a ZIP-code centroid" in flat
+    assert "served its Census place rather than the ring" in flat
+    # Fix round 2: and the honest other half, so an operator reading a blank card on QA knows
+    # which of the two conditions they are looking at.
+    assert "where the ZIP centroid lies in one" in flat
+    assert "all twenty-nine demo hospitals carry a street and resolve at `rooftop`" in flat
+    # Review minor 3: `--force` is not the only door to a re-resolve, and the page said it was.
+    # `--listing <id>` resolves the named listing whether or not it already has a location.
+    assert "`--listing <id>` re-resolves the listing it names" in flat
+    # Review minor 5: what to DO when a listing is still pinless, named as a command.
+    assert "still has no pin after ten minutes" in flat
+    assert "re-run `census_load.py geocode`" in flat
+    # Fix round 2: the SECOND signature, which the first recovery sentence could not name because
+    # the failure it describes could not happen yet. A pin with no card is a backfill that never
+    # ran, and `geocode` will not retry it — that listing HAS a location.
+    assert "pin present but no card" in flat
+    assert "`census_load.py materialize --listing <id>`" in flat
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, item 1 (controller, 2026-09-13). CLAUDE.md's A28 clause states a piece of
+# history that is false: A28.1 was NOT the first amendment to edit `MarketMapV3.jsx`. A24.9-A24.12
+# (2026-09-10) edited it first, and A28.1 rides the `file: 'jsx'` partition A24 introduced
+# (spec section 9.2) - the A24 prose in the same paragraph says as much ("A28.1 reached that file first,
+# by merging first"), so the document contradicted itself. It is corrected as a DATED CLAUSE
+# rather than a silent rewrite, which is this ledger's own convention for a fact that changed
+# (A21.2's revert, A-S6.1's supersession, the gate's own "corrected 2026-09-12" note).
+#
+# The claim and its correction are pinned TOGETHER, as one sentence, and per COPY: CLAUDE.md
+# carries the amendment paragraph twice, and every other whole-file check in this module reads
+# the union of the two (I1, the byte-identity case above is what makes the union honest).
+# ---------------------------------------------------------------------------------------------
+A28_JSX_CLAIM = "the FIRST amendment in the programme\u2019s history to edit `MarketMapV3.jsx`"
+A28_JSX_SENTENCE = (
+    "A28.1 is the FIRST amendment in the programme\u2019s history to edit `MarketMapV3.jsx` rather "
+    "than the `.dc.html` (`file: 'jsx'`, the partition spec \u00a79.2 added for A24 \u2014 corrected "
+    "2026-09-13: A24.9\u2013A24.12 were first; A28.1 rides A24's `file: 'jsx'` partition)"
+)
+
+
+def test_claude_md_does_not_claim_a28_1_was_the_first_jsx_amendment():
+    """The A28 clause carries its dated correction, in both copies, and carries it wherever the
+    claim appears — a second, uncorrected occurrence would be the same falsehood one sentence
+    over, which is exactly how the two copies drifted before I1."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all (no **A<n>** marker anywhere)"
+    for i, copy in enumerate(copies, start=1):
+        assert copy.count(A28_JSX_SENTENCE) == 1, (
+            f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph does not carry the A28.1 "
+            "jsx sentence with its dated correction clause "
+            "(corrected 2026-09-13: A24.9-A24.12 were first)"
+        )
+        assert copy.count(A28_JSX_CLAIM) == copy.count(A28_JSX_SENTENCE), (
+            f"copy {i} of {len(copies)} claims A28.1 was the first `MarketMapV3.jsx` amendment "
+            "somewhere that carries no correction clause"
+        )
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, amendment (controller, 2026-09-13). Release 0.1.21 deployed with the
+# Quality workflow RED: the documented local frontend gate was weaker than the one CI runs
+# (`npm test` had been a plain `vitest run` when the line was written and is
+# `vitest run --coverage` since COVERAGE-HOTFIX), and nothing in the document said "CI green
+# before deploy" at all. Both halves are pinned verbatim so neither can quietly weaken again.
+# ---------------------------------------------------------------------------------------------
+GATE_COVERAGE_NOTE = (
+    "(`npm test` is `vitest run --coverage`, the exact step CI runs — a local gate weaker than "
+    "CI let 0.1.21 ship with the Quality workflow red, 2026-09-13)"
+)
+GATE_CI_GREEN = (
+    "and the Quality workflow green on the pushed SHA (`gh run list --branch main --commit <sha>`) "
+    "— four jobs `success`, read, not assumed"
+)
+FRONTEND_GATE_COMMENT = (
+    "# frontend gates — BUILD FIRST: vue-only and bundle-budget read dist/_app; "
+    "npm test runs coverage at 100 % all four, exactly as CI"
+)
+
+
+def test_claude_md_frontend_gate_is_the_one_ci_runs_and_names_the_ci_check():
+    """The two sentences the 0.1.21 root cause produced, each in its own section: the coverage
+    note and the CI-green requirement inside the Non-negotiables verification gate, and the
+    "Common operations" frontend line's comment saying the same thing where the command is."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    gate = next(
+        (line for line in claude.splitlines()
+         if line.startswith("- **Verification gate before every production deploy")),
+        None,
+    )
+    assert gate is not None, "CLAUDE.md has no Non-negotiables verification-gate bullet"
+    assert GATE_COVERAGE_NOTE in gate, (
+        "the verification gate does not say `npm test` is `vitest run --coverage` — the gap that "
+        "let 0.1.21 ship with CI red"
+    )
+    assert GATE_CI_GREEN in gate, (
+        "the verification gate does not require the Quality workflow green on the pushed SHA"
+    )
+    ops = [line for line in claude.splitlines() if "npm run typecheck && npm run build && npm test" in line
+           and line.startswith("cd frontend")]
+    assert len(ops) == 1, "CLAUDE.md's Common operations block has no single frontend gate line"
+    assert ops[0].endswith(FRONTEND_GATE_COMMENT), (
+        "the Common operations frontend gate line's comment does not say `npm test` runs coverage "
+        "at 100 % on all four columns, exactly as CI"
+    )
+
+
+def test_the_gates_four_quality_jobs_are_the_four_the_workflow_declares():
+    """Fix round 1 (review Minor: four behaviours in one case). The count the gate promises is the
+    one `quality.yml` actually declares — a number nobody can read off the document alone, so it is
+    measured against the workflow rather than asserted from the prose."""
+    quality = cast(dict, yaml.safe_load((ROOT / ".github" / "workflows" / "quality.yml").read_text()))
+    assert len(quality["jobs"]) == 4, (
+        f"the gate says four Quality jobs; quality.yml declares {len(quality['jobs'])}"
+    )
+    assert GATE_CI_GREEN in (ROOT / "CLAUDE.md").read_text()
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, amendment (controller, 2026-09-13). Two implementers re-derived
+# `frontend/src/logic.js` on the same day with throwaway scripts copied out of
+# `app-generated.test.ts`'s transform, because the repository had `gen:design` and `gen:app` and
+# no `gen:logic`. The command exists now and CLAUDE.md is where an implementer finds it: the
+# three generators are one line, in the order the bundle flows through them.
+# ---------------------------------------------------------------------------------------------
+GENERATORS = ("gen:design", "gen:app", "gen:logic")
+
+
+def test_claude_md_common_operations_names_the_three_design_generators():
+    """The design bundle's own line: pristine + ruled amendments -> the amended design, the
+    design's template -> App.vue and pseudo.css, the design's script -> logic.js. Each is a real
+    `frontend/package.json` script, read from the file rather than assumed."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    line = [ln for ln in claude.splitlines() if all(g in ln for g in GENERATORS)]
+    assert len(line) == 1, (
+        "CLAUDE.md's Common operations block must carry exactly one line running all three design "
+        f"generators ({', '.join(GENERATORS)}) — found {len(line)}"
+    )
+    assert line[0].startswith("cd frontend && npm run gen:design"), line[0]
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    for name in GENERATORS:
+        assert name in scripts, f"frontend/package.json declares no {name}"
+    # The one CLAUDE.md names as the reason it exists: the hand-port is generated, never typed.
+    assert "logic.js" in line[0], "the line does not say which file gen:logic writes"
+
+
+# ---------------------------------------------------------------------------------------------
+# Task HOUSEKEEPING-B, fix round 1 (Concern 1(d), controller, 2026-09-13). The amendment ledger
+# gained a gate that decides what may leave the design, and its vocabulary is not discoverable
+# from the ledger alone: a row must DECLARE a removal with a token, in one of two tiers. CLAUDE.md
+# is where an implementer learns that before writing a row the gate will refuse.
+# ---------------------------------------------------------------------------------------------
+AMEND_GUARD_TOKENS = ("**AMEND-GUARD**", "`consumes <id>`", "`supersedes <id>`", "`superseded by <id>`")
+
+
+def test_claude_md_amendment_paragraph_states_the_amend_guard_vocabulary():
+    """Both copies, per copy: the gate is named, its two tiers are named, and the three tokens a
+    row may use are spelled exactly as `frontend/tests/amend-guard.ts` reads them."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all"
+    for i, copy in enumerate(copies, start=1):
+        for token in AMEND_GUARD_TOKENS:
+            assert token in copy, (
+                f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph does not carry {token} "
+                "— the AMEND-GUARD vocabulary a ledger row must use"
+            )
+        for tier in ("LINE tier", "SENTENCE tier"):
+            assert tier in copy, f"copy {i} does not name the {tier}"
+    # The tokens are the ones the guard actually reads, not prose about them.
+    guard = (ROOT / "frontend" / "tests" / "amend-guard.ts").read_text()
+    for word in ("consumes", "supersedes", "superseded\\s+by"):
+        assert re.search(word, guard), f"amend-guard.ts does not read the {word} token"

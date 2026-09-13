@@ -66,6 +66,51 @@ const SHEET = 'div[style*="z-index: 700"]';
 // trigger added later fails there rather than silently re-pointing these two states.
 const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
+// The strip's footnote paragraph, as A31.11 (Task SNAP, D-C50 as revised) leaves it: A27.5's
+// sentence said the figures describe the area around each PRACTICE, which AREA mode makes false —
+// it is the metro's Census areas now, and the practice's own community only when one is selected.
+const STRIP_FOOTNOTE = 'In AREA mode each card is the median across the metro\u2019s Census tracts';
+
+/**
+ * `browse-market-strip` alone: the strip's OWN `.rf-scroll` container, pinned to its bottom.
+ *
+ * MEASURED, not assumed. The strip's body is `max-height: 40vh; overflow-y: auto`
+ * (`App.vue`'s strip container) — 376 px at the harness's 940 px viewport — and at 1440 px wide
+ * the six cards wrap to two rows that fill it, so A27.5's footnote sits BELOW the fold. A capture
+ * taken at `scrollTop: 0` does not contain the ruled sentence at all (checked by reading the
+ * first generated PNG), which is the one thing D-C40 appended this state to photograph. The DOM
+ * oracle carries it either way — it serialises the node, not the viewport — but "photographed"
+ * is what the ruling says.
+ *
+ * Pinned rather than hoped for, in `atTop`'s own shape (harness.ts, A-LB2 Important 1): set the
+ * scroll to its maximum, then hold until the footnote's box has been identical across two
+ * consecutive animation frames AND lies inside the container's box. Both targets run the same
+ * step, so the comparison is unaffected; nothing here is a tolerance.
+ *
+ * This is the ONE approved state whose capture depends on an `.rf-scroll` container being
+ * scrolled away from the top, and it deliberately does not call `atTop` — which resets every
+ * such container — so that helper's unconditional reset stays safe (its comment says so too).
+ */
+const stripFootnoteInFrame = async (p: Page) => {
+  await p.waitForFunction((text) => new Promise<boolean>((resolve) => {
+    const panel = Array.from(document.querySelectorAll('.rf-scroll'))
+      .find((n) => (n.textContent || '').includes(text)) as HTMLElement | undefined;
+    const note = panel && Array.from(panel.querySelectorAll('p')).find((n) => (n.textContent || '').includes(text));
+    if (!panel || !note) return resolve(false);
+    panel.scrollTop = panel.scrollHeight;
+    const a = note.getBoundingClientRect();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const b = note.getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      resolve(
+        Math.abs(panel.scrollTop - (panel.scrollHeight - panel.clientHeight)) <= 1 &&
+        a.top === b.top && a.height === b.height &&
+        b.top >= box.top - 1 && b.bottom <= box.bottom + 1
+      );
+    }));
+  }), STRIP_FOOTNOTE);
+};
+
 // ---------------------------------------------------------------------------------------
 // The fifteen account-screen states (spec §6, controller amendment A-S5). Three helpers, and
 // then one entry per state — everything else about them is in `reach()`.
@@ -415,6 +460,92 @@ export const SCREENS: Screen[] = [
   // name a `<button>`, so A26.11 spells that caption again as the trigger's `aria-label`.
   { name: 'browse-more-filters', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'browse-more-filters-menu', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).click(); await p.getByRole('listbox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A27.5 / D-C40 — the Browse "Market data" strip, OPEN: the 53rd approved state, APPENDED for
+  // the reason A13's, A14's, A19's and A26's were (`cross-plan-deltas.test.ts`'s
+  // `SCREENS.slice(0, 28)` pins the 28 Browse V3 states to their positions; a new state goes on
+  // the end, never in the middle).
+  //
+  // A27.5 corrects a sentence that lives INSIDE this strip, behind `md.stripOpen`, and nothing in
+  // this file had ever opened it: a ruled UI change with no oracle, the same gap A26's Task F2
+  // closed for the More-filters popover. The strip's own control is the design's "Expand all six
+  // layers" (`logic.js` `md.toggleStrip` / `md.stripToggleLabel`), and the six cards behind it had
+  // no baseline of any kind either.
+  //
+  // Waits for the CORRECTED SENTENCE itself before the 400 ms settle every Browse state was taken
+  // with — the rule stated at the top of this file, and the reason it exists: a bare
+  // `waitForTimeout` cannot tell "the click worked" from "the click no-opped on both targets".
+  // Matched as a SUBSTRING, because the design's paragraph carries two more sentences after it
+  // and both are untouched. Then `stripFootnoteInFrame` puts that sentence inside the capture:
+  // the strip's body is `max-height: 40vh` and the six cards fill it, so a click alone leaves the
+  // footnote below the fold — see that helper for the measurement.
+  // D-L1 fix round 1, Important 5 (2026-09-12): the three layers this branch built could be
+  // selected in no approved state, so nothing rendered one in a browser or a pixel — and the
+  // defect the review found is exactly the class a rendered oracle catches. `households` drew 503
+  // of 503 polygons in the no-data grey under a full four-class ramp naming a geography, and the
+  // characterisation case that looped the layer asserted the LEGEND and never the fill.
+  //
+  // One state, on a TRACT layer, reached the way `browse-layer-menu` reaches the same control —
+  // click the trigger, wait for the listbox, click the row by its own name. D-C40's precedent
+  // (`browse-market-strip`): appending one Browse state moves no frozen hash, none of the
+  // thirteen being a Browse capture. The row is addressed by NAME rather than by index, so a
+  // layer added to or removed from the catalogue fails this loudly instead of silently
+  // photographing its neighbour.
+  { name: 'browse-layer-households', steps: async (p) => {
+    await browse(p);
+    await layerTrigger(p).first().click();
+    const menu = p.getByRole('listbox', { name: 'Active market layer' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name: 'Households' }).click();
+    await menu.waitFor({ state: 'detached' });
+    await p.waitForTimeout(400);
+  } },
+  { name: 'browse-market-strip', steps: async (p) => {
+    await browse(p);
+    await click(p, 'Expand all six layers');
+    await p.getByText(STRIP_FOOTNOTE).first().waitFor({ state: 'visible' });
+    await stripFootnoteInFrame(p);
+    // H2 (the fix-round re-review's own one-liner). `stripFootnoteInFrame` proves the note lies
+    // inside the PANEL's box, which is not the same as inside the VIEWPORT — and the pixel gate
+    // cannot tell the difference: if someone later drops that scroll, BOTH targets reset
+    // identically, the comparison still passes at `maxDiffPixels: 0`, and the one sentence this
+    // state exists to photograph leaves the baseline in silence. This is the assertion that
+    // fails instead. It runs on the reference and the app alike, before the capture, and changes
+    // nothing about it.
+    // `{ ratio: 1 }`, not the default (minor, whole-branch review 2026-09-11): bare
+    // `toBeInViewport()` passes at ANY intersection above zero, so a sentence clipped to its last
+    // two words still satisfied it and the state would go on photographing a truncated footnote.
+    // The whole element has to be in the frame, which is what this capture exists to prove.
+    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
+    await p.waitForTimeout(400);
+  } },
+  // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the strip's OTHER mode, which had no
+  // approved state at all: with a practice selected every card is that practice's own community
+  // figure, the header reads "LOCATION · …" instead of "AREA · …", and the bars stay the metro's
+  // distribution with the class the practice falls in kept at full strength while the rest take
+  // `opacity: .6`. The selection is the same click `browse-market-panel` makes (Cedar Park, the
+  // design's own p1), and the strip is then opened over it.
+  //
+  // This one is photographed at the TOP of the strip, and its AREA twin at the bottom, and the
+  // pair is deliberate: `browse-market-strip` exists to photograph the FOOTNOTE (D-C40) and
+  // scrolls to it, which puts the mode heading above the fold — so with only that state the one
+  // thing this ruling is loudest about ("it should reflect boldly which is being viewed") would
+  // be in the DOM oracle and in no PIXEL at all. Between the two, the header and the footnote are
+  // each photographed once.
+  { name: 'browse-market-strip-location', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Cedar Park').first().click();
+    await p.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await click(p, 'Expand all six layers');
+    // The thing the state exists to SHOW, waited for before the settle (review M9): a bare
+    // timeout cannot tell "the strip is in LOCATION mode" from "the selection no-opped on both
+    // targets", which is how a state goes on photographing the wrong screen in silence.
+    await p.getByText(/^LOCATION \u00b7 /).first().waitFor({ state: 'visible' });
+    // …and it is IN THE FRAME, whole. `toBeInViewport()` alone passes at any intersection above
+    // zero, so the ratio is stated for the same reason its AREA twin states it.
+    await expect(p.getByText(/^LOCATION \u00b7 /).first()).toBeInViewport({ ratio: 1 });
+    await expect(p.getByText(/^AREA \u00b7 /), 'both mode words are on screen at once').toHaveCount(0);
+    await p.waitForTimeout(400);
+  } },
 ];
 
 /**

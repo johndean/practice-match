@@ -13,6 +13,7 @@ on the boundary, to prove `high_moe` uses a strict `>` rather than `>=`.
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
@@ -98,8 +99,47 @@ def test_weighted_count_treats_a_missing_weight_like_an_excluded_part() -> None:
     assert est == 100 and moe == 10.0 and excluded == 1
 
 
-def test_weighted_median_is_household_weighted_average() -> None:
-    assert m.weighted_median([(100000, 1000), (50000, 3000), (None, 500)]) == 62500
+def test_weighted_median_is_a_true_weighted_median_not_a_weighted_mean() -> None:
+    """Task INCOME-MEDIAN (Census plan §14, amended 2026-09-12). `weighted_median` returned
+    Σ(v·w)/Σw -- a household-weighted MEAN of tract medians -- while every caller, the column
+    name (`median_hh_income`) and the card's own label read it as a median. Over a right-skewed
+    income distribution the mean of medians sits systematically ABOVE the median of medians:
+    measured on QA against the 64 tracts inside GHI Veterinary Hospital's 5-mile ring, the mean
+    was $109,744 against a true household-weighted median of $99,357 -- 10.5 % high, and up to
+    39.2 % high across the 29 QA listings.
+
+    First case (the brief's own): three equal weights over 100/200/900. The MEAN is
+    (100+200+900)/3 = 400, a value no part carries and one that no tract's households support;
+    the MEDIAN is 200 -- the 50 % mark (1.5 of 3) falls strictly inside the second part's own
+    weight block.
+
+    Second case: households 1000 at $100,000 and 3000 at $50,000. The old MEAN was
+    (100000*1000 + 50000*3000) / 4000 = 250,000,000 / 4000 = $62,500 -- above the income of
+    three quarters of the households it claims to describe. The MEDIAN is $50,000: cumulative
+    weight 3000 of 4000 is reached at $50,000, and half the total is 2000, so the 50 % mark falls
+    strictly inside that part. The `(None, 500)` part is skipped as it always was."""
+    assert m.weighted_median([(100, 1), (200, 1), (900, 1)]) == 200
+    assert m.weighted_median([(100000, 1000), (50000, 3000), (None, 500)]) == 50000
+
+
+def test_weighted_median_interpolates_a_straddle_at_the_fifty_percent_mark() -> None:
+    """When the cumulative weight lands EXACTLY on half the total, the 50 % mark falls between
+    two parts rather than inside either one, and the result is the linear interpolation of the two
+    straddling values -- their midpoint, the same convention the ordinary median of an even number
+    of observations uses. Equal weights: (100+200)/2 = 150 and (50000+100000)/2 = 75000. Unequal
+    weights that still split evenly straddle the same way: 3000 households at $40,000 and
+    1000 + 2000 = 3000 at $90,000 and $120,000 put the mark on the $40,000/$90,000 boundary, so
+    the answer is (40000+90000)/2 = 65000."""
+    assert m.weighted_median([(100, 1), (200, 1)]) == 150
+    assert m.weighted_median([(100000, 3000), (50000, 3000)]) == 75000
+    assert m.weighted_median([(90000, 1000), (40000, 3000), (120000, 2000)]) == 65000
+
+
+def test_weighted_median_of_one_contributing_part_is_that_part() -> None:
+    """A ring that overlaps a single tract has one median and it is the answer, at any weight --
+    the 50 % mark is inside that one part's block however heavy it is."""
+    assert m.weighted_median([(83400, 1)]) == 83400
+    assert m.weighted_median([(83400, 12345.678)]) == 83400
 
 
 def test_weighted_median_skips_zero_weight_as_well_as_missing_value() -> None:
@@ -117,6 +157,55 @@ def test_weighted_median_skips_a_present_value_with_a_missing_weight() -> None:
 def test_weighted_median_is_none_with_no_usable_weight() -> None:
     assert m.weighted_median([(None, 1)]) is None
     assert m.weighted_median([]) is None
+
+
+def test_weighted_median_skips_a_negative_weight() -> None:
+    """Task INCOME-MEDIAN fix round 1, Minor 2. The skip guard was `w not in (None, 0)`, which
+    admits a NEGATIVE weight. Under the old weighted MEAN a negative weight merely skewed the
+    answer; under a weighted median it corrupts the walk itself — the running total can go DOWN, so
+    the cumulative weight can cross half the total more than once, and `sum` can even produce a
+    total smaller than a part's own weight. No caller can produce one (`materialize.py` multiplies
+    households by an overlap fraction, both non-negative), which is exactly why the guard has to say
+    so rather than rely on it. A weight that is not positive contributes nothing and is skipped,
+    like a zero."""
+    assert m.weighted_median([(100000, 1000), (999999, -5000)]) == 100000
+    assert m.weighted_median([(999999, -5000)]) is None
+
+
+def test_weighted_median_skips_a_nan_weight() -> None:
+    """The other value `w not in (None, 0)` let through, and the worse of the two. `float("nan")`
+    compares unequal to everything including itself, so it passed that guard and poisoned `sum`:
+    `total` became NaN, `not total` was False (NaN is truthy) so the `None` arm never fired, `half`
+    became NaN, and `cum < half` was False on the first test — so the walk never ran, `i` stayed at
+    its sentinel -1, and `usable[i]` read the LAST part by negative indexing. Measured before the
+    fix: `[(100000, 1000), (999999, nan)]` returned 549999.5, the midpoint of the two, a number
+    fabricated out of an unusable weight and indistinguishable from a real answer. `w > 0` is False
+    for NaN, so it is skipped structurally, without a NaN-specific branch."""
+    nan = float("nan")
+    assert m.weighted_median([(100000, 1000), (999999, nan)]) == 100000
+    assert m.weighted_median([(999999, nan)]) is None
+
+
+def test_weighted_median_is_bounded_by_its_parts_and_invariant_to_duplicating_them() -> None:
+    """Two properties the weighted MEAN also satisfied, kept so the new statistic is not merely
+    different but still well-formed, over 200 pseudo-random catchments (fixed seed, so a failure
+    is reproducible):
+
+    * `min <= result <= max` -- an interpolated straddle lies between the two values it
+      interpolates, so no combination of tract medians can produce a figure outside the range of
+      the tract medians themselves.
+    * duplicating EVERY part leaves the answer unchanged -- the statistic depends on the SHAPE of
+      the weight distribution, not on its total. This is the property that rules out the other
+      common "interpolated weighted median" (interpolating the empirical CDF at the midpoint of
+      each part's own weight block), which is NOT duplication-invariant: on
+      `[(100, 1), (200, 3)]` that rule gives 175 un-duplicated and 200 duplicated."""
+    rng = random.Random(20260912)
+    for _ in range(200):
+        parts = [(float(rng.randrange(20000, 250000)), float(rng.randrange(1, 9000))) for _ in range(rng.randint(1, 12))]
+        r = m.weighted_median(parts)
+        assert r is not None
+        assert min(v for v, _ in parts) <= r <= max(v for v, _ in parts), parts
+        assert m.weighted_median(parts + parts) == r, parts
 
 
 def test_pet_households_est() -> None:

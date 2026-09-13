@@ -93,10 +93,20 @@ def test_zbp_loads_zip_establishments_once_per_naics_code_via_cbp_zip_code_geogr
         code = r.url.params["NAICS2017"]
         return httpx.Response(200, json=[["ZIPCODE", "ESTAB", "NAICS2017"],
                                          ["78613", "7", code], ["78664", "2", code], ["10001", "99", code]])
-    assert zbp.load(conn, factory_for(handler), ["48"]) == 6  # 2 in-bounds ZIPs x 3 NAICS codes
-    assert len(urls) == 3
+    assert zbp.load(conn, factory_for(handler), ["48"]) == 8  # 2 in-bounds ZIPs x 4 NAICS keys
+    assert len(urls) == 4
     assert all("for=zip%20code:*" in u and "in=" not in u for u in urls)
     assert any("NAICS2017=453910" in u for u in urls) and not any("459910" in u for u in urls)
+    # The ALL-INDUSTRY total, `00`, loaded in the same pass (review round 1, Important 3). It is
+    # the only way to tell "this ZIP has fewer than three veterinary establishments, and the
+    # Census therefore publishes no count for that category" from "ZIP Code Business Patterns
+    # does not cover this ZIP at all" -- the Census's own rule is that a category under three
+    # establishments is not reported but IS counted in the sum total, so the total is the
+    # universe and the absence of a 541940 row inside it is the withholding.
+    assert any("NAICS2017=00" in u for u in urls)
+    with conn.cursor() as cur:
+        cur.execute("SELECT establishments FROM zbp_industry WHERE geo_id='78613' AND naics_code='00'")
+        assert cur.fetchone() == (7,), "the all-industry total is stored under its own NAICS key"
     with conn.cursor() as cur:
         cur.execute("SELECT establishments FROM zbp_industry WHERE geo_id='78613' AND naics_code='541940'")
         assert cur.fetchone() == (7,)
@@ -124,10 +134,10 @@ def test_zbp_upsert_is_idempotent_on_a_rerun(conn):
     f = factory_for(handler)
     first = zbp.load(conn, f, ["48"])
     second = zbp.load(conn, f, ["48"])
-    assert first == second == 3  # one ZIP x 3 NAICS codes, not doubled by the re-run
+    assert first == second == 4  # one ZIP x 3 NAICS codes + the all-industry total, not doubled
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM zbp_industry")
-        assert cur.fetchone() == (3,)
+        assert cur.fetchone() == (4,)
 
 
 def test_zbp_refuses_a_dataset_that_is_not_cleared(conn):

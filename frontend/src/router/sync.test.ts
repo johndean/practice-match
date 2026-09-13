@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stateToRoute, routeToPatch, guard, needsPatch, sameLocation, ROUTE_PERMS } from './sync';
+import { stateToRoute, routeToPatch, guard, needsPatch, refusedScreen, sameLocation, ROUTE_PERMS } from './sync';
 
 const base = { screen: 'gate', detailId: 'p1', adminTab: 'users' };
 
@@ -173,6 +173,35 @@ describe('account gate routes (S2)', () => {
       expect(target).toEqual({ path, query: {} });
       expect(routeToPatch(r(target.path, target.query))).toEqual({ screen: 'gate', gate, gateToken: '' });
     }
+  });
+});
+
+// Task ADMIN-GATE (D-C53, 2026-09-13). `guard` answers about a route being REQUESTED;
+// `refusedScreen` answers the same question about a screen the state has already moved to, which
+// is the path the design's own header nav takes and the one the matrix was never asked on.
+describe('refusedScreen (the state-driven half of the same guard)', () => {
+  const buyer = { id: '1', email: 'b@x.io', name: 'B', role: 'Approved buyer', initials: 'B', state: 'active', roles: ['buyer'], affiliation_label: null };
+  const staff = { ...buyer, role: 'VIN Foundation admin', roles: ['staff'] };
+
+  it('refuses a screen the signed-in account does not hold, with the design\'s own unavailable gate', () => {
+    expect(refusedScreen({ ...base, auth: true, screen: 'admin' }, { me: buyer })).toEqual({ screen: 'gate', gate: 'unavailable' });
+  });
+
+  it('says nothing about a screen the account does hold', () => {
+    expect(refusedScreen({ ...base, auth: true, screen: 'admin' }, { me: staff })).toBeNull();
+    expect(refusedScreen({ ...base, auth: true, screen: 'browse' }, { me: buyer })).toBeNull();
+  });
+
+  it('says nothing about the gate itself — that is the screen a refusal LANDS on', () => {
+    expect(refusedScreen({ ...base, auth: true, screen: 'gate', gate: 'unavailable' }, { me: buyer })).toBeNull();
+  });
+
+  // The signed-out case belongs to `guard`, which REMEMBERS the route until auth arrives. Answering
+  // it here would send a visitor who has merely not signed in to the gate that says their account
+  // may not have this page — the fail-closed ORDER A-I7.2 records, seen from the other side.
+  it('says nothing while signed out', () => {
+    expect(refusedScreen({ ...base, auth: false, screen: 'admin' }, { me: null })).toBeNull();
+    expect(refusedScreen({ ...base, screen: 'admin' }, { me: null })).toBeNull();
   });
 });
 

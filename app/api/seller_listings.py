@@ -53,7 +53,15 @@ from python_multipart.exceptions import FormParserError
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
-from app.api.listings import PHOTOS_ROOT, REQUIRE_LISTING_READ, _error, drop_list_cache, photo_list
+from app.api.listings import (
+    PHOTOS_ROOT,
+    REQUIRE_LISTING_READ,
+    _error,
+    clear_geocode_dedupe,
+    enqueue_geocode,
+    has_geocode,
+    photo_list,
+)
 from app.auth import audit
 from app.auth import permissions as P
 from app.auth import sessions as S
@@ -67,7 +75,7 @@ from app.auth.limits import (
     LISTING_UPLOAD,
     hit,
 )
-from app.cache import sync_redis
+from app.cache import drop_list_cache_quietly, sync_redis
 from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
@@ -75,7 +83,6 @@ from app.media.encode import encode_webp, sha256_hex
 from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, original_key, photo_prefix
 from app.privacy import record as privacy_record
 from app.storage import ObjectStore
-from app.tasks.celery_app import celery_app
 
 router = APIRouter(prefix="/api/seller")
 
@@ -107,6 +114,12 @@ EDIT_ACTION = "listing.edit"
 # audit row to say it had changed. An untouched pause/republish is still "immediate and
 # reversible" (the design's admin footnote), which is all that footnote promises.
 EDIT_REENTERS_REVIEW = ("published", "paused")
+
+# GEO-WIRE (2). The columns `app.census.geocode.resolve` reads to build an address, that a seller
+# can change: `street` is never written by this API (the approved step 2 collects a city and a
+# ZIP, and inventing a wizard field is forbidden, spec Q2) and `state` is the reviewer's at the
+# first publish and never seller-editable after it (D12).
+ADDRESS_COLUMNS = ("city", "zip")
 
 # --- D10: the per-step whitelist, and the four mappings the approved design forces ---------------
 #
@@ -613,6 +626,13 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             # A-SL31/A-SL32 (2): the row is the "did the seller actually change this" oracle, so it
             # has to be fetched before `columns_for` can compare against it.
             columns = columns_for(step, body, row)
+            # GEO-WIRE (2). Step 2 carries the ONLY address the geocoder ever sees — D12 keeps
+            # `state` and `market` the reviewer's, and the wizard has no street field — so a
+            # changed `city` or `zip` makes `practice_location` (its point, its tract, its CBSA)
+            # a description of somewhere this practice is not. `row` holds the values BEFORE this
+            # write, which is what makes "changed" mean changed rather than "step 2 was saved":
+            # the autosave fires on every visit, and `anon` is a step-2 field that moves nothing.
+            moved = step == 2 and any(columns[name] != row[name] for name in ADDRESS_COLUMNS if name in columns)
             # D3, John's ruling: the FIRST save to a published listing moves it to in_review and off
             # the market at once. `GET /api/listings` filters `status = 'published'`, so the
             # transition alone does the removing — no new code on the read side. Subsequent PATCHes
@@ -638,6 +658,16 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
                 cur.execute(f"UPDATE listing SET {sets}updated_at = now()"
                             " WHERE id = %(id)s AND seller_id = %(seller)s",
                             {**columns, "id": row["id"], "seller": principal.account_id})
+                if moved:
+                    # In the SAME transaction as the address it describes: a committed new city
+                    # beside a surviving old geography is the state this exists to prevent. The
+                    # publish path already reads "no row" as "geocode this" (`has_geocode`), so
+                    # the DELETE re-arms the trigger with no column and no second rule — and
+                    # nothing a buyer can see is lost, because a PUBLISHED listing leaves the
+                    # market in this same statement (D3, `re_entering`) and a draft never had a
+                    # location. `market_metric`/`practice_catchment` are keyed on the listing and
+                    # are rebuilt by `census.backfill_listing` after the next geocode.
+                    cur.execute("DELETE FROM practice_location WHERE listing_id = %s", (row["id"],))
             claim_from_seed(conn, row, principal)
             if re_entering:
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
@@ -658,7 +688,17 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # change a published payload" (review L6). A draft's autosave changes nothing a buyer can read,
     # and a SCAN plus a DELETE per key on each of 240 patches an hour flushes Browse for everyone.
     if leaving_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
+    # GEO-WIRE (2), after the commit like every other cache write here: the dedupe key is what
+    # would otherwise swallow the re-geocode, since a correction arrives precisely inside the
+    # window the publish that revealed the mistake opened.
+    #
+    # `str(row["id"])`, never the raw path string (review minor 2): `UUID()` accepts upper case,
+    # braces and an unhyphenated form, so a path spelled any of those ways would have cleared a
+    # key nobody set and left the real one standing — and the admin route that SETS it keys on
+    # the canonical `str(parsed)`. The row's own id has one spelling.
+    if moved:
+        clear_geocode_dedupe(sync_redis(), str(row["id"]))
     return JSONResponse(payload)
 
 
@@ -1039,7 +1079,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     # AFTER the commit (spec C.5 step 0): a task published inside the transaction could be taken by
     # a prefork child before the row it names exists. `started` is None on no path that reaches
     # here -- the `except` above returns -- and mypy needs the narrowing said out loud.
@@ -1088,7 +1128,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1130,7 +1170,7 @@ async def caption_asset(listing_id: str, asset_id: str, request: Request, princi
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1186,7 +1226,7 @@ async def caption_seed_photo(listing_id: str, n: int, request: Request, principa
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1237,7 +1277,7 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return Response(status_code=204)
 
 
@@ -1283,7 +1323,7 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload, status_code=201)
 
 
@@ -1435,7 +1475,7 @@ async def submit_listing(listing_id: str, request: Request, principal: Owner) ->
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1462,6 +1502,11 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET status = %s, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s", (after, row["id"], principal.account_id))
+            # GEO-WIRE (1). Read INSIDE the transaction — the enqueue itself is after the commit,
+            # below. It used to be read after it, through `conn` — a connection `closing()` had
+            # already returned to `app.db`'s pool, so the statement ran on a connection another
+            # request could by then be holding.
+            needs_geocode = action == "republish" and not has_geocode(conn, row["id"])
             claim_from_seed(conn, row, principal)
             audit.write(conn, actor=principal, action=recorded, target_type="listing", target_id=row["id"],
                         before={"status": before}, after={"status": after}, request=request)
@@ -1472,11 +1517,12 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
     # conditional because it fires 240 times an hour (A-SL13 L6). A transition is a deliberate act
     # bounded by `LISTING_SUBMIT`, three of the four move a row onto or off the market, and a SCAN
     # that matches nothing costs one round trip.
-    drop_list_cache(sync_redis())
-    # Task B9: enqueue geocoding when republishing (republish moves from paused to published)
-    if action == "republish":
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM practice_location WHERE listing_id = %s", (listing_id,))
-            if cur.fetchone() is None:
-                celery_app.send_task("census.geocode_listing", args=[listing_id])
+    drop_list_cache_quietly()
+    # Task B9, deduped by GEO-WIRE (1) and enqueued after the commit for `drop_list_cache`'s own
+    # reason: a listing the seller puts back on the market needs the pin, the community card and
+    # the metro every other published listing has.
+    if needs_geocode:
+        # `str(row["id"])` for `clear_geocode_dedupe`'s own reason (review minor 2): the key this
+        # SETS has to be the one an address edit, or the admin route, later looks for.
+        enqueue_geocode(sync_redis(), str(row["id"]))
     return JSONResponse(payload)

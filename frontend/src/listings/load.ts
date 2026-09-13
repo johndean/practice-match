@@ -83,12 +83,37 @@ export interface ApiListing {
   vets: number | null;
   // B8: annual payroll per establishment in $thousands from Census CBP, or null if unavailable
   econ_k: number | null;
-  // B10 (D-C32): which area the six Community Context figures above describe. `null` means the
-  // listing's own community (the Census `place` band), which is the wording the design already
-  // uses; `"Within 10 minutes of the practice"` means the place band had no figures and the
-  // `drive_10` band answered. The design renders it wherever it names the area, so a buyer is
-  // never shown a drive-time catchment disguised as a named city.
+  // B10 (D-C32), widened by D-C38: which area the AREA figures above describe — `pop`, `hh`,
+  // `income` and the off-card `vets`, which move as one group. `null` means the listing's own
+  // community (the Census `place` band), which is the wording the design already uses;
+  // `"Within about 5 miles of the practice"` means the catchment band answered. The design
+  // renders it wherever it names the area, so a buyer is never shown a catchment disguised as a
+  // named city.
   community_label: string | null;
+  // D-C38 (John, 2026-09-11): the geography the GROWTH figure was measured at, named exactly as
+  // TIGER names it — "Dallas", "Orange County", never a composed "City of " prefix — which
+  // `community_label` does NOT describe. `population_growth_pct` cannot
+  // vary by band at all (the pipeline computes it once per listing and writes that one value into
+  // all three bands, plan D12), so the Growth tile keeps the city-or-county figure and its own
+  // sub-line names it. `null` where the geography has no name to give, and the design's own
+  // "Since <year>" then stands.
+  growth_scope: string | null;
+  // D-C38: the median-income tile's whole sub-line, when that median is an approximation rather
+  // than a published Census figure — a catchment median is a household-weighted median of the
+  // tract medians inside the ring. Composed server-side because the tile has ONE sub-line and it
+  // must carry the area and the qualifier together. `null` for a published place median, and the
+  // design's own "Household, 2023" then stands.
+  income_note: string | null;
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13): the pipeline's own `income_index_vs_us`, from the
+  // SAME band `income` came from and measured against the stored US median at the listing's own
+  // ACS vintage — the figure the docked panel's Median Income tile used to compute for itself
+  // against a hard-coded 75149 in the design's script. `null` when it is absent or suppressed,
+  // and `null` whenever `income` is, because the index qualifies the figure above it.
+  income_vs_us_pct: number | null;
+  // A33.1: whether that median is an approximation rather than a published Census figure — the
+  // FACT `income_note` states in prose, served beside it because the two surfaces compose
+  // different copy from it. `null` where there is no median at all.
+  income_approximate: boolean | null;
 }
 
 export interface Practice {
@@ -124,6 +149,17 @@ export interface Practice {
   // never `undefined` as a present key — when the figures came from the listing's own community,
   // which is what makes the design's `p.communityLabel || "…"` fall back to its own wording.
   communityLabel?: string;
+  // D-C38: the same rule again for the two per-figure fields A27 reads — `growth_scope` and
+  // `income_note` under the design's own camel-case naming, absent rather than present-and-
+  // undefined, so `p.growthScope ? … : …` and `p.incomeNote || "…"` fall back to the design's
+  // own literals and every approved state keeps its pixels.
+  growthScope?: string;
+  incomeNote?: string;
+  // A33.1: the same absence rule again. The design's own fixtures carry neither key, so
+  // `sel.incomeVsUs != null` falls through to the design's own fixture arithmetic and
+  // `sel.incomeApproximate` is falsey — which is what keeps every approved state on its pixels.
+  incomeVsUs?: number;
+  incomeApproximate?: boolean;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -185,6 +221,14 @@ export function toPractice(row: ApiListing): Practice {
   // must not set `p.communityLabel = undefined`, which would be a key the design's `||` chain
   // then has to absorb, and a difference the D6 round-trip identity would see.
   if (row.community_label != null) p.communityLabel = row.community_label;
+  // D-C38: `!= null`, the same rule as `community_label` above and for the same M7 reason.
+  if (row.growth_scope != null) p.growthScope = row.growth_scope;
+  if (row.income_note != null) p.incomeNote = row.income_note;
+  // A33.1: `!= null` again, and it is load-bearing on BOTH of these in a way it is not on the
+  // strings above — a truthiness test would drop a `0` index (a community exactly on the US
+  // median) and a `false` flag (a published median, which is a statement the payload makes).
+  if (row.income_vs_us_pct != null) p.incomeVsUs = row.income_vs_us_pct;
+  if (row.income_approximate != null) p.incomeApproximate = row.income_approximate;
   return p;
 }
 

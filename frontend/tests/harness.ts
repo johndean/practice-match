@@ -3,9 +3,19 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+import { designSummaryBody } from './design-summary.mjs';
+
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
+
+/** `app.api.market.MAX_BBOX_DEG`, the span cap the boundary route refuses on — stated in
+ *  `docs/integrations/market-data-api.md` and pinned against this copy by
+ *  `harness.test.ts`, so the stub cannot go on answering 200 to a box the real route would
+ *  refuse. It is a number rather than an import because this file runs in a browser test
+ *  process and the constant lives in Python. */
+export const MAX_BBOX_DEG = 4.0;
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -202,6 +212,78 @@ export async function prepare(page: Page): Promise<void> {
       status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
     }));
   }
+  // ---------------------------------------------------------------------------------------
+  // A24.14-A24.18 — the boundary layer. Thirteen approved states mount a map and, with the
+  // `market` adapter present, the app draws what the API answered and nothing else — so the
+  // oracle answers with the DESIGN's own polygons, derived from `areaSet` by
+  // design-boundaries.mjs, never hand-copied, so the two targets cannot diverge. The adapter
+  // resolves a metro by NAME through `/api/markets` first, so both routes are needed.
+  //
+  // NEVER against a remote target, for the same reason the listings stub is not: there the real,
+  // seeded API answers, and stubbing it would hide the very thing the QA parity run exists to
+  // check.
+  // ---------------------------------------------------------------------------------------
+  const markets = marketsStubUrl();
+  if (markets !== null) {
+    await page.route((url) => url.href === markets, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: designMarketsBody()
+    }));
+    await page.route(
+      (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => {
+        // The route's OWN span refusal, imitated: a box wider than `MAX_BBOX_DEG` on either axis
+        // is `422 BBOX_TOO_LARGE` in decision A5's envelope. Without it this stub answers 200 to
+        // everything and the adapter's whole refusal ladder — the retry, the whole-metro fallback
+        // and the guard that stops both for a box the member has left — is unreachable in a real
+        // browser, so a case written against it can only pass. (Proved: the metro-switch case
+        // below passed with the guard cut out until this existed.)
+        const bbox = new URL(route.request().url()).searchParams.get('bbox');
+        const box = bbox === null ? null : bbox.split(',').map(Number);
+        if (box !== null && (box[2] - box[0] > MAX_BBOX_DEG || box[3] - box[1] > MAX_BBOX_DEG)) {
+          return route.fulfill({
+            status: 422, contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'BBOX_TOO_LARGE', message: `bbox spans more than ${MAX_BBOX_DEG} degrees` } })
+          });
+        }
+        return route.fulfill({
+          status: 200, contentType: 'application/geo+json',
+          // The BOX as well as the layer: the route is bbox-scoped and metro-agnostic, so a
+          // member who pans off the selected metro still gets polygons under the view, and a stub
+          // that answered the same Austin geometry whatever it was asked could not tell that
+          // continuity from a blank map. `designBoundariesBody` translates the design's own
+          // polygons only when they are NOT already under the box, which is never the case for
+          // any approved state, so no capture moves.
+          body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income', bbox)
+        });
+      }
+    );
+    // A31 (Task SNAP) — the metro summary. Two approved states open the Market snapshot strip and,
+    // with the `market` adapter present, the app prints what this answered and nothing else — so
+    // the oracle answers with the DESIGN's own distribution, derived from `summarySet` by
+    // design-summary.mjs exactly as the polygons above are derived from `areaSet`. The reference
+    // has no adapter and computes the same distribution for itself, which is what keeps the two
+    // targets on one set of pixels.
+    await page.route(
+      (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/summary'),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: designSummaryBody(new URL(route.request().url()).pathname.split('/')[3])
+      })
+    );
+  }
+}
+
+/** `null` for a REMOTE target (`PW_APP_URL`): there the real, seeded API answers, and stubbing it
+ *  would hide the very thing the QA parity run exists to check — the same rule `listingsStubUrl`
+ *  and `collectionStubUrls` already follow, and pinned in harness.test.ts for the same reason.
+ *  `marketsStubUrl` guards BOTH boundary routes: the adapter cannot reach `/boundaries` without
+ *  resolving a metro through the catalogue first. */
+export function marketsStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets', appOrigin(env)).href;
+}
+
+export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
 /** The two collection endpoints the oracle answers itself, or `[]` on a remote target
@@ -359,9 +441,14 @@ export function btn(page: Page, name: RegExp) {
 // localized to the docked panel, not the lightbox itself: the panel's own `scrollTop` was left
 // wherever the click happened to leave it, and nothing after the click reset or checked it. Pinned
 // here in `atTop`'s own shape — reset alongside the page scroll, held stable alongside the
-// selector's own box — so every state that calls `atTop` benefits, not only the lightbox ones. No
-// approved state depends on a `.rf-scroll` container being scrolled away from the top when its
-// capture is taken (grep finds no such step), so resetting all of them unconditionally is safe.
+// selector's own box — so every state that calls `atTop` benefits, not only the lightbox ones.
+//
+// Resetting all of them unconditionally is safe because no state that CALLS `atTop` depends on a
+// `.rf-scroll` container being scrolled away from the top. Exactly one approved state now does —
+// `browse-market-strip` (D-C40), whose ruled sentence sits below the fold of the Market data
+// strip's own `max-height: 40vh` body and is scrolled into frame by `screens.ts`'s
+// `stripFootnoteInFrame` — and that state deliberately does not call `atTop`: it has no
+// `position: fixed` element, so it never needed it, and calling it would undo its own scroll.
 export async function atTop(page: Page, selector: string): Promise<void> {
   await page.locator(selector).first().waitFor({ state: 'visible' });
   await page.evaluate(() => {
@@ -933,7 +1020,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET — FOURTEEN of thirty (review round 1, I1/M3; traced against the real
+ * THE BUDGET — FIFTEEN of thirty (review round 1, I1/M3; traced against the real
  * `POST /api/auth/signin` calls, not estimated).
  *
  * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
@@ -945,7 +1032,10 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  *                     (through `decideAs`, the reviewer that puts the applicant fixtures back),
  *                     `declined`, `buyer`, `unverified`
  *   dom           +2  `pending` and `seller`; every other state reuses a jar account-flows minted
- *   signin-form   +3  the successful sign-in, the deliberately wrong password, the sign-out test's
+ *   signin-form   +4  the successful sign-in, the deliberately wrong password, the sign-out test's,
+ *                     and Task ADMIN-GATE's own: `design@` through the design's own form, the one
+ *                     path that exercises the reload seam (A40.5) — `signInAs` sets cookies and
+ *                     reloads, which is precisely what hid that defect
  *   smoke         +1  the reauth check's standalone `personaSignIn()` session
  *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
  *                     reset revoked the session and `personaPasswordRotated` forgot it
@@ -1384,6 +1474,14 @@ export function consumeExpectedApiFailure(page: Page, message: string): boolean 
   observedApiFailures.set(page, [...(observedApiFailures.get(page) ?? []), status]);
   return true;
 }
+
+// `forgetExpectedApiFailures` stood here until A32 (2026-09-12) and is DELETED with its one
+// caller. It dropped allowances nobody spent, for the single case whose refusal count was not
+// deterministic — the metro-switch cost case, which raced a settled view against a refusal and
+// could not say whether the map would ask twice or three times. A32 removes the doomed round that
+// made it a race, so the two cases that replace it arm an exact twelve and spend all twelve, and
+// `assertExpectedApiFailuresObserved` — the right default, since an allowance nobody used usually
+// means the state stopped provoking the failure it exists for — is the only rule left.
 
 /** Throws unless every armed allowance was actually used. */
 export function assertExpectedApiFailuresObserved(page: Page): void {

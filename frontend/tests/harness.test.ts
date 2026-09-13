@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
 import { P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
 // 2026-09-07). MarketMapV3.jsx:190 adds the Esri label tile layer with `pane: "shadowPane"`
@@ -267,6 +274,148 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
 // disarms it against a remote target is all that stands between the oracle's fixtures and a QA
 // parity run, and an untested `if` is how it comes back.
 // ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the boundary stubs. Same rule as the two above and the same reason it is
+// pinned: the `if` that disarms them against a remote target is all that stands between the
+// design's own polygons and a QA parity run whose whole purpose is to see the REAL ones.
+// ---------------------------------------------------------------------------------------
+describe('the boundary stubs (A24.14-A24.18)', () => {
+  it('are disarmed against a remote target', () => {
+    expect(marketsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(boundariesStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(marketsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(boundariesStubUrl({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('name both routes on the local app origin, on the port the run uses', () => {
+    expect(marketsStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBe('http://localhost:5473/api/markets');
+    expect(marketsStubUrl({} as NodeJS.ProcessEnv)).toBe('http://localhost:5173/api/markets');
+    expect(boundariesStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBe('http://localhost:5473/api/markets/12420/boundaries');
+  });
+
+  it('answer the DESIGN\'s own polygons, derived from areaSet and never hand-copied', () => {
+    for (const layer of ['income', 'growth', 'econ'] as const) {
+      const body = JSON.parse(designBoundariesBody(layer));
+      const own = designAreaSet(layer);
+      expect(body.type).toBe('FeatureCollection');
+      expect(body.layer).toBe(layer);
+      expect(body.features).toEqual(own.features);
+      expect(body.features.length, 'the design draws polygons at every fill geography').toBeGreaterThan(0);
+      // Every property the adapter's `BoundaryProperties` names, and nothing missing.
+      expect(Object.keys(body.features[0].properties).sort())
+        .toEqual(['band_ambiguous', 'geo_id', 'moe', 'name', 'suppress_reason', 'suppressed', 'value']);
+    }
+    // The three geographies D-C35 ruled, named the way the endpoint names them.
+    expect(JSON.parse(designBoundariesBody('income')).summary_level).toBe('140');
+    expect(JSON.parse(designBoundariesBody('growth')).summary_level).toBe('160');
+    expect(JSON.parse(designBoundariesBody('econ')).summary_level).toBe('050');
+    // An unknown layer cannot fabricate a collection: it answers income's, as the design's own
+    // default layer, rather than a FeatureCollection with no features that would read as "this
+    // metro has no boundaries".
+    expect(JSON.parse(designBoundariesBody('nonsense')).layer).toBe('income');
+    // Every foreign member `app/api/market.py` sends, and no other (commit `c466415`).
+    // `blocked_reason` is the one conditional member and is absent on an enabled layer.
+    expect(Object.keys(JSON.parse(designBoundariesBody('income'))).sort()).toEqual([
+      'attribution', 'boundary_vintage', 'cbsa_geoid', 'features', 'geo_label', 'layer',
+      'metric_key', 'simplified_deg', 'source_dataset', 'state', 'summary_level', 'type', 'unit',
+      'value_vintage', 'values_without_geometry'
+    ]);
+    // Attribution is read from `dataset_registry`, never composed, and the route puts the
+    // BOUNDARY string first — so growth, which spans two ACS vintages, carries three.
+    expect(JSON.parse(designBoundariesBody('income')).attribution[0]).toBe('Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023');
+    expect(JSON.parse(designBoundariesBody('growth')).attribution).toHaveLength(3);
+    expect(JSON.parse(designBoundariesBody('econ')).attribution[1]).toContain('County Business Patterns');
+    expect(JSON.parse(designBoundariesBody('econ')).source_dataset).toBe('cbp');
+  });
+
+  it('answers for the ground it was ASKED about — the route is bbox-scoped and metro-agnostic', () => {
+    // `_BOUNDARY_SQL` filters on summary level, vintage and `ST_Intersects(geom, bbox)` and never
+    // on the CBSA, so a member who pans clean off the selected metro keeps getting polygons under
+    // the view. A stub that answered the same Austin geometry whatever it was asked could not tell
+    // that continuity from a blank map, which is what `smoke.spec.ts`'s continuity case measures.
+    const lngs = (body: string) => {
+      const out: number[] = [];
+      const walk = (c: unknown): void => {
+        if (Array.isArray(c) && typeof c[0] === 'number') { out.push(c[0] as number); return; }
+        if (Array.isArray(c)) c.forEach(walk);
+      };
+      walk((JSON.parse(body) as { features: { geometry: { coordinates: unknown } }[] }).features.map((f) => f.geometry.coordinates));
+      return out;
+    };
+    const own = lngs(designBoundariesBody('income'));
+    expect(own.length, 'the design draws no income polygons at all').toBeGreaterThan(0);
+
+    // A box over the design's own ground: the geometry is returned UNTOUCHED. Every approved
+    // state's box is one of these, which is why none of them moves.
+    const austin = `${Math.min(...own) - 0.5},20,${Math.max(...own) + 0.5},50`;
+    expect(designBoundariesBody('income', austin)).toBe(designBoundariesBody('income'));
+
+    // A box the fixture is nowhere near: the SAME polygons, carried to the centre of that box.
+    // They INTERSECT it rather than sit inside it, which is what the real route returns too — a
+    // tract on the edge of a viewport is served whole, not clipped.
+    const far = lngs(designBoundariesBody('income', '-84.9,33.3,-83.9,34.3'));
+    expect(far).toHaveLength(own.length);
+    expect(Math.min(...far), 'the fixture is still east of the box').toBeLessThan(-83.9);
+    expect(Math.max(...far), 'the fixture is still west of the box').toBeGreaterThan(-84.9);
+    expect((Math.min(...far) + Math.max(...far)) / 2, 'the fixture was not centred on the box').toBeCloseTo(-84.4, 6);
+    // …the SHAPE is the design's, unchanged: every polygon moved by the same vector.
+    const deltas = [...new Set(far.map((v, i) => (v - own[i]).toFixed(6)))];
+    expect(deltas, 'the fixture was reshaped, not translated').toHaveLength(1);
+
+    // A collection with no coordinates at all (the design carries no ZCTAs) is left alone rather
+    // than divided by zero into NaNs.
+    expect(JSON.parse(designBoundariesBody('competition', '-84.9,33.3,-83.9,34.3')).features).toEqual([]);
+    // …and a malformed box is the route's question, not this stub's: it answers as it always did.
+    expect(designBoundariesBody('income', 'not,a,box')).toBe(designBoundariesBody('income'));
+  });
+
+  // A31 (Task SNAP, D-C50 as revised): the metro summary stub. Two approved states open the
+  // snapshot strip and the app prints what the API answered, so this is the answer — and it must
+  // be the DESIGN's own distribution, or the app and the reference would print different numbers
+  // at `maxDiffPixels: 0`.
+  it('answer the metro summary with the DESIGN\'s own distribution, in the route\'s own shape', () => {
+    const body = JSON.parse(designSummaryBody()) as {
+      cbsa_geoid: string; layers: { layer: string; with_value: number; count: number; suppressed: number; no_data: number; median: number | null; quantiles: number[] | null; geo_label: string }[];
+    };
+    const own = designSummarySet() as Record<string, { median: number | null; quantiles: number[] | null; with_value: number; geo_label: string }>;
+    // Every foreign member `app/api/market.summary` sends, and no other. `blocked_reason` is the
+    // one conditional member and is absent on an enabled layer.
+    expect(Object.keys(body).sort()).toEqual(['attribution', 'boundary_vintage', 'cbsa_geoid', 'layers']);
+    expect(Object.keys(body.layers[0]).sort()).toEqual([
+      'count', 'geo_label', 'layer', 'median', 'no_data', 'quantiles', 'source_dataset', 'state',
+      'summary_level', 'suppressed', 'unit', 'value_vintage', 'with_value'
+    ]);
+    // DERIVED, never retyped: every figure is `summarySet`'s own, which is what stops the stub
+    // and the reference describing two different distributions.
+    for (const row of body.layers) {
+      expect(row.median, row.layer).toBe(own[row.layer].median);
+      expect(row.quantiles, row.layer).toEqual(own[row.layer].quantiles);
+      expect(row.with_value, row.layer).toBe(own[row.layer].with_value);
+      expect(row.geo_label, row.layer).toBe(own[row.layer].geo_label);
+      // The route's own partition, which a client reading `with_value` as "how many areas this
+      // metro has" would get wrong — so the stub may not break it either.
+      expect(row.count, row.layer).toBe(row.with_value + row.suppressed + row.no_data);
+    }
+    // The design's fixture carries no ZCTAs at all, so `competition` answers with NOTHING — which
+    // is what puts A21.2n/o's "keeps its title and source, shows no value and no bars" posture
+    // inside an approved state rather than in a unit test alone.
+    const competition = body.layers.find((l) => l.layer === 'competition')!;
+    expect([competition.with_value, competition.median, competition.quantiles]).toEqual([0, null, null]);
+    // …and the three tract layers do carry one, or the AREA cards would photograph nothing.
+    expect(body.layers.find((l) => l.layer === 'income')!.quantiles).toHaveLength(5);
+    // The path segment the route is addressed by is carried through, so a second metro's stub is
+    // not silently labelled Austin's.
+    expect((JSON.parse(designSummaryBody('19100')) as { cbsa_geoid: string }).cbsa_geoid).toBe('19100');
+  });
+
+  it('answer a market catalogue the adapter can resolve the design\'s own metro by NAME in', () => {
+    const rows = JSON.parse(designMarketsBody()) as { cbsa_geoid: string; name: string }[];
+    expect(rows.map((r) => r.name)).toContain('Austin, TX');
+    expect(rows.find((r) => r.name === 'Austin, TX')!.cbsa_geoid).toBe('12420');
+    expect(rows.every((r) => /^\d{5}$/.test(r.cbsa_geoid)), 'every row carries a CBSA-shaped geoid').toBe(true);
+  });
+});
+
 describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
   it('is disarmed for a remote target — there the real, seeded API answers', () => {
     expect(collectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toEqual([]);
@@ -1252,5 +1401,18 @@ describe('the seeded application data the oracle types back (A-S5 ruling 2)', ()
 
   it('NEEDS_REVIEW_INFO_REQUEST is the reviewer\'s question the seed writes', () => {
     expect(NEEDS_REVIEW_INFO_REQUEST).toBe('Which practice do you work at now, and in what role?');
+  });
+});
+
+// Fix round 2, A. The stub imitates the route's own span refusal so the adapter's refusal ladder
+// is reachable in a real browser at all; a number copied out of Python is a number that can drift,
+// so it is pinned against the integration contract the route itself is pinned against
+// (`tests/api/test_contract_doc.py::test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces`).
+describe('the boundary stub refuses the boxes the real route refuses', () => {
+  it('carries the same MAX_BBOX_DEG the contract document states', () => {
+    const doc = readFileSync(join(HERE, '..', '..', 'docs', 'integrations', 'market-data-api.md'), 'utf8');
+    const m = /`MAX_BBOX_DEG = ([\d.]+)`/.exec(doc);
+    expect(m, 'the contract document no longer states MAX_BBOX_DEG').not.toBeNull();
+    expect(MAX_BBOX_DEG).toBe(Number(m![1]));
   });
 });

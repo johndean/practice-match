@@ -84,7 +84,10 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
 
   it('the census plan documents V3 rendering, the payroll label, the reserved word and the migration range', () => {
     const md = read(CENSUS);
-    expect(md).toContain('community mosaic shading');
+    expect(md).toContain('community boundary shading');
+    // A24 (2026-09-10/11): the grid is gone from the product, so it is gone from this plan's
+    // rendering table too — the table is the artefact a reviewer audits coverage from.
+    expect(md, 'the grid is gone from the product and from this plan').not.toContain('| Median Household Income (`income`) | community mosaic shading');
     expect(md).toContain('Average Practice Payroll');
     expect(md).toContain('Avg. payroll per practice');
     expect(md).not.toMatch(/community bubble `dot\(/);
@@ -93,7 +96,7 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).not.toContain("dot(size, 'rgba(120,86,190,.75)')");
     expect(md).not.toMatch(/\|\s*(community )?bubble/);
     expect(md).toContain('`practicePin(label, selected)`');
-    expect(md).toContain('| Veterinary Competition (`competition`) | community mosaic shading');
+    expect(md).toContain('| Veterinary Competition (`competition`) | graduated symbols at the listing point (D-C35)');
     // `016` is the Seed Listings plan's listing table, so the census range starts at `017`.
     expect(md).toContain('migrations/017_census_registry.sql');
     expect(md).not.toContain('migrations/016_census_registry.sql');
@@ -416,5 +419,31 @@ describe('the logic.js port lists every normalisation it performs', () => {
   // drift test says.
   it('the Browse V3 spec \u00a73 spells out the export the listings loader needs (Seed Listings L6)', () => {
     expect(readSpec(BROWSE_V3_SPEC)).toContain('export { Component, MARKETS, P, VETS, ECON_K };');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-GATE fix round 1 (2026-09-13, review Minor 2): the held ruling 2's measurement
+// names a COUNT of approved states, and it was written by hand as 54 while `SCREENS` had held
+// 55 since A31 added `browse-market-strip-location`. A hand-written census goes stale the next
+// time a state is appended, and this one is the evidence a ruling is waiting on — so it is
+// pinned against the array itself, in the three places the sentence is written.
+//
+// `SCREENS.length`, not a literal: the point is that the number tracks the oracle. Only the
+// TOTAL is pinned here; the 28 is a property of `harness.ts`'s `SCREEN_PERSONA` split, which
+// no longer has a filter in the tree to measure it against (the review says so too).
+// ---------------------------------------------------------------------------------------
+describe('the held A40.1/A40.2 measurement counts the approved states it was measured over', () => {
+  const phrase = `28 of the ${SCREENS.length} approved states`;
+  const claudeMd = () => readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
+
+  it('names SCREENS.length in the amendment ledger, the characterisation suite and CLAUDE.md', () => {
+    expect(readFileSync(join(ROOT, 'frontend', 'tests', 'design-amendments.ts'), 'utf8'), 'design-amendments.ts').toContain(phrase);
+    expect(readFileSync(join(ROOT, 'frontend', 'src', 'logic.test.ts'), 'utf8'), 'logic.test.ts').toContain(phrase);
+    expect(claudeMd(), 'CLAUDE.md').toContain(phrase);
+  });
+
+  it('says it in BOTH byte-identical copies of CLAUDE.md\'s amendment paragraph', () => {
+    expect(claudeMd().split(phrase)).toHaveLength(3);
   });
 });

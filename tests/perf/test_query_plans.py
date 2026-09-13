@@ -22,6 +22,7 @@ database its plan is a claim about.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -31,9 +32,11 @@ from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
+from app.api.market import _SUMMARY_SQL, SUMMARY_FRACTIONS
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
 from app.census.catchment import SQL as CATCHMENT_SQL
+from app.census.serve import _PRECISION_SQL, _SCOPE_NAME_SQL
 
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
 # endpoint's OWN query, imported from the handler rather than retyped, so this gate cannot drift
@@ -63,6 +66,34 @@ _COMMUNITY_ROWS_LISTING_IDS = [
     "00000000-0000-0000-0000-0000000cb7a1",
     "00000000-0000-0000-0000-0000000cb7a2",
 ]
+
+# D-C38's second batched query (`app.census.serve._scope_names`) — the Growth tile's geography
+# name. Its own three listings, shared with `_seed_scope_names` for the reason above.
+_SCOPE_NAMES_LISTING_IDS = [
+    "00000000-0000-0000-0000-0000000c38a0",
+    "00000000-0000-0000-0000-0000000c38a1",
+    "00000000-0000-0000-0000-0000000c38a2",
+]
+
+# The active `tiger_cb` edition the seed writes and the plan asks for — one constant, so the
+# JOIN's third equality cannot silently stop matching.
+_SCOPE_NAMES_VINTAGE = "2023"
+
+# Task SNAP fix round 1 (2026-09-13): `_SUMMARY_SQL` is written for SQLAlchemy's `text()`
+# (`:metric`) and this gate runs on a raw psycopg2 cursor (`%(metric)s`), so — unlike `panel`,
+# which is hand-matched for exactly that reason — the module's own string is IMPORTED and its
+# bind markers are translated mechanically. The gate therefore cannot drift from the query it is
+# a gate on. `::` casts would be mangled by the same substitution, so their absence is asserted
+# rather than assumed; `_SUMMARY_SQL` spells every cast `CAST(... AS ...)` deliberately.
+def _pyformat(sql: str) -> str:
+    assert "::" not in sql, "a `::` cast would be mangled by the bind-marker translation below"
+    return re.sub(r":(\w+)", r"%(\1)s", sql)
+
+
+# The tract the summary plan's envelope encloses, and the metric it asks for. Shared between
+# `_seed_summary_geo` and the plan's own params, as `_CATCHMENT_LISTING_ID` is.
+_SUMMARY_METRIC = "median_hh_income"
+_SUMMARY_VALUE_VINTAGE = "2019\u20132023"
 
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
@@ -132,9 +163,52 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     # a page of listings in one batch, filtering by listing_id array and band. The query should use
     # `market_metric_lookup_idx (listing_id, band, vintage)` for efficient lookup.
     "community_rows": (
-        "EXPLAIN (FORMAT JSON) SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage "
+        "EXPLAIN (FORMAT JSON) SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage, is_derived, inputs "
         + "FROM market_metric WHERE listing_id = ANY(%s::uuid[]) AND band = %s",
         (_COMMUNITY_ROWS_LISTING_IDS, "place"),
+    ),
+    # D-C38 (fix round 1, finding 8): `community_rows` runs a SECOND batched query per page —
+    # `_scope_names`, which resolves each listing's place and county NAME for the Growth tile's
+    # sub-line. It had no entry here, so the one query this branch ADDED to the listings page was
+    # the one query with no plan gate.
+    #
+    # IMPORTED, not hand-matched: `_SCOPE_NAME_SQL` is built for a raw psycopg2 cursor (`%s`
+    # placeholders), so unlike `panel` — whose production string carries SQLAlchemy `:id` bind
+    # markers and cannot be handed to this cursor — this gate can read the module's own string
+    # and cannot drift from it. Its four parameters are exactly what `_scope_names` passes:
+    # vintage, ids, vintage, ids, one pair per UNION branch.
+    "scope_names": (
+        "EXPLAIN (FORMAT JSON) " + _SCOPE_NAME_SQL,
+        (_SCOPE_NAMES_VINTAGE, _SCOPE_NAMES_LISTING_IDS, _SCOPE_NAMES_VINTAGE, _SCOPE_NAMES_LISTING_IDS),
+    ),
+    # GEO-WIRE fix round 2, minor 3. `community_rows` runs a THIRD batched query per page since
+    # the controller's non-rooftop ruling — `_precisions`, which reads each listing's
+    # `geo_precision` to decide whether its area figures come from the ring or from its city. It
+    # is on the listings page's own path, once per page, and it had no plan gate; `scope_names`
+    # was added for exactly this omission one round earlier.
+    #
+    # IMPORTED like `scope_names`, for the same reason: `_PRECISION_SQL` is written for a raw
+    # psycopg2 cursor, so this gate reads the module's own string and cannot drift from it. One
+    # parameter, the page's listing ids, which is what `_precisions` passes.
+    "precisions": (
+        "EXPLAIN (FORMAT JSON) " + _PRECISION_SQL,
+        (_SCOPE_NAMES_LISTING_IDS,),
+    ),
+    # Task SNAP fix round 1, the spec gap the review named: `GET /api/markets/{cbsa}/summary`'s
+    # own query on a cache miss (`app.api.market._SUMMARY_SQL`). It is `_BOUNDARY_SQL`'s FROM and
+    # WHERE with no geometry on the wire, so it has to take the same path — `geo_area_geom_gix`,
+    # the GiST index the envelope is transformed INTO 4269 rather than the column out of it to
+    # keep usable — and it runs SIX times per miss, once per shaded layer, over the metro's whole
+    # envelope rather than a viewport. `_BOUNDARY_SQL` itself has no entry here and this is not
+    # the task that adds one; what this pins is the query the strip's AREA mode waits on.
+    "summary": (
+        "EXPLAIN (FORMAT JSON) " + _pyformat(_SUMMARY_SQL),
+        {"metric": _SUMMARY_METRIC, "value_vintage": _SUMMARY_VALUE_VINTAGE,
+         "level": "140", "geo_vintage": "2023", "fractions": list(SUMMARY_FRACTIONS),
+         # The seeded target tract's own envelope: the 5,000 noise tracts are scattered from
+         # -130 to -80 and none of them is in it, so the spatial predicate is selective and the
+         # planner's choice is the one it would make on a real metro.
+         "w": -98.0, "s": 30.4, "e": -97.7, "n": 30.7},
     ),
 }
 
@@ -159,6 +233,21 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # Task B7: `market_metric_lookup_idx (listing_id, band, vintage)` serves the batch query that
     # filters on listing_id (via ANY clause) and band.
     "community_rows": ("market_metric_lookup_idx",),
+    # D-C38: MEASURED, not assumed (the same discipline the `panel` entry above records). The
+    # plan is `Append` over two `Nested Loop`s, each one a bitmap scan of
+    # `practice_location_pkey` (its PRIMARY KEY IS `listing_id`, which the `ANY(...)` array
+    # filters on) driving an `Index Scan` on `geo_area_pkey` — the primary key
+    # (geo_id, summary_level, vintage) that `_scope_names`'s two-branch UNION exists to let each
+    # branch descend. One join with an `OR` across `place_geoid`/`county_geoid` could not.
+    "scope_names": ("practice_location_pkey", "geo_area_pkey"),
+    # `practice_location`'s PRIMARY KEY IS `listing_id` (`migrations/061`), which is the only
+    # column this query touches on either side of the `= ANY(...)`, so there is exactly one index
+    # it can be right to use and this names it.
+    "precisions": ("practice_location_pkey",),
+    # migrations/018_census_geo.sql's GiST index on geo_area.geom, the same one `catchment_tracts`
+    # pins — `_SUMMARY_SQL` drives off that predicate, and the whole reason the envelope is
+    # transformed into 4269 instead of the column out of it is to keep this index usable.
+    "summary": ("geo_area_geom_gix",),
 }
 
 
@@ -308,9 +397,73 @@ def _seed_community_rows(conn: Any) -> None:
         cur.execute("ANALYZE market_metric")
 
 
+def _seed_scope_names(conn: Any) -> None:
+    """3,000 geocoded listings, each with a place and a county geoid, and the `geo_area` rows that
+    name them: 3,000 places at summary level 160 and 300 counties at 050, on one `tiger_cb`
+    vintage — plus a second vintage's worth of the same geoids, so that the vintage equality in
+    the join is SELECTIVE rather than free. Without the volume this plans against a handful of
+    rows and says nothing about a real page ("row counts are part of the gate", the reasoning
+    `_seed_admin_queue` documents).
+
+    Both UNION branches read `geo_area` by its own primary key (geo_id, summary_level, vintage)
+    and `practice_location` by its (listing_id), which is what `_scope_names`'s docstring claims
+    the two-branch shape buys over one join with an OR across two different columns."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
+                       SELECT md5(random()::text || i::text)::uuid, 'plan-scope-'||i, 'Plan Scope '||i, '1 Main St',
+                              'Dallas', 'TX', '75201', 'published', 'Dallas', 'Small animal', 'Dallas, TX', 'seed', 3000, 2005, 1200000
+                         FROM generate_series(1, 3000) i""")
+        for i, listing_id in enumerate(_SCOPE_NAMES_LISTING_IDS):
+            cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
+                           VALUES (%s, %s, %s, '1 Main St', 'Dallas', 'TX', '75201',
+                                   'published', 'Dallas', 'Small animal', 'Dallas, TX', 'seed', 3000, 2005, 1200000)""",
+                        (listing_id, f"plan-scope-target-{listing_id}", f"Plan Scope Target {i + 1}"))
+        # `row_number()` gives each listing its OWN place geoid and one of 300 counties, so the
+        # join is a real many-to-one lookup rather than 3,000 rows all hitting one index entry.
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, place_geoid, county_geoid, geo_precision, geocoded_at, geocoder_vintage)
+                       SELECT id, 'h-'||id, '48' || lpad(n::text, 5, '0'), '48' || lpad((n % 300)::text, 3, '0'),
+                              'rooftop', now(), 'Current_Current'
+                         FROM (SELECT id, row_number() OVER (ORDER BY slug) AS n FROM listing WHERE slug LIKE 'plan-scope-%') s""")   # single `%`: psycopg2 interpolates only when params are passed
+        for vintage in (_SCOPE_NAMES_VINTAGE, "2022"):
+            cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name)
+                           SELECT '48' || lpad(i::text, 5, '0'), '160', %s, 'Plan Place '||i FROM generate_series(1, 3003) i""",
+                        (vintage,))
+            cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name)
+                           SELECT '48' || lpad(i::text, 3, '0'), '050', %s, 'Plan County '||i FROM generate_series(0, 299) i""",
+                        (vintage,))
+        cur.execute("ANALYZE listing")
+        cur.execute("ANALYZE practice_location")
+        cur.execute("ANALYZE geo_area")
+
+
+def _seed_summary_geo(conn: Any) -> None:
+    """`_seed_catchment_geo`'s 5,000 scattered tracts plus the one the envelope encloses — the
+    same shape, and for the same reason ("row counts are part of the gate") — and then a
+    `geo_metric` row for every one of them, because `_SUMMARY_SQL` LEFT JOINs that table and a
+    join to an EMPTY table plans nothing like a join to a populated one.
+
+    `ANALYZE geo_metric` is what makes the join's own statistics visible; `_seed_catchment_geo`
+    already analyses `geo_area`, whose PostGIS histogram is what the spatial predicate's
+    selectivity is estimated from."""
+    _seed_catchment_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit,
+                                               moe, suppressed, source_dataset, computed_at)
+                       SELECT geo_id, '140', %s, %s, 40000 + (random() * 90000)::numeric, 'usd',
+                              1200, false, 'acs5', now()
+                         FROM geo_area WHERE summary_level = '140' AND vintage = '2023'""",
+                    (_SUMMARY_VALUE_VINTAGE, _SUMMARY_METRIC))
+        cur.execute("ANALYZE geo_metric")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
                         "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics,
-                        "community_rows": _seed_community_rows}
+                        "community_rows": _seed_community_rows, "scope_names": _seed_scope_names,
+                        # 3,000 `practice_location` rows, which `_seed_scope_names` already writes
+                        # for its own plan and which are exactly what this one needs — "row counts
+                        # are part of the gate", and a handful of rows would make the planner's
+                        # choice a coin toss.
+                        "precisions": _seed_scope_names, "summary": _seed_summary_geo}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
@@ -349,3 +502,33 @@ def test_hot_query_uses_an_index(conn, name):
     # `HashAggregate` over a `Seq Scan` is the correct plan, not a regression to catch.
     assert any("Index" in t for t in types) or name == "signups_counts", types
     assert "Seq Scan" not in types or name in ("active_engine", "signups_counts"), types   # the registry is ~20 rows; a seq scan there is fine
+
+
+def test_both_scope_name_branches_descend_geo_area_s_primary_key(conn):
+    """D-C38 (fix round 1, finding 8). `INDEXES` above is a SET-membership claim, and that is not
+    enough for a UNION of two structurally identical branches: an index named once satisfies it
+    however many branches use it.
+
+    Measured, not reasoned. Making the place branch's join non-sargable
+    (`upper(g.geo_id) = upper(pl.place_geoid)`) leaves the `scope_names` entry above GREEN — the
+    county branch still names both indexes, and Postgres reaches for `geo_area_level_idx` to
+    bitmap every level-160 row at that vintage, so there is no `Seq Scan` node to catch either.
+    What actually happened is a `Hash Join` over a full scan of one summary level, which is the
+    degradation `_scope_names`'s two-branch shape exists to prevent and which grows with
+    `geo_area`, not with the page.
+
+    So the claim is COUNTED: one `geo_area_pkey` descent and one `practice_location_pkey` lookup
+    per branch, two of each in the plan. The mutation above turns the first into 1 and fails."""
+    _seed_scope_names(conn)
+    sql, params = PLANS["scope_names"]
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        plan = cur.fetchone()[0][0]["Plan"]
+    indexes = _index_names(plan)
+    types = _node_types(plan)
+    assert indexes.count("geo_area_pkey") == 2, (
+        f"each UNION branch must descend geo_area's primary key; the plan uses {indexes} — nodes {types}"
+    )
+    assert indexes.count("practice_location_pkey") == 2, (
+        f"each UNION branch must look practice_location up by listing_id; the plan uses {indexes} — nodes {types}"
+    )

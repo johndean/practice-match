@@ -1,6 +1,8 @@
-import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test';
+import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
+import { designBoundariesBody } from './design-boundaries.mjs';
+import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -50,6 +52,32 @@ test.describe('smoke', () => {
     await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
     await page.getByRole('button', { name: /^Data Sources\s*\d/ }).first().click();
     await expect(page).toHaveURL(/\/admin\?tab=data$/);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-GATE (D-C53, 2026-09-13): a buyer never reaches the Admin screen, in a real
+  // browser and on the path the header nav takes. The buyer persona is the one John's four admin
+  // screenshots were taken as; `signInAs` reuses the run's memoised `buyer@` session, so this
+  // spends no sign-in of its own.
+  //
+  // The DOOR is still shown — A40.1/A40.2 are reserved and held (see `design-amendments.ts`'s A40
+  // block: the filter moves 28 approved states and seven frozen hashes, which is a ruling). What
+  // is proved here is that clicking it lands on the design's own gate and never on the shell.
+  // ---------------------------------------------------------------------------------------
+  test('a buyer who reaches for /admin gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/admin');
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' }), 'the admin shell must not render').toHaveCount(0);
+  });
+
+  test('and the header\'s own Admin button is refused the same way — the path that bypassed the guard', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
   });
 
   test('unknown routes redirect to /', async ({ page }) => {
@@ -228,9 +256,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(box.width)).toBeLessThanOrEqual(392);
   });
 
-  test('the Map tab shows community mosaic shading', async ({ page }) => {
+  test('the Map tab shows community boundary shading', async ({ page }) => {
     await mobileMap(page);
-    // The mosaic is drawn on the engine's shared L.canvas renderer, so "shading is showing"
+    // The polygons are drawn on the engine's shared L.canvas renderer (A24.12 passes it to
+    // L.geoJSON exactly as the mosaic passed it to L.rectangle), so "shading is showing"
     // means that canvas has painted pixels. Nothing is drawn from a cross-origin image, so
     // the canvas is untainted and readable.
     const painted = await page.evaluate(() => {
@@ -241,7 +270,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
       for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
       return n;
     });
-    expect(painted, 'no canvas in the Leaflet overlay pane — the mosaic never drew').toBeGreaterThan(0);
+    expect(painted, 'no canvas in the Leaflet overlay pane — the boundary layer never drew').toBeGreaterThan(0);
   });
 
   test('the key does not overlap the + / − cluster: elementFromPoint on each button returns the button', async ({ page }) => {
@@ -318,7 +347,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(updated, 'the sheet renders no "Updated:" line').toBeGreaterThan(source);
     expect(updated, 'the ramp + source/updated block is not between Shading and Compare against')
       .toBeLessThan(text.indexOf('COMPARE AGAINST'));
-    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · community level');
+    // A24.36 (fix round 1, Important 2): income shades at the CENSUS TRACT and its source line
+    // said "community level" — the one line on this card that named no geography while the line
+    // above it named the tract.
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
@@ -399,7 +431,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   //
   // A selection moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382)
   // and `showDrive` (`!!sel`, :578), which are two of the five deps of MarketMapV3.jsx's own
-  // area effect (`:268`), so the community mosaic really is rebuilt on the second tap. That
+  // area effect (`:268`), so the polygon layer really is rebuilt on the second tap. That
   // is the DESIGN's redraw cost on a 390×800 frame, not an over-trigger the port added:
   // MarketMapView.vue gates the overlay rebuild on exactly those five. The first tap is an
   // unmeasured warm-up, and it is a DIFFERENT pin from the second — tapping the same pin
@@ -782,7 +814,7 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     );
   }
 
-  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null };
+  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null, income_vs_us_pct: null, income_approximate: null };
 
   /** Cedar Park's docked panel, opened the way `browse-market-panel` opens it: a card click. */
   async function openPanel(page: Page) {
@@ -832,7 +864,15 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('a listing with SOME figures shows those and fabricates none of the rest', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    await serveListings(page, { growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null });
+    // A33.1c: the index goes with the median it qualifies. `serve.py` never serves one without
+    // the other (`test_an_index_without_a_median_is_never_served_alone`), so an override that
+    // takes the median away and leaves the index behind would be stubbing a row the API cannot
+    // emit — and the D6 body now carries the design's own index by default (A33.1c's note in
+    // `design-listings.mjs`).
+    await serveListings(page, {
+      growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null,
+      income_vs_us_pct: null, income_approximate: null
+    });
     const panel = await openPanel(page);
 
     // "Median Income" is the design's own STATIC tile label and is always on this screen — the
@@ -862,12 +902,34 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('the fallback label reaches every place that names the area, and nothing else moves', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    const LABEL = 'Within 10 minutes of the practice';
+    // D-C39 (2026-09-11): the ring is described by DISTANCE. It is an 8 km straight-line buffer
+    // (spec §8), not a routed drive time, and true isochrones are still open for V1 (spec §15).
+    const LABEL = 'Within about 5 miles of the practice';
     await serveListings(page, { community_label: LABEL });
     const panel = await openPanel(page);
 
     await expect(panel.getByText(LABEL)).toBeVisible();
-    await expect(panel.getByText('Market Overview (10 min drive)')).toHaveCount(0);
+    // D-C42 (John, 2026-09-11). The heading KEEPS its name and the geography renders on its own
+    // sub-line beneath it — A21.5a let the label replace the heading, and D-C38 gives 28 of 29 QA
+    // listings a label, so "Market Overview" appeared nowhere on QA and A27.3's own correction
+    // was invisible.
+    //
+    // THIS IS THE ONLY ORACLE THE LABELLED PATH HAS, and it is here rather than in `screens.ts`
+    // by measurement: the design's own fixtures carry no `communityLabel`, `design-listings.mjs`
+    // sends `community_label: null`, and the REFERENCE has no way to be handed one — its listings
+    // are `logic.js`'s own `P`, and reaching it would mean either editing the approved fixture
+    // data or declaring a ninth prototype prop, neither of which this ruling authorises. So the
+    // assertion is on the RENDERED DOM, not the payload: the sub-line is the heading's own next
+    // element sibling, it carries the label, and it is set in the design's place-line 12.5px.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return { heading: Boolean(heading), text: next && (next.textContent || '').trim(), size: next && getComputedStyle(next).fontSize };
+    });
+    expect(beneath.heading, 'the panel has no "Market Overview" heading — the label replaced it again').toBe(true);
+    expect(beneath.text, 'the geography is not on the line directly beneath the heading').toBe(LABEL);
+    expect(beneath.size, 'the sub-line is not the design\'s own place-line type').toBe('12.5px');
     // The figures themselves are the design's own and still render.
     await expect(panel.getByText('Veterinary Establishments')).toBeVisible();
 
@@ -877,9 +939,42 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await expect(detail.getByText(LABEL).first()).toBeVisible();
     await expect(detail.getByText('Community, 2023')).toHaveCount(0);
     await expect(detail.getByText('In the community')).toHaveCount(0);
-    await expect(detail.getByText(`Figures describe the area within 10 minutes of the practice, not the practice itself.`)).toBeVisible();
+    await expect(detail.getByText(`Figures describe the area within about 5 miles of the practice, not the practice itself.`)).toBeVisible();
     // The Census attribution is legally load-bearing and is not part of the sentence that moved.
     await expect(detail.getByText('Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested).')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7's ONE sub-line above the grid
+  // describes the AREA figures, and the Population tile's sub-line is not one of them — it is
+  // GROWTH, which the API measures at place-or-county and serves with its own `growth_scope`. So
+  // the panel printed a city number under a ring caption on 28 of 29 QA listings.
+  //
+  // Its oracle is here, beside A27.7's, for the same measured reason: the design's own fixtures
+  // carry no `growthScope`, `design-listings.mjs` sends `growth_scope: null`, and the reference
+  // has no way to be handed one without editing approved fixture data or declaring a ninth
+  // prototype prop. The assertion is therefore on the RENDERED DOM under a stubbed API.
+  test('the panel\'s Population tile names the geography its growth figure came from', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, { community_label: LABEL, growth_scope: 'Dallas' });
+    const panel = await openPanel(page);
+
+    const tile = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Population');
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box && (box.textContent || '').trim();
+    });
+    expect(tile, 'the panel has no Population tile').toBeTruthy();
+    // The figure and its period lead, the geography follows, joined by the design's own middot —
+    // the idiom of the detail card's Growth tile (A27.2) and of `income_note` (A27.1).
+    expect(tile, 'the Population tile\'s growth sub-line names no geography')
+      .toMatch(/[+-]\d+\.\d% \(5 yrs\) \u00b7 Dallas/);
+    // The heading's own sub-line still says what the AREA figures describe, and says it once.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    expect((await panel.innerText()).split(LABEL).length - 1,
+      'the ring caption is stated more than once on the Insights tab').toBe(1);
     expect(errors).toEqual([]);
   });
 
@@ -889,13 +984,168 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await prepare(page);
     const errors = trapErrors(page);
     const panel = await openPanel(page);
-    await expect(panel.getByText('Market Overview (10 min drive)')).toBeVisible();
+    // A27.3: the design's own two words, minus the parenthetical D-C39 ruled out. This heading
+    // sat over PLACE-band figures on 28 of 29 listings and named a drive time the pipeline has
+    // never computed.
+    await expect(panel.getByText('Market Overview').first()).toBeVisible();
+    await expect(panel.getByText('10 min drive')).toHaveCount(0);
+    // A27.7 (D-C42): and with no label there is no sub-line ELEMENT at all — an empty one would
+    // still take its `margin-top` and move every approved Browse capture. The heading's next
+    // sibling is the overview tiles grid, exactly as the design has it.
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return next && (next.textContent || '').trim();
+    });
+    expect(beneath, 'a sub-line was rendered for a listing the API sent no community_label for').toContain('Population');
+    // A27.4: and its footnote, the second sentence D-C39 names.
+    await expect(panel.getByText('A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.').first()).toBeVisible();
+    await expect(panel.getByText('Drive-time figures are approximated')).toHaveCount(0);
 
     await panel.getByRole('button', { name: 'View full listing' }).click();
     const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
     await expect(detail.getByText('Community, 2023')).toBeVisible();
     await expect(detail.getByText('In the community')).toBeVisible();
     await expect(detail.getByText('Figures describe the community around the practice, not the practice itself.')).toBeVisible();
+    // A27.1/A27.2 null branches: the design's own two literals, which is what keeps `detail` on
+    // its frozen hash.
+    await expect(detail.getByText('Household, 2023').first()).toBeVisible();
+    await expect(detail.getByText('Since 2015', { exact: true }).first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A33.1 (Task SCREEN-LABELS, 2026-09-13) — the docked panel's Median Income tile, in a real
+  // browser and through the real payload.
+  //
+  // Measured on QA 0.1.21 (Austin, DEF Veterinary Hospital): "$94K · +25% vs US", where the +25 %
+  // was the design dividing its own fixture median by a hard-coded `incomeNat = 75149` while the
+  // pipeline's own index for the same listing and band was +19.4 — stored in `market_metric` and
+  // served by nothing. The tile also showed a DERIVED median with no qualifier, while the detail
+  // card behind it has carried one since D-C38 (A27.1).
+  //
+  // Its oracle is here rather than an approved state, for A27.7's own measured reason: the
+  // design's fixtures carry neither `incomeVsUs` nor `incomeApproximate`, `design-listings.mjs`
+  // sends both null, and the reference has no way to be handed either without editing approved
+  // fixture data or declaring a ninth prototype prop. So the assertion is on the RENDERED DOM
+  // under a stubbed API.
+  // -----------------------------------------------------------------------------------------
+  /** The docked panel's overview tile whose key is `key`, as one flattened string. */
+  async function overviewTile(panel: Locator, key: string): Promise<string | null> {
+    return panel.evaluate((root, k) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === k);
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : null;
+    }, key);
+  }
+
+  test('the Median Income tile renders the served index and the served qualifier', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, {
+      community_label: LABEL,
+      income_vs_us_pct: 19.4,
+      income_approximate: true,
+      income_note: `${LABEL} \u00b7 approximate`,
+    });
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    expect(tile, 'the panel has no Median Income tile').toBeTruthy();
+    // The SERVED index, rounded, and the qualifier joined to it by the design's own middot.
+    expect(tile).toContain('+19% vs US · approximate');
+    // …and NOT the design's own arithmetic against the constant, which for this fixture median
+    // reads +57 %: the number that made the QA panel say +25 % about a listing that is +19 %.
+    expect(tile, 'the tile still divides by the hard-coded incomeNat').not.toContain('+57% vs US');
+    expect(errors).toEqual([]);
+  });
+
+  // A33.1c (fix round 1, ruled on the review's Important) — WITH THE API PRESENT THE INDEX IS
+  // THE API'S OR NOTHING. The app hands `marketPanel` the Browse market adapter on every render,
+  // so the design's own `incomeNat = 75149` is not read here at all: a listing with a median and
+  // no served index shows its median and NO index, rather than a percentage against a 2023
+  // constant with nothing saying so. This is the state a real database with no `acs_measure`
+  // summary-level-010 row puts every listing in the country into at once.
+  //
+  // The Affluence opportunity tile beside it is the same statement in the design's own
+  // vocabulary and NO new copy: an empty label in `tone(false)`'s `#8d99a6`, exactly what its
+  // Population-Growth and Sector-Payroll neighbours already render for an absent figure.
+  test('…and with the API serving no index the tile shows none, and Affluence goes to the design\'s own unavailable treatment', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The D6 body now serves the DESIGN'S own index, so that the app and the reference agree on
+    // the approved Browse captures (A33.1c's own note in `design-listings.mjs`). This case is
+    // about the state where the API has none, so it says so explicitly.
+    await serveListings(page, { income_vs_us_pct: null });
+    const panel = await openPanel(page);
+
+    const tile = await overviewTile(panel, 'Median Income');
+    expect(tile, 'the median itself still renders').toMatch(/\$\d+K/);
+    expect(tile, 'an index was rendered for a listing the API served none for').not.toContain('vs US');
+    expect(tile, 'a qualifier appeared for a median the API did not call approximate').not.toContain('approximate');
+
+    const affluence = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Affluence');
+      const box = label && (label.parentElement as HTMLElement | null);
+      if (!box) return null;
+      const rows = Array.from(box.querySelectorAll('div')).map((d) => ({
+        text: (d.textContent || '').trim(), color: getComputedStyle(d).color
+      }));
+      return { text: (box.textContent || '').replace(/\s+/g, ' ').trim(), rows };
+    });
+    expect(affluence, 'the panel has no Affluence tile').toBeTruthy();
+    // The design's own `$` icon, its own caption, and NO verdict — `oppTiles[0].label` is "" for
+    // an undefined index, so the tile carries the two things it always carries and nothing else.
+    expect(affluence!.text, 'Affluence still carries a verdict with no index behind it').toBe('$ Affluence');
+    for (const verdict of ['High', 'Above avg.', 'Median']) {
+      expect(affluence!.text, `Affluence reads "${verdict}" with no index behind it`).not.toContain(verdict);
+    }
+    // `tone(false)` is #8d99a6 — rgb(141, 153, 166). Read off the computed style rather than the
+    // attribute, so this is the colour a member actually sees.
+    expect(affluence!.rows.some((r) => r.color === 'rgb(141, 153, 166)'),
+      'the Affluence tile is still painted as though it had a figure').toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // D-C38 — per-figure geography, end to end in a real browser. The card's own tiles, not the
+  // payload: the three area figures follow the catchment while the Growth tile says out loud
+  // that its number is the city's, which is the whole reason John chose this option over the
+  // one that relabels every tile uniformly.
+  //
+  // THE HONEST MEASURE this case exists to hold: THREE of the four tiles gain neighbourhood
+  // detail. The Growth tile gains a label and nothing else, and will until the 2010->2020 tract
+  // crosswalk is loaded.
+  // -----------------------------------------------------------------------------------------
+  test('each tile names where its own number comes from (D-C38)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, {
+      community_label: LABEL,
+      growth_scope: 'Dallas',
+      income_note: `${LABEL} \u00b7 approximate`,
+    });
+    const panel = await openPanel(page);
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
+
+    // Population and Households: the ring, named by the one label that describes them.
+    await expect(detail.getByText(LABEL).first()).toBeVisible();
+    // Median income: the ring AND the qualifier, in the one sub-line the tile has. The design's
+    // own hard-coded "Household, 2023" is gone, which is the sub-line A21.5b/c could not reach.
+    await expect(detail.getByText(`${LABEL} \u00b7 approximate`).first()).toBeVisible();
+    await expect(detail.getByText('Household, 2023')).toHaveCount(0);
+    // Growth: NOT the ring. The city, said out loud, beside the vintage A21.3d takes from the
+    // API's own string. The stub is 'Dallas', the name TIGER itself gives (D-C41): the API
+    // composes no "City of " prefix, so a fixture carrying one asserts a value the backend
+    // cannot emit — which is the reading that made the prefix look composed in the first place.
+    // `exact` on the negative: `getByText` matches by case-insensitive SUBSTRING, so a bare
+    // 'Since 2015' would match the new sub-line's own tail and the assertion would say the
+    // opposite of what it means.
+    await expect(detail.getByText('Dallas \u00b7 since 2015').first()).toBeVisible();
+    await expect(detail.getByText('Since 2015', { exact: true })).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 });
@@ -982,5 +1232,840 @@ test.describe('Task MP1 — a listing with no coordinates keeps its place and ge
     await waitMap(page);
     await expect(page.locator('.leaflet-marker-icon')).toHaveCount(AUSTIN.length);
     expect(errors).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task 10 (A24.14–A24.18) — what a member sees when the boundary route cannot answer.
+//
+// The rule is "the app draws what the API answered, or nothing at all", and nothing at all is
+// exactly the blank screen that made this a fire once already: Task 4 reached QA on its own and
+// the map read as empty. So the degradation is PHOTOGRAPHED here rather than asserted in prose.
+// It cannot be an approved visual state — the reference receives no adapter and always draws the
+// design's fixture, so there is no oracle to compare a failed load against; this is the same
+// mechanism A16's and A17's adapter-failure paths are covered by.
+//
+// Two facts, together: the shading is gone (the design's Austin fixture is NOT drawn over a real
+// metro, which is the honesty half), and everything else on the map still is — the basemap, the
+// practice pins with their price callouts, and the results rail. `drawOverlay` paints the C7
+// drive ring before it reaches the polygon layer and `drawPins()` is a separate call, which is
+// why an empty overlay costs the member nothing but the colour.
+// -------------------------------------------------------------------------------------------
+test.describe('A24 — the boundary route is absent, and the map degrades rather than dying', () => {
+  /** Painted pixels on the Leaflet overlay pane's shared canvas — the polygon layer's own
+   *  surface, read the way the mobile shading smoke above reads it. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  /** The adapter asks for every fill layer at once, so a refused route logs one 4xx console line
+   *  per layer and each one has to be armed. Counted from `FILL_LAYERS` rather than typed: the
+   *  list went from three to six on 2026-09-12 and a literal here would have made this case fail
+   *  for arithmetic rather than for behaviour. `prepare()`'s own gate still fails the test on
+   *  anything else — a page error, or a request nobody expected. */
+  async function browseWith(page: Page, status: number): Promise<void> {
+    await prepare(page);
+    // The refusal is HELD until the allowances are armed, rather than raced against a timer:
+    // `expectApiStatus` needs a page that has already navigated, and the three requests are made
+    // at mount — so nothing may be DELIVERED before `release()`, which runs after arming.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    // Registered AFTER prepare()'s own route, and Playwright matches the LAST handler first.
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      async (route) => {
+        await held;
+        await route.fulfill({ status, contentType: 'application/json', body: '{"error":{"code":"NOT_FOUND","message":"no such route"}}' });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    for (let i = 0; i < FILL_LAYERS.length; i++) expectApiStatus(page, status);
+    release();
+    await waitMap(page);
+    await settleExpectedApiFailures(page);
+    await page.waitForTimeout(400);
+  }
+
+  test("a 404 leaves the map unshaded — and never falls back to the design's own Austin fixture", async ({ page }) => {
+    await browseWith(page, 404);
+    expect(await paintedOverlay(page), 'the polygon layer drew something after a refused load — the fixture must not stand in').toBe(0);
+    // Everything the member still has. The pins are the proof the map is alive, not blank.
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    expect(await page.locator('.leaflet-marker-pane .leaflet-marker-icon').count()).toBeGreaterThan(1);
+    await expect(page.locator('.leaflet-container').first()).toBeVisible();
+    // …and the results rail, the filters and the detail path are untouched.
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('a refusal the member cannot fix — 401 — degrades the same way, not differently', async ({ page }) => {
+    await browseWith(page, 401);
+    expect(await paintedOverlay(page)).toBe(0);
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('the route present but holding NO values paints real outlines in the design\'s own No data grey', async ({ page }) => {
+    // The state QA is in until `geo_metric` is filled, and the one this whole design gained a
+    // neutral swatch for (D-NS16): a polygon with no value is DRAWN, never omitted, because a
+    // hole on a choropleth reads as a park, a lake or the edge of the market. So an unloaded
+    // pipeline degrades inside the design's own vocabulary rather than as an empty map.
+    await prepare(page);
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => {
+        const layer = new URL(route.request().url()).searchParams.get('layer') ?? 'income';
+        const body = JSON.parse(designBoundariesBody(layer)) as { features: { properties: Record<string, unknown> }[] };
+        for (const f of body.features) f.properties.value = null;
+        route.fulfill({ status: 200, contentType: 'application/geo+json', body: JSON.stringify(body) });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    // Painted, and painted in ONE colour — `#e6e6e6` at fillOpacity .5 over Leaflet's #ddd
+    // ground, which is what the transparent tile stub leaves showing.
+    const shades = await page.evaluate(() => {
+      const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+      if (!c) return [];
+      const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      const seen = new Set<string>();
+      for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0) seen.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+      return [...seen];
+    });
+    expect(shades.length, 'nothing was drawn — a value-less polygon must still be drawn (D-NS16)').toBeGreaterThan(0);
+    // (0xe6 + 221) / 2 = 223 on every channel. Anti-aliased polygon edges add near neighbours,
+    // so the assertion is that every painted shade is GREY — no ramp colour anywhere.
+    for (const s of shades) {
+      const [r, g, b] = s.split(',').map(Number);
+      expect(Math.abs(r - g) + Math.abs(g - b), `a non-grey shade ${s} was painted for a value-less polygon`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('and with the route answering, the same page DOES paint polygons — so the two above measure the route, not the canvas', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    expect(await paintedOverlay(page), 'the control case must paint, or "0" above proves nothing').toBeGreaterThan(0);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A24.21–A24.23 — the map asks the API for the ground it is SHOWING (2026-09-12).
+//
+// The route has taken a `bbox` since Task 9 and the adapter never sent one, so every request was
+// for the whole metro envelope — every screen paying for the whole of New York when it can see a
+// fifth of it. (When this was wired the caps were still the ZCTA era's and that request was a 422
+// outright; they were re-measured for Census tracts the same day — `MAX_FEATURES = 12000`,
+// `MAX_BODY_BYTES = 6_000_000` — so both arms serve now and what the box buys is the size of the
+// ANSWER: `tests/census/test_boundaries.py::test_the_viewport_bbox_narrows_new_yorks_answer_and_both_arms_now_serve`.)
+//
+// The unit tests own the arithmetic — `src/map/viewport.test.ts` for the padding, the grid and
+// the debounce, `src/market/boundaries.test.ts` for the request and the retry, `src/logic.test.ts`
+// for the guard. What only a real browser can prove is that the CHAIN is joined: Leaflet's own
+// bounds → the engine → the viewport module → the adapter → the query string.
+// -------------------------------------------------------------------------------------------
+test.describe('A24.21–A24.23 — the boundary request carries the map own viewport', () => {
+  const bboxesOf = (urls: string[]) => [...new Set(urls.map((u) => new URL(u).searchParams.get('bbox')))];
+
+  /** `arm` is how many `422` console lines the FIRST settled view is expected to produce — six,
+   *  one per layer, on a viewport wide enough that the boot box is past the route's span cap.
+   *  They have to be armed BEFORE the view that provokes them and AFTER the page has an origin
+   *  (`expectApiStatus` reads `page.url()` to tell the app from the reference), which is why the
+   *  signed-out gate is visited first: it carries no map, so it provokes nothing, and it is the
+   *  only moment in this sequence where both are true. */
+  async function browseRecording(page: Page, arm = 0): Promise<string[]> {
+    const urls: string[] = [];
+    page.on('request', (r) => { if (/\/api\/markets\/[^/]+\/boundaries/.test(r.url())) urls.push(r.url()); });
+    await prepare(page);
+    if (arm > 0) {
+      await page.goto('/browse');
+      for (let i = 0; i < arm; i++) expectApiStatus(page, 422);
+    }
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(900);          // the module's 250 ms settle, with room to spare
+    return urls;
+  }
+
+  test('every boundary request names a box, and the box covers the map with the renderer own padding', async ({ page }) => {
+    const urls = await browseRecording(page);
+    expect(urls.length, 'the map asked for no boundaries at all').toBeGreaterThan(0);
+    // NOT ONE whole-metro request: that is the request this change exists to stop making.
+    expect(urls.filter((u) => new URL(u).searchParams.get('bbox') === null)).toEqual([]);
+
+    const box = bboxesOf(urls).at(-1)!.split(',').map(Number);
+    expect(box, 'the bbox is not four numbers').toHaveLength(4);
+    const [w, s, e, n] = box;
+    expect(e).toBeGreaterThan(w);
+    expect(n).toBeGreaterThan(s);
+
+    // The measured tie between the browser and the module: at zoom 10 a CSS pixel is
+    // 360 / (256 x 2^10) degrees of longitude, the box is padded by 0.3 of the span on each side
+    // (Leaflet's own canvas-renderer padding) and then snapped outward to at most one 1/8-tile
+    // cell per side.
+    const mapWidth = (await page.locator('.leaflet-container').first().boundingBox())!.width;
+    const span = mapWidth * (360 / (256 * 2 ** 10));
+    const cell = 360 / 2 ** 13;
+    expect(e - w).toBeGreaterThanOrEqual(span * 1.6);
+    expect(e - w).toBeLessThanOrEqual(span * 1.6 + 2 * cell);
+  });
+
+  // SUPERSEDED, 2026-09-12 (A32). `a metro switch pays for the whole-metro fallback ONCE per
+  // layer, not twice` stood here: it armed three rounds of refusals, drained whatever was left
+  // with `forgetExpectedApiFailures`, and asserted an UPPER bound, because the sequence it
+  // measured was a race — its own comment recorded that cutting the 0.1.21 stale-box guard out
+  // left it green, and named a metro envelope in the catalogue as "the real remedy … scheduled
+  // for 0.1.22". That remedy was built, reviewed and withdrawn (the route is bbox-scoped and
+  // metro-agnostic, so refusing on geometry would have blanked a member who panned off the
+  // metro); what landed instead is A32, which removes the doomed round rather than declining to
+  // send it. With no race left the count is deterministic in both directions, so the two cases
+  // below assert EQUALITIES and spend every allowance they arm.
+
+  // ---------------------------------------------------------------------------------------
+  // A32 (2026-09-12) — a metro switch waits for the map to move before it asks.
+  //
+  // Measured on QA `db8bf67` (New York, 1,912 x 1,228): a metro switch pulled the whole metro
+  // TWICE — 24 requests, 7.85 MB gzipped. `setMarket` runs BEFORE the map has moved, so the
+  // request it used to issue carried the box the OLD metro was still settled on; on a wide screen
+  // that box is past the route's span cap, the ladder falls back to the whole metro and pays for
+  // it, and `logic.js`'s own guard then discards the answer because the settled view has moved on
+  // by the time it lands. The listener repeats the sequence and THAT answer is drawn.
+  //
+  // The unit cases own the branch (`src/logic.test.ts`) and the notification (`src/map/
+  // viewport.test.ts`, `src/components/MarketMapView.test.ts`). What only a real browser can
+  // prove is the chain: the design's dropdown → `setMarket` → Vue's watcher → Leaflet's own
+  // `setView` → the forced publish → the debounce → the adapter → the query string.
+  // ---------------------------------------------------------------------------------------
+  const REQUEST_SETTLE_MS = 1500;
+
+  /** Click the metro dropdown's own row for `name` — A13's listbox, never a native select. */
+  async function chooseMetro(page: Page, name: string): Promise<void> {
+    await page.getByRole('combobox', { name: 'Metro area' }).click();
+    const menu = page.getByRole('listbox', { name: 'Metro area' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name }).click();
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+  }
+
+  /** The padded span the settled view will ask for, in degrees, read off the real map element —
+   *  the same arithmetic `src/map/viewport.ts` does, so a case can STATE which side of the
+   *  route's `MAX_BBOX_DEG` it is on instead of assuming a layout. */
+  async function paddedSpanDeg(page: Page): Promise<number> {
+    const width = (await page.locator('.leaflet-container').first().boundingBox())!.width;
+    return width * (360 / (256 * 2 ** 10)) * 1.6;
+  }
+
+  /** Every box a set of recorded requests carried, in order, without de-duplicating: a count of
+   *  requests is the thing these cases measure, so `bboxesOf`'s Set would hide the double pull.
+   *  The whole-metro request's `null` is dropped — these are the boxes that were NAMED. */
+  const boxesOf = (urls: string[]) => urls.map((u) => new URL(u).searchParams.get('bbox')).filter((b): b is string => b !== null);
+
+  /** Painted pixels on the polygon layer's own canvas, the way the degradation block below reads
+   *  them. Same-origin, so the canvas is untainted and readable. */
+  const paintedPixels = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  test('a metro switch on a WIDE map pulls the new metro whole ONCE per layer, and never asks with the old box', async ({ page }) => {
+    // Wide enough that the padded box at the design's own zoom 10 is past the route's 4-degree
+    // span cap — the shape of the QA measurement, where the map was 1,912 px. The precondition is
+    // ASSERTED rather than assumed: if the Browse layout ever gives the map less of the window,
+    // this says so instead of quietly testing the narrow case twice.
+    await page.setViewportSize({ width: 2400, height: 1100 });
+    // Every box past the cap is a console 422 and has to be armed BEFORE the view that provokes
+    // it: six for the metro the page boots on, six more for the metro it switches to.
+    const urls = await browseRecording(page, FILL_LAYERS.length);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(await paddedSpanDeg(page), 'this viewport no longer produces a box past the route span cap')
+      .toBeGreaterThan(4.0);
+    const austin = boxesOf(urls);
+    expect(austin.length, 'the boot never asked with a box').toBeGreaterThan(0);
+    for (let i = 0; i < FILL_LAYERS.length; i++) expectApiStatus(page, 422);
+
+    const before = urls.length;
+    await chooseMetro(page, 'Atlanta, GA');
+
+    const after = urls.slice(before);
+    // NOT ONE request carrying a box Austin settled on. That request is the defect: its answer
+    // was bought, discarded on arrival, and paid for again by the listener.
+    expect(after.filter((u) => austin.includes(new URL(u).searchParams.get('bbox') ?? '')),
+      'the metro switch asked with the box the previous metro was settled on').toEqual([]);
+    // EXACTLY one whole-metro pull per layer — the ladder's fallback, once. Twelve is the defect.
+    const wholeMetro = after.filter((u) => new URL(u).searchParams.get('bbox') === null);
+    expect(wholeMetro.length, `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers`)
+      .toBe(FILL_LAYERS.length);
+    // …and every request is for the metro the member CHOSE. Atlanta's geoid, never Austin's.
+    expect([...new Set(after.map((u) => new URL(u).pathname.split('/')[3]))]).toEqual(['12060']);
+    // The refused round and the fallback round, and nothing before them.
+    expect(after.length).toBe(FILL_LAYERS.length * 2);
+    // Every one of the twelve allowances armed above is SPENT — `assertExpectedApiFailuresObserved`
+    // at teardown fails on any that is not — so the refusal count is asserted as exactly as the
+    // request count. There is no race left to lose.
+  });
+
+  test('a metro switch on a NARROW map asks for the new metro once per layer, and never for the old box', async ({ page }) => {
+    // The project's own 1440 x 940, where the padded box sits UNDER the span cap — so nothing is
+    // refused, nothing falls back, and the whole cost of a metro switch is one request per layer.
+    // Before A32 it was twelve: six carrying the box the previous metro had settled on (served,
+    // and describing ground the member is no longer looking at) and six carrying the real one.
+    const urls = await browseRecording(page);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(await paddedSpanDeg(page), 'this viewport now produces a box past the route span cap')
+      .toBeLessThan(4.0);
+    const austin = boxesOf(urls);
+
+    const before = urls.length;
+    await chooseMetro(page, 'Atlanta, GA');
+
+    const after = urls.slice(before);
+    expect(after.filter((u) => austin.includes(new URL(u).searchParams.get('bbox') ?? '')),
+      'the metro switch asked with the box the previous metro was settled on').toEqual([]);
+    expect(after.length, 'a metro switch costs more than one request per layer').toBe(FILL_LAYERS.length);
+    expect(after.filter((u) => new URL(u).searchParams.get('bbox') === null), 'the whole metro was pulled at all').toEqual([]);
+    expect([...new Set(after.map((u) => new URL(u).pathname.split('/')[3]))]).toEqual(['12060']);
+    // One box, and it is a box over ATLANTA — the metro the member chose, not the one they left.
+    const boxes = [...new Set(boxesOf(after))];
+    expect(boxes).toHaveLength(1);
+    const [w, , e] = boxes[0]!.split(',').map(Number);
+    expect(w).toBeLessThan(-84.39);
+    expect(e).toBeGreaterThan(-84.39);
+  });
+
+  // CONTINUITY — the case a client-side "is this box inside the metro?" guard would have failed,
+  // and the reason that guard was withdrawn (review of ADAPT-STALE-2, 2026-09-12).
+  //
+  // `_BOUNDARY_SQL` filters on summary level, vintage and `ST_Intersects(geom, bbox)` and NEVER on
+  // the CBSA: the `cbsa` path segment picks the whole-metro fallback box, the cache key and the
+  // 404, and nothing else. So the shading has always followed a member who pans off the selected
+  // metro, and it must keep doing so — "the map must work wherever a hospital is displayed".
+  test('panning clean off the selected metro still asks, and still shades', async ({ page }) => {
+    const urls = await browseRecording(page);
+    const first = new URL(urls.at(-1)!).searchParams.get('bbox')!.split(',').map(Number);
+
+    // Three full-width drags east: at zoom 10 the padded box is about 3.2 deg wide, so this
+    // leaves Austin's own ground entirely — the design's practices span -98.09 to -97.62.
+    const map = (await page.locator('.leaflet-container').first().boundingBox())!;
+    for (let i = 0; i < 3; i++) {
+      await page.mouse.move(map.x + map.width * 0.85, map.y + map.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(map.x + map.width * 0.15, map.y + map.height / 2, { steps: 12 });
+      await page.waitForTimeout(200);            // stand still: Leaflet throws an inertia pan otherwise
+      await page.mouse.up();
+      await page.waitForTimeout(700);
+    }
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+
+    // The last request the map made names ground entirely east of where it started — so a request
+    // WAS issued for the new box, and it is a box outside the metro. (There is no separate
+    // "≥ 1 request carries this box" assertion: `last` is parsed from that request, so such a
+    // line would match itself and measure nothing.)
+    const last = new URL(urls.at(-1)!).searchParams.get('bbox')!.split(',').map(Number);
+    expect(last[0], 'the map never left the ground it started on').toBeGreaterThan(first[2]);
+    // …and the answer is drawn. A client that refused to ask here would leave this at zero.
+    expect(await paintedPixels(page), 'the map went blank once it left the metro').toBeGreaterThan(0);
+  });
+
+  // A24.41/A24.42: `hasRamp` is true while `mdAreas === null`, which is precisely the state A32
+  // puts the map in for the length of a metro switch. The legend must therefore keep its ramp and
+  // its geography line throughout — the flicker those entries exist to prevent, now reachable by
+  // a second route.
+  test('the legend keeps its ramp and its geography line through a metro switch', async ({ page }) => {
+    await browseRecording(page);
+    // The two elements A24.41 and A24.42 gate on `areaFc.features.length > 0 || areasPending`:
+    // the ramp's own "No data" class (`hasRamp`) and the geography line (`hasGeo`). Both are
+    // present while `mdAreas === null`, which is exactly the state A32 holds the map in for the
+    // length of a switch — so a ramp that vanished mid-switch would be the flicker those entries
+    // exist to prevent, reached by a second route.
+    const ramp = page.getByText('No data', { exact: true }).first();
+    const geo = page.getByText('Census tract', { exact: true }).first();
+    await expect(ramp, 'no ramp before the switch — this case would assert nothing').toBeVisible();
+    await expect(geo).toBeVisible();
+
+    await page.getByRole('combobox', { name: 'Metro area' }).click();
+    const menu = page.getByRole('listbox', { name: 'Metro area' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name: 'Atlanta, GA' }).click();
+    // MID-SWITCH: the map has moved, the settle has not fired, `mdAreas` is null.
+    await page.waitForTimeout(120);
+    await expect(ramp, 'the legend dropped its ramp while the new metro was pending').toBeVisible();
+    await expect(geo, 'the legend dropped its geography line while the new metro was pending').toBeVisible();
+
+    await page.waitForTimeout(REQUEST_SETTLE_MS);
+    await expect(ramp).toBeVisible();
+    await expect(geo).toBeVisible();
+  });
+
+  test('panning the map asks again, for the new ground and once', async ({ page }) => {
+    const urls = await browseRecording(page);
+    const before = bboxesOf(urls);
+    expect(before.length).toBeGreaterThan(0);
+
+    const map = (await page.locator('.leaflet-container').first().boundingBox())!;
+    await page.mouse.move(map.x + map.width * 0.7, map.y + map.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(map.x + map.width * 0.2, map.y + map.height / 2, { steps: 12 });
+    // Stand still before letting go: Leaflet's drag handler measures the pointer's speed at
+    // mouseup and throws an inertia pan if there is any, which would be a SECOND settled view.
+    await page.waitForTimeout(200);
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+
+    const after = bboxesOf(urls);
+    // Exactly one new box — a drag is one settled view, not one request per mouse move.
+    expect(after.length, 'the pan produced no new request, or more than one round of them').toBe(before.length + 1);
+    expect(after.at(-1)).not.toBe(before.at(-1));
+    // …and it is a box to the EAST of the one before it: dragging the map left moves the view right.
+    expect(Number(after.at(-1)!.split(',')[0])).toBeGreaterThan(Number(before.at(-1)!.split(',')[0]));
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the Market snapshot's two modes, in a
+// real browser and through the real adapter.
+//
+// The two approved states photograph both modes, and pixels cannot say WHY a number is what it
+// is: the point of this ruling is that the AREA figure comes from `GET /api/markets/{cbsa}/summary`
+// — the polygons the map shades — and not from the listings, and those two can agree by accident
+// on a fixture. So this reads the ANSWER the page itself received and the STRING the card printed,
+// and checks that the second follows the first.
+//
+// The answer is taken off the page's own `response` event rather than re-fetched through
+// `page.request`: an APIRequestContext does not go through `page.route`, so a second fetch would
+// reach the real API and read a different body from the one the app rendered — which is exactly
+// what a test like this must not do.
+// ---------------------------------------------------------------------------------------
+interface SummaryRow { layer: string; median: number | null; with_value: number; geo_label: string }
+
+test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', () => {
+  test('the strip reads the metro summary in AREA mode, and the practice in LOCATION', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const asked: string[] = [];
+    const answers: Promise<{ layers: SummaryRow[] }>[] = [];
+    page.on('response', (r) => {
+      if (!r.url().includes('/summary')) return;
+      asked.push(r.url());
+      answers.push(r.json() as Promise<{ layers: SummaryRow[] }>);
+    });
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    // The route was actually called, for the METRO and with no bbox — "metro median" names the
+    // metro, and a median over whatever is on screen would move with every pan.
+    expect(asked.length, 'the app never asked for the metro summary').toBeGreaterThan(0);
+    expect(asked.at(-1)).toMatch(/\/api\/markets\/\d+\/summary$/);
+    const summary = await answers[answers.length - 1];
+    const income = summary.layers.find((l) => l.layer === 'income')!;
+    expect(income.median, 'the summary answered no median, so this case proves nothing').not.toBeNull();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // The figure the card prints IS the answered median, formatted by the design's own
+    // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(income.median! / 1000)}K`);
+    // …and it names the geography and the count it summarised, which is the whole correction: a
+    // number under a caption that does not describe it is the defect D-C50 removed. The count is
+    // grouped by the PAGE's own `toLocaleString`, evaluated in the page rather than here, so this
+    // assertion reads the same separator the design does on a browser in any locale.
+    const grouped = await page.evaluate((n: number) => n.toLocaleString(), income.with_value);
+    // Fix round 1's Addendum (2026-09-13): the caption states exactly what the number IS and the
+    // word "metro" is gone from it — the Census PUBLISHES a metro median at summary level 310
+    // (97,638 ± 1,163 for CBSA 12420) and this is the median OF the metro's valued areas (94,801
+    // on the same metro), so "metro median" beside a published figure gave a reader two different
+    // numbers under one name. The heading still says "AREA · … metro", which is true of the SCOPE.
+    await expect(card).toContainText(`median of ${grouped} ${income.geo_label}s`);
+    await expect(card, 'the caption still claims to be the metro’s own median').not.toContainText('metro median');
+
+    // LOCATION: selecting a practice switches the header and the figures, and the AREA caption
+    // leaves the card entirely — "median of N areas" is AREA mode's wording alone.
+    await page.getByText('Cedar Park').first().click();
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    await expect(strip.getByText(/^AREA · /)).toHaveCount(0);
+    await expect(card).not.toContainText('median of');
+    // Closing the docked panel returns to AREA — the ruling's own last sentence.
+    await page.getByRole('button', { name: 'Close panel' }).first().click();
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // The LIVE data path, which no fixture reaches: 28 of 29 QA listings carry a `community_label`
+  // (D-C38), and in LOCATION mode the ruling puts that label on every card as its value note. The
+  // design's own fixtures carry none, so the reference — and therefore both approved states —
+  // renders the short fallback "community level" and can never photograph this. This is the case
+  // that does, and it MEASURES the consequence rather than only asserting the string: the label is
+  // 38 characters at 10.5 px beside a 24 px figure in a 232 px card, so the note wraps, and the
+  // number recorded here is what a reader needs to judge whether the ruling wants revisiting.
+  //
+  // The listings stub is written inline rather than reached for: `serveListings` is scoped to the
+  // docked-panel suite above, and hoisting it would be a drive-by edit to a passing file.
+  test('LOCATION mode names each figure’s own geography, once (A31.12)', async ({ page }) => {
+    // Fix round 1 (2026-09-13). Before it this case asserted every card's note WAS the ring label,
+    // which is what the task shipped and what D-C48 had already ruled against one surface over:
+    // `growth` is served at place-or-county with its own `growth_scope` and `econ` is the county
+    // CBP row everywhere and always, so the ring sentence was false on two of the six cards on 28
+    // of 29 QA listings. The LIVE path is what is measured — the API's own fields through
+    // `load.ts` onto the card — because that is the only place the defect was visible.
+    await prepare(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    const SCOPE = 'Travis County';
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    const APPROX = `${LABEL} \u00b7 approximate`;
+    for (const item of body.items) {
+      item.community_label = LABEL;
+      item.growth_scope = SCOPE;
+      item.income_note = APPROX;   // D-C51: the API's own qualifier for a catchment median
+    }
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+    await page.getByText('Cedar Park').first().click();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    const notes = await strip.locator('span[style*="font-size: 10.5px"]').allInnerTexts();
+    expect(notes.length, 'the strip rendered no value notes at all').toBeGreaterThan(0);
+    // Four of the six cards ARE the ring the label describes; growth names the geography the API
+    // served and payroll names the county it is always measured at.
+    expect(new Set(notes)).toEqual(new Set([LABEL, APPROX, SCOPE, 'surrounding county']));
+    expect(notes.filter((n) => n === APPROX).length, 'the income card dropped the API\u2019s own qualifier (D-C51)').toBe(1);
+    expect(notes.filter((n) => n === SCOPE).length, 'growth did not take its own `growth_scope`').toBe(1);
+    expect(notes.filter((n) => n === 'surrounding county').length, 'payroll did not name the county').toBe(1);
+    expect(notes.some((n) => n.includes('metro median')), 'the AREA wording reached LOCATION mode').toBe(false);
+    // ONE STRING PER FACT (A24.44–A24.57), measured on the rendered strip rather than asserted:
+    // the basis belongs to the mode sub-line and each card's own note, and to nothing else.
+    const sources = await strip.locator('div[style*="font-size: 10px"]').allInnerTexts();
+    expect(sources.length, 'the strip rendered no source lines at all').toBeGreaterThan(0);
+    for (const src of sources) {
+      expect(src, `a source line repeats the basis: "${src}"`).not.toContain(LABEL);
+      expect(src.trimEnd().endsWith('·'), `a source line ends in a dangling separator: "${src}"`).toBe(false);
+    }
+    const printed = (await strip.innerText()).split(LABEL).length - 1;
+    expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
+    console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A35 — THE BASEMAP NEVER REQUESTS A TILE ESRI DOES NOT HAVE, AND THE MEMBER ZOOMS PAST IT.
+// John, 2026-09-13 (ruling D-C52): "allow a user to zoom in BELOW the level of the last actual
+// map layer … the map allows user to zoom in as far as they want … this message is never seen".
+//
+// WHY NO GATE CAUGHT IT, and why this one is in a real browser. `harness.ts` answers every
+// arcgisonline request with a transparent 1x1 GIF at any zoom, and every approved state captures
+// at z10 (desktop) / z9 (phone) with no zoom step — so the pixels could never show it. The unit
+// case (`src/map/engines/leaflet.test.ts`) owns the OPTIONS; what only Chromium can prove is what
+// Leaflet does WITH them: that `_clampZoom` holds the URL at the native max while `_limitZoom`
+// lets the map itself reach 20, on both basemaps, across a switch.
+//
+// The URLs are recorded rather than the tiles inspected: the stub deliberately answers 200 to
+// everything (an abort logs a console error the harness's own gate would fail on), which is
+// exactly what Esri does for a missing tile too. The REQUEST is the observable.
+// -------------------------------------------------------------------------------------------
+test.describe('A35 — the gray basemap never asks Esri for a tile it does not have (D-C52)', () => {
+  /** The last level each Esri service is actually cached to, MEASURED 2026-09-13 (the task brief's
+   *  own probe: the Canvas tilemaps report zero tiles at 17+ at all nine US points; World_Imagery
+   *  is real at z19 everywhere probed, rural Texas included). */
+  const NATIVE_MAX: Record<string, number> = { 'gray-base': 16, 'gray-labels': 16, imagery: 19 };
+  const CEILING = 20;
+  /** The two credits, as the design and both ports spell them. The STRINGS are pinned in
+   *  `tests/design-amendments.test.ts` (A35.7) and `src/lib/leaflet.test.ts`; what is measured here
+   *  is which of them the attribution control is RENDERING. */
+  const CREDIT: Record<string, string> = {
+    map: 'Tiles © Esri',
+    satellite: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  };
+
+  type TileHit = { service: string; z: number };
+  // ONE table and ONE pattern, shared by the request log and the pane reads — the two used to carry
+  // their own copies, which is the drift the bundle's own dead-code rule exists to stop.
+  const SERVICE: Record<string, string> = {
+    'Canvas/World_Light_Gray_Base': 'gray-base',
+    'Canvas/World_Light_Gray_Reference': 'gray-labels',
+    World_Imagery: 'imagery'
+  };
+  const TILE_URL = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//;
+  function classify(url: string): TileHit[] {
+    const m = TILE_URL.exec(url);
+    return m !== null && SERVICE[m[1]] !== undefined ? [{ service: SERVICE[m[1]], z: Number(m[2]) }] : [];
+  }
+
+  /** Every basemap tile the page asks for, from before the first navigation — a tile requested at
+   *  mount counts as much as one requested after a click. */
+  function recordTiles(page: Page): TileHit[] {
+    const hits: TileHit[] = [];
+    page.on('request', (r) => hits.push(...classify(r.url())));
+    return hits;
+  }
+
+  /** The MAP's own zoom, read off Leaflet's own animation proxy — the element `Map._animMoveEnd`
+   *  transforms to `scale(getZoomScale(zoom, 1))`, i.e. 2^(zoom-1), on every `moveend`
+   *  (leaflet-src.js:4756). Read from the DOM rather than through a hook, because the production
+   *  code must not grow a test-only seam: the app exposes no zoom and this case does not ask it to.
+   *  The TILE z cannot stand in — separating the two is the whole point of the ruling. */
+  const mapZoom = (page: Page) => page.evaluate(() => {
+    const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+    if (proxy === null) return null;
+    const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+    return m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1;
+  });
+
+  /** One press of the design's own "+" control, waited out rather than slept through — in the PAGE,
+   *  because every zoom step also settles a new viewport and pulls six layers of boundary polygons,
+   *  and a poll driven from the test would be spending its budget on those round trips. Returns the
+   *  zoom it settled on — equal to `from` when the map refused to move, which is the ceiling.
+   *
+   *  The wait is on `leaflet-zoom-anim` LEAVING the map pane as well as on the zoom changing,
+   *  because Leaflet SWALLOWS a zoom request made during a zoom animation (`Map._tryAnimatedZoom`:
+   *  `if (this._animatingZoom) { return true; }`) and the proxy carries the TARGET zoom from
+   *  `zoomanim` onward — so a press timed off the proxy alone lands inside the previous transition
+   *  and is discarded, which is what held an early draft of this case at zoom 11. The class is on
+   *  the MAP PANE, not on the container (leaflet-src.js:4808/4834). */
+  const STEP_TIMEOUT_MS = 10_000;
+  async function zoomInOnce(page: Page, from: number): Promise<number> {
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    try {
+      await page.waitForFunction((prev) => {
+        const pane = document.querySelector('.leaflet-map-pane');
+        const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+        if (pane === null || proxy === null) return false;
+        const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+        if (m === null) return false;
+        return !pane.classList.contains('leaflet-zoom-anim')
+          && Math.round(Math.log2(Number(m[1]))) + 1 !== prev;
+      }, from, { timeout: STEP_TIMEOUT_MS, polling: 100 });
+    } catch {
+      return from;                       // the map did not move: this is the ceiling
+    }
+    return (await mapZoom(page)) as number;
+  }
+
+  /** The basemap tiles one Leaflet PANE is actually SHOWING. Necessary as well as the request log,
+   *  and deterministic where it is not: once a URL has been loaded, Chromium serves it from the
+   *  memory cache and emits no network event at all, so switching BACK to a basemap whose tiles are
+   *  already in hand can legitimately make zero requests. What the layer asked for is still written
+   *  on every `<img>` — and an EMPTY tile pane is exactly the blank map A35.6's reset prevents.
+   *
+   *  The pane is a parameter because the two grid layers do not share one: the base draws into
+   *  `.leaflet-tile-pane` and the labels are created with `pane: "shadowPane"`, so a read of the
+   *  tile pane alone can say nothing at all about A35.4's ruled hiding above z18. */
+  const TILE_PANE = '.leaflet-tile-pane';
+  const SHADOW_PANE = '.leaflet-shadow-pane';
+  async function paneTiles(page: Page, pane: string): Promise<TileHit[]> {
+    const srcs = await page.evaluate(
+      (p) => [...document.querySelectorAll(`${p} img`)].map((el) => (el as HTMLImageElement).src), pane);
+    return srcs.flatMap(classify);
+  }
+  /** The services a pane is showing and the deepest level each is drawn at — one value to poll on,
+   *  so the case waits for the state it is about to assert instead of for a fixed number of ms. */
+  async function paneState(page: Page, pane: string): Promise<{ services: string[]; maxZ: number; count: number }> {
+    const tiles = await paneTiles(page, pane);
+    return {
+      services: [...new Set(tiles.map((h) => h.service))].sort(),
+      maxZ: tiles.length === 0 ? -1 : Math.max(...tiles.map((h) => h.z)),
+      count: tiles.length
+    };
+  }
+
+  /** What the map's own attribution control is RENDERING. Leaflet's default prefix (its own link)
+   *  is always in there, so the assertions are about which CREDITS the text carries. */
+  const attributionText = (page: Page) => page.locator('.leaflet-control-attribution').first().innerText();
+
+  /** Painted pixels on the polygon layer's own canvas — the shading must survive the whole climb,
+   *  because the canvas renderer has no zoom limit and the tiles beneath it now do. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  /** Browse, signed in, with the map up and settled at the design's own zoom 10. */
+  async function browseMap(page: Page): Promise<void> {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await expect.poll(() => mapZoom(page), { timeout: 15_000 })
+      .toBe(10);                                  // the design opens Austin at zoom 10
+    await expect.poll(() => paneState(page, TILE_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+  }
+
+  // Ten zoom steps, each settling a new viewport and pulling six layers of real boundary polygons
+  // through the harness — the cost of measuring the real chain rather than a stub of it.
+  test.setTimeout(180_000);
+
+  test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
+    const hits = recordTiles(page);
+    await browseMap(page);
+
+    // Press + until the map stops, watching the LABEL pane on the way: A35.4 gives the reference
+    // layer its own `maxZoom: 18`, so a GridLayer draws nothing above it (`_setView` sets
+    // `_tileZoom` undefined and calls `_removeAllTiles`). Read from the shadow pane, which is where
+    // `pane: "shadowPane"` puts them — the tile pane can say nothing about it.
+    const labelsAt: Record<number, number> = {};
+    let z = 10;
+    for (let i = 0; i < 14; i++) {
+      const next = await zoomInOnce(page, z);
+      if (next === z) break;
+      z = next;
+      if (z >= 18) labelsAt[z] = (await paneState(page, SHADOW_PANE)).count;
+    }
+    // Settled on the state the assertions are about, rather than on a timer.
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
+
+    const gray = hits.filter((h) => h.service !== 'imagery');
+    expect(gray.length, 'the gray canvas asked for no tiles at all — the recorder is not watching').toBeGreaterThan(0);
+    // (i) The defect itself, stated as the thing that must never be requested: Esri answers 200 with
+    // a 2,521-byte "Map data not yet available" JPEG for any Canvas tile past 16.
+    expect([...new Set(gray.filter((h) => h.z > NATIVE_MAX['gray-base']).map((h) => h.z))].sort((a, b) => a - b),
+      'the gray canvas was asked for a level Esri answers with "Map data not yet available"').toEqual([]);
+    // (ii) …and it still asks AT the ceiling. A layer that quietly stopped drawing at 16 would pass
+    // the assertion above and leave the member on a blank map, which is not the ruling.
+    expect(Math.max(...gray.map((h) => h.z)), 'the gray canvas stopped short of its own native max').toBe(NATIVE_MAX['gray-base']);
+
+    // (iii) The member gets the whole way there, and no further. Before this change Leaflet derived
+    // the map's ceiling from the layers (`getMaxZoom` -> `_layersMaxZoom`) and it was 18.
+    expect(z, 'the + button did not reach the map\'s own ceiling of 20').toBe(CEILING);
+
+    // (c) The labels soften to 18 and then HIDE. Stated as behaviour, on the pane they actually
+    // live in, rather than as an options value: 16x upscaled text is not legible.
+    expect(labelsAt[18], 'the reference labels are not drawn at z18, where Esri still has them').toBeGreaterThan(0);
+    expect(labelsAt[19], 'the reference labels are still drawn at z19, past their own maxZoom').toBe(0);
+    expect(labelsAt[20], 'the reference labels are still drawn at z20, past their own maxZoom').toBe(0);
+
+    // (iv) The polygons are canvas layers with no zoom limit, and they still paint at 20 — the
+    // upscaled basemap is underneath them, not instead of them.
+    expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
+
+    // (v) The other basemap, switched AT the ceiling — which is where A35.6's reset is load-bearing,
+    // because the two services clamp to different tile zooms and `redraw()` alone leaves the
+    // layer holding the previous zoom's world range. An empty tile pane here is the blank map.
+    const beforeSat = hits.length;
+    const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
+    await satTab.click();
+    await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['imagery'], maxZ: NATIVE_MAX.imagery, count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
+    expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
+      'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
+
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
+
+    // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
+    // for a tile the service that serves it does not have.
+    const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
+    expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
+
+    // …and nothing is DRAWN past it either, in either pane, at any point in the run.
+    for (const pane of [TILE_PANE, SHADOW_PANE]) {
+      expect((await paneTiles(page, pane)).filter((h) => h.z > NATIVE_MAX[h.service])).toEqual([]);
+    }
+
+    const byZoom = [...new Set(hits.map((h) => h.service))].sort().map((s) => {
+      const zs = hits.filter((h) => h.service === s).map((h) => h.z);
+      return `${s}: z${Math.min(...zs)}–${Math.max(...zs)} (${zs.length} requests)`;
+    });
+    console.log(`[A35] map zoom reached ${z}; labels drawn at 18/19/20: ${labelsAt[18]}/${labelsAt[19]}/${labelsAt[20]}; ${byZoom.join('; ')}`);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 and Important-2. Attribution is legally load-bearing (CLAUDE.md), and
+  // nothing on this branch read what the control RENDERS — the unit case only counted `_update()`
+  // calls. `Control.Attribution._update()` rebuilds from its own `_attributions` registry, not from
+  // the layer's current `options.attribution`, and the registry is written by `_addAttribution` at
+  // ADD time and by its `once('remove')` handler at REMOVE time. A35.6 assigned the new credit
+  // AFTER `addTo`, so the first switch re-registered the OLD string (A35.7's credit was never shown
+  // on Satellite at all) and the second de-registered a string that had never been registered while
+  // registering the new one — leaving BOTH credits in the footer for the life of the map.
+  // Assigning between `remove()` and `addTo()` fixes both, and this case is what says so.
+  // -----------------------------------------------------------------------------------------
+  test('the attribution control shows exactly the current basemap\'s credit, never both', async ({ page }) => {
+    await browseMap(page);
+    const other = (kind: string) => (kind === 'map' ? CREDIT.satellite : CREDIT.map);
+
+    for (const step of ['map', 'satellite', 'map', 'satellite'] as const) {
+      if (step !== 'map' || (await attributionText(page)).includes(CREDIT.satellite)) {
+        await page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }).click();
+        await expect(page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }))
+          .toHaveAttribute('aria-pressed', 'true');
+      }
+      await expect.poll(() => attributionText(page), { timeout: 10_000 })
+        .toContain(CREDIT[step]);
+      expect(await attributionText(page), `the footer carries BOTH credits on the ${step} basemap`)
+        .not.toContain(other(step));
+    }
+    console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-3. `MarketMapView`'s basemap watcher carries `status` among its deps, so
+  // it fires `setBase(props.basemap)` with the SAME basemap the engine has just mounted. Under the
+  // old code that was free — `setUrl(sameUrl)` sets `noRedraw` itself (leaflet-src.js:12150-12152)
+  // — and A35.6's reset is unconditional, so every mount paid a second full basemap tile load.
+  // The base layer and the label layer cover the same view at the same tile size, so one load each
+  // means the SAME number of requests; a second load of the base alone breaks that equality, which
+  // is what makes this measurable without hard-coding a tile count for a viewport.
+  // -----------------------------------------------------------------------------------------
+  test('a mount loads the basemap ONCE — the no-op setBase the watcher fires costs nothing', async ({ page }) => {
+    // COUNTED IN THE DOM, not in the request log, and that is the whole design of this case: the
+    // second load asks for the SAME urls the first one is still fetching, so Chromium coalesces it
+    // and the network shows twelve requests either way (measured — the request counts are identical
+    // before and after the fix). What is not hidden is that Leaflet builds twelve more `<img>`
+    // elements, which a MutationObserver installed before the page's own scripts can count. The
+    // observer lives in the TEST, through addInitScript; no production code grows a seam for it.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __tileAdds: Record<string, number> };
+      w.__tileAdds = {};
+      new MutationObserver((records) => {
+        for (const r of records) {
+          for (const node of r.addedNodes) {
+            if (!(node instanceof HTMLImageElement) || !node.classList.contains('leaflet-tile')) continue;
+            const m = /\/services\/(.+?)\/MapServer\/tile\//.exec(node.src);
+            if (m) w.__tileAdds[m[1]] = (w.__tileAdds[m[1]] ?? 0) + 1;
+          }
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+    await browseMap(page);
+    await expect.poll(() => paneState(page, SHADOW_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+
+    const adds = await page.evaluate(() => (window as unknown as { __tileAdds: Record<string, number> }).__tileAdds);
+    const base = adds['Canvas/World_Light_Gray_Base'] ?? 0;
+    const labels = adds['Canvas/World_Light_Gray_Reference'] ?? 0;
+    // The base layer and the label layer cover the same view at the same tile size, so ONE load
+    // each is the same number of tiles. A second load of the base alone breaks that equality —
+    // which is what makes this measurable without hard-coding a tile count for a viewport.
+    expect(labels, 'the label layer built no tiles at all — the comparison below is vacuous').toBeGreaterThan(0);
+    expect(base, 'the basemap was built more than once at mount — the no-op setBase reset the layer')
+      .toBe(labels);
+    console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
   });
 });

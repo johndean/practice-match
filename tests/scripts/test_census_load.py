@@ -43,6 +43,7 @@ from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import vintage as census_vintage
 from app.census import zbp as census_zbp
+from app.census.states import STATES as _STATES
 from scripts import census_load
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,7 +69,7 @@ def test_cmd_tiger_queries_market_state_and_prints_row_counts(scratch_dsn, monke
     assert census_load.main(["tiger"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["vintage"] == "2023"
     out = capsys.readouterr().out
     assert "140:cb_2023_48_tract_500k.zip: 2 rows" in out
@@ -314,7 +315,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         captured["states"] = list(states)
         return {"acs5": 100, "acs5_subject": 10, "acs5_prior": 50}[dataset_key]
@@ -324,7 +325,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     assert census_load.main(["acs"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     # the default `--dataset` list is all three ACS datasets, in order.
     assert captured["dataset_keys"] == ["acs5", "acs5_subject", "acs5_prior"]
     out = capsys.readouterr().out
@@ -337,7 +338,7 @@ def test_cmd_acs_accepts_a_dataset_override(scratch_dsn, monkeypatch):
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         return 1
 
@@ -371,7 +372,7 @@ def test_cmd_acs_builds_the_client_factory_from_the_required_key_and_contact_nev
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         client = client_factory(object())  # CensusClient's constructor never inspects `ds`
         captured["api_key"] = client.api_key
         captured["contact"] = client.contact
@@ -400,7 +401,7 @@ def test_cmd_acs_leaves_the_archive_disabled_without_s3_settings(scratch_dsn, mo
     monkeypatch.setattr(settings, "s3_secret_access_key", None)
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -424,7 +425,7 @@ def test_cmd_acs_passes_a_real_archive_once_s3_settings_are_configured(scratch_d
     monkeypatch.setattr(settings, "s3_secret_access_key", "secretkey")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -480,7 +481,7 @@ def test_cmd_acs_returns_four_when_a_dataset_download_fails(scratch_dsn, monkeyp
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise CensusHTTPError(500, "https://api.census.gov/data/2023/acs/acs5?key=SECRET")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -497,7 +498,7 @@ def test_cmd_acs_returns_five_when_a_dataset_fails_validation(scratch_dsn, monke
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise VariableMissing(["B19013_001E"])
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -517,7 +518,7 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise PermissionError(f"{dataset_key} is blocked; loads are refused (spec §1 licensing gate)")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -525,6 +526,68 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     assert census_load.main(["acs", "--dataset", "acs5"]) == 2
     err = capsys.readouterr().err
     assert "acs5" in err and "refused" in err
+
+
+# --- acs --levels (Task 6, D-NS4) -------------------------------------------------------------
+
+def test_cmd_acs_passes_a_levels_filter_through(scratch_dsn, monkeypatch):
+    """The CLI's own half of D-NS4: `census_load.py acs --levels 860` loads the one level, so the
+    ZCTA pull can be run on its own instead of re-running six geographies for six states."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860"]) == 0
+
+    assert captured["levels"] == ["860"]
+
+
+def test_cmd_acs_accepts_more_than_one_level(scratch_dsn, monkeypatch):
+    """`nargs="+"`: the flag is a list, so an operator can reload two geographies together."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860", "160"]) == 0
+
+    assert captured["levels"] == ["860", "160"]
+
+
+def test_cmd_acs_defaults_to_every_level(scratch_dsn, monkeypatch):
+    """Omitting the flag must leave the existing load exactly as it was: `levels=None`, which is
+    `acs.load`'s "every geography" arm (`tests/census/test_acs.py
+    ::test_load_without_a_levels_filter_still_fetches_every_geography` proves what that arm does)."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    # `**kwargs`, not `levels=None`: a fake with its own default would report `None` whether or
+    # not `cmd_acs` passed the argument at all, which is a gate that cannot fail. This one sees
+    # exactly what was handed over.
+    def fake_load(conn, client_factory, dataset_key, states, **kwargs):
+        captured["kwargs"] = kwargs
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5"]) == 0
+
+    assert captured["kwargs"] == {"levels": None}
 
 
 # --- cbp/zbp/bds subcommands (Task A6) --------------------------------------------------------
@@ -547,7 +610,7 @@ def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
     assert census_load.main(["cbp"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "cbp: 42 rows" in capsys.readouterr().out
 
 
@@ -652,7 +715,7 @@ def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
 
     assert census_load.main(["zbp"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "zbp: 18 rows" in capsys.readouterr().out
 
 
@@ -775,7 +838,7 @@ def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, 
 
     assert census_load.main(["bds", "--year", "2022"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2022
     assert "bds 2022: 6 rows" in capsys.readouterr().out
 
@@ -898,7 +961,7 @@ def test_cmd_qwi_loads_a_given_quarter_without_resolving_latest(scratch_dsn, mon
 
     assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert captured["trimmed_keep_default"] == 20
     out = capsys.readouterr().out
@@ -926,7 +989,7 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
 
     assert census_load.main(["qwi"]) == 0
 
-    assert captured["state"] == "06"  # states[0], market_state's first row
+    assert captured["state"] == _STATES[0][1] == "01"  # states[0], market_state's first row — Alabama since 065
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert "qwi 2024Q4: 6 rows (0 trimmed)" in capsys.readouterr().out
 
@@ -1425,6 +1488,223 @@ def test_cmd_geocode_resolves_listing_with_no_practice_location_row(scratch_dsn,
     out = capsys.readouterr().out
     assert lid in out
     assert "1 listing(s) geocoded" in out
+
+
+def test_cmd_geocode_drops_the_browse_list_cache_once_after_its_loop(scratch_dsn, redis, monkeypatch, capsys):
+    """Fix round 2, Moderate 2. `resolve()` no longer drops the Browse list cache itself — a
+    network call between two committed point columns and the backfill that turns them into figures
+    is a place a Redis blip costs a listing its market card. Its two callers do it instead, each
+    after the rest of its own work: the Celery task after it enqueues the backfill, and this
+    command ONCE after its loop rather than once per listing.
+
+    A pass over hundreds of listings has no reason to flush a handful of 60 s keys hundreds of
+    times. The idempotent re-run that finds nothing to do never reaches the drop at all — it
+    leaves by the `if not rows:` branch above the loop, which is what
+    `test_cmd_geocode_skips_listing_with_practice_location_row` covers."""
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+            )
+            cur.executemany(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                [("tiger_cb", "2023", "test"), ("acs5", "2019\u20132023", "test")],
+            )
+    finally:
+        conn.close()
+
+    def _mock_resolve(conn, gc, listing_id):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, geo_precision,"
+                " geocoded_at, geocoder_vintage) VALUES (%s, 'h', ST_SetSRID(ST_MakePoint(-97.8, 30.55), 4269),"
+                " '48491020355', 'rooftop', now(), 'Current_Current')", (listing_id,))
+        return census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", None, None, None, None)
+
+    monkeypatch.setattr(census_geocode, "resolve", _mock_resolve)
+    redis.set("listings:v1:::50", b"stale page")
+
+    assert census_load.main(["geocode", "--listing", lid]) == 0
+
+    assert redis.get("listings:v1:::50") is None
+    assert "1 listing(s) geocoded" in capsys.readouterr().out
+
+
+def test_cmd_geocode_drops_the_cache_for_the_listings_it_did_geocode_before_it_exits_five(
+    scratch_dsn, redis, monkeypatch, capsys
+):
+    """Fix round 3, minor 1. `except geocode.GeocodeFailed: return 5` returns from INSIDE the
+    loop, before the `drop_list_cache` that fix round 2 put after it — so a batch where listing N
+    geocodes and N+1 fails exited 5 with N's pin committed and the Browse list cache never
+    dropped, leaving a buyer looking at a pinless card for the rest of its 60 s TTL.
+
+    Round 1 had no such window because `resolve()` dropped the cache itself, per success; moving
+    the drop to the caller (round 2, so a Redis blip could not cost a listing its backfill) opened
+    it. The exit code is unchanged and still 5 — the operator must still be told the batch failed
+    — but the work that DID commit is published either way.
+
+    There was no multi-listing-with-a-failure test before this one: the existing failure case
+    geocodes nothing at all, which is exactly the shape that cannot see this bug."""
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        make_listing(conn)
+        make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+            )
+            cur.executemany(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                [("tiger_cb", "2023", "test"), ("acs5", "2019\u20132023", "test")],
+            )
+    finally:
+        conn.close()
+
+    # The FIRST listing the batch reaches resolves; the second raises. Keyed on call order rather
+    # than on an id, so the test does not depend on which uuid sorts first.
+    seen: list[str] = []
+
+    def _first_succeeds_then_fails(conn, gc, listing_id):
+        seen.append(listing_id)
+        if len(seen) > 1:
+            raise census_geocode.GeocodeFailed("nothing resolved for this one")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, geo_precision,"
+                " geocoded_at, geocoder_vintage) VALUES (%s, 'h', ST_SetSRID(ST_MakePoint(-97.8, 30.55), 4269),"
+                " '48491020355', 'rooftop', now(), 'Current_Current')", (listing_id,))
+        return census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", None, None, None, None)
+
+    monkeypatch.setattr(census_geocode, "resolve", _first_succeeds_then_fails)
+    redis.set("listings:v1:::50", b"stale page")
+
+    assert census_load.main(["geocode"]) == 5, "the operator is still told the batch failed"
+
+    assert len(seen) == 2, "the batch really did reach a second listing"
+    assert redis.get("listings:v1:::50") is None, "the first listing's pin must not wait out the TTL"
+    assert "geocoding failed" in capsys.readouterr().err
+
+
+def _seed_one_tract_world(conn):
+    """The minimum `cmd_geocode` needs to reach its loop: one tract for the mocked resolve to
+    point at, and the two active vintages the command and `materialize` check for."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                 ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+        )
+        cur.executemany(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+            [("tiger_cb", "2023", "test"), ("acs5", "2019\u20132023", "test")],
+        )
+
+
+def _resolve_writing(census_geocode):
+    """A `geocode.resolve` stand-in that writes the `practice_location` row and returns its
+    `Location`, so the command's own success path runs without a Census round trip."""
+    def _resolve(conn, gc, listing_id):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, geo_precision,"
+                " geocoded_at, geocoder_vintage) VALUES (%s, 'h', ST_SetSRID(ST_MakePoint(-97.8, 30.55), 4269),"
+                " '48491020355', 'rooftop', now(), 'Current_Current')", (listing_id,))
+        return census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", None, None, None, None)
+    return _resolve
+
+
+def test_a_redis_failure_in_the_batch_drop_does_not_change_a_clean_exit(scratch_dsn, redis, monkeypatch, capsys):
+    """Fix round 4. The drop lives in a `finally` (round 3), which is what makes it run on every
+    exit — and what makes it able to REPLACE that exit. A `RedisError` raised there turns a clean
+    `return 0` into an uncaught traceback out of an operator command whose work has already
+    committed, and the operator's next move is to re-run a batch that had nothing left to do.
+
+    The cache drop is the least important thing this command does. It is reported on stderr and
+    swallowed; the cache's own 60 s TTL is the backstop."""
+    import redis as redis_sync
+
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        _seed_one_tract_world(conn)
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(census_geocode, "resolve", _resolve_writing(census_geocode))
+    # Patched on `app.cache`, not on `census_load`: `cmd_geocode` imports the name inside the
+    # function, so it is resolved from `app.cache`'s namespace at call time.
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache",
+                        lambda cache: (_ for _ in ()).throw(redis_sync.exceptions.ConnectionError("redis://h:6379 down")))
+
+    assert census_load.main(["geocode", "--listing", lid]) == 0, "the batch's own outcome stands"
+
+    captured = capsys.readouterr()
+    assert "1 listing(s) geocoded" in captured.out
+    assert "ConnectionError" in captured.err
+    assert "6379" not in captured.err, "the type, never the text: it can carry a host"
+
+
+def test_a_redis_failure_in_the_batch_drop_does_not_replace_the_geocode_failure_exit(
+    scratch_dsn, redis, monkeypatch, capsys
+):
+    """The exit the `finally` is most able to swallow: `return 5` leaves from inside the loop, so
+    a raising drop replaces the operator's "geocoding failed" answer with a traceback about
+    Redis — the wrong problem, and the real one lost."""
+    import redis as redis_sync
+
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        make_listing(conn)
+        make_listing(conn)
+        _seed_one_tract_world(conn)
+    finally:
+        conn.close()
+
+    seen: list[str] = []
+    writing = _resolve_writing(census_geocode)
+
+    def _first_succeeds_then_fails(conn, gc, listing_id):
+        seen.append(listing_id)
+        if len(seen) > 1:
+            raise census_geocode.GeocodeFailed("nothing resolved for this one")
+        return writing(conn, gc, listing_id)
+
+    monkeypatch.setattr(census_geocode, "resolve", _first_succeeds_then_fails)
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache",
+                        lambda cache: (_ for _ in ()).throw(redis_sync.exceptions.ConnectionError("down")))
+
+    assert census_load.main(["geocode"]) == 5, "the geocode failure is still what the operator is told"
+
+    err = capsys.readouterr().err
+    assert "geocoding failed" in err, "...and it is still the first thing in the error output"
+    assert "ConnectionError" in err
 
 
 def test_cmd_geocode_skips_listing_with_practice_location_row(scratch_dsn, monkeypatch, capsys):

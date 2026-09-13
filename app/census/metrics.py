@@ -69,17 +69,45 @@ def weighted_count(parts: Iterable[tuple[float | None, float | None, float | Non
 
 
 def weighted_median(parts: Iterable[tuple[float | None, float | None]]) -> float | None:
-    """Household-weighted average of per-area medians — an approximation of a true median over the
-    combined area (§8). A part with a missing value or a missing/zero weight is skipped. `None`
-    when no part contributes any weight."""
-    num = 0.0
-    den = 0.0
-    for v, w in parts:
-        if v is None or w in (None, 0):
-            continue
-        num += float(v) * float(w)
-        den += float(w)
-    return num / den if den else None
+    """Household-weighted MEDIAN of per-area medians — an approximation of a true median over the
+    combined area (§14, amended 2026-09-12 by Task INCOME-MEDIAN).
+
+    The rule: sort the contributing parts by value, accumulate their weights, and return the value
+    whose own weight block contains the 50 % mark (half the total weight). When the cumulative
+    weight lands EXACTLY on half the total the mark falls BETWEEN two parts rather than inside
+    either, and the answer is the linear interpolation of the two straddling values — their
+    midpoint, the same convention the ordinary median of an even number of observations uses. With
+    unit weights this is exactly the ordinary median, and the result is invariant to duplicating
+    every part: the statistic depends on the shape of the weight distribution, not on its total.
+
+    Until 2026-09-12 this returned `Σ(v·w)/Σw` — a weighted MEAN — while its name, the column it
+    fills (`median_hh_income`) and the card's own label all read it as a median. Over a
+    right-skewed income distribution the mean of medians sits systematically above the median of
+    medians; measured on QA over the 64 tracts in one Austin listing's 5-mile ring it read $109,744
+    against a true $99,357, 10.5 % high.
+
+    A part with a missing value, or a weight that is not a positive number, is skipped — missing,
+    zero, negative or NaN alike (fix round 1, Minor 2). The earlier guard was `w not in (None, 0)`,
+    which let the last two through: a negative weight makes the running total go DOWN, so the
+    cumulative weight can cross half the total more than once, and a NaN poisons `sum` so that
+    `cum < half` is False on the first test and the sentinel index reads the LAST part by negative
+    indexing — `[(100000, 1000), (999999, nan)]` returned their midpoint, a number fabricated out of
+    an unusable weight. No caller can produce either (`materialize.py` multiplies households by an
+    overlap fraction, both non-negative), which is why the guard has to say so rather than rely on
+    it. `None` when no part contributes any weight. The figure stays flagged approximate: it is still an approximation of
+    the combined-area median and still has no combined margin of error by construction."""
+    usable = sorted(((float(v), float(w)) for v, w in parts if v is not None and w is not None and float(w) > 0), key=lambda p: p[0])
+    total = sum(w for _, w in usable)
+    if not total:
+        return None
+    half = total / 2
+    cum = 0.0
+    i = -1
+    while cum < half:
+        i += 1
+        cum += usable[i][1]
+    value = usable[i][0]
+    return value if cum > half else (value + usable[i + 1][0]) / 2
 
 
 def pet_households_est(hh: float | None) -> int | None:

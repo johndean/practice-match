@@ -94,10 +94,15 @@ async def test_get_redis_passes_socket_timeouts(monkeypatch):
     assert captured.get("socket_timeout") == db.TIMEOUT_S
 
 
+@pytest.mark.timing
 async def test_check_db_and_check_redis_time_out_against_a_black_hole():
     """A host that accepts the TCP connection but never replies must not hang a probe
     toward asyncpg's/redis-py's driver defaults (60s / no timeout) — belt-and-braces:
-    app.db's connect_args/socket timeouts AND app.checks' outer wait_for."""
+    app.db's connect_args/socket timeouts AND app.checks' outer wait_for.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — a real, if generous, wall-clock ceiling
+    (`db.TIMEOUT_S + 2` seconds) that the RED-first predicate matches; folded into the marked
+    class rather than left an acknowledged gap."""
     never = asyncio.Event()
     writers: list[asyncio.StreamWriter] = []
 

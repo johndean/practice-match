@@ -18,6 +18,7 @@ from app.api.listings import (
     relative_listed,
     serialise,
 )
+from app.census.serve import CommunityRow
 from tests.api.conftest import auth_headers
 
 INSERT = (
@@ -376,6 +377,12 @@ def _row(**over: Any) -> dict[str, Any]:
         # A-SL23 (0): `_SELECT`'s aggregate of this listing's own `listing_asset.caption`s, keyed
         # by asset id. Empty for a seed, whose `photos` name no asset row at all.
         "asset_captions": {},
+        # GEO-WIRE (4): `_SELECT`'s `practice_location.geo_precision` subquery. `None` here is the
+        # un-geocoded listing, which is what every one of these direct tests is; the geocoded arm
+        # is exercised over HTTP at the bottom of this file, against a real `practice_location`
+        # row. Present for `rev_disclosed`'s own reason (SL3 review L8): a row this helper builds
+        # must be a row `_rows()` could build.
+        "geo_precision": None,
     }
     base.update(over)
     return base
@@ -1020,26 +1027,48 @@ def _seed_drive_10_only(conn: Any, listing_id: str) -> None:
             "(%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s)",
             ("acs5", "2019-2023", "test", "acs5_prior", "2014-2018", "test", "zbp", "2022", "test", "cbp", "2022", "test"),
         )
-        for key, vintage, value, dataset in (
-            ("population", "2019-2023", 167997, "acs5"),
-            ("households", "2019-2023", 59588, "acs5"),
-            ("median_hh_income", "2019-2023", 69780, "acs5"),
-            ("population_growth_pct", "2019-2023", 9.0, "acs5"),
-            ("establishments", "2022", 10.8, "zbp"),
-            ("revenue_per_establishment", "2022", 512000, "cbp"),
+        # D-C38: `median_hh_income` is seeded the way the pipeline actually writes a ring median —
+        # `is_derived=True` with NO margin of error, because it is a household-weighted median of
+        # the tract medians inside the buffer rather than a published Census figure
+        # (`materialize.py`), and a catchment median can therefore never be suppressed. The old
+        # fixture seeded every row `is_derived=False, moe=1` — place-shaped rows wearing a drive
+        # label — so nothing here could see the approximate qualifier the contract has always
+        # asked for. `population_growth_pct` carries its own `geo_level`, which is what the Growth
+        # tile names: Orlando's is the county, because the practice sits in unincorporated Orange
+        # County where the Census has no place at all.
+        for key, vintage, value, dataset, derived, moe, inputs in (
+            ("population", "2019-2023", 167997, "acs5", False, 1, None),
+            ("households", "2019-2023", 59588, "acs5", False, 1, None),
+            ("median_hh_income", "2019-2023", 69780, "acs5", True, None, None),
+            ("population_growth_pct", "2019-2023", 9.0, "acs5", True, 1, '{"geo_level": "county"}'),
+            ("establishments", "2022", 10.8, "zbp", False, 1, None),
+            ("revenue_per_establishment", "2022", 512000, "cbp", False, 1, None),
         ):
             cur.execute(
                 "INSERT INTO market_metric "
                 "(listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
-                "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())",
-                (listing_id, "drive_10", key, vintage, value, "count", False, None, 1, False, None, dataset),
+                "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at, inputs) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)",
+                (listing_id, "drive_10", key, vintage, value, "count", derived, None, moe, False, None, dataset, inputs),
             )
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, county_geoid, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s, 'h', '12095', 'rooftop', now(), 'Current_Current') "
+            "ON CONFLICT (listing_id) DO UPDATE SET county_geoid = EXCLUDED.county_geoid",
+            (listing_id,),
+        )
+        cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name) VALUES ('12095', '050', '2023', 'Orange County')")
+        cur.execute("DELETE FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('tiger_cb', '2023', now(), 'test')")
 
 
-async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: Any, member: Any) -> None:
+async def test_the_single_route_carries_the_catchment_label(client: Any, conn: Any, member: Any) -> None:
     """D-C32: a listing with no `place`-band figures is served its `drive_10` band AND the label
-    that says so, so the buyer is never shown a drive-time area disguised as a named city."""
+    that says so, so the buyer is never shown a catchment disguised as a named city.
+
+    The name said "drive time label" until D-C39 retired the phrase: there is no drive time
+    anywhere in the pipeline. `drive_10` is the BAND's column value (`migrations/061`), which this
+    fixture still seeds by name; what the label describes is an 8 km straight-line catchment."""
     from tests.census.listing_fixtures import make_listing
 
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
@@ -1050,12 +1079,19 @@ async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: 
     assert r.status_code == 200, r.text
     data = r.json()
 
-    assert data["community_label"] == "Within 10 minutes of the practice"
+    # D-C39: the ring is described by DISTANCE. It is an 8 km straight-line buffer (spec §8), not
+    # a routed drive time, and true isochrones are still open for V1 (spec §15).
+    assert data["community_label"] == "Within about 5 miles of the practice"
     assert data["pop"] == "167,997"
     assert data["hh"] == "59,588 households"
+    # D-C38, per-figure: the median is the ring's and says it is approximate; the growth figure is
+    # the COUNTY's and says that instead, because growth exists at no finer geography until the
+    # tract crosswalk lands.
+    assert data["income_note"] == "Within about 5 miles of the practice · approximate"
+    assert data["growth_scope"] == "Orange County"
 
 
-async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn: Any, member: Any) -> None:
+async def test_the_list_route_carries_the_catchment_label_too(client: Any, conn: Any, member: Any) -> None:
     """The same row through `GET /api/listings` — the docked panel reads the list, not the detail."""
     from tests.census.listing_fixtures import make_listing
 
@@ -1067,8 +1103,10 @@ async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn
     assert r.status_code == 200, r.text
     item = next(i for i in r.json()["items"] if i["id"] == listing_id)
 
-    assert item["community_label"] == "Within 10 minutes of the practice"
+    assert item["community_label"] == "Within about 5 miles of the practice"
     assert item["pop"] == "167,997"
+    assert item["income_note"] == "Within about 5 miles of the practice · approximate"
+    assert item["growth_scope"] == "Orange County"
 
 
 async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
@@ -1090,8 +1128,45 @@ async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
         if i["id"] == listing_id
     )
     for payload in (single, listed):
-        for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+        # DERIVED, never typed: the list is `CommunityRow`'s own annotations, so a field added to
+        # the producer is asserted here by existing rather than by somebody remembering — and the
+        # route's own answer is what it is compared against, so the check can fail.
+        _assert_serves_every_community_field(payload)
+        for field in COMMUNITY_PAYLOAD_FIELDS:
             assert payload[field] is None, field
+
+
+#: Every community-derived key `serialise` emits, DERIVED from the producer rather than typed here
+#: (review Minor 3, 2026-09-13). Both "every community field is None" assertions below used to
+#: hard-code the nine pre-A33 names, so neither noticed `income_vs_us_pct` or `income_approximate`
+#: arriving and both went on claiming to check "every" field. `CommunityRow`'s annotations are the
+#: producer's own list and `serialise`'s mapping renames exactly one of them, so a tenth field
+#: joins these assertions by existing. The same discipline
+#: `tests/api/test_contract_doc.py::test_contract_doc_names_every_community_field_the_listing_serialiser_emits`
+#: already applies to the CONTRACT DOC, applied here to the payload.
+COMMUNITY_PAYLOAD_FIELDS = tuple(
+    "community_label" if k == "label" else k for k in CommunityRow.__annotations__
+)
+
+
+def _assert_serves_every_community_field(payload: dict[str, Any]) -> None:
+    """Every field the PRODUCER declares is actually on the wire.
+
+    Fix round 2, review Minor: this used to read
+    `assert len(COMMUNITY_PAYLOAD_FIELDS) == len(CommunityRow.__annotations__)`, which cannot
+    fail — the tuple is a 1:1 comprehension over the very thing it was compared against, so the
+    two lengths are equal by construction. The branch's own rule is that a gate must be able to
+    fail, so the comparison is made against something INDEPENDENT: the keys of a real answer.
+    A tenth field added to `CommunityRow` and forgotten in `serialise` fails here, named, instead
+    of passing in silence.
+
+    The `KeyError` the loops below would raise is the same fact; this states it as a set, so the
+    message names every missing field at once rather than the first."""
+    missing = sorted(f for f in COMMUNITY_PAYLOAD_FIELDS if f not in payload)
+    assert missing == [], (
+        f"`CommunityRow` declares {len(COMMUNITY_PAYLOAD_FIELDS)} community fields and the served "
+        f"payload carries no key for: {', '.join(missing)}"
+    )
 
 
 def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
@@ -1105,22 +1180,80 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
         "est": 2001, "listed_at": datetime(2026, 9, 1, tzinfo=UTC), "status": "published",
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
+        "geo_precision": None,
     }
     now = datetime(2026, 9, 6, tzinfo=UTC)
 
     labelled = serialise(row, now, community={
-        "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
-        "econ_k": None, "label": "Within 10 minutes of the practice",
+        "pop": "167,997", "growth": "+9.0% since 2018", "income": "$69,780", "hh": None, "vets": None,
+        "econ_k": None, "label": "Within about 5 miles of the practice",
+        "growth_scope": "Orange County", "income_note": "Within about 5 miles of the practice \u00b7 approximate",
+        "income_vs_us_pct": -13.7, "income_approximate": True,
     })
-    assert labelled["community_label"] == "Within 10 minutes of the practice"
-    assert labelled["growth"] is None
+    assert labelled["community_label"] == "Within about 5 miles of the practice"
+    # D-C38: the two per-figure fields pass through the same way — one place, no invention.
+    assert labelled["growth_scope"] == "Orange County"
+    assert labelled["income_note"] == "Within about 5 miles of the practice \u00b7 approximate"
+    # A33.1: the index and the flag pass through the same way, and a NEGATIVE index and a TRUE
+    # flag both survive — `serialise` reads them with `.get`, never with a truthiness test.
+    assert labelled["income_vs_us_pct"] == -13.7
+    assert labelled["income_approximate"] is True
+    assert labelled["hh"] is None
 
     unlabelled = serialise(row, now, community={
         "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
-        "econ_k": None, "label": None,
+        "econ_k": None, "label": None, "growth_scope": None, "income_note": None,
+        "income_vs_us_pct": None, "income_approximate": None,
     })
     assert unlabelled["community_label"] is None
+    assert unlabelled["growth_scope"] is None
+    assert unlabelled["income_note"] is None
+    assert unlabelled["income_vs_us_pct"] is None
+    assert unlabelled["income_approximate"] is None
 
     absent = serialise(row, now)
-    for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+    _assert_serves_every_community_field(absent)
+    _assert_serves_every_community_field(labelled)
+    for field in COMMUNITY_PAYLOAD_FIELDS:
         assert absent[field] is None, field
+
+
+# --- Task GEO-WIRE (4): the card is told how precisely the point is known ------------------------
+def _locate(conn: Any, listing_id: str, precision: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at)"
+                    " VALUES (%s, 'h', %s, 'Current_Current', now())", (listing_id, precision))
+
+
+async def test_a_listings_payload_carries_the_precision_its_point_was_resolved_at(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """GEO-WIRE (4). The contract already rules what this datum means — "`geo_precision !=
+    "rooftop"` → render 'approximate community data' near the map pin"
+    (`docs/integrations/market-data-api.md`) — and `GET /api/markets/{cbsa}/communities` and
+    `GET /api/listings/{id}/market` have both served it since Task B5. The listing payload, which
+    is what the Community Context card and the Browse pin are actually built from, did not, so the
+    one rule the contract states about precision was unreachable from the one place it applies.
+
+    It matters far more now than it did: the wizard collects a city and a ZIP and no street
+    (`STEP_FIELDS[2]`), so a seller's listing resolves through the §11 ladder at `zcta` — a ZIP-code
+    centroid — and the ring the card describes is centred there, not on the practice. The figure is
+    served; naming it on the card is the frontend's own ruled copy, not this payload's to invent."""
+    _account, cookies, _headers = member(("buyer",))
+    listing_id = _insert(conn)
+    _locate(conn, listing_id, "zcta")
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies))).json()
+    assert body["geo_precision"] == "zcta"
+    listed = (await client.get("/api/listings", headers=auth_headers(cookies))).json()["items"]
+    assert [item["geo_precision"] for item in listed] == ["zcta"]
+
+
+async def test_a_listing_that_was_never_geocoded_says_nothing_about_its_precision(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """`null`, never a guessed "rooftop" — the D-C31 rule this payload already applies to every
+    community figure: a thing the database does not know is absent, not defaulted."""
+    _account, cookies, _headers = member(("buyer",))
+    listing_id = _insert(conn)
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies))).json()
+    assert body["geo_precision"] is None

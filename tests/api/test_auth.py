@@ -76,13 +76,20 @@ async def test_signin_sets_cookies_and_me_returns_the_design_shape(client, membe
                   "state": "active", "roles": ["buyer"], "affiliation_label": "StartUp Club"}
 
 
+@pytest.mark.timing
 async def test_signin_failures_are_generic_for_wrong_unknown_suspended_and_revoked(client, member):
     """One warm-up request, then FIVE samples per case compared as medians (fix round 2, NEW-5).
 
     The brief compared the single-shot min and max of four samples, and the first sample is always
     the outlier — a warm-up cost, not unequal work, so widening the tolerance would only hide it.
     Six concurrent runs of the old shape failed six times, every one with the same signature: first
-    ~230-280 ms, the other three within ~17 ms of each other. The tolerance is unchanged."""
+    ~230-280 ms, the other three within ~17 ms of each other. The tolerance is unchanged.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — this is the structurally-identical fourth
+    auth test the RED-first predicate always found (looser tolerance, 100 ms of pairwise median
+    spread; declared `NOT_YET_SERIALISED` in round 0), which fix round 1's ruling folds into the
+    marked class along with the other eight the round 0 report undercounted (fourteen, not
+    thirteen)."""
     member(("buyer",), state="suspended", email="s@example.org"); member(("buyer",), state="revoked", email="r@example.org")
     await client.post("/api/auth/signin", json={"email": "warm-up@example.org", "password": PW})   # discarded
     bodies, medians = set(), []
@@ -409,11 +416,16 @@ def _password_hash(conn, account_id):
     return _rows(conn, "SELECT password_hash FROM account WHERE id=%s", (account_id,))[0][0]
 
 
+@pytest.mark.timing
 async def test_signup_does_the_same_work_for_a_new_and_an_existing_address(client, conn):
     """C1. A registered address answered ~29 ms faster than an unregistered one, in
     non-overlapping distributions: only the new branch wrote rows, and only a transaction that has
     written needs a WAL flush at COMMIT. Both branches now write one outbox row, so the commit costs
-    the same — and the existing-address branch tells its owner somebody tried to sign up as them."""
+    the same — and the existing-address branch tells its owner somebody tried to sign up as them.
+
+    Task CI-TIMING: `@pytest.mark.timing` — a real wall-clock delta against a 20 ms tolerance,
+    measured with no `gate_p95` retry underneath it, flaked on a loaded machine (John, 2026-09-11)
+    and is scheduled to run serially, last, isolated from CPU-heavy neighbours."""
     existing = [f"c1-old-{i}@example.org" for i in range(10)]
     with conn.cursor() as cur:
         for email in existing:
@@ -487,11 +499,15 @@ async def test_signing_up_again_on_a_verified_or_later_address_still_says_accoun
         assert _rows(conn, "SELECT count(*) FROM email_token WHERE account_id = (SELECT id FROM account WHERE email=%s)", (email,)) == [(0,)], state
 
 
+@pytest.mark.timing
 async def test_the_re_issue_branch_answers_in_the_same_time_as_the_account_exists_branch(client, conn):
     """Important 4's uniformity condition. The re-issue writes one `email_token` row that the
     `account_exists` branch does not, so the two paths have to be shown to stay inside the same
     20 ms window `test_signup_does_the_same_work_for_a_new_and_an_existing_address` uses \u2014 an INSERT
-    into a small table against a WAL flush both branches already pay."""
+    into a small table against a WAL flush both branches already pay.
+
+    Task CI-TIMING: the sibling `@pytest.mark.timing` case \u2014 same 20 ms tolerance, same raw
+    perf_counter measurement, same machine-load sensitivity."""
     unverified = [f"u4-unver-{i}@example.org" for i in range(10)]
     verified = [f"u4-ver-{i}@example.org" for i in range(10)]
     with conn.cursor() as cur:
@@ -512,6 +528,7 @@ async def test_the_re_issue_branch_answers_in_the_same_time_as_the_account_exist
     assert delta < 0.020, (statistics.median(reissue_s), statistics.median(exists_s))
 
 
+@pytest.mark.timing
 async def test_a_new_address_and_an_existing_unverified_one_answer_in_the_same_time(client, conn):
     """I9a re-review, Minor. The registration-timing leak Critical 1 closed is about NEW vs
     EXISTING, and after Important 4 "existing" has two shapes. `new` vs `verified` is pinned by
@@ -523,7 +540,10 @@ async def test_a_new_address_and_an_existing_unverified_one_answer_in_the_same_t
     It is also the pair with the most work on BOTH sides: `new` inserts an account, issues a token
     and queues a row; `unverified` re-issues a token and queues a row. The difference is one
     `account` INSERT against one no-op `ON CONFLICT DO UPDATE` — which is why it fits the same
-    20 ms window the other two use."""
+    20 ms window the other two use.
+
+    Task CI-TIMING: the third `@pytest.mark.timing` case (Task CI-TIMING brief's own name for
+    this one) — same reasoning as its two siblings above."""
     existing = [f"u5-unver-{i}@example.org" for i in range(10)]
     with conn.cursor() as cur:
         for email in existing:

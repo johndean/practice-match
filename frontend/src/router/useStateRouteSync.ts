@@ -1,7 +1,7 @@
 import { watch } from 'vue';
 import type { Router } from 'vue-router';
 import { useMe } from '../auth/me';
-import { guard, needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
+import { guard, needsPatch, refusedScreen, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
 
 // A19 (John, 2026-09-09): a route-driven screen change calls the design's own `closeLightbox` —
 // see `apply()`. Required, not optional: the one component this composable ever receives is the
@@ -168,6 +168,19 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
           if (!sameLocation(before, stateToRoute(c.state))) return;
         }
       }
+      // Task ADMIN-GATE (D-C53, 2026-09-13): THE GUARD RUNS ON EVERY PATH TO A SCREEN, and this
+      // is the path it did not run on. `apply()` above consults `guard()` for a route-driven
+      // change, but `afterEach` skips `apply()` while `settling` — and the navigation this
+      // watcher is about to issue is what sets `settling`. So a state-driven change (the design's
+      // own header nav: `go()` sets `state.screen` and checks `state.auth` alone) settled the URL
+      // on a screen the matrix had never been asked about, and a buyer reached the admin shell.
+      //
+      // Asked BEFORE the navigation, not after it: a refusal must never put the refused path in
+      // the address bar, even briefly. Applying it moves the state to the gate, which retriggers
+      // this same watcher — and the retrigger is what settles the URL, from the gate state rather
+      // than the transitional one, exactly as the `pending` branch above does.
+      const refusal = refusedScreen(c.state, { me: useMe().me.value });
+      if (refusal) { c.setState(refusal); return; }
       // Recomputed FRESH inside the thunk, not captured from this invocation's outer scope
       // (review fix round 1 follow-up): a retry runs later, after `c.state` may have moved
       // again while the previous navigation was in flight, and must settle to THAT state, not

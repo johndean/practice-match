@@ -39,10 +39,7 @@ import httpx
 import psycopg2
 import psycopg2.extensions
 import shapefile  # type: ignore[import-untyped]  # pyshp ships no py.typed marker / stubs (A4 review m-2: its `stubs` extra was not evaluated as an alternative)
-from shapely import wkb
 from shapely.geometry import MultiPolygon, Polygon, shape
-from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
 
 from app.census import ingest
 from app.census.client import CensusHTTPError
@@ -217,8 +214,14 @@ def load_boundaries(
     vintage: str = "2023",
     archive: ObjectStore | None = None,
 ) -> dict[str, int]:
-    """Downloads and upserts every boundary file. ZCTAs (national file) are kept only
-    when their centroid falls inside a market state, to bound table size.
+    """Downloads and upserts every boundary file, for every state `market_state` carries -- which
+    since 2026-09-12 is all fifty and the District of Columbia, so this is a NATIONWIDE load.
+
+    The national ZCTA file used to be filtered down to the ZCTAs whose centroid fell inside a
+    market state, "to bound table size". That filter is gone: it was the mechanism that made
+    nationwide coverage impossible (a ZIP in an unlisted state had no `geo_area` row, so the
+    geocoder's first and tract-carrying rung could never match it), and nationally it kept 99.4 %
+    of the file anyway -- 33,603 of 33,791 -- for 5.9 s of `unary_union` work per load.
 
     Runs inside `ingest.run(conn, "tiger_cb", vintage)` (controller amendment A-C7 M1), the same
     ledger wrapping every other loader in this package already uses: without it, `tiger_cb` never
@@ -228,7 +231,6 @@ def load_boundaries(
     across every file; `run.requests` is the count of files fetched -- one per `BoundarySpec`,
     even the ZCTA level, whose 404 triggers a second, fallback HTTP call for that same one file."""
     counts: dict[str, int] = {}
-    state_geoms: list[BaseGeometry] | None = None
     with ingest.run(conn, "tiger_cb", vintage) as run:
         for spec in BOUNDARY_FILES(int(vintage), states):
             tmp_path, url = _get_with_fallback(http, spec, vintage)
@@ -239,11 +241,6 @@ def load_boundaries(
                     if not archive.exists(key):  # append-only by convention (A-C3 (1)): never re-write an archived key
                         with open(tmp_path, "rb") as fh:
                             archive.put(key, fh.read(), "application/zip")
-                if spec.summary_level == "040":
-                    state_geoms = [wkb.loads(r.wkb) for r in rows if r.geo_id in states]
-                if spec.summary_level == "860" and state_geoms:
-                    market = unary_union(state_geoms)
-                    rows = [r for r in rows if market.contains(wkb.loads(r.wkb).centroid)]
                 n = upsert_geo(conn, rows, vintage)
                 counts[f"{spec.summary_level}:{url.rsplit('/', 1)[1]}"] = n
                 run.rows += n

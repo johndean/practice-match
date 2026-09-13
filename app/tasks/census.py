@@ -45,6 +45,7 @@ from datetime import UTC, datetime
 import httpx
 import psycopg2
 import psycopg2.extensions
+import redis as redis_sync
 
 from app.census import acs, bds, cbp, geocode, ingest, license, qwi, tiger, zbp
 from app.census.client import CensusClient, missing_archive_settings, require_archive, require_contact, require_key
@@ -346,6 +347,33 @@ def geocode_listing(listing_id: str) -> dict[str, object]:
             gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
             loc = geocode.resolve(conn, gc, listing_id)
         celery_app.send_task("census.backfill_listing", args=[listing_id])
+        # AFTER the enqueue, and last (fix round 2). `GET /api/listings` caches a page for 60 s
+        # and the PUBLISH that queued this task dropped that cache before the point existed, so a
+        # buyer who loaded Browse in between would be served a pinless card for the rest of the
+        # TTL; this drops it again now the pin is real. It is LAST because the ordering is what
+        # bounds its failure: `resolve` has committed both point columns and the backfill is
+        # queued, so a Redis blip here costs one stale page and nothing else. With the drop
+        # BEFORE the `send_task` (fix round 1, inside `resolve`) the same blip left a committed
+        # pin, no backfill, no retry, and a republish that would not re-trigger because
+        # `has_geocode()` is already true.
+        #
+        # Logged and SWALLOWED on a Redis failure (fix round 4). The ordering above already meant
+        # a blip here could not cost the listing its backfill; what it still did was replace the
+        # task's OUTCOME with an exception — the geocode succeeded, both point columns are
+        # committed and the backfill is queued, and Celery would have recorded the task FAILED and
+        # retried a whole Census round trip to redo work that was already done. A cache drop is
+        # not this task's job, and the cache's own 60 s TTL is the backstop.
+        #
+        # `redis.RedisError` specifically, and only the exception's TYPE in the message — never
+        # its text, which can carry a host and port. Both are `app/api/admin_data_sources.py`'s
+        # shape for a gate invalidation that fails after its decision has committed, for exactly
+        # the same reason; a `TypeError` out of our own code is a defect and still surfaces.
+        from app.cache import drop_list_cache, sync_redis
+        try:
+            drop_list_cache(sync_redis())
+        except redis_sync.RedisError as exc:
+            log.warning("[census] geocoded %s but the Browse list cache was not dropped: %s;"
+                        " it expires on its own within 60 s", listing_id, type(exc).__name__)
         return {"listing_id": listing_id, "precision": loc.geo_precision}
     finally:
         conn.close()
@@ -367,6 +395,30 @@ def materialize_metrics() -> dict[str, object]:
     conn = _conn()
     try:
         return {"listings": len(materialize.materialize_all(conn, sync_redis()))}
+    finally:
+        conn.close()
+
+
+def materialize_geo_metrics() -> dict[str, object]:
+    """Nightly job (D-NS9): rebuilds `geo_metric` for every geography in a `market_state` state,
+    at the ruled levels -- SIX layers since 2026-09-12, not three -- from whatever vintages are
+    currently active. Like
+    `materialize_metrics` it does no Census I/O at all -- only local aggregation over `geo_area`,
+    `acs_measure` and `cbp_industry` -- so it needs no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`
+    gate and no `_NotReady` handling, and a missing active vintage is left to fail the task
+    visibly rather than being folded into a success-shaped result (A-C18 (3)).
+
+    This is the ONLY caller of `app.census.geo_metric.materialize_geo` anywhere under `app/`, and
+    `tests/census/test_geo_metric.py::
+    test_the_writer_is_reached_from_the_nightly_task_alone_and_never_from_the_request_path` is
+    what keeps it that way: spec §10's hard rule is that the request path never reaches a Census
+    write."""
+    from app.cache import sync_redis
+    from app.census import geo_metric
+
+    conn = _conn()
+    try:
+        return {"metrics": geo_metric.materialize_geo(conn, sync_redis())}
     finally:
         conn.close()
 
@@ -406,4 +458,7 @@ geocode_listing_task = celery_app.task(name="census.geocode_listing")(geocode_li
 
 # Phase B, B4: backfill_listing_task and materialize_metrics_task register here.
 materialize_metrics_task = celery_app.task(name="census.materialize_metrics")(materialize_metrics)
+
+# Neighbourhood shading (spec 2026-09-10, D-NS9): the polygon table's own nightly writer.
+materialize_geo_metrics_task = celery_app.task(name="census.materialize_geo_metrics")(materialize_geo_metrics)
 backfill_listing_task = celery_app.task(name="census.backfill_listing")(backfill_listing)

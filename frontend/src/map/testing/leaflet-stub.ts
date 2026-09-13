@@ -9,12 +9,42 @@ export interface LeafletStub { calls: Call[]; map: FakeMap; tiles: FakeTile[]; c
 let SEQ = 0;
 
 class FakeLayer { added: unknown[] = []; seq = -1; on(ev: string, cb: () => void) { (this as any)['on_' + ev] = cb; return this; } addTo(g: any) { g.added?.push(this); (this as any).parent = g; this.seq = SEQ++; return this; } remove() { const p = (this as any).parent; if (p?.added) p.added = p.added.filter((x: unknown) => x !== this); } bindTooltip(text: string, opts: unknown) { (this as any).tooltip = { text, opts }; return this; } openTooltip() { (this as any).tooltipOpened = ((this as any).tooltipOpened ?? 0) + 1; return this; } }
-export class FakeTile extends FakeLayer { url: string; options: Record<string, unknown>; constructor(url: string, options: Record<string, unknown>) { super(); this.url = url; this.options = options; } setUrl(u: string) { this.url = u; } }
+// `optionsAtSetUrl` is the ORDER, snapshotted, and `noRedrawAtSetUrl` the second argument that
+// decides whether `setUrl` redraws at all. A35.6 (ruling D-C52) writes `options.maxNativeZoom`
+// BEFORE it touches the url and then removes and re-adds the layer, because the re-add is what
+// re-reads the option — `GridLayer.redraw()` moves `_tileZoom` without calling `_resetGrid()`, so
+// a redraw alone leaves the previous zoom's world range in place. A test that reads `options`
+// after the call cannot tell "written first" from "written second", so the stub records what the
+// options WERE at that moment, and `setUrlCalls` counts a call that did not have to happen at all.
+//
+// `_url` carries Leaflet's OWN field name because that is the field A35.6's guard compares (fix
+// round 1: `L.TileLayer` has no public reader for its url and the layer is the only thing that
+// knows which basemap it is showing); `url` stays as a getter over it, which is what every
+// assertion written before that guard reads.
+export class FakeTile extends FakeLayer { _url: string; options: Record<string, unknown>; optionsAtSetUrl: Record<string, unknown> | null = null; noRedrawAtSetUrl: boolean | undefined = undefined; setUrlCalls = 0; constructor(url: string, options: Record<string, unknown>) { super(); this._url = url; this.options = options; } get url() { return this._url; } setUrl(u: string, noRedraw?: boolean) { this.setUrlCalls += 1; this.optionsAtSetUrl = { ...this.options }; this.noRedrawAtSetUrl = noRedraw; this._url = u; } }
 class FakeGroup extends FakeLayer { clearLayers() { this.added = []; } }
 export class FakeMap { added: unknown[] = []; handlers: Record<string, () => void> = {}; center: unknown; zoom: number; invalidated = 0; attributionControl = { _update: () => { (this as any).attrUpdated = ((this as any).attrUpdated ?? 0) + 1; } };
   constructor(public el: HTMLElement, public opts: any) { this.center = opts.center; this.zoom = opts.zoom; el.dataset.leafletMounted = '1'; }
-  setView(c: unknown, z: number, o?: unknown) { this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; }
+  // Leaflet's own `setView` ALWAYS settles: `_resetView` (leaflet-src.js:4287) runs
+  // `_moveStart -> _move -> _moveEnd`, and `_moveEnd` fires `zoomend` when the zoom changed and
+  // `moveend` unconditionally — the animated pan path reaches the same `_moveEnd` when its
+  // transition ends. This stub used to move silently, which made A32's recentre flag look like
+  // it leaked into the next user pan when in a real browser the `setView`'s own `moveend`
+  // always spends it.
+  setView(c: unknown, z: number, o?: unknown) { const zoomed = this.zoom !== z; this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; if (zoomed) this.handlers.zoomend?.(); this.handlers.moveend?.(); }
   getZoom() { return this.zoom; } getCenter() { const c = this.center as [number, number]; return { lat: c[0], lng: c[1] }; }
+  // The Browse map measured at the design's own 1440 x 940 preview: 1020 x 740 CSS px beside the
+  // results rail, which at zoom 10 is 1.401 deg of longitude and, at New York's latitude, 0.771
+  // of latitude. Halved per zoom level, the way a tile pyramid is. `boundsReads` is how a test
+  // proves a destroyed engine did not reach in here for a stale box.
+  boundsReads = 0;
+  getBounds() {
+    this.boundsReads += 1;
+    const c = this.center as [number, number];
+    const k = 2 ** (10 - this.zoom);
+    const dLng = 0.7005 * k; const dLat = 0.3855 * k;
+    return { getSouth: () => c[0] - dLat, getWest: () => c[1] - dLng, getNorth: () => c[0] + dLat, getEast: () => c[1] + dLng };
+  }
   zoomIn() { this.zoom += 1; } zoomOut() { this.zoom -= 1; } invalidateSize() { this.invalidated += 1; }
   on(ev: string, cb: () => void) { ev.split(' ').forEach((e) => { this.handlers[e] = cb; }); } off(ev: string) { ev.split(' ').forEach((e) => { delete this.handlers[e]; }); }
   removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } panInside(pos: unknown, o?: unknown) { (this as any).pannedInside = [pos, o]; (this as any).pannedInsideCount = ((this as any).pannedInsideCount ?? 0) + 1; } }

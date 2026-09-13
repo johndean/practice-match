@@ -137,6 +137,23 @@ def test_catchment_bands_aggregate_tracts_and_zctas_coherently(conn, world):
     assert _metric(conn, world, "population")[0] == pytest.approx(exp_pop, rel=1e-6)
     inc = _metric(conn, world, "median_hh_income")
     assert inc[2] is True and inc[3] == "v1"  # catchment median is an approximation -> labelled derived
+    # The VALUE, not just the flags (Task INCOME-MEDIAN fix round 1, Minor 1): the statistic became
+    # a true household-weighted MEDIAN of tract medians on 2026-09-12 and nothing here pinned it end
+    # to end, so the materialiser could have gone on calling a weighted MEAN and only the unit tests
+    # in `tests/census/test_metrics.py` would have noticed.
+    #
+    # Re-derived from THIS world's own weights rather than asserted from a remembered number. Two
+    # tracts: 48491000001 at $118,400 with 1,500 households, 48491000002 at $98,000 with 1,200, each
+    # weighted by its `practice_catchment.overlap_frac` against the 8 km buffer. The listing's point
+    # (-97.85, 30.55) sits inside tract 1, so w1 > w2 and the household weights are ordered
+    # 1500*w1 > 1200*w2 — asserted below, so a geometry change that reversed them fails here rather
+    # than silently moving the expectation. Sorted ascending the parts are [(98000, 1200*w2),
+    # (118400, 1500*w1)]; half the total weight is (1200*w2 + 1500*w1)/2, and 1200*w2 is BELOW it,
+    # so the 50 % mark falls strictly inside the $118,400 part: the median is $118,400 exactly.
+    # The old weighted MEAN was (118400*1500*w1 + 98000*1200*w2) / (1500*w1 + 1200*w2) — strictly
+    # between $98,000 and $118,400 for any positive weights, so it could never equal this.
+    assert 1500 * wt["48491000001"] > 1200 * wt["48491000002"], "tract 1 must carry more than half the ring's households"
+    assert inc[0] == 118400
     est = _metric(conn, world, "establishments")
     assert est[0] == pytest.approx(exp_estab, rel=1e-6) and est[9]["geo_level"] == "zcta"
     assert _metric(conn, world, "vets_per_10k_households")[0] == pytest.approx(exp_estab / (exp_hh / 10000), rel=1e-6)  # same geography top and bottom (C1)

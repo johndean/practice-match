@@ -386,7 +386,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
 
             
             <div class="rf-scroll" style="position: absolute; left: 16px; top: 16px; bottom: 72px; z-index: 600; width: 300px; min-height: 0; overflow-y: auto; overflow-x: visible; padding-right: 2px;">
@@ -426,6 +426,9 @@
                       </div>
                     </template>
 
+                    <template v-if="v.md?.active?.hasGeo">
+                      <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                    </template>
                     <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                     <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                   </div>
@@ -713,6 +716,9 @@
                 <div style="padding: 16px;">
                   <template v-if="v.md?.panel?.hasDemo">
                   <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.overviewTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewTitle) }}</span></div>
+                  <template v-if="v.md?.panel?.hasOverviewScope">
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.panel?.overviewScope) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewScope) }}</span></div>
+                  </template>
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
                     <template v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)" :key="$index">
                       <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
@@ -778,7 +784,7 @@
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <template v-if="v.md?.panel?.hasDemo">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
                   </template>
                 </div>
               </template>
@@ -813,7 +819,11 @@
 
           <template v-if="v.md?.stripOpen">
             <div class="rf-scroll" style="max-height: 40vh; overflow-y: auto; padding: 0 22px 16px;">
-              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px;">
+              <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.stripMode) !== null" class="sc-interp">{{ __s(v.md?.stripMode) }}</span></div>
+              <template v-if="v.md?.hasStripModeSub">
+                <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.stripModeSub) !== null" class="sc-interp">{{ __s(v.md?.stripModeSub) }}</span></div>
+              </template>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px; margin-top: 9px;">
                 <template v-for="(c, $index) in __arr(v.md?.stripCards)" :key="$index">
                   <div :style="c?.cardStyle">
                     <div style="flex: none; height: 30px; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; line-height: 1.4; color: var(--vf-accent);"><span v-if="__s(c?.title) !== null" class="sc-interp">{{ __s(c?.title) }}</span></div>
@@ -831,7 +841,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the community around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas on the map are approximate — production draws Census ZCTA boundaries.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </template>
 
@@ -1433,7 +1443,7 @@
 
         <template v-if="v.mob?.isMap">
           <div style="flex: 1; position: relative; min-height: 0;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
 
             
             <div style="position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 520; display: flex; align-items: center; gap: 8px;">
@@ -1499,6 +1509,9 @@
                             <div style="flex: 1; font-size: 9.5px; color: var(--vf-text); text-align: center;"><span v-if="__s(r?.label) !== null" class="sc-interp">{{ __s(r?.label) }}</span></div>
                           </template>
                         </div>
+                        <template v-if="v.md?.active?.hasGeo">
+                          <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                        </template>
                         <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                         <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                       </div>
@@ -1671,6 +1684,8 @@ import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
+import { makePermsAdapter } from './auth/perms';
+import { makeMarketAdapter } from './market/boundaries';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -1731,6 +1746,19 @@ const props = defineProps({
   // `renderVals()` returns its own `me` (the header strings, from state), which wins in `v`
   // below — this prop is read by the prototype's bootstrap, not by the template.
   me: { type: Object, default: () => useMe().me.value },
+  // A40 (D-C53): the permission matrix, as the prototype's `perms` adapter — the seam the design's
+  // own header nav asks "may this account open that screen?" through, and the seam `loadAdmin`
+  // asks before it spends a request. The table is the GENERATED `src/auth/permissions.ts`, whose
+  // source is `app/auth/permissions.py`, read through `can()`; the design states no role test of
+  // its own, so there is one matrix and not two. Unlike `me` above this is NOT a snapshot: it reads
+  // the store at call time, so an interactive sign-in changes the answer with no remount. The
+  // reference and the Claude Design preview pass nothing and keep every door, which is what keeps
+  // both targets on the same pixels. Nothing in the template reads `perms`; only `logic.js` does.
+  //
+  // `src/auth/perms.ts`, not an object literal here, for the reason `auth` records: this file is
+  // copied verbatim into App.vue and sits outside the coverage gate. It needs no `data-props`
+  // entry — the parity gate is one-directional.
+  perms: { type: Object, default: () => makePermsAdapter() },
   // A16: the real /api/seller client, as the prototype's `listings` adapter — the seam the design's
   // own Continue, Edit, Add files, Continue-to-next-step, Submit and Pause/Republish/Withdraw
   // handlers call through. The reference and the Claude Design preview pass nothing and keep the
@@ -1751,7 +1779,16 @@ const props = defineProps({
   // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
   // in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
-  adminListings: { type: Object, default: () => makeAdminListingsAdapter() }
+  adminListings: { type: Object, default: () => makeAdminListingsAdapter() },
+  // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
+  // design's own script branches on. With it present the Browse map draws the polygons the API
+  // answered or NONE at all, whatever it answered; with no adapter — the reference server and
+  // the Claude Design preview — the design's own boundary fixture is drawn instead, which is what
+  // keeps both targets on the same pixels. Nothing in the template reads `market`; only logic.js
+  // does. Built by the factory in `src/market/boundaries.ts`, not an object literal here, for the
+  // reason `auth` records: this file is copied verbatim into App.vue and sits outside the
+  // coverage gate. It needs no `data-props` entry — the parity gate is one-directional.
+  market: { type: Object, default: () => makeMarketAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

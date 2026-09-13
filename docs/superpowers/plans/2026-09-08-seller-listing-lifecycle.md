@@ -98,7 +98,7 @@ The spec names family **A13**. `.worktrees/feat-design-dropdowns` is already add
 
 ### The programme's standing rules
 
-- **(a) 100 % lines AND branches, backend.** Every task's local gate is `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100`, exactly as `.github/workflows/quality.yml` runs it. `scripts/` is in scope because Task SL6 changes `scripts/seed_listings.py`; `tests/e2e/` because it holds the Playwright api under test (A-SL28/A-SL29 (2)).
+- **(a) 100 % lines AND branches, backend.** Every task's local gate is, in two steps since Task CI-TIMING (2026-09-12) — real wall-clock budget tests run serially, last, coverage appended: `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"` then `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100`, exactly as `.github/workflows/quality.yml` runs it. `scripts/` is in scope because Task SL6 changes `scripts/seed_listings.py`; `tests/e2e/` because it holds the Playwright api under test (A-SL28/A-SL29 (2)).
 - **(b) 100 % lines, branches, functions and statements, frontend.** `cd frontend && npx vitest run --coverage`. The documented `coverage.exclude` list in `frontend/vite.config.ts` is **not widened**: `frontend/src/listings/seller.ts` and `frontend/src/admin/listings.ts` are covered at 100 %.
 - **(c) No suppressions.** No `# pragma: no cover`, no `# noqa`, no `# type: ignore`, no `@ts-expect-error`, no `@ts-nocheck`, no `assert` as control flow in production code.
 - **(d) `poetry run mypy app --strict` — 0 errors; `poetry run ruff check app tests scripts` — 0 findings**, on ruff's default set plus `extend-select = ["I", "RUF"]`, no ignores added. `boto3-stubs[s3]` is a dev dependency precisely so the storage module type-checks strictly rather than being excused.
@@ -3198,7 +3198,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | D26 seed photographs stay on disk; the tile shows the caption | SL4, SL6 | `test_a_seed_listings_photograph_still_comes_off_disk`; `listing-flows.spec.ts` asserts step 6's four captions |
 | Q2 the reviewer supplies state + metro | SL5, SL8 | `test_publish_needs_state_and_market_on_the_first_publish_and_not_after`; `ListingsUi.needsFields` |
 | Q4 no confirmation dialog | — | **no task adds one**; `wizard-*` and `seller-dash` keep their frozen hashes, which is the proof |
-| §12 100 % backend and frontend | every task's gate step | `--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100`; `npx vitest run --coverage` at 100/100/100/100 |
+| §12 100 % backend and frontend | every task's gate step | `--cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"`, then `-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100` (Task CI-TIMING, 2026-09-12); `npx vitest run --coverage` at 100/100/100/100 |
 | §12 `listing-flows.spec.ts` against the real API, no stub | SL8 | the spec itself, and `emptyCollectionStubUrls` returning `[]` under `PW_APP_URL` |
 | §13 non-goals | — | no task touches requests/messaging, the detail's document rows, abuse flagging, geocoding a seller listing, Census figures, or production data |
 
@@ -3261,7 +3261,7 @@ Read this before dispatching any task. Each row is a gate, what this plan does t
 | `seed_listings.py` exit codes | `tests/test_docs.py:1333` | **adds none** — an absent persona is a printed note, not a code | `codes == [0, 2, 3, 4, 5]` still |
 | DEPLOY.md seeding section | `test_deploy_md_documents_how_to_seed_qa` | one paragraph added | the nine pinned substrings and the plain-before-`--reset` ordering are not disturbed |
 | CLAUDE.md launch-removal pins | `test_launch_removal_list_is_executed`, `test_claude_md_launch_removal_records_the_listings_boot_swap`, `test_claude_md_counts_the_seven_prototype_props_…` | one sentence extended (SL9) | RED first through the pin, then the edit |
-| 100 % backend, lines and branches | `--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100` | four new modules, one changed script, the Playwright api under test | every unreachable-from-a-request arm has a named test (Self-Review §3) |
+| 100 % backend, lines and branches | `--cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"`, then `-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100` (Task CI-TIMING, 2026-09-12) | four new modules, one changed script, the Playwright api under test | every unreachable-from-a-request arm has a named test (Self-Review §3) |
 | 100 % frontend | `frontend/vite.config.ts` thresholds | two new `src/**` modules | **the exclude list is not widened**; every adapter failure path has its own test |
 | Suite clock | CI backend `timeout-minutes: 30` | moto + the WebP ladder | fixtures ≤ 200 × 200 except the two that must exceed `MAX_EDGE_PX`; no sleeps |
 | `-W error` | pytest | boto3/moto emit `DeprecationWarning` on some Python builds | if one fires, the fix is the dependency pin, **never** a filterwarnings entry (Global Constraint (c)) |

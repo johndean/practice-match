@@ -59,6 +59,20 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v.signedOut).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A40.1/A40.2 (D-C53, 2026-09-13) — RESERVED AND HELD, so this case still reads four.
+  //
+  // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
+  // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
+  // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
+  // the filter moved 28 of the 55 approved states and seven of the thirteen frozen hashes. The
+  // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
+  // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
+  // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
+  // refuses the click (`refusedScreen`) — a visible door onto the design's own "not available to
+  // your account" gate, never the admin shell.
+  // ---------------------------------------------------------------------------------------
+
   it('adminVals renders the four tabs and switches the row set with adminTab', () => {
     expect(c.adminVals().tabs.map((t: any) => t.label)).toEqual(['Users', 'Listings', 'Requests', 'Data Sources']);
     c.setState({ adminTab: 'data' });
@@ -122,6 +136,29 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     // isBrowse is a DIFFERENT, still-vestigial-but-untouched key (app-generated.test.ts pins
     // it separately) — this asserts A2.3 did not reach past its own three names.
     expect(v).toHaveProperty('isBrowse', false);
+  });
+
+  // A28.2-A28.4 (John, 2026-09-11, ruling D-C44), the same dead-code rule again — this time on
+  // orphans the DESIGN itself left behind rather than ones an amendment created. `layerHelp`,
+  // `fillRows` and `overlayRows` were V3's "GROUP 1 / GROUP 2" rows for the panel V3 replaced
+  // with `md.layerChoices`, retained by the design's own comment as legacy and read by no
+  // template on either target; `drive5`/`drive10` were layer-default flags only those rows read.
+  // Deleting them removes the last "drive time" strings in the product (D-C39's real target).
+  it('marketVals no longer exposes the legacy panel\'s orphan rows (A28.2-A28.4)', () => {
+    const md = c.marketVals(c.filtered());
+    expect(md).not.toHaveProperty('layerHelp');
+    expect(md).not.toHaveProperty('fillRows');
+    expect(md).not.toHaveProperty('overlayRows');
+    // …and nothing the family did not name went with them: the compact control V3 made
+    // canonical, and the legend the design still draws, are untouched.
+    expect(md).toHaveProperty('layerChoices');
+    expect(md).toHaveProperty('legend');
+    // A28.4: the two drive-band flags leave the defaults and the four LIVE members stay, with
+    // their values. Read through `symbols` — `SYMBOL_KEYS.filter((k) => layers[k] && ...)` — which
+    // is what actually consumes them, so all three of `pets: false`, `households: false` and
+    // `competition: true` are pinned by one literal. (`practices`, the fourth, is not a symbol
+    // key; the design reads it only from the deleted row, and it stays in the defaults.)
+    expect(md.symbols, 'A28.4 changed a layer default it was not given').toEqual(['competition']);
   });
 
   // A2.5 (zero-gaps review, same dead-code rule as A2.3: a dead handler is dead code). The
@@ -3595,16 +3632,66 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 
   // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
 
-  it('the panel’s Insights heading names the fallback area, and the design’s own wording otherwise (A21.5a)', () => {
+  it('the panel’s Insights heading KEEPS its name and the area goes to its own sub-line (A27.6, D-C42)', () => {
     const p = austin()[0];
-    expect(panelFor(p).overviewTitle).toBe('Market Overview (10 min drive)');
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    // A27.3 (D-C39): the default loses the parenthetical it could not support. The band is an
+    // 8 km straight-line buffer, not a routed drive time, and this heading sat over PLACE-band
+    // figures on all but one listing.
+    //
+    // A27.6 (D-C42, John, 2026-09-11): and the heading is now that default ALWAYS. A21.5a let
+    // `communityLabel` REPLACE it, so on QA — where D-C38 gives 28 of 29 listings a label — the
+    // words "Market Overview" appeared nowhere and A27.3's own correction was invisible. The
+    // geography moves to a sub-line beneath the heading, which is what every other place on this
+    // card already does with it (A21.5b, A21.5c, A27.1, A27.2).
+    expect(panelFor(p).overviewTitle).toBe('Market Overview');
+    expect(panelFor(p).hasOverviewScope).toBe(false);
+    expect(panelFor(p).overviewScope).toBe('');
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
-      expect(panelFor(p).overviewTitle).toBe('Within 10 minutes of the practice');
+      expect(panelFor(p).overviewTitle, 'the label replaced the heading again').toBe('Market Overview');
+      expect(panelFor(p).hasOverviewScope).toBe(true);
+      expect(panelFor(p).overviewScope).toBe('Within about 5 miles of the practice');
     } finally { delete (p as any).communityLabel; }
   });
 
-  it('the detail’s Community Context names the fallback area in all three places (A21.5b/c/d)', () => {
+  it('the panel’s Population tile names the geography its GROWTH sub-line came from (A27.8, D-C48)', () => {
+    // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7 puts ONE geography sub-line
+    // above the whole four-tile grid, and the Population tile's sub-line is not a population
+    // figure at all — it is GROWTH, which is place-level (`serve.py`'s `growth_scope`) and reads
+    // −1.5% for the whole of Dallas. So a city number sat under a caption describing a ring on
+    // 28 of 29 QA listings: the defect D-C38 removed, one card over. John ruled it is named on
+    // the tile, the way the detail card's own Growth tile already names it (A27.2).
+    const p = austin()[0];
+    // The design's own fixtures carry no `growthScope`, so the null branch is the design's own
+    // sub-line byte for byte — which is what keeps every approved Browse state where it is.
+    const withoutScope = panelFor(p).overviewTiles[0].sub;
+    expect(withoutScope).toMatch(/^[+-]?\d+\.\d% \(5 yrs\)$/);
+    const value = panelFor(p).overviewTiles[0].v;
+
+    (p as any).growthScope = 'Dallas';
+    try {
+      expect(panelFor(p).overviewTiles[0].sub).toBe(withoutScope + ' \u00b7 Dallas');
+      // The VALUE is the ring's population and is untouched: D-C48 labels the sub-line, it
+      // changes no figure. And the three tiles the heading sub-line DOES describe keep theirs.
+      expect(panelFor(p).overviewTiles[0].v).toBe(value);
+      expect(panelFor(p).overviewTiles[1].sub).toBe('ACS 5-year');
+      expect(panelFor(p).overviewTiles[3].sub).toBe('derived estimate');
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a Population tile with no growth figure names nothing, scope or no scope (A27.8)', () => {
+    // A21.2d's own rule, which D-C48 must not weaken: no figure, no sub-line. A geography with
+    // no number beside it is a caption for something that is not there.
+    const p = austin()[0];
+    (p as any).growthScope = 'Dallas';
+    try {
+      without([p], () => {
+        expect(panelFor(p).overviewTiles[0].sub).toBe(undefined);
+      });
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('the detail’s Community Context names the area in all three places (A21.5b/c/d)', () => {
     const p = austin()[0];
     c.setState({ auth: true, detailId: p.id });
     const before = c.detail();
@@ -3612,19 +3699,77 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     expect(before.demo[3].sub).toBe('In the community');
     expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
 
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
       const after = c.detail();
-      expect(after.demo[0].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demo[3].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demoScope).toBe('Figures describe the area within 10 minutes of the practice, not the practice itself.');
+      expect(after.demo[0].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demo[3].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself.');
       // The Census attribution itself is legally load-bearing and is not part of this sentence.
       expect(after.demoScope).not.toContain('Census');
     } finally { delete (p as any).communityLabel; }
   });
 
+  // ---- D-C38, per-figure geography: the two tiles A21.5b/c could not reach ------------------
+  //
+  // THE HONEST MEASURE, which these cases exist to hold: only THREE of the card's four tiles gain
+  // neighbourhood detail. Population, Households and Median income follow the catchment; the
+  // Growth tile keeps its city-or-county figure and gains an honest label and nothing else,
+  // because `population_growth_pct` cannot vary below place-or-county until the 2010->2020 tract
+  // crosswalk is loaded. Nothing here is "per-neighbourhood market data".
+
+  it('the Growth tile names the geography its own figure was measured at (A27.2)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    // The design's own fixtures carry no `growthScope`, so the null branch is A21.3d's output
+    // unchanged — which is what keeps `detail` on its frozen hash.
+    expect(c.detail().demo[1].sub).toBe('Since 2015');
+    // Read BEFORE the scope arrives. `expect(x).toBe(x)` was the assertion here and it compared
+    // the post-change value with itself — a tautology no change to A27.2 could ever fail.
+    const valueWithoutScope = c.detail().demo[1].v;
+
+    // 'Dallas', the name TIGER itself gives (D-C41). The API composes no "City of " prefix, so a
+    // fixture carrying one asserts a value the backend cannot emit.
+    (p as any).growthScope = 'Dallas';
+    try {
+      expect(c.detail().demo[1].sub).toBe('Dallas \u00b7 since 2015');
+      // The VALUE is untouched: D-C38 labels this figure, it does not change it.
+      expect(c.detail().demo[1].v).toBe(valueWithoutScope);
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a growth figure with no vintage still names its geography, alone (A27.2)', () => {
+    const p = austin()[0];
+    const growth = (p as any).growth;
+    c.setState({ auth: true, detailId: p.id });
+    (p as any).growth = '+1.2%';
+    try {
+      // A21.3d renders "" for a figure that carries no " since " — the sub-line must not become
+      // "Dallas · since " with nothing after it.
+      expect(c.detail().demo[1].sub).toBe('');
+      (p as any).growthScope = 'Orange County';
+      expect(c.detail().demo[1].sub).toBe('Orange County');
+      delete (p as any).growthScope;
+    } finally { (p as any).growth = growth; }
+  });
+
+  it('the Median income tile carries the approximate qualifier when the API sends one (A27.1)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    expect(c.detail().demo[2].sub).toBe('Household, 2023');
+
+    (p as any).incomeNote = 'Within about 5 miles of the practice \u00b7 approximate';
+    try {
+      expect(c.detail().demo[2].sub).toBe('Within about 5 miles of the practice \u00b7 approximate');
+    } finally { delete (p as any).incomeNote; }
+  });
+
   // ---- F-6, the Market data strip cards ----------------------------------------------------
 
+  // A21.2n/o's posture, kept through A31 (Task SNAP, D-C50 as revised) and re-measured on its own
+  // basis: the strip summarises the POLYGONS the map shades now, not the listings, so "the metro
+  // has no figure" is "no polygon carries one" — which is what `without(austin())` produces here,
+  // every polygon taking its value from the nearest community and there being none.
   it('a strip card whose metro has no figure keeps its title, source and link and shows no value (A21.2n/o)', () => {
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
     without(austin(), () => {
@@ -3636,25 +3781,358 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         expect(card.title.length).toBeGreaterThan(0);
         expect(card.src.length).toBeGreaterThan(0);
         expect(card.linkLabel.length).toBeGreaterThan(0);
-        expect(card.valueNote).toBe('metro median');
+        // Fix round 1, Minor 1 (controller, 2026-09-13): a card with NO figure carries NO
+        // caption. It used to read "metro median · 0 ZIP areas" — a caption over a blank,
+        // visible in the approved DOM oracle — and `absent beats faked` governs a caption as
+        // much as a figure. The title, the source and the link stay, which is A21.2n/o.
+        expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
       }
     });
   });
 
-  it('…and prints the metro median over the DEFINED values only when some are missing', () => {
+  // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12). This case used to prove the median was
+  // taken over the DEFINED listings only; the basis has moved, so it proves the property that
+  // replaced it — the AREA card is the metro's own distribution, measured over the polygons the
+  // map shades, and its bars are the five quantiles of that distribution rather than the first
+  // seven hospitals in listing order.
+  it('an AREA card is the metro polygons’ own median and its five quantiles, never the listings’', () => {
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
-    const all = c.renderVals().md.stripCards;
-    const households = all.filter((x: any) => x.title === 'Households')[0];
-    const nine = austin();
-    // Drop the two lowest-household communities: a median over nine becomes a median over seven,
-    // and the old `num(raw)` coercion would instead have pushed two ZEROS to the bottom of the
-    // sort and moved the median the other way.
-    const byHh = nine.slice().sort((a, b) => Number(String(a.hh).replace(/[^0-9]/g, '')) - Number(String(b.hh).replace(/[^0-9]/g, '')));
-    without(byHh.slice(0, 2), () => {
-      const card = c.renderVals().md.stripCards.filter((x: any) => x.title === 'Households')[0];
-      expect(card.bars, 'one bar per community that HAS the figure').toHaveLength(7);
-      expect(card.value).not.toBe(households.value);
-      expect(card.value).not.toContain('0K0');
+    const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const own = c.summarySet();
+    expect(card.value).toBe(c.fmtMetric('households', own.households.median));
+    expect(card.bars, 'five bars: p10, p25, p50, p75, p90').toHaveLength(5);
+    // Fix round 1, the Addendum (controller, 2026-09-13): the caption states exactly what the
+    // number IS and drops the word "metro". Measured on QA: this card would read "$95K metro
+    // median" for income (percentile_cont over the metro's valued tracts) while the Census
+    // PUBLISHES a metro median for CBSA 12420 — 97,638 ± 1,163 at summary level 310 — so a
+    // stakeholder reading "$95K metro median" beside a Census metro median of "$98K" has a
+    // fourth number to explain. A median OF 503 tracts is what this is, and now what it says.
+    expect(card.valueNote).toBe(`median of ${own.households.with_value.toLocaleString()} Census tracts`);
+    expect(card.valueNote, 'the caption still claims to be the metro\u2019s own median').not.toContain('metro');
+    // The defect the ruling names, in one assertion: a Census tract holds about 1,500 households
+    // and a listing's five-mile ring holds six figures, so the two bases are an order of
+    // magnitude apart — the card must be on the tract's side of that gap.
+    const listings = c.communities().map((x: { hh: number }) => x.hh).filter((v: number) => v != null).sort((a: number, b: number) => a - b);
+    const listingMedian = listings[Math.floor(listings.length / 2)];
+    expect(card.value, 'the card is still the median of the LISTINGS’ own ring totals')
+      .not.toBe(c.fmtMetric('households', listingMedian));
+    // …and the bars are a DISTRIBUTION: they rise, because quantiles are sorted. The old ones were
+    // hospitals in listing order and had no order at all.
+    const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
+    expect(heights, 'the bars are not ordered, so they are not a distribution')
+      .toEqual([...heights].sort((a, b) => a - b));
+  });
+
+  // ---- A31, the two modes (Task SNAP, ruling D-C50 as revised, 2026-09-12) -------------------
+
+  it('AREA is the default, and it names the geography and the count it summarised', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const md = c.renderVals().md;
+    expect(md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
+    expect(md.hasStripModeSub).toBe(true);
+    expect(md.stripModeSub).toBe('Census areas across the metro, as the map shades them');
+    // Every card names the MAP's geography, which is what it now measures — the interim
+    // per-listing basis (A24.53's `stripBasis`) is gone with the figures it described.
+    const income = md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0];
+    expect(income.src).toBe('U.S. Census ACS 5-year estimates (2023) · Census tract');
+  });
+
+  it('growth\u2019s source line composes like the other five (A31.12c, fix round 1 Minor 3)', () => {
+    // `LAYER_META.growth` was the one layer left carrying a whole `source` SENTENCE ending
+    // "\u00b7 community level" while its AREA card measures PLACE polygons and `AREA_LABEL.growth`
+    // is "Place (city/town)" — so the vaguer wording stood on the card AND on the map legend,
+    // which is what A24.45's split (income, households, competition) had corrected for the
+    // others. It carries the DATASET now and `metaSource` composes the rest for the surface
+    // that prints it, which is one string per fact.
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const growth = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(growth.src).toBe('U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …the LEGEND takes the same composition, which is where the vaguer wording also stood.
+    c.setState({ mdValue: 'growth' });
+    expect(c.renderVals().md.active.sourceLine)
+      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+    // …and LOCATION mode carries the dataset alone, as the other five do (A31.12).
+    c.setState({ mdValue: 'income', mdSel: austin()[0].id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0].src)
+      .toBe('U.S. Census ACS population estimates, 2015\u20132023');
+  });
+
+  it('selecting a practice switches the strip to LOCATION and to that practice’s own figures', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const area = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    const md = c.renderVals().md;
+    expect(md.stripMode).toBe(`LOCATION · ${c.practiceName(p)}`);
+    // Both words are never shown at once — the ruling's own requirement.
+    expect(md.stripMode.includes('AREA')).toBe(false);
+    const card = md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const own = c.communities().filter((x: { id: string }) => x.id === p.id)[0];
+    expect(card.value).toBe(c.fmtMetric('households', own.hh));
+    expect(card.value, 'LOCATION printed the metro figure').not.toBe(area.value);
+    expect(card.valueNote, 'the AREA caption’s "median of N areas" wording reached LOCATION mode').not.toContain('median of');
+    // The bars stay the METRO's distribution, so the card says WHERE the practice sits: same
+    // count, same heights, and exactly the classes the practice is NOT in are dimmed.
+    expect(card.bars).toHaveLength(area.bars.length);
+    const height = (b: { style: string }) => /height: (\d+)px/.exec(b.style)![1];
+    expect(card.bars.map(height)).toEqual(area.bars.map(height));
+    const dimmed = card.bars.filter((b: { style: string }) => b.style.includes('opacity: .6'));
+    expect(dimmed.length, 'no bar is highlighted, so the card says nothing about where it sits')
+      .toBeLessThan(card.bars.length);
+    expect(area.bars.some((b: { style: string }) => b.style.includes('opacity')), 'AREA mode dims a bar')
+      .toBe(false);
+  });
+
+  it('closing the panel returns the strip to AREA', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: austin()[0].id });
+    expect(c.renderVals().md.stripMode).toContain('LOCATION');
+    c.renderVals().md.closePanel();
+    expect(c.renderVals().md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
+  });
+
+  it('LOCATION mode on a practice the API has no figures for shows no value, and no bar is dimmed', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const p = austin()[0];
+    const saved = { hh: p.hh };
+    (p as unknown as { hh: unknown }).hh = null;
+    try {
+      c.setState({ mdSel: p.id });
+      const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+      expect(card.value).toBeUndefined();
+      // The metro's shape is still drawn — the absence is the PRACTICE's, not the metro's — and
+      // nothing is highlighted, because there is no figure to place.
+      expect(card.bars.length).toBeGreaterThan(0);
+      expect(card.bars.every((b: { style: string }) => !b.style.includes('opacity'))).toBe(true);
+    } finally { (p as unknown as { hh: unknown }).hh = saved.hh; }
+  });
+
+  it('with a `market` adapter present and NO summary the cards show nothing — never the listings’ median', () => {
+    // A-SL23 (2)'s posture, one surface over: with an adapter the strip describes what the API
+    // answered or nothing at all. The figure it must never fall back to is the one D-C50 removed.
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: {} });
+    const cards = withAdapter.renderVals().md.stripCards;
+    for (const card of cards) {
+      expect(card.value, `${card.title} fell back to the listings' own median`).toBeUndefined();
+      expect(card.bars).toEqual([]);
+      expect(card.valueNote, `${card.title} captions a figure it does not have`).toBeUndefined();
+      expect(card.src.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('the AREA bars are classed on the MAP’s own breaks, not the community scale', () => {
+    // MEASURED, and the reason the third argument is there at all: a Census tract holds about
+    // 1,500 households and `VALUE_LAYERS.households` starts at 10,000, so on the community scale
+    // every one of the five quantiles lands in class 0 and the card draws five identical 6 px
+    // stubs — the same collapse A24.25 cut `AREA_LAYERS` to remove on the map. These are the
+    // map's polygons, so they take the map's classes.
+    const quantiles = [900, 1200, 1500, 1900, 2400];
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles } }
+    });
+    const card = withAdapter.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    const drawn = card.bars.map(colour);
+    // Both scales are NAMED and the MAP's is the one required — an assertion that only checked
+    // "the colours differ" would pass on any third scale somebody introduced later. The expected
+    // colour is the one the MAP paints that value (`bucket(…, true).color`, `areaVals`' own door).
+    expect(drawn).toEqual(quantiles.map((v) => withAdapter.bucket('households', v, true).color));
+    expect(drawn, 'the bars are drawn on the COMMUNITY scale, which collapses a tract distribution')
+      .not.toEqual(quantiles.map((v) => withAdapter.bucket('households', v).color));
+    expect(new Set(drawn).size, 'every bar is one colour — the distribution collapsed').toBeGreaterThan(1);
+    expect(new Set(quantiles.map((v) => withAdapter.bucket('households', v).t)).size,
+      'the community scale no longer collapses these values, so this case proves nothing').toBe(1);
+    // …and the heights follow the same classes, so the shape is the distribution's and not a flat row.
+    const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
+    expect(new Set(heights).size).toBeGreaterThan(1);
+  });
+
+  // A31.13 (fix round 1, 2026-09-13). The case above proved colour identity for `households`
+  // ALONE, and passed for a reason that does not generalise: A31.8 painted each bar with
+  // `ramp(k)[Math.min(3, Math.round(t * 3))]` — the design's own pre-A31 expression — which can
+  // only address indices 0–3, and the households ramp happens to carry exactly four colours.
+  // `income`'s carries FIVE: `t = i / 4` for i = 0–4, so `Math.round(t * 3)` maps classes 2 and 3
+  // onto ONE colour and can never reach class 4 at all. The strip drew a five-class distribution
+  // in four colours, two of them the same, while the map beside it painted five — which is
+  // exactly what A31.8's own comment ("the strip and the legend then agree about what colour a
+  // tract's figure is") claimed it did not. The bars take the colour from the SAME door the
+  // polygons do, `bucket(k, v, true)`, so that sentence is true for all six layers.
+  it('every strip bar is the colour the MAP paints that value — all six layers (A31.13)', () => {
+    const QUANTILES: Record<string, number[]> = {
+      income: [30000, 60000, 85000, 120000, 180000],
+      pets: [400, 700, 900, 1000, 1500],
+      competition: [3, 5, 7, 9, 12],
+      growth: [-2, 2, 7, 10, 20],
+      households: [900, 1200, 1500, 1900, 2400],
+      econ: [300000, 500000, 700000, 800000, 1000000]
+    };
+    const TITLE: Record<string, string> = {
+      income: 'Median household income', pets: 'Pet ownership (estimated)',
+      competition: 'Veterinary competition', growth: 'Population growth',
+      households: 'Households', econ: 'Average practice payroll'
+    };
+    const summary: Record<string, unknown> = {};
+    for (const k of Object.keys(QUANTILES)) {
+      summary[k] = { layer: k, geo_label: 'Census tract', with_value: 503, median: QUANTILES[k][2], quantiles: QUANTILES[k] };
+    }
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: summary });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    for (const k of Object.keys(QUANTILES)) {
+      const card = cards.filter((x: { title: string }) => x.title === TITLE[k])[0];
+      expect(card, `no card titled "${TITLE[k]}"`).toBeDefined();
+      expect(card.bars.map(colour), `${k}'s bars are not the colours the map paints those values`)
+        .toEqual(QUANTILES[k].map((v) => withAdapter.bucket(k, v, true).color));
+    }
+    // The measurement that names the defect: income's ramp has FIVE colours and its five
+    // quantiles fall in five different classes, so five distinct colours must be drawn — and
+    // the TOP one, which `Math.round(t * 3)` could never address, must be among them.
+    const incomeDrawn = cards.filter((x: { title: string }) => x.title === TITLE.income)[0].bars.map(colour);
+    expect(new Set(incomeDrawn).size, 'two of income\u2019s five classes collapsed onto one colour').toBe(5);
+    expect(incomeDrawn[4], 'the top income class can never appear on a bar').toBe(withAdapter.bucket('income', QUANTILES.income[4], true).color);
+  });
+
+  it('LOCATION highlights only where the practice and the metro are ONE measurement', () => {
+    // The practice's figure is its five-mile ring's and the metro's is a tract's, a place's or a
+    // county's. Those are the same scale only for a RATE or a MEDIAN — exactly the layers
+    // `AREA_LAYERS` does not re-scale — so a COUNT layer carries the distribution undimmed rather
+    // than marking a ring's household count inside a distribution of tract counts, which is this
+    // ruling's own defect one card over.
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: austin()[0].id,
+      mdSummary: {
+        households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles: [900, 1200, 1500, 1900, 2400] },
+        income: { layer: 'income', geo_label: 'Census tract', with_value: 1791, median: 92150, quantiles: [48200, 67400, 92150, 121300, 158900] }
+      }
+    });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const dimmed = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0]
+      .bars.filter((b: { style: string }) => b.style.includes('opacity: .6')).length;
+    // A median IS comparable across geographies, so the practice's class is marked…
+    expect(dimmed('Median household income'), 'no bar is dimmed on a layer where the comparison holds').toBeGreaterThan(0);
+    // …and a COUNT is not, so nothing is marked, while the distribution itself is still drawn.
+    expect(dimmed('Households'), 'a ring’s household count was marked inside a distribution of tract counts').toBe(0);
+    expect(cards.filter((x: { title: string }) => x.title === 'Households')[0].bars).toHaveLength(5);
+    // The premise, asserted rather than assumed: `AREA_LAYERS` is what tells the two apart, and it
+    // names exactly the three COUNT layers.
+    expect(dimmed('Median household income') + dimmed('Households')).toBeGreaterThan(0);
+  });
+
+  // ---- A31.12 (fix round 1, 2026-09-13): the caption over a figure is that figure's own ------
+
+  it('LOCATION mode never puts the ring caption over a figure that is not the ring\u2019s (A31.12)', () => {
+    // D-C48 (John, 2026-09-11), applied to this surface. In LOCATION mode every card read the
+    // listing's own `communityLabel` — "Within about 5 miles of the practice" — while `growth`
+    // is served at place-or-county with its own `growth_scope` and `econ` is the COUNTY CBP row
+    // everywhere and always (`app/census/serve.py`: "`econ_k` is county everywhere and always").
+    // On 28 of 29 QA listings that sentence was false on two of the six cards: the exact defect
+    // D-C48 removed from the docked panel's Population tile one day earlier.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { growthScope: string }).growthScope = 'Dallas';
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const note = (title: string) => c.renderVals().md.stripCards
+        .filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Population growth'), 'growth is measured at place or county, not at the ring').toBe('Dallas');
+      expect(note('Average practice payroll'), 'payroll is the county CBP row, everywhere and always').toBe('surrounding county');
+      // …and the four figures the ring DOES describe keep the ring's own label.
+      expect(note('Median household income')).toBe(ring);
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+      expect(note('Veterinary competition')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { growthScope?: string }).growthScope;
+    }
+  });
+
+  it('the income card carries the API\u2019s own approximate qualifier (A31.12, D-C51)', () => {
+    // The catchment median is a household-weighted median of tract medians — never published and
+    // never suppressible — so the API qualifies it with `income_note` ("Within about 5 miles of
+    // the practice · approximate", `app/census/serve.py`). The DETAIL card has rendered that since
+    // A27.1; the strip printed the bare ring label beside the same number, so one figure was
+    // qualified on one surface and not on the other.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    (p as unknown as { incomeNote: string }).incomeNote = `${ring} \u00b7 approximate`;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const note = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].valueNote;
+      expect(note('Median household income')).toBe(`${ring} \u00b7 approximate`);
+      // …and the other five are untouched by it: the qualifier belongs to the median alone.
+      expect(note('Households')).toBe(ring);
+      expect(note('Pet ownership (estimated)')).toBe(ring);
+    } finally {
+      delete (p as unknown as { communityLabel?: string }).communityLabel;
+      delete (p as unknown as { incomeNote?: string }).incomeNote;
+    }
+    // With no note served — the reference path, and every approved state: the design's fixtures
+    // carry no `incomeNote` and `load.ts` leaves the key off where the API sends null.
+    expect('incomeNote' in (p as object), 'the fixture carries a note, so this proves nothing').toBe(false);
+    c.setState({ mdSel: p.id });
+    expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0].valueNote)
+      .toBe('community level');
+  });
+
+  it('growth names the geography the API supplies, and A24.20\u2019s own phrase where it supplies none (A31.12)', () => {
+    // The design's own fixtures carry no `growth_scope` — `load.ts` leaves the key OFF the
+    // practice where the API sends null — so the fallback is what the reference and every
+    // approved state render, and it is A24.20's own wording for the same fact.
+    const p = austin()[0];
+    expect('growthScope' in (p as object), 'the fixture carries a scope, so this proves nothing').toBe(false);
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+    const card = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    expect(card.valueNote).toBe('surrounding city or county');
+  });
+
+  it('in LOCATION mode the source line carries the DATASET alone \u2014 one string per fact (A31.12)', () => {
+    // A24.44–A24.57's own rule, measured on this surface: with the basis on both the mode
+    // sub-line and each card's own `valueNote`, the `src` line repeating it printed the
+    // geography TEN times on one strip, four cards printing it twice. The card's own note
+    // carries the geography; the source line carries where the number came from.
+    const ring = 'Within about 5 miles of the practice';
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    try {
+      c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id });
+      const cards = c.renderVals().md.stripCards;
+      const src = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0].src;
+      expect(src('Median household income')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Households')).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(src('Veterinary competition')).toBe('U.S. Census ZIP Code Business Patterns (2022), NAICS 541940');
+      for (const card of cards) {
+        expect(card.src.endsWith(' \u00b7 '), `${card.title}'s source line ends in a dangling separator`).toBe(false);
+        expect(card.src, `${card.title} prints the basis twice`).not.toContain(ring);
+      }
+      // AREA mode is untouched: there the card measures the MAP's polygons and names them,
+      // exactly as the legend and the tip do (A24.49/A24.50).
+      c.setState({ mdSel: null });
+      expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+        .toBe('U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract');
+    } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
+  });
+
+  it('loadSummary discards an answer for a metro the member has already left', () => {
+    let resolveIt: (v: unknown) => void = () => {};
+    const adapter = {
+      boundaries: () => new Promise(() => {}),
+      summary: () => new Promise((res) => { resolveIt = res; })
+    };
+    const withAdapter = new Component({ market: adapter } as never);
+    withAdapter.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    withAdapter.loadSummary(AUSTIN);
+    withAdapter.setState({ market: 'Orlando, FL' });
+    resolveIt({ income: { layer: 'income', geo_label: 'Census tract', with_value: 9, median: 1, quantiles: [1, 1, 1, 1, 1] } });
+    return Promise.resolve().then(() => {
+      expect(withAdapter.state.mdSummary, 'Austin’s answer was painted over Orlando').toBeNull();
     });
   });
 
@@ -3779,17 +4257,38 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     });
   });
 
-  it('A25.3 — …and the strip cards still count its figures, because a figure is not a point', () => {
+  // SUPERSEDED BY A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12), and re-pointed rather than
+  // deleted, because the RULE it defends is unchanged and the surface it defended it on has moved.
+  //
+  // A25.3 held that an unlocated listing keeps its place in everything that is not the map: the
+  // rail, the count, the sort, the filters — and, then, the snapshot strip, because the strip was
+  // a median of the LISTINGS' own figures and a figure is not a point. D-C50 removed that basis:
+  // in AREA mode the strip summarises the POLYGONS the map shades, so a listing with no point
+  // cannot reach it, by construction and correctly — on the real API those figures are the
+  // Census's and no listing contributes to them at all. What the case measures now is that the
+  // rest of A25.3 still holds, and that the strip follows the MAP rather than diverging from it,
+  // which is the whole of the ruling in one line.
+  it('A25.3 — an unlocated listing keeps its place in the rail, and the strip follows the MAP', () => {
     const p = austin()[0];
     const before = c.marketVals(c.filtered());
     at([p], null, null, () => {
       const md = c.marketVals(c.filtered());
       // The premise, asserted rather than assumed (fix round 1, Minor-3): the MAP's list really
-      // did lose the unlocated community. Without this the case only discriminates because
-      // dropping one of nine values happens to move a median.
+      // did lose the unlocated community.
       expect(md.communities.length, 'the map list did not shrink, so this control proves nothing')
         .toBeLessThan(c.communities().length);
-      expect(md.stripCards.map((s: any) => s.value)).toEqual(before.stripCards.map((s: any) => s.value));
+      // The listing itself is untouched everywhere the map is not: it is still in the results.
+      expect(md.mdResults.map((r: { name: string }) => r.name), 'the rail lost an unlocated listing')
+        .toEqual(before.mdResults.map((r: { name: string }) => r.name));
+      // …and the strip describes the same polygons the map draws, which is what D-C50 ruled: it
+      // reads `summarySet()` — the distribution over `areaSet`'s own features — so it moves when
+      // and only when the map moves. `before` is kept as the control that it DID move: the
+      // unlocated listing was the nearest community to some of those polygons.
+      const fromMap = c.summarySet();
+      expect(md.stripCards.map((s: { value: string }) => s.value))
+        .not.toEqual(before.stripCards.map((s: { value: string }) => s.value));
+      const income = md.stripCards.filter((s: { title: string }) => s.title === 'Median household income')[0];
+      expect(income.value).toBe(c.fmtMetric('income', fromMap.income.median));
     });
   });
 
@@ -3797,16 +4296,19 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
   // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
   // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
   // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
-  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
-  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
-  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
-  // finite-coordinate test the pin list uses.
+  // listing drew a dashed circle around the middle of Austin. That is worse than the missing pin
+  // it replaced: a missing pin omits, a ring centred on a place the practice is not ASSERTS
+  // something false. A25.6 gives `showDrive` the same finite-coordinate test the pin list uses.
+  //
+  // A28.1 (D-C44, 2026-09-11) moved that circle from 16 km to 8 km and changed nothing here: the
+  // discriminator is the BOOLEAN, not the radius, so this case is as live after the ruling as
+  // before it — verified by perturbation, `showDrive: !!sel` still fails it.
   it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
     const p = austin()[0];
     at([p], null, null, () => {
       c.setState({ mdSel: p.id });
       const md = c.marketVals(c.filtered());
-      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      expect(md.showDrive, 'an 8 km drive-time ring was painted around the metro centre').toBe(false);
       // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
       expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
     });
@@ -4507,5 +5009,1151 @@ describe('A26 (Q2) — opening any one of the four menus closes the other three 
     c.renderVals().toggleNavMenu();
     c.renderVals().toggleMarketMenu();
     expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A24 — real Census boundary polygons (John's rulings D-C34–D-C37, 2026-09-10) and D-C46's
+// re-scaled growth breaks (2026-09-11). Every branch the amendment adds to the design's script
+// is characterised here; `logic.js` itself is never hand-edited.
+// ---------------------------------------------------------------------------------------
+describe('A24 — real boundary polygons', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
+  const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
+  const feat = (props: Record<string, unknown>) => ({
+    type: 'Feature', geometry: null,
+    properties: { geo_id: 'g', name: 'g', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false, ...props }
+  });
+
+  it('areaSet gives every polygon the value of the NEAREST community, at the ruled geography', () => {
+    const set = c.areaSet('income');
+    expect(set.features.length, 'the design fixture has no tract features').toBeGreaterThan(0);
+    for (const f of set.features) {
+      expect(f.properties.geo_id).toBe(f.id);
+      expect(f.properties.moe).toBeNull();
+      expect(f.properties.suppressed).toBe(false);
+      expect(f.properties.band_ambiguous).toBe(false);
+      expect(f.geometry).toBeTruthy();
+    }
+    // Every design community carries an income, so no tract comes out null on this layer.
+    expect(set.features.every((f: any) => typeof f.properties.value === 'number')).toBe(true);
+    // The three geographies are D-C35's, and each layer reads its OWN level — `growth` sees the
+    // places and `econ` the counties, so a layer promoted into a finer slot fails here.
+    expect(c.areaSet('growth').features.length).toBe(c.state.areas['160'].features.length);
+    expect(c.areaSet('econ').features.length).toBe(c.state.areas['050'].features.length);
+    expect(set.features.length).toBe(c.state.areas['140'].features.length);
+  });
+
+  it('areaSet returns a collection for every layer with a geography, and none for no layer at all', () => {
+    // A24.24 (D-L1, 2026-09-12) INVERTS the half of this case that asserted `pets`, `households`
+    // and `competition` had no geography: all three shade now. The two ACS counts take the tract,
+    // beside income, and read the design's own tract fixture; `competition` takes the ZCTA, which
+    // the design's fixture does not carry at all — so it is EMPTY on the reference path, and
+    // empty is the honest answer there rather than a fabricated one.
+    for (const k of ['households', 'pets']) expect(c.areaSet(k).features.length).toBe(c.state.areas['140'].features.length);
+    expect(c.areaSet('competition').features, 'the design fixture carries no ZCTAs').toEqual([]);
+    expect(c.areaSet(null).features).toEqual([]);
+    expect(c.areaSet(undefined).features).toEqual([]);
+  });
+
+  // The nearest-community rule itself, on a fixture whose answer is knowable: two communities,
+  // one far away, so every polygon must take the near one's figure.
+  it('areaSet measures to the community centroid with the mosaic\'s own cos(lat) scaling', () => {
+    const near = { id: 'n', name: 'Near', lat: 30.31, lng: -97.75, income: 111111 };
+    const far = { id: 'f', name: 'Far', lat: 45.0, lng: -120.0, income: 222222 };
+    c.communities = () => [far, near];
+    expect(new Set(c.areaSet('income').features.map((f: any) => f.properties.value))).toEqual(new Set([111111]));
+    // A community with no usable point is skipped, exactly as A25 skips it for a pin.
+    c.communities = () => [{ id: 'x', name: 'X', lat: null, lng: null, income: 9 }];
+    expect(c.areaSet('income').features.every((f: any) => f.properties.value === null)).toBe(true);
+  });
+
+  // Global Constraint (c), and a real trap: `num()` strips every character but digits and a dot,
+  // so `num(-5.1)` is `5.1`. Routing a growth figure through it would paint a DECLINING place as
+  // a growing one — silently, and only for the sign that D-C46 exists to make visible.
+  it('a negative growth figure keeps its sign all the way to the fill', () => {
+    c.communities = () => [{ id: 'd', name: 'Declining', lat: 30.31, lng: -97.75, growth: -5.1 }];
+    const set = c.areaSet('growth');
+    expect(set.features[0].properties.value).toBe(-5.1);
+    const out = c.areaVals(set, 'growth');
+    expect(out.features[0].properties.label).toBe('-5.1%');
+    expect(out.features[0].properties.color, 'a decline took a growth band').toBe(c.bucket('growth', -5.1).color);
+    expect(out.features[0].properties.color).not.toBe(c.bucket('growth', 5.1).color);
+  });
+
+  it('areaVals colours a measured value through bucket() and labels it through fmtMetric()', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78704', name: 'ZCTA5 78704', value: 92150, moe: 6420 })]), 'income');
+    expect(out.features[0].properties.color).toBe(c.bucket('income', 92150).color);
+    expect(out.features[0].properties.label).toBe(c.fmtMetric('income', 92150));
+    expect(out.features[0].properties.tip).toContain('ZCTA5 78704');
+    expect(out.features[0].id).toBe('78704');
+    // Nothing but a FeatureCollection is required of the caller: an absent one is empty, not a throw.
+    expect(c.areaVals(null, 'income').features).toEqual([]);
+    expect(c.areaVals({}, 'income').features).toEqual([]);
+  });
+
+  // Global Constraint (c) again: the producer's sentinel, measured rather than assumed. A MISSING
+  // value is `value: null` with `suppressed: false` — that is what `_suppression(None, None)`
+  // returns and what the endpoint will serialise — so a guard on `suppressed` alone would paint a
+  // null as a measured figure.
+  it('a null value takes the no-data class even though it is not suppressed', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78745', name: 'ZCTA5 78745', value: null })]), 'income');
+    expect(out.features[0].properties.color).toBe('#e6e6e6');
+    expect(out.features[0].properties.label).toBe('No data');
+    expect(out.features[0].properties.tip).toContain('No data for this area');
+    // …and so does a SUPPRESSED value, which is a different state and the same class.
+    const sup = c.areaVals(fc([feat({ value: 92150, suppressed: true, suppress_reason: 'high_moe' })]), 'income');
+    expect(sup.features[0].properties.color).toBe('#e6e6e6');
+    expect(sup.features[0].properties.suppressed).toBe(true);
+    expect(sup.features[0].properties.suppressReason).toBe('high_moe');
+  });
+
+  it('the honesty lines are the contract\'s own wording, one per case', () => {
+    const tip = (props: Record<string, unknown>, layer = 'income') =>
+      c.areaVals(fc([feat(props)]), layer).features[0].properties.tip;
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'no_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'high_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'source_flag' })).toContain('Not published for this county');
+    expect(tip({ value: null })).toContain('No data for this area');
+    // A33.2: ± 9,000 crosses the $100K stop and nothing else, which is the design's own two-band
+    // example and a state the endpoint can actually set the flag for; ± 6,420 spans ONE band
+    // (`tests/census/test_bands.py`), so the flag is false for it on the server too.
+    expect(tip({ value: 92150, moe: 9000, band_ambiguous: true })).toContain('this margin spans two legend bands.');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: false })).not.toContain('legend bands');
+    expect(tip({ value: 12.4 }, 'growth')).toContain('No combined margin of error is published.');
+    expect(tip({ value: 640000 }, 'econ')).toContain('a census of establishments, not a sample');
+    // The tip's own shape, once: every line the reference's literal carries, in order, so a
+    // trimmed inline style is caught here rather than only by a pixel that nothing captures.
+    expect(tip({ value: 92150, moe: 6420 }).startsWith('<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">')).toBe(true);
+    expect(tip({ value: 92150, moe: 6420 })).toContain('<div style="font-size:10.5px;color:#494949;margin-top:4px">\u00b1 $6K</div>');
+  });
+
+  it('the legend names the geography and gains a No data row, for every layer that shades', () => {
+    for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County'],
+      ['households', 'Census tract'], ['pets', 'Census tract']] as const) {
+      c.state.mdValue = layer;
+      const md = c.marketVals(P);
+      const active = md.active;
+      expect(active.hasGeo).toBe(true);
+      expect(active.geoLine).toBe(label);
+      // Review round 1, Important 1 — the assertion this case was MISSING, and the reason it
+      // stepped over a layer that painted 503 of 503 polygons "No data" under a full four-class
+      // ramp: `areaSet` read `best[layer]` while `communities()` names the field `hh` for
+      // households and `vets` for competition, which the design's three OTHER readers alias. A
+      // legend is a claim about what is drawn, so a case that checks the legend and never the
+      // fill cannot see the exact lie A24.32 exists to prevent.
+      expect(md.areas.features.length, `${layer}: no polygons at all`).toBeGreaterThan(0);
+      expect(
+        md.areas.features.filter((f: { properties: { value: number | null } }) => f.properties.value !== null).length,
+        `${layer}: every polygon is valueless, so the ramp above describes nothing`
+      ).toBeGreaterThan(0);
+      expect(active.ramp[active.ramp.length - 1]).toEqual({ style: 'flex: 1; height: 9px; background: #e6e6e6;', label: 'No data' });
+      // …and exactly one such row, appended, with the design's own classes ahead of it.
+      expect(active.ramp.filter((r: { label: string }) => r.label === 'No data')).toHaveLength(1);
+    }
+    // A24.28: a shading layer with its OWN class breaks prints its own labels, not the design's
+    // community-scale ones — a legend reading "< 10K" over a map cut at 1,000 households would be
+    // the caption for a different map.
+    c.state.mdValue = 'households';
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< 1,000', '1,000–1,500', '1,500–2,000', '> 2,000', 'No data']);
+    c.state.mdValue = 'income';
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< $50K', '$50–75K', '$75–100K', '$100–150K', '> $150K', 'No data']);
+
+    // A24.32 (review finding 5): zero polygons drawn, no ramp and no geography line. On the
+    // reference path `competition` is the reachable case — the design's fixture has no ZCTAs —
+    // and on the app it is any metro the API could not answer for, Bozeman included.
+    c.state.mdValue = 'competition';
+    const nothingDrawn = c.marketVals(P).active;
+    expect(nothingDrawn.hasRamp, 'a ramp was printed over a map with no polygons').toBe(false);
+    expect(nothingDrawn.hasGeo).toBe(false);
+
+    // "No shading — practices only": no ramp at all, so no no-data row either.
+    c.state.mdValue = null;
+    const none = c.marketVals(P).active;
+    expect(none.hasGeo).toBe(false);
+    expect(none.ramp).toEqual([]);
+  });
+
+  it('md.areas is the drawable collection, taken through areaVals for the active layer', () => {
+    c.state.mdValue = 'income';
+    const md = c.marketVals(P);
+    expect(md.areas.type).toBe('FeatureCollection');
+    expect(md.areas.features.length).toBe(c.state.areas['140'].features.length);
+    for (const f of md.areas.features) {
+      expect(typeof f.properties.color).toBe('string');
+      expect(typeof f.properties.tip).toBe('string');
+    }
+    // Every shading layer is handed its own polygons now (A24.24), and a layer the fixture has
+    // no geography for is handed none rather than another layer's.
+    c.state.mdValue = 'pets';
+    expect(c.marketVals(P).areas.features.length).toBe(c.state.areas['140'].features.length);
+    c.state.mdValue = 'competition';
+    expect(c.marketVals(P).areas.features).toEqual([]);
+  });
+
+  // Fix round 2, B (2026-09-12). Measured on QA: the strip's Households card read "162K metro
+  // median · U.S. Census ACS 5-year estimates (2023) · Census tract". The 162K is the MEDIAN OF
+  // THE LISTINGS' OWN five-mile-ring totals — `stripCards` reads `comms`, one row per listing —
+  // and a Census tract holds about 1,500 households, so the caption described a geography the
+  // number is not measured at. A24.34–A24.36 made `LAYER_META.*.source` truthfully name the MAP's
+  // geography, which is right for the legend and made the strip borrow a caption that is false
+  // for it. Until D-C50 makes the strip describe the map (Task SNAP, 0.1.22) the strip must
+  // describe what it IS: the same dataset, and the practice-area basis the API already serves.
+  // SUPERSEDED BY A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) and re-pointed, not
+  // deleted: fix round 2's interim made the CAPTION honest about a per-listing median while
+  // the ruling was pending. The ruling moved the FIGURE instead, so the caption follows it —
+  // in AREA mode the card measures the map's own geography and names it, exactly as the legend
+  // and the tip do (A24.49/A24.50), and in LOCATION mode it names the selected practice's own
+  // basis. The interim's `stripBasis` and the per-community `communityLabel` it read are gone
+  // (A31.8/A31.9), so the two halves of this pair become one case about both modes.
+  it('the snapshot caption names the area its own figures describe — the map’s in AREA, the practice’s in LOCATION', () => {
+    const ring = 'Within about 5 miles of the practice';
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
+    const area = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(area.src).toBe('U.S. Census ACS 5-year estimates (2023) · Census tract');
+
+    // LOCATION: the practice's own label where the API serves one…
+    const p = austin()[0];
+    (p as unknown as { communityLabel: string }).communityLabel = ring;
+    try {
+      c.setState({ mdSel: p.id });
+      const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+      // A31.12 (fix round 1, 2026-09-13): the geography is named ONCE in LOCATION mode, on the
+      // card's own note; the source line carries the DATASET alone. One string per fact is
+      // A24.44–A24.57's own rule, and this surface was breaking it ten times over.
+      expect(card.src).toBe('U.S. Census ACS 5-year estimates (2023)');
+      expect(card.valueNote).toBe(ring);
+    } finally { delete (p as unknown as { communityLabel?: string }).communityLabel; }
+
+    // …and with no label served the note is still the design's own wording, which is the
+    // reference path and every approved state — the fixtures carry no `communityLabel` at all.
+    c.setState({ mdSel: p.id });
+    const bare = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023)');
+    expect(bare.valueNote).toBe('community level');
+
+    // The LEGEND still names the map's own geography — that is what it describes, and it has not
+    // moved: one string per fact, composed for the surface that prints it.
+    c.state.mdValue = 'households';
+    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+  });
+
+  // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
+  // median" while every Dallas listing's own API figure is "-1.5% since 2018". `num` stripped the
+  // MINUS and then concatenated the trailing year: "-1.5% since 2018" -> "1.52018" -> 1.52018,
+  // which `fmtMetric` rounds to "+1.5%" and `bucket` classes as growth. The docked panel was
+  // right all along because `communities()` uses `parseFloat` and keeps the sign; the strip is
+  // the ONE reader that goes through `num`, which is why one screen said the opposite of the
+  // other about the same city.
+  // Fix round 2, C (found by the re-review). `communities()` has its OWN growth parser, and it
+  // has the same trap `num` had: stripping everything but digits, a dot and a minus leaves the
+  // year glued to the figure — "+14.2% since 2015" parses as 14.22015. Harmless today only
+  // because `toFixed(1)` rounds it away on the one surface that prints it and no fixture sits on
+  // a class boundary; a number nothing measured is still a number nothing measured, and the two
+  // parsers are now one helper with two readers.
+  it('communities() parses a growth figure to the number it states, year and all', () => {
+    const through = (raw: string) => {
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', growth: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0].growth; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('+14.2% since 2015')).toBe(14.2);
+    expect(through('-1.5% since 2018')).toBe(-1.5);
+    expect(through('+3% since 2018')).toBe(3);
+    // The design's own zero-for-absent contract on this field is unchanged.
+    expect(through('no figure')).toBe(0);
+  });
+
+  it('num keeps a figure\'s sign and stops at the end of the number', () => {
+    // `num` is module-scoped in the ported script and the trailing export is pinned byte for byte
+    // (`app-generated.test.ts`), so it is exercised through the ONE reader whose output is a
+    // number rather than a colour: `communities()`, which the docked panel reads. Both the sign
+    // and the trailing-token trap are covered here, and the strip's own case below proves the
+    // reader that actually broke.
+    const through = (field: string, raw: string) => {
+      c.state.market = 'Austin, TX';
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', [field]: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0]; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('hh', '169,355 households').hh).toBe(169355);
+    expect(through('income', '$101,721').income).toBe(101721);
+    expect(through('pop', '81,900').pop).toBe(81900);
+    // BOTH halves of the trap in one string, through a field that really goes through `num`:
+    // the leading minus was stripped and the trailing year was CONCATENATED onto the digits, so
+    // "-1.5% since 2018" became 1.52018 — a number nothing measured, of the wrong sign.
+    expect(through('pop', '-1.5% since 2018').pop).toBe(-1.5);
+    expect(through('pop', '+11.6% since 2018').pop).toBe(11.6);
+    // The design's own zero-for-null contract is unchanged: A21.1c's guards do not go through
+    // `num`, so a caller that must tell absence from zero already does not ask this helper.
+    expect(through('hh', 'no figure').hh).toBe(0);
+  });
+
+  it('the snapshot strip reads a declining metro as declining', () => {
+    // The strip's own path, end to end: `stripCards` is the only growth reader that goes through
+    // `num`, and it classes with `bucket`, so a lost sign is both a wrong number and a wrong
+    // colour — D-C46's band below zero exists precisely so a decline reads as one.
+    // `communities()` has already parsed growth to a NUMBER and kept its sign (`parseFloat`,
+    // A24.3's own note), which is why the docked panel reads it correctly — and `num(-1.5)` is
+    // `String(-1.5)` with everything but digits and a dot stripped, so the strip lost the sign
+    // one step later. Numbers here, because that is exactly what this reader is handed.
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, growth: -1.5 },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, growth: -2.5 }
+    ];
+    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    // The design's own median rule on an even count takes the upper of the two (`sort(...)[
+    // Math.floor(n / 2)]`), so two declining communities read as the SHALLOWER decline — and the
+    // point is that it is a decline at all: this card said "+2.5%" before the fix.
+    expect(card.value, 'the strip reported a declining metro as growing').toBe('-1.5%');
+    // …and the colour follows the number: D-C46 gave growth a band below zero precisely so a
+    // decline reads as one, and `bucket` classed 1.5 into the band above it.
+    expect(card.bars[0].style).toContain(c.bucket('growth', -1.5).color);
+    expect(card.bars[0].style).not.toContain(c.bucket('growth', 1.5).color);
+  });
+
+  // A24.25/A24.26: one classifier, two tables. The choropleth asks for the breaks measured over
+  // the geography it paints; everything else on the screen keeps asking for the design's own.
+  it('the choropleth classes a count against the tract-scale breaks and the cards against the city-scale ones', () => {
+    // 1,480 households is an ordinary Census tract and an implausibly small city, and the two
+    // tables say so: the design's own breaks put every US tract in one class, which was the
+    // whole complaint.
+    expect(c.bucket('households', 1480, true).t).not.toBe(c.bucket('households', 1480).t);
+    expect(c.bucket('households', 1480).t, 'the design\'s own first class swallows every tract').toBe(0);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v, true).color)).size).toBe(4);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v).color)).size).toBe(1);
+    // A layer with no area table of its own is classed identically either way.
+    expect(c.bucket('income', 92150, true)).toEqual(c.bucket('income', 92150));
+    // A24.29: a tract-scale count is not abbreviated to the thousand it shares with 500 others.
+    expect(c.fmtMetric('households', 1446)).toBe('1,446');
+    expect(c.fmtMetric('households', 27600), 'nothing at ten thousand or above moves').toBe('28K');
+    expect(c.fmtMetric('competition', 7)).toBe('7');
+  });
+
+  // §15 (the stakeholder's own directive): a competition count states its geography on screen.
+  it('a competition tip names what it counts and the geography it counts them in', () => {
+    const tip = c.areaTip({ name: 'ZCTA5 78704', value: 7, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'competition', true);
+    expect(tip).toContain('7 veterinary practices');
+    expect(tip).toContain('within this ZIP Code Tabulation Area');
+    expect(tip).toContain('authoritative geography');
+    // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
+    const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
+    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
+  });
+
+  // D-C46 (John, 2026-09-11). Measured against ACS 2014-2018 -> 2019-2023 place populations; the
+  // band below zero is the ruling's own point, so it is asserted as a band and not as a label.
+  it('A24.13 — the growth breaks carry a band below zero, and a decline never shares a class with growth', () => {
+    const band = (v: number) => c.bucket('growth', v).color;
+    expect(band(-12)).toBe(band(-0.1));
+    expect(band(-0.1), 'a decline is in the same class as a 9 % rise — D-C46\'s own defect').not.toBe(band(9));
+    // Four distinct classes over the real range, which is what "still all one colour" was about.
+    expect(new Set([band(-5), band(2), band(9), band(24)]).size).toBe(4);
+    expect(band(0), 'zero is growth, not decline: the stop is inclusive upward').toBe(band(4.9));
+    expect(band(15)).toBe(band(200));
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the `market` adapter. The seam A16 and A17 established, keyed on adapter
+// PRESENCE and never on data (A16.1's shape, A-SL23 (2)). The design's own fixture is the
+// AUSTIN metro carrying the design's own nine figures, so the one thing that must never happen
+// is it being drawn over a real metro: every arm below ends either on the API's polygons or on
+// none, and never on `areaSet`.
+// ---------------------------------------------------------------------------------------
+describe('A24 — the market adapter', () => {
+  const FC = (ids: string[]) => ({
+    type: 'FeatureCollection',
+    features: ids.map((id) => ({
+      type: 'Feature', id,
+      properties: { geo_id: id, name: id.toUpperCase(), value: 60000, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      geometry: null
+    }))
+  });
+  const adapter = (areas: Record<string, unknown>) => ({ boundaries: () => Promise.resolve(areas) });
+  const drawn = (comp: any) => comp.marketVals(P).areas.features.map((f: any) => f.properties.geo_id);
+
+  it("with an adapter present the map draws the API's polygons and NEVER the design's fixture", async () => {
+    const api = { income: FC(['x']) };
+    const comp: any = new Component({ market: adapter(api) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toBe(api);
+    expect(drawn(comp)).toEqual(['x']);
+  });
+
+  it('an EMPTY answer empties the map — it does not fall back to the fixture', async () => {
+    const comp: any = new Component({ market: adapter({}) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('a REFUSED load empties the map too, and the rejection arm exists', async () => {
+    const comp: any = new Component({ market: { boundaries: () => Promise.reject(new Error('404')) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it("with NO adapter the design's own fixture path runs, untouched", () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    expect(comp.state.mdAreas).toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
+  });
+
+  it('changing the metro reloads the polygons for the metro chosen', async () => {
+    const asked: string[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string) => { asked.push(n); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it("a metro change CLEARS the previous metro's polygons before it asks, so no city is ever drawn over another", async () => {
+    let settle: (v: unknown) => void = () => {};
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => { settle = r; }) } });
+    comp.componentDidMount();
+    settle({ income: FC(['austin'] ) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['austin']);
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is asked for').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+    settle({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('an answer for a market the member has already left is DISCARDED, however late it lands', async () => {
+    const pending: ((v: unknown) => void)[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => pending.push(r)) } });
+    comp.componentDidMount();          // asks for Austin
+    comp.setMarket('Sacramento, CA');  // asks for Sacramento
+    pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+    // Austin's answer arrives second. Last-write-wins would strand Austin's outlines over
+    // Sacramento's map indefinitely; the guard drops it instead.
+    pending[0]({ income: FC(['austin']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it("a late REJECTION for a market already left does not empty the market the member is on", async () => {
+    const pending: { reject: (e: unknown) => void }[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((_r, reject) => pending.push({ reject })) } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    pending[1].reject(new Error('nope'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    pending[0].reject(new Error('Austin, late'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas, "Austin's refusal is not Sacramento's") .toEqual({});
+  });
+
+  // -----------------------------------------------------------------------------------
+  // A24.21-A24.23 (2026-09-12) — the map asks for the ground it is SHOWING. The route has taken
+  // a `bbox` since Task 9 and the adapter never sent one, so every request was for the whole
+  // metro envelope: 5,935 Census tracts in New York where the view holds 3,706. The caps were
+  // re-measured for Census tracts the same day (`MAX_FEATURES = 12000`, `MAX_BODY_BYTES =
+  // 6_000_000`), so the metro request is no longer refused — it is simply an answer nobody asked
+  // for, and the box is what keeps it the size of the screen.
+  //
+  // The adapter's own `viewport()` is BOTH the box that is sent and the token an arriving answer
+  // is checked against — one value, so the guard cannot drift from the request. An adapter
+  // WITHOUT it (every case above, and any older build) keeps the whole-metro behaviour exactly.
+  // -----------------------------------------------------------------------------------
+  const viewportAdapter = (boxes: string[]) => {
+    const calls: { market: string; bbox: string | null }[] = [];
+    const subs: (() => void)[] = [];
+    const pending: ((v: unknown) => void)[] = [];
+    return {
+      calls, pending,
+      move: (box: string) => { boxes.unshift(box); subs.forEach((s) => s()); },
+      unsubscribed: () => subs.length === 0,
+      adapter: {
+        viewport: () => boxes[0] ?? null,
+        onViewport: (cb: () => void) => { subs.push(cb); return () => { subs.length = 0; }; },
+        boundaries: (market: string, bbox: string | null) => {
+          calls.push({ market, bbox });
+          return new Promise((r) => pending.push(r));
+        }
+      }
+    };
+  };
+
+  it('asks for NOTHING until a map has said what it is looking at — no doomed whole-metro request', () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.calls).toEqual([]);
+    expect(comp.state.mdAreas).toBeNull();
+  });
+
+  it('asks with the box the map published, the moment it publishes one', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('-74.2,40.1,-72.8,40.9');
+    expect(a.calls).toEqual([{ market: 'Austin, TX', bbox: '-74.2,40.1,-72.8,40.9' }]);
+    a.pending[0]({ income: FC(['tract-a']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['tract-a']);
+  });
+
+  it('KEEPS the polygons on screen while a pan reloads — a pan is not a metro change', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.pending[0]({ income: FC(['before']) });
+    await Promise.resolve();
+    a.move('box-2');
+    expect(comp.state.mdAreas, 'the map went blank mid-pan').not.toBeNull();
+    expect(drawn(comp)).toEqual(['before']);
+    a.pending[1]({ income: FC(['after']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['after']);
+  });
+
+  it('DISCARDS an answer for a box the member has already panned off, the market guard extended', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.move('box-2');
+    a.pending[1]({ income: FC(['box-2']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['box-2']);
+    a.pending[0]({ income: FC(['box-1']) });
+    await Promise.resolve();
+    expect(drawn(comp), "box-1's answer landed on box-2's map").toEqual(['box-2']);
+  });
+
+  // -----------------------------------------------------------------------------------
+  // A32 (2026-09-12) — a metro change waits for the map to move before it asks.
+  //
+  // Measured on QA `db8bf67` (New York, 1,912 x 1,228): a metro switch pulled the whole metro
+  // TWICE, 24 requests and 7.85 MB gzipped. `setMarket` runs BEFORE the map has moved, so the
+  // request it issues carries the box the OLD metro is still settled on; on a wide screen that
+  // box is past the route's span cap, the adapter's ladder falls back to the whole metro and pays
+  // for it, and `loadAreas`'s own guard then discards the answer because the settled view has
+  // moved on by the time it lands. The listener repeats the sequence and THAT answer is drawn.
+  //
+  // The first request was never answerable, so it is not made. The shading goes PENDING —
+  // `mdAreas: null`, the state A24.41 keeps the legend's ramp and geography line for — and the
+  // settled-view listener asks once, with the box the new metro has actually settled on.
+  //
+  // NOT a guess about where the box is. The boundaries route is bbox-scoped and metro-agnostic
+  // (`_BOUNDARY_SQL` filters on level, vintage and `ST_Intersects(geom, bbox)` and never on the
+  // CBSA), so shading FOLLOWS a member who pans off the selected metro, and a client that refused
+  // to ask on geometry would blank exactly that. This asks the same questions, in the order that
+  // makes them answerable.
+  // -----------------------------------------------------------------------------------
+  it('a metro change asks for NOTHING until the map has moved, and goes pending meanwhile', () => {
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.pending[0]({ income: FC(['austin']) });
+    comp.setMarket('Sacramento, CA');
+    expect(a.calls.map((c) => c.market), 'Sacramento was asked for with Austin\'s box').toEqual(['Austin, TX']);
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is chosen').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('…and the settled-view listener then asks ONCE, for the new metro with the new box', async () => {
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    a.move('box-sacramento');                    // the map has moved and settled
+    expect(a.calls).toEqual([
+      { market: 'Austin, TX', bbox: 'box-austin' },
+      { market: 'Sacramento, CA', bbox: 'box-sacramento' }
+    ]);
+    a.pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('the SAME metro re-selected asks immediately — there is no move to wait for', () => {
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Austin, TX');
+    expect(a.calls).toEqual([
+      { market: 'Austin, TX', bbox: 'box-austin' },
+      { market: 'Austin, TX', bbox: 'box-austin' }
+    ]);
+  });
+
+  it('a metro the catalogue no longer holds asks immediately too — there is no centre to compare', () => {
+    // `load.ts` prunes `MARKETS` to the metros the API actually served, so a stale dropdown row
+    // can name one that is gone. `MARKETS[v]` is then undefined, no comparison is possible, and
+    // the design's own immediate path is the honest answer — never a silent do-nothing.
+    const a = viewportAdapter(['box-austin']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    comp.setMarket('Nowhere, ZZ');
+    expect(a.calls.map((c) => c.market)).toEqual(['Austin, TX', 'Nowhere, ZZ']);
+  });
+
+  it('with an adapter that publishes no viewport the design\'s own immediate load is unchanged', () => {
+    // The reference and the Claude Design preview take this path, and so does any build whose
+    // adapter predates the bbox wiring: there is no settled-view listener to wait for, so waiting
+    // would mean never loading at all.
+    const asked: unknown[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string, b: unknown) => { asked.push([n, b]); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual([['Austin, TX', null], ['Sacramento, CA', null]]);
+  });
+
+  it('with NO market adapter at all setMarket touches neither mdAreas nor the API', () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.market).toBe('Sacramento, CA');
+    expect(comp.state.mdAreas, 'the design\'s fixture path reads areaSet, never mdAreas').toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
+  });
+
+  it('unsubscribes on unmount, so a torn-down screen stops asking the API for boxes', () => {
+    const a = viewportAdapter(['box-1']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.unsubscribed()).toBe(false);
+    comp.componentWillUnmount();
+    expect(a.unsubscribed()).toBe(true);
+    expect(() => comp.componentWillUnmount()).not.toThrow();
+  });
+
+  it('an adapter with no viewport at all keeps the whole-metro behaviour, unchanged', () => {
+    const asked: unknown[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string, b: unknown) => { asked.push([n, b]); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    expect(asked).toEqual([['Austin, TX', null]]);
+  });
+
+  // -----------------------------------------------------------------------------------
+  // The three states Task 9's payload distinguishes, rendered. These property dicts are
+  // `app/api/market._boundary_feature`'s own output, transcribed from the route (commit
+  // `c466415`) rather than imagined: `value` is null BOTH when the geography has no row and
+  // when its row is suppressed, and the two are told apart by `suppressed`/`suppress_reason`
+  // on the same dict. `band_ambiguous` is orthogonal to both — the value is KEPT and a caveat
+  // is added, never greyed (D-C36: "greying a measured figure is its own false statement").
+  // -----------------------------------------------------------------------------------
+  it('renders no-data, suppressed and band-ambiguous as three different things', () => {
+    const props = [
+      { geo_id: 'none', name: 'No row', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      { geo_id: 'nomoe', name: 'No margin', value: null, moe: null, suppressed: true, suppress_reason: 'no_moe', band_ambiguous: false },
+      { geo_id: 'highmoe', name: 'Wide margin', value: null, moe: 40000, suppressed: true, suppress_reason: 'high_moe', band_ambiguous: false },
+      { geo_id: 'cascade', name: 'Cascaded', value: null, moe: null, suppressed: true, suppress_reason: 'input_suppressed', band_ambiguous: false },
+      { geo_id: 'flag', name: 'Withheld', value: null, moe: null, suppressed: true, suppress_reason: 'source_flag', band_ambiguous: false },
+      // A33.2: the margin is 9,000 and not 6,420. `band_ambiguous(92150, 6420)` is FALSE against
+      // the income stops (`tests/census/test_bands.py` — 85,730…98,570 is one band), so the old
+      // fixture set the flag on an interval the endpoint would never set it for, and the caveat
+      // now counts the bands rather than asserting two. 9,000 crosses the $100K stop and nothing
+      // else, which is the design's own two-band example.
+      { geo_id: 'amb', name: 'Ambiguous', value: 92150, moe: 9000, suppressed: false, suppress_reason: null, band_ambiguous: true },
+      { geo_id: 'plain', name: 'Measured', value: 92150, moe: 1200, suppressed: false, suppress_reason: null, band_ambiguous: false }
+    ];
+    const comp: any = new Component({});
+    const out = comp.areaVals({ type: 'FeatureCollection', features: props.map((p) => ({ type: 'Feature', id: p.geo_id, properties: p, geometry: null })) }, 'income');
+    const by = Object.fromEntries(out.features.map((f: any) => [f.properties.geo_id, f.properties]));
+
+    // Every unmeasured polygon is DRAWN — never omitted, because a hole on a choropleth reads
+    // as a park, a lake or the edge of the market (D-NS16).
+    expect(out.features).toHaveLength(props.length);
+
+    // One neutral class for all five unmeasured states, and a DIFFERENT sentence for each fact.
+    const grey = by.none.color;
+    for (const id of ['none', 'nomoe', 'highmoe', 'cascade', 'flag']) {
+      expect(by[id].color, `${id} must take the no-data class`).toBe(grey);
+      expect(by[id].label).toBe('No data');
+    }
+    expect(by.none.tip).toContain('No data for this area');
+    // The three imprecision reasons share the contract's own wording; `input_suppressed` is a
+    // cascade from a figure suppressed for imprecision, so it reads as imprecision too. It is
+    // also unreachable on this endpoint today — only `median_hh_income` is suppressed here
+    // (D-NS17) and `_suppression` emits `no_moe`/`high_moe` alone.
+    for (const id of ['nomoe', 'highmoe', 'cascade']) {
+      expect(by[id].tip).toContain('Estimate too imprecise to show at this geography');
+    }
+    expect(by.flag.tip).toContain('Not published for this county');
+    expect(by.flag.tip).not.toContain('Estimate too imprecise');
+
+    // Band-ambiguous is NOT greyed: the figure stands, and the caveat rides beside it.
+    expect(by.amb.color).not.toBe(grey);
+    expect(by.amb.color).toBe(by.plain.color);
+    expect(by.amb.label).toBe('$92K');
+    expect(by.amb.tip).toContain('this margin spans two legend bands');
+    expect(by.plain.tip).not.toContain('legend bands');
+  });
+
+  it("a blocked or disabled layer arrives with no features, so nothing of it is ever painted", async () => {
+    // Verified against the route, not assumed: `app/api/market.py` fills `rows` only when
+    // `state == "enabled"`, so a licence-blocked layer answers `features: []` with a
+    // `blocked_reason`. "Blocked datasets never ship" therefore holds without the design
+    // reading `state` at all — and if that ever changes, this case is where it shows.
+    const comp: any = new Component({ market: { boundaries: () => Promise.resolve({
+      income: { type: 'FeatureCollection', state: 'blocked', blocked_reason: 'licence refused', features: [] }
+    }) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+  });
+
+  it('a layer the API did not answer for draws nothing rather than the fixture for that layer', async () => {
+    const comp: any = new Component({ market: adapter({ income: FC(['x']) }) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    comp.state.mdValue = 'growth';
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+    comp.state.mdValue = 'income';
+    expect(drawn(comp)).toEqual(['x']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A30 — a metro change closes the docked panel, so a practice is never captioned with another
+// metro's figures (Task PANEL-STALE, root cause read from QA 0.1.21: with GHI Veterinary
+// Hospital, Austin, selected and its docked panel open, switching the metro to Dallas left the
+// panel OPEN with GHI's header over the first Dallas listing's community figures).
+//
+// `setMarket` set `market`, `activeId` and `hoverId` but never `mdSel`, so `sel` — found by id
+// alone (`P.filter((x) => x.id === s.mdSel)[0]`, market-blind) — survived the switch. `selComm`
+// — filtered to communities() of the NEW market — no longer matched it, so `marketPanel`'s own
+// fallback chain (`selComm || comms[0] || { …all undefined }`) took over: with the design's own
+// fixtures every OTHER market still has its own communities (Sacramento's c1-c4 etc.), so the
+// fallback actually taken is `comms[0]` — the new market's FIRST community — never A25.4's own
+// last-resort literal, which stands in only when the market has NO communities of its own at
+// all (empty `comms`) and is otherwise untouched here.
+//
+// The design has no treatment for "the selected practice is not in this metro", so the ruled
+// fix (John) is that a metro change closes the panel: `setMarket` now clears `mdSel` too.
+// ---------------------------------------------------------------------------------------
+describe("A30 — a metro change closes the docked panel (Task PANEL-STALE)", () => {
+  it('switching the metro clears the selected practice and closes the panel', () => {
+    c.setState({ screen: 'browse', mdSel: 'p2' });
+    expect(c.marketVals(c.filtered()).panel, 'sanity: the panel is open before the switch').not.toBeNull();
+    c.setMarket('Sacramento, CA');
+    expect(c.state.mdSel, 'a metro change must clear the selection, not leave it pointed at a practice from the metro just left').toBeNull();
+    expect(c.marketVals(c.filtered()).panel, 'the panel must close — the design has no treatment for "the selected practice is not in this metro"').toBeNull();
+  });
+
+  it('the same holds through the metro listbox\'s own choice path (marketOptions[i].go), not only a direct setMarket call', () => {
+    c.setState({ screen: 'browse', mdSel: 'p7' });
+    c.renderVals().toggleMarketMenu();
+    const orlando = c.renderVals().marketOptions.find((o: any) => o.label.startsWith('Orlando'));
+    orlando.go();
+    expect(c.state.mdSel).toBeNull();
+    expect(c.marketVals(c.filtered()).panel).toBeNull();
+  });
+
+  it('…and a plain change EVENT (V3:1907\'s own contract) clears it exactly the same way', () => {
+    c.setState({ mdSel: 'p1' });
+    c.setMarket({ target: { value: 'Atlanta, GA' } });
+    expect(c.state.mdSel).toBeNull();
+  });
+
+  // The characterisation the ruling asks for: `marketPanel` is never handed a `selComm`
+  // belonging to a different practice than `sel` names, because `sel` itself is unreachable
+  // once a metro change clears `mdSel` — proved through the real component flow, not by asserting
+  // on `marketPanel` in isolation. Named here (not just asserted): the fallback the stale defect
+  // actually took is Sacramento's OWN `comms[0]` (Roseville, `c1`) — a real practice's real
+  // figures under another practice's header — never A25.4's empty-market literal, which A25.4's
+  // own test (`marketPanel(sel, null, [], AUSTIN)`) reaches by handing it an EMPTY community
+  // list; Sacramento's is not empty, so that arm is not what this defect exercises and A25.4's
+  // own arm is left untouched.
+  it('names the fallback the stale defect actually took: comms[0], never A25.4\'s empty-market literal', () => {
+    const p2 = P.filter((x: any) => x.id === 'p2')[0];
+    c.setState({ market: 'Sacramento, CA' });
+    const comms = c.communities();
+    expect(comms.map((x: any) => x.id)).toEqual(['c1', 'c2', 'c3', 'c4']);
+    const selComm = comms.filter((x: any) => x.id === p2.id)[0];
+    expect(selComm, "p2 is not one of Sacramento's own communities").toBeUndefined();
+    // marketPanel itself takes no metro guard — it renders whatever it is handed, which is
+    // exactly why the guard has to live where `sel` is resolved (marketVals/setMarket) and not
+    // here. This is the shape a stale `mdSel` would have produced had the panel stayed open.
+    const panel = c.marketPanel(p2, selComm, comms, 'Sacramento, CA');
+    expect(panel.name, 'the header still names p2 (Round Rock)').toBe(c.practiceName(p2));
+    expect(comms[0].name).toBe('Roseville');
+    expect(panel.overviewTiles[0].v, "the figures are comms[0]'s (Roseville) — a different practice's").toBe(c.fmtMetric('households', comms[0].pop));
+    // Through the real component flow this call is never made in the first place: selecting p2
+    // and then switching to Sacramento (the first case above) clears `mdSel`, so `sel` is null
+    // and `marketVals` never resolves a `selComm` at all, let alone this mismatched one.
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A33.1 — the docked panel's income index is the pipeline's own (Task SCREEN-LABELS,
+// 2026-09-13). Measured on QA 0.1.21, Austin, DEF Veterinary Hospital: the Median Income tile
+// read "$94K · +25% vs US". The $94K is DEF's own 8 km ring median (93,750); the "+25%" divided
+// it by `incomeNat = 75149`, a constant in the design's script commented "ACS 2023 U.S. median
+// household income", while QA's own database holds 78,538 for the SAME 2019-2023 vintage the
+// $94K comes from — against which DEF is +19 %. The pipeline already STORED that index per
+// listing and band (`market_metric.income_index_vs_us`) and nothing served or read it.
+//
+// The constant STAYS, as the design's own FIXTURE arithmetic and nothing more: `incomeIdx` also
+// feeds the Affluence opportunity tile, and the reference — which has no API at all — must go on
+// rendering both. Measured, not assumed: `oppTiles[0]` is the second reader, and the cases below
+// pin that it follows the SERVED index wherever there is one, which is the whole point of
+// preferring the pipeline's own number rather than only relabelling one tile.
+// ---------------------------------------------------------------------------------------
+describe('A33.1 — the panel prefers the pipeline\'s own income index', () => {
+  const AUSTIN = 'Austin, TX';
+  const sel = () => P.filter((x: any) => x.market === AUSTIN && x.status === 'published')[0] as any;
+
+  /** The panel as the REFERENCE renders it: no adapter of any kind, which is how the design
+   *  bundle and the Claude Design preview run. */
+  const panelFor = (listing: any) =>
+    c.marketPanel(listing, c.communities().filter((x: any) => x.id === listing.id)[0], c.communities(), AUSTIN);
+
+  /** The panel as the APP renders it: carrying the market adapter the app hands to every render
+   *  (`app.setup.js`'s own default factory) and the reference is never given — A33.1c's gate. */
+  const appPanelFor = (listing: any) => {
+    const app: any = new Component({ market: { boundaries: () => new Promise(() => {}) } } as never);
+    return app.marketPanel(listing, app.communities().filter((x: any) => x.id === listing.id)[0], app.communities(), AUSTIN);
+  };
+
+  /** Run `body` with `over`'s keys set on the fixture, and every one of them removed afterwards —
+   *  the design's own fixtures carry none of them, and a leaked key would move a baseline. */
+  function withFields(listing: any, over: Record<string, unknown>, body: () => void): void {
+    Object.assign(listing, over);
+    try { body(); } finally { for (const k of Object.keys(over)) delete listing[k]; }
+  }
+
+  it('renders the served index rather than its own arithmetic against the constant', () => {
+    const p = sel();
+    expect(panelFor(p).overviewTiles[2].sub, 'sanity: the design\'s own fixture arithmetic is what the reference renders')
+      .toMatch(/^\+\d+% vs US$/);
+    withFields(p, { incomeVsUs: 19.4 }, () => {
+      expect(appPanelFor(p).overviewTiles[2].sub).toBe('+19% vs US');
+    });
+  });
+
+  it('keeps the sign on an index below the US median, and prints no "+" on it', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: -13.7 }, () => {
+      expect(appPanelFor(p).overviewTiles[2].sub).toBe('-14% vs US');
+    });
+  });
+
+  it('a community exactly on the US median reads 0 %, never nothing (the D-C31 sentinel)', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: 0 }, () => {
+      expect(appPanelFor(p).overviewTiles[2].sub).toBe('0% vs US');
+    });
+  });
+
+  it('says "approximate" beside the index when the API says the median is', () => {
+    const p = sel();
+    withFields(p, { incomeVsUs: 19.4, incomeApproximate: true }, () => {
+      expect(appPanelFor(p).overviewTiles[2].sub).toBe('+19% vs US · approximate');
+    });
+  });
+
+  it('with no index and no flag the design\'s own sub-line stands, byte for byte', () => {
+    const p = sel();
+    expect(panelFor(p).overviewTiles[2].sub).toMatch(/^[+-]?\d+% vs US$/);
+    expect(panelFor(p).overviewTiles[2].sub).not.toContain('approximate');
+  });
+
+  // The API never serves an index without the median it is a percentage of
+  // (`tests/census/test_serve.py::test_an_index_without_a_median_is_never_served_alone`), nor a
+  // flag without one (`::test_no_median_means_nothing_to_say_about_it`), so the design does not
+  // re-guard either pairing — these cases NAME the contract rather than pinning guards the
+  // payload makes unreachable, and record what the tile does if it is ever broken.
+  it('does not re-guard the index against the median — the payload pairs them', () => {
+    const p = sel();
+    const savedIncome = p.income;
+    p.income = null;
+    try {
+      withFields(p, { incomeVsUs: 19.4 }, () => {
+        const tile = appPanelFor(p).overviewTiles[2];
+        expect(tile.v, 'no median, no value').toBeUndefined();
+        expect(tile.sub, 'and the sub-line the API would never have sent on its own').toBe('+19% vs US');
+      });
+      withFields(p, { incomeApproximate: true }, () => {
+        expect(appPanelFor(p).overviewTiles[2].sub, 'the same, for the flag').toBe('approximate');
+      });
+    } finally { p.income = savedIncome; }
+  });
+
+  it('the Affluence tile follows the served index too', () => {
+    const p = sel();
+    // `on` is not a member of the mapped tile — the design spends it on `tone(t.on)` — so the
+    // assertion is on the COLOUR it produces, which is what a member actually sees.
+    const ON = 'var(--vf-navy)';
+    const OFF = '#8d99a6';
+    expect(panelFor(p).oppTiles[0].label, 'sanity: the design\'s own +57 % fixture reads High')
+      .toBe('High');
+    withFields(p, { incomeVsUs: 19.4 }, () => {
+      const opp = appPanelFor(p).oppTiles[0];
+      expect(opp.sub).toBe('Affluence');
+      expect(opp.label, '+19 % is above the US median but not more than 25 % above it').toBe('Above avg.');
+      expect(opp.labelStyle).toContain(ON);
+    });
+    withFields(p, { incomeVsUs: -13.7 }, () => {
+      expect(appPanelFor(p).oppTiles[0].label).toBe('Median');
+      expect(appPanelFor(p).oppTiles[0].labelStyle).toContain(OFF);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------
+  // A33.1c (fix round 1, ruled on the review's Important) — WITH THE API PRESENT THE INDEX IS
+  // THE API'S OR NOTHING. A33.1 left `incomeNat = 75149` as the fallback for a listing that has
+  // a median and no served index, which on a real database is a missing `acs_measure`
+  // summary-level-010 row — `materialize._Ctx.us_income` is then None and
+  // `income_index_vs_us` is null for EVERY listing in the country at once. The panel would print
+  // an index, and an Affluence verdict, against a 2023 constant with nothing saying so.
+  //
+  // The gate is ADAPTER PRESENCE, A16.1's own idiom and never data: `this.props.market` is the
+  // app-only Browse adapter (A24.14-A24.18) and the reference is never handed one —
+  // `design-amendments.test.ts` pins `market` OUT of the declared `data-props`. So the app's
+  // panel is honest and the reference keeps the design's own arithmetic, which is what keeps
+  // every approved state on its pixels.
+  // -------------------------------------------------------------------------------------
+  it('with the adapter present and no served index, the tile shows no index at all', () => {
+    const p = sel();
+    expect(p.income, 'sanity: the fixture HAS a median, so only the index is missing').toBeTruthy();
+    expect(appPanelFor(p).overviewTiles[2].v, 'the median itself still renders').toBeDefined();
+    expect(appPanelFor(p).overviewTiles[2].sub, 'no served index, so nothing "vs US"').toBeUndefined();
+  });
+
+  it('…and the Affluence tile falls to the design\'s own unavailable treatment, with no invented copy', () => {
+    const p = sel();
+    const opp = appPanelFor(p).oppTiles[0];
+    // The design's own answer for an absent figure, identical to what the Population Growth and
+    // Sector Payroll tiles beside it do: an empty label in the off colour. No new string.
+    expect(opp.sub).toBe('Affluence');
+    expect(opp.label).toBe('');
+    expect(opp.labelStyle).toContain('#8d99a6');
+    expect(opp.iconStyle).toContain('#8d99a6');
+  });
+
+  it('says "approximate" alone when the API has a derived median and no index (A33.1c.2)', () => {
+    const p = sel();
+    withFields(p, { incomeApproximate: true }, () => {
+      expect(appPanelFor(p).overviewTiles[2].sub).toBe('approximate');
+    });
+  });
+
+  it('with NO adapter the design\'s own constant still answers — which is what keeps the pixels', () => {
+    const p = sel();
+    // The reference and the Claude Design preview pass no `market` prop at all, so the served
+    // index is not even read: this is the path every approved state is captured through.
+    withFields(p, { incomeVsUs: 19.4 }, () => {
+      expect(panelFor(p).overviewTiles[2].sub).toMatch(/^\+\d+% vs US$/);
+      expect(panelFor(p).overviewTiles[2].sub).not.toBe('+19% vs US');
+    });
+    expect(panelFor(p).oppTiles[0].label).toBe('High');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A33.2 — the margin caveat counts the legend bands it spans (Task SCREEN-LABELS,
+// 2026-09-13). Measured on QA 0.1.21: hovering Census Tract 303 on the income layer read
+// "± $22K — this margin spans two legend bands." The interval is 61,320–105,806, which spans
+// THREE of the income legend's five ($50–75K, $75–100K, $100–150K). The copy was FIXED, emitted
+// whenever the API's `band_ambiguous` is true, and `app/census/bands.py` only ever asks whether
+// the two ends land in DIFFERENT bands — it never counts them. The number is knowable on the
+// client from the layer's own stops, which is where the legend itself comes from.
+// ---------------------------------------------------------------------------------------
+describe('A33.2 — the margin caveat counts the bands', () => {
+  const feat = (props: Record<string, unknown>) => ({
+    type: 'Feature', geometry: null,
+    properties: { geo_id: 'g', name: 'Census Tract 303', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false, ...props }
+  });
+  const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
+  const tip = (props: Record<string, unknown>, layer = 'income') =>
+    c.areaVals(fc([feat(props)]), layer).features[0].properties.tip;
+
+  // QA's own Tract 303: 83,563 ± 22,243 → 61,320…105,806 across $50–75K, $75–100K, $100–150K.
+  it('says "three" for the tract that was measured saying "two"', () => {
+    expect(tip({ value: 83563, moe: 22243, band_ambiguous: true }))
+      .toContain('this margin spans three legend bands.');
+  });
+
+  it('still says "two" where two is the truth', () => {
+    // The design's own case, from `tests/census/test_bands.py`: 92,150 ± 9,000 → 83,150…101,150,
+    // which crosses the $100K stop and nothing else.
+    expect(tip({ value: 92150, moe: 9000, band_ambiguous: true }))
+      .toContain('this margin spans two legend bands.');
+  });
+
+  it('counts to the top of the ramp — five bands for a margin that spans the whole income legend', () => {
+    expect(tip({ value: 90000, moe: 80000, band_ambiguous: true }))
+      .toContain('this margin spans five legend bands.');
+  });
+
+  it('counts against the layer the polygon belongs to, not against income', () => {
+    // `households` shades at the CENSUS TRACT and has its OWN class breaks (A24.25's
+    // `AREA_LAYERS`, [1000, 1500, 2000]) — which is the table `app.api.market.BAND_STOPS` passes
+    // for this layer too. 1,400 ± 700 → 700…2,100: all four bands.
+    expect(tip({ value: 1400, moe: 700, band_ambiguous: true }, 'households'))
+      .toContain('this margin spans four legend bands.');
+  });
+
+  it('adds nothing where the API did not say the margin crosses a stop', () => {
+    const plain = tip({ value: 92150, moe: 6420, band_ambiguous: false });
+    expect(plain).toContain('± $6K');
+    expect(plain).not.toContain('legend bands');
+  });
+
+  it('says nothing about bands for a polygon with no value to count them around', () => {
+    // A suppressed polygon can arrive with a margin AND `band_ambiguous` true — the endpoint
+    // judges ambiguity on the RAW value and nulls the value separately. `areaTip` composes
+    // `margin` before it knows whether the tip will use it, so the caveat IS built for such a
+    // polygon (around `null + moe`, which is why it would read "undefined") and then discarded
+    // whole: the tip renders `shown ? margin : absent`, and `shown` is false here. The guard the
+    // first implementation added for this was removed on review — it changed no rendered byte and
+    // no test failed when it was reverted, which is the definition of a term that cannot be
+    // tested. What a member sees is asserted instead.
+    const suppressed = tip({ value: null, moe: 22243, band_ambiguous: true });
+    expect(suppressed).toContain('No data for this area');
+    expect(suppressed).not.toContain('legend bands');
+    expect(suppressed, 'the discarded margin string reached the tip').not.toContain('undefined');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-GATE (D-C53, 2026-09-13): THE ADMIN DATA LOADS WHENEVER AN ADMIN ARRIVES.
+//
+// The review queue was fetched in `componentDidMount` and nowhere else, so a reviewer who
+// signed in through the design's own form saw an EMPTY Listings tab under the design's literal
+// badge "3" until they hard-reloaded the page: `signIn` set `me` and loaded nothing
+// (`admin-tabs-audit.md`, "Second Listings load defect" — independent of the router bypass and
+// of which persona is signed in).
+//
+// `loadAdmin()` is the one place the admin screen's data is read, and the seam A36/A38/A37 each
+// add ONE line to. It is guarded on the permission — asked of the generated matrix through the
+// `perms` adapter, never a role list written here — and on the adapter's presence, and every
+// load carries A16.17's rejection arm, so a refusal leaves the tab EMPTY rather than falling
+// back to the design's five fixture rows.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
+  const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
+  const ROWS = [['a listing row'], ['another']];
+  const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+    const calls: string[] = [];
+    return { calls, list: () => { calls.push('list()'); return answer(); } };
+  };
+  const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
+
+  it('an interactive sign-in loads the review queue, with no hard reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'signIn set `me` and loaded nothing before this').toEqual(['list()']);
+    expect(c2.state.adminListingRows).toEqual(ROWS);
+    expect(c2.adminVals().rows.map((r: any) => r.cells), 'and the tab renders them, not the design\'s five fixtures').toEqual(ROWS);
+  });
+
+  it('a sign-in by an account that cannot open the screen spends no request at all', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.browse']) });
+    c2.setState({ email: 'buyer@practice-match.test', pw: 'a-password' });
+
+    await c2.renderVals().signIn();
+
+    expect(adapter.calls, 'the API would refuse it; the client does not ask').toEqual([]);
+    expect(c2.state.adminListingRows).toBeUndefined();
+  });
+
+  it('componentDidMount still loads on arrival — the reload path, which is all there was', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    expect(adapter.calls).toEqual(['list()']);
+
+    const buyer: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.browse']) });
+    buyer.componentDidMount();
+    expect(buyer.props.adminListings.calls, 'the permission, not a role list written into the design').toEqual([]);
+  });
+
+  it('go("admin") loads too, so a queue that failed on arrival is not empty for the rest of the session', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ auth: true, screen: 'browse' });
+
+    c2.go('admin')();
+    await Promise.resolve();
+
+    expect(c2.state.screen).toBe('admin');
+    expect(adapter.calls).toEqual(['list()']);
+
+    c2.go('browse')();
+    expect(adapter.calls, 'and only that door asks').toEqual(['list()']);
+  });
+
+  it('a refusal leaves the tab empty rather than falling back to the design\'s fixture rows (A16.17)', async () => {
+    const adapter = adminListings(() => Promise.reject(new Error('403')));
+    const c2: any = new Component({ auth: auth(STAFF), adminListings: adapter, perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.adminVals().rows).toEqual([]);
+  });
+
+  it('with no adapter nothing is asked and nothing is set — the reference and the Claude Design preview', async () => {
+    const c2: any = new Component({ auth: auth(STAFF), perms: perms(['page.admin']) });
+    c2.setState({ email: STAFF.email, pw: 'a-password', adminTab: 'listings' });
+
+    await c2.renderVals().signIn();
+
+    expect(c2.state.adminListingRows).toBeUndefined();
+    expect(c2.adminVals().rows.length, 'the design\'s own five Listings fixtures stand').toBe(5);
+  });
+
+  // Fix round 1 (2026-09-13, review Minor 6). The guard was `perms && !allowed(...)`, so a host
+  // that passed `adminListings` and no `perms` loaded the queue for WHOEVER was signed in — the
+  // permission being checked only when something was there to check it with. The line A40.4 retired
+  // was unconditional (it also required `me.state === "active"`), and the entry's own prose says
+  // "guarded on the PERMISSION" without qualification, so the guard is made to match the sentence:
+  // no `perms`, no load. Nothing in the tree is that host — both ports default the adapter and the
+  // reference passes neither — which is exactly why it has to be a test and not an observation.
+  it('A40.3 fails closed: an adapter with no perms to check against loads NOTHING', () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter });
+    c2.componentDidMount();
+    expect(adapter.calls, 'the queue is not asked for by an unidentified caller').toEqual([]);
+    expect(c2.state.adminListingRows, 'and nothing is set, so the design\'s own fixtures stand').toBeUndefined();
+  });
+
+  // Fix round 1 (2026-09-13, review Minor 5). A40.5 returns `loadAdmin()` from `signIn`'s fulfilled
+  // arm so "signIn answers a promise" still holds and a caller can await a settled screen — which
+  // was true only for an account that may open the screen: the refusal arm returned `undefined`, so
+  // `await` on the sign-in of a buyer resolved to it and any `.then` on the loader itself threw.
+  // Both arms settle now.
+  it('A40.3 always answers a settled promise, for every account and every host', async () => {
+    const allowed: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    const refused: any = new Component({ adminListings: adminListings(), perms: perms(['page.browse']) });
+    const hostless: any = new Component({ perms: perms(['page.admin']) });
+    for (const [name, c2] of [['allowed', allowed], ['refused', refused], ['no adapter', hostless]] as const) {
+      const answer = c2.loadAdmin();
+      expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
+      await expect(answer).resolves.toBeInstanceOf(Array);
+    }
   });
 });
