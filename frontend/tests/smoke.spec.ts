@@ -54,6 +54,39 @@ test.describe('smoke', () => {
     await expect(page).toHaveURL(/\/admin\?tab=data$/);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-GATE (D-C53, 2026-09-13): the two halves of "a buyer never reaches the Admin
+  // screen", in a real browser. The door is not shown (A40.1/A40.2), and the guard refuses it on
+  // the path the header nav takes even if it were (`refusedScreen`, the router half).
+  //
+  // The buyer persona is the one John's four admin screenshots were taken as. `signInAs` reuses
+  // the run's memoised `buyer@` session, so neither case spends a sign-in of its own.
+  // ---------------------------------------------------------------------------------------
+  test('a buyer\'s header carries no door the account cannot open (A40, D-C53)', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await expect(page.getByRole('button', { name: 'Browse Practices', exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'My Requests', exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }), 'page.admin is ["admin","staff"]').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'List a Practice', exact: true }), 'page.seller is ["seller"]').toHaveCount(0);
+  });
+
+  test('and a buyer who asks for /admin anyway gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/admin');
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' }), 'the admin shell must not render').toHaveCount(0);
+  });
+
+  test('the design persona holds both permissions, so its header still carries all four doors', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    for (const label of ['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']) {
+      await expect(page.getByRole('button', { name: label, exact: true }).first(), label).toBeVisible();
+    }
+  });
+
   test('unknown routes redirect to /', async ({ page }) => {
     await page.goto('/definitely-not-a-route');
     await expect(page).toHaveURL(/\/$/);

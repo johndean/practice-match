@@ -6,6 +6,7 @@ import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
+import { makePermsAdapter } from './auth/perms';
 import { makeMarketAdapter } from './market/boundaries';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
@@ -67,6 +68,19 @@ const props = defineProps({
   // `renderVals()` returns its own `me` (the header strings, from state), which wins in `v`
   // below — this prop is read by the prototype's bootstrap, not by the template.
   me: { type: Object, default: () => useMe().me.value },
+  // A40 (D-C53): the permission matrix, as the prototype's `perms` adapter — the seam the design's
+  // own header nav asks "may this account open that screen?" through, and the seam `loadAdmin`
+  // asks before it spends a request. The table is the GENERATED `src/auth/permissions.ts`, whose
+  // source is `app/auth/permissions.py`, read through `can()`; the design states no role test of
+  // its own, so there is one matrix and not two. Unlike `me` above this is NOT a snapshot: it reads
+  // the store at call time, so an interactive sign-in changes the answer with no remount. The
+  // reference and the Claude Design preview pass nothing and keep every door, which is what keeps
+  // both targets on the same pixels. Nothing in the template reads `perms`; only `logic.js` does.
+  //
+  // `src/auth/perms.ts`, not an object literal here, for the reason `auth` records: this file is
+  // copied verbatim into App.vue and sits outside the coverage gate. It needs no `data-props`
+  // entry — the parity gate is one-directional.
+  perms: { type: Object, default: () => makePermsAdapter() },
   // A16: the real /api/seller client, as the prototype's `listings` adapter — the seam the design's
   // own Continue, Edit, Add files, Continue-to-next-step, Submit and Pause/Republish/Withdraw
   // handlers call through. The reference and the Claude Design preview pass nothing and keep the

@@ -59,6 +59,45 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v.signedOut).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A40.1/A40.2 (D-C53, 2026-09-13): A DOOR THAT REFUSES IS NOT SHOWN.
+  //
+  // The header rendered all four items to every account, so a buyer was invited to click "VIN
+  // Foundation Admin" — and until the router fix in this same branch, arrived. The matrix is
+  // consulted through the `perms` adapter (`src/auth/perms.ts` → `can()` → the GENERATED
+  // `src/auth/permissions.ts`), never re-stated here: a role test written into the design would
+  // be a second copy of the matrix.
+  //
+  // Browse and My Requests carry no `perm` and are untouched — this ruling named two doors.
+  // ---------------------------------------------------------------------------------------
+  it('A40: the header shows no door the account cannot open (D-C53)', () => {
+    const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+
+    const buyer = new Component({ perms: perms(['page.browse', 'request.read_own', 'seller.apply']) });
+    expect(buyer.renderVals().nav.map((n: any) => n.label),
+      'page.seller is ["seller"] and page.admin ["admin","staff"]: a buyer holds neither')
+      .toEqual(['Browse Practices', 'My Requests']);
+
+    const staff = new Component({ perms: perms(['page.browse', 'page.admin']) });
+    expect(staff.renderVals().nav.map((n: any) => n.label))
+      .toEqual(['Browse Practices', 'My Requests', 'VIN Foundation Admin']);
+
+    const seller = new Component({ perms: perms(['page.browse', 'page.seller']) });
+    expect(seller.renderVals().nav.map((n: any) => n.label))
+      .toEqual(['Browse Practices', 'My Requests', 'List a Practice']);
+  });
+
+  it('A40: with no perms adapter every door stays — the reference and the Claude Design preview (D-C53)', () => {
+    expect(new Component({}).renderVals().nav.map((n: any) => n.label))
+      .toEqual(['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']);
+  });
+
+  it('A40: the two gated doors carry the permission the API guards the same screen with', () => {
+    const seen: string[] = [];
+    new Component({ perms: { allowed: (p: string) => { seen.push(p); return true; } } }).renderVals();
+    expect(seen, 'exactly the two doors the ruling named, each asked once').toEqual(['page.seller', 'page.admin']);
+  });
+
   it('adminVals renders the four tabs and switches the row set with adminTab', () => {
     expect(c.adminVals().tabs.map((t: any) => t.label)).toEqual(['Users', 'Listings', 'Requests', 'Data Sources']);
     c.setState({ adminTab: 'data' });

@@ -6274,6 +6274,56 @@ const A31_12c: Amendment = {
   count: 1
 };
 
+/** A40 — the admin screen is reached only by an account that may open it, and its data is loaded
+ *  whenever such an account arrives (Task ADMIN-GATE; D-C53, John, 2026-09-13: "all the admin tabs
+ *  must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and
+ *  wired to UX").
+ *
+ *  John's four admin screenshots were taken signed in as the QA BUYER persona
+ *  (`buyer@practice-match.test`, header "Approved buyer · StartUp Club"): a buyer reached the
+ *  Admin screen, where the Listings tab was correctly empty (the API refused it) under the design's
+ *  literal badge "3", and the other three tabs showed the design's fixture rows to somebody with no
+ *  business seeing them. Two independent causes, one task. The ROUTER bypass is app code
+ *  (`src/router/sync.ts`'s `refusedScreen`, consulted by the state → route watcher) and carries no
+ *  amendment. These entries are the design's own half.
+ *
+ *  A40.1/A40.2 — A DOOR THAT REFUSES IS NOT SHOWN. The header rendered all four nav items to every
+ *  account, so the refusal the router now issues would be the FIRST thing a buyer learned about a
+ *  door the product had invited them through. Each gated row carries the permission the API guards
+ *  the same screen with, and the array is filtered through `this.props.perms` — `src/auth/perms.ts`
+ *  → `can()` → the GENERATED `src/auth/permissions.ts`, whose source is `app/auth/permissions.py`.
+ *  The matrix is never re-stated in the design: a role test written here would be a second copy of
+ *  it, which is exactly what `componentDidMount`'s `r === "staff" || r === "admin"` was (A40.4
+ *  retires it).
+ *
+ *  "List a Practice" is gated on `page.seller` ALONE, and the alternative was measured rather than
+ *  assumed: `seller.apply` is a real API permission (`POST /api/applications`, kind `seller`, buyers
+ *  only) but the DESIGN has no seller-application screen and no caller of that route — the nav item
+ *  goes to the seller dashboard and nowhere else. So for a buyer it is a door onto the refusal, not
+ *  a door onto applying, and hiding it removes an invitation the product cannot honour. The day a
+ *  seller-apply flow exists, this row's `perm` is where it is re-opened.
+ *
+ *  The reference and the Claude Design preview pass no `perms` adapter, so the filter is inert
+ *  there and all four doors stay — which is what keeps every approved state on its pixels; the
+ *  app's own single persona (`design@practice-match.test`, roles admin/buyer/seller/staff) holds
+ *  both permissions, so the app renders four as well. */
+const A40_1: Amendment = {
+  id: 'A40.1', date: '2026-09-13',
+  ruling: 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — a door the account cannot open is not shown: the header renders "VIN Foundation Admin" only for an account that holds `page.admin`, asked of the generated permission matrix and never re-stated in the design',
+  find: '      { key: "admin", label: "VIN Foundation Admin" }\n    ].map((n) => ({\n',
+  replace: '      { key: "admin", label: "VIN Foundation Admin", perm: "page.admin" }\n'
+    + '    ].filter((n) => !n.perm || !this.props.perms || this.props.perms.allowed(n.perm)).map((n) => ({\n',
+  count: 1
+};
+
+const A40_2: Amendment = {
+  id: 'A40.2', date: '2026-09-13',
+  ruling: 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — "List a Practice" is shown only to an account that holds `page.seller`: the design has no seller-application screen behind it, so for a buyer it is a door onto a refusal rather than a door onto applying',
+  find: '      { key: "seller", label: "List a Practice" },\n',
+  replace: '      { key: "seller", label: "List a Practice", perm: "page.seller" },\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6425,5 +6475,8 @@ export function amendments(): Amendment[] {
     // A31.12b on A24.45's whole helper, so both run after the entries they read.
     A31_12, A31_12b, A31_12c,
     // A31.13/A31.13b are CHAINED on A31.8 too, on lines A31.12 does not touch.
-    A31_13, A31_13b];
+    A31_13, A31_13b,
+    // A40 -- the admin gate (Task ADMIN-GATE, D-C53, 2026-09-13). Appended last, as every family
+    // is. Not chained: both `find` strings are the pristine bundle's own nav array.
+    A40_1, A40_2];
 }
