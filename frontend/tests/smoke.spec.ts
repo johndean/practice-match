@@ -2184,14 +2184,24 @@ test.describe('admin data sources', () => {
     active_vintage: null, active_vintage_note: null, last_run: null, ...over
   });
 
-  // Seventeen of the nineteen keys migration 092 leaves in the registry, plus the two the tab is
-  // FOR: the blocked dataset with no terms page, and an Esri basemap row that ships unresolved.
+  // Sixteen of the nineteen keys migration 092 leaves in the registry, plus the three the tab is
+  // FOR: the blocked dataset with no terms page, and BOTH Esri basemap rows, which ship while
+  // their licence is undecided. Both of them, not one: 092 registers two, and the badge below is
+  // the count of rows nobody has cleared — with a single unresolved row beside the blocked one
+  // the fixture would answer exactly the design's own literal "2" and prove nothing about which
+  // of the two the tab is reading (gate run, 2026-09-14).
   const REGISTRY = [
-    ...Array.from({ length: 16 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
+    ...Array.from({ length: 15 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
     registryRow({
       dataset_key: 'esri_tiles', display_name: 'Base map and tiles (Esri Light Gray Canvas)',
       license_status: 'unresolved', license_name: null, refresh_cadence: 'Live tiles',
       license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement', attribution_text: 'Tiles © Esri'
+    }),
+    registryRow({
+      dataset_key: 'esri_imagery', display_name: 'Satellite imagery (Esri World Imagery)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'Live tiles',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement',
+      attribution_text: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
     }),
     registryRow({
       dataset_key: 'pet_ownership', display_name: 'Pet ownership incidence (commercial)',
@@ -2203,11 +2213,19 @@ test.describe('admin data sources', () => {
     registryRow({ dataset_key: 'zzz_cleared' })
   ];
 
-  async function dataTab(page: Page, answer: { status: number; body?: string }) {
+  async function dataTab(page: Page, answer: { status: number; body?: string }, arm?: number) {
     await prepare(page);
     // Registered AFTER prepare()'s own collection stub — Playwright matches the LAST handler first.
     await page.route((url) => url.pathname === '/api/admin/data-sources',
       (route) => route.fulfill({ status: answer.status, contentType: 'application/json', body: answer.body ?? '{}' }));
+    // `expectApiStatus` tells the app from the reference by reading `page.url()`, so it needs a
+    // page that has already navigated, and it must be armed BEFORE the refusal it allows reaches
+    // the console. The signed-out boot is that navigation and logs nothing of its own — the
+    // ROUTES loop at the top of this file is what says so (gate run, 2026-09-14).
+    if (arm !== undefined) {
+      await booted(page);
+      expectApiStatus(page, arm);
+    }
     await signInAs(page, 'design', '/admin?tab=data');
     await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
   }
@@ -2237,7 +2255,8 @@ test.describe('admin data sources', () => {
     await expect(page.getByText(/Terms drift flagged/).first()).toBeVisible();
     // The Esri row ships while its licence is undecided, and the tab says so in both columns.
     await expect(page.getByText('Tiles © Esri').first()).toBeVisible();
-    await expect(statusPills(page).filter({ hasText: 'Unresolved' })).toHaveCount(1);
+    await expect(page.getByText('Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community').first()).toBeVisible();
+    await expect(statusPills(page).filter({ hasText: 'Unresolved' })).toHaveCount(2);
     await expect(page.getByText('Licence not recorded').first()).toBeVisible();
   });
 
@@ -2272,8 +2291,7 @@ test.describe('admin data sources', () => {
     // A17.1's rule, applied to the surface that carries the legal gate: showing a reviewer five
     // datasets that are not the ones the platform holds is worse than showing none, and a badge
     // over no rows is the "Data Sources 2" defect this task closed.
-    expectApiStatus(page, 403);
-    await dataTab(page, { status: 403, body: '{"error":{"code":"FORBIDDEN","message":"no"}}' });
+    await dataTab(page, { status: 403, body: '{"error":{"code":"FORBIDDEN","message":"no"}}' }, 403);
     await expect(statusPills(page), 'no row at all, rather than the design\'s five').toHaveCount(0);
     await expect(page.getByText('Prior VetVision work')).toHaveCount(0);
     await expect(page.getByText('Pet ownership estimates')).toHaveCount(0);
