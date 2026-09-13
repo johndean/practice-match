@@ -2352,6 +2352,9 @@ test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
     await expect(page.getByText('Population growth is measured for the surrounding city or county, not the tract.').first()).toBeVisible();
     await expect(page.getByText('Pet-household counts and average practice payroll are derived estimates, not observed values.').first()).toBeVisible();
     expect(errors).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------
 // Task A38 (D-C53) — the Admin > Data Sources tab reads `dataset_registry`, in a real browser.
 //
