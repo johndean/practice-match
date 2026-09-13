@@ -14,6 +14,15 @@ name matches no row, writes nothing and reports that it did (0, or None where 0 
 count), which is what makes `media.process_photo`'s "never raises" (spec C.5) a property of these
 statements rather than of the order its caller happens to try them in.
 
+`bump_attempt` is guarded by `READY_STATES` and not by the plan's `CLAIMABLE_STATES` (controller
+amendment A-IDP-8): `claim` counts the claimable states' attempt inside its own statement, so a
+second counter there would spend the ladder twice as fast, and the in-place re-run this writer
+exists for happens in the three ready states `claim` refuses by design. The same amendment, as
+extended on the fix-round-1 re-review (N5), ratifies its dropping the plan's `*, code` parameter:
+a failed in-place attempt writes NO `last_error`, because it is not yet an outcome anyone reads --
+`exhaust` writes the code at the bound. P8 should not go looking for a parameter removed on
+purpose.
+
 The confirmation-reset rule ships as TWO constants, `RESET_COLUMNS` and `RESET_COLUMNS_EDITED`,
 rather than the plan's single `RESET_COLUMNS` -- PostgreSQL refuses two assignments to the same
 column in one UPDATE, so the plan's own `{RESET_COLUMNS}, seller_review_status = 'edited'` is not a

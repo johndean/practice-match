@@ -1451,11 +1451,17 @@ def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
     gets made, rather than in a prose count that enforces nothing."""
     # THIS file is skipped: the pattern below occurs in it as the pattern, and a docs-and-drift
     # suite that takes no `conn` fixture writes no table. Every other file is scanned.
-    # `\s+` between the table and `SET`, not one space: `app/census/geocode.py` writes its
-    # `UPDATE listing\n      SET geom = ...` across two lines, and the one-space form walked
-    # straight past a PRODUCTION writer of the table. Proved by perturbation before being left
-    # green — collapsing that statement onto one line must not change what this finds.
-    write = re.compile(r"INSERT INTO listing[ (\n]|UPDATE listing\s+SET")
+    # The pattern ends at the TABLE NAME and never reaches for `SET`. It used to be
+    # `UPDATE listing\s+SET`, which cannot see `UPDATE listing l SET ... FROM ...` — the aliased
+    # form any join-carrying write takes — so a planted `UPDATE listing l SET status = 'published'`
+    # in `app/api/listings.py` left this pin GREEN (P3 fix-round-1 re-review N1, widened here under
+    # the controller's zero-gaps ruling; `app/privacy/record.py`'s `claim` already writes in that
+    # form on the privacy table). `\b` is what keeps `listing_asset` and `listing_asset_privacy`
+    # out: `_` is a word character, so `listing\b` does not match inside either name. `\s+` also
+    # keeps `app/census/geocode.py`'s `UPDATE listing\n      SET geom = ...` — a PRODUCTION writer
+    # the one-space form walked straight past. Every widening was proved by perturbation: the
+    # aliased plant turns this red, and the found set is unchanged at seventeen without it.
+    write = re.compile(r"(?:INSERT INTO|UPDATE)\s+listing\b")
     found = {
         str(path.relative_to(ROOT))
         for root in ("app", "scripts", "tests")
@@ -1510,8 +1516,15 @@ def test_every_writer_of_the_privacy_row_is_declared_and_only_one_is_production(
     argument rests on: under `app/` and `scripts/` there is exactly ONE writer, so there is exactly
     one place a state transition can happen and every one of them carries a state predicate. Task
     P8's sweeper adds its `REPROCESS_REQUIRED` rule to `app/privacy/record.py` as a transition
-    function for this reason; putting it in `app/tasks/media.py` would fail here."""
-    write = re.compile(r"INSERT INTO listing_asset_privacy[ (\n]|UPDATE listing_asset_privacy\s+SET")
+    function for this reason; putting it in `app/tasks/media.py` would fail here.
+
+    The pattern ends at the TABLE NAME (fix-round-2, re-review N1). It used to require `SET` to
+    follow it, which cannot see `UPDATE listing_asset_privacy p SET … FROM …` — the exact form
+    `claim` took in the round that added this pin, and the natural form for any join-carrying
+    write — so a planted aliased sweeper in `app/api/listings.py` was undeclared, counted as no
+    production writer at all, and left this test GREEN. That is the one failure this pin exists to
+    prevent, arriving by the door the pin could not see."""
+    write = re.compile(r"(?:INSERT INTO|UPDATE)\s+listing_asset_privacy\b")
     found = {
         str(path.relative_to(ROOT))
         for root in ("app", "scripts", "tests")

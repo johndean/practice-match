@@ -327,13 +327,18 @@ def _executed_sql(module: Any) -> dict[str, list[str]]:
     function boundary with it, which is what lets the count below be EXACT per writer instead of a
     floor over the whole module. The literal parts of an f-string are Constants inside the
     JoinedStr, so `{RESET_COLUMNS}` contributes nothing -- which is right: every statement writes
-    `updated_at = now()` in its own text, outside that fragment."""
+    `updated_at = now()` in its own text, outside that fragment.
+
+    `AsyncFunctionDef` beside `FunctionDef` (re-review N4): `record.py` is psycopg2-sync and flat
+    today, so nothing is missed either way, but a planted `async def` writer was invisible to this
+    walk and to `_plain_calls` alike -- and a walk that cannot see a writer is exactly what the
+    counting pin below exists to prevent."""
     import ast
     import inspect
 
     found: dict[str, list[str]] = {}
     for top in ast.parse(inspect.getsource(module)).body:
-        if not isinstance(top, ast.FunctionDef):
+        if not isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for node in ast.walk(top):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
@@ -353,7 +358,7 @@ def _plain_calls(module: Any, function: str) -> set[str]:
     import inspect
 
     for top in ast.parse(inspect.getsource(module)).body:
-        if isinstance(top, ast.FunctionDef) and top.name == function:
+        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)) and top.name == function:
             return {node.func.id for node in ast.walk(top)
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     pytest.fail(f"{module.__name__} has no top-level function {function}")
@@ -391,6 +396,60 @@ PRIVACY_UPDATES = {
     "mark_published": 1,
     "set_visibility": 1,
 }
+
+
+#: Writers whose statement deliberately carries NO `processing_status` predicate at all, each named
+#: with the reason it is safe without one. **Empty today, and that is the point**: every one of
+#: `record.py`'s fifteen privacy UPDATEs names the column in its own WHERE, so the assertion below
+#: has no exception to grant. The door exists so that a writer which genuinely needs none has to be
+#: declared here in one line -- rather than slipping through as the omission `fail`, `exhaust` and
+#: `advance_in_place` slipped through as, which is the whole of the fix round's Important-1.
+UNGUARDED_UPDATES: dict[str, str] = {}
+
+#: The one writer whose predicate is CONDITIONAL rather than a plain state test, declared by name
+#: so no reader has to discover it (re-review N2). It is NOT exempt from the assertion below -- it
+#: names the column in its own WHERE like every other statement -- and what the ternary around that
+#: name does is something no assertion over a statement's TEXT can read, which is why it is said
+#: here in words instead.
+CONDITIONAL_GUARDS = {
+    "set_visibility": (
+        "the GRANT arm is gated on READY_STATES, because `lap_visible_ready_ck` would refuse the "
+        "write outright and a flip that raised on one photograph would abandon the rest of the "
+        "listing; the WITHDRAW arm is unconditional, because hiding is always safe (spec C.1 "
+        "step 4). So the predicate is `(NOT %s OR processing_status = ANY(%s))`, a ternary."
+    ),
+}
+
+
+def test_every_update_in_the_module_names_the_state_it_is_allowed_from() -> None:
+    """The STRUCTURAL half of the module docstring's "every writer carries a state predicate".
+
+    Until this pin that sentence was enforced only by hand-written dead-end cases -- the same
+    enumeration that missed three of fourteen writers and produced the fix round's Important-1,
+    where `fail` on a confirmed row raised a `CheckViolation` out of a task contracted never to
+    raise. `PRIVACY_UPDATES` below counts statements and says nothing about what is in them, so a
+    writer that lost its predicate stayed green there (re-review N2, reproduced by deleting
+    `bump_attempt`'s).
+
+    What is asserted is the weakest thing that is still load-bearing and that a statement's text
+    can carry honestly: every counted UPDATE has a WHERE, and that WHERE names `processing_status`.
+    It cannot tell a right predicate from a wrong one -- the per-transition and dead-end cases are
+    what do that, against a real database -- but it can tell a predicate from NONE, which is the
+    failure that actually happened."""
+    by_function = _privacy_updates(record)
+    assert by_function, "the walk found no privacy UPDATEs at all"
+    missing = [
+        f"{name}: {sql[:120]}"
+        for name, sqls in by_function.items() if name not in UNGUARDED_UPDATES
+        for sql in sqls
+        if "WHERE" not in sql or "processing_status" not in sql.split("WHERE", 1)[1]
+    ]
+    assert missing == [], missing
+    declared = set(UNGUARDED_UPDATES) | set(CONDITIONAL_GUARDS)
+    stale = sorted(declared - set(by_function))
+    assert stale == [], f"declared for writers this module no longer has: {stale}"
+    for name, reason in (UNGUARDED_UPDATES | CONDITIONAL_GUARDS).items():
+        assert len(reason) > 40, f"{name}'s reason says nothing useful"
 
 
 def test_every_update_in_the_module_sets_updated_at() -> None:
@@ -850,21 +909,32 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
     racer = psycopg2.connect(scratch_dsn)
     racer.autocommit = True
     answers: dict[str, record.PrivacyRow | None] = {}
+    # Built before the `try`, so the `finally` can always ask whether it is still running -- a
+    # `finally` that cannot name the thread is the same defect one step further out.
+    thread = threading.Thread(
+        target=lambda: answers.__setitem__("racer", record.claim(racer, asset_id, 1)))
     try:
         with holder.cursor() as cur:
             cur.execute("SELECT attempts FROM listing_asset_privacy WHERE asset_id = %s FOR UPDATE",
                         (asset_id,))
-        thread = threading.Thread(
-            target=lambda: answers.__setitem__("racer", record.claim(racer, asset_id, 1)))
         thread.start()
         _wait_for_a_blocked_backend(conn)
         answers["holder"] = record.claim(holder, asset_id, 1)
         holder.commit()
         thread.join(timeout=30)
-        assert not thread.is_alive(), "the racing claim never returned"
+        assert not thread.is_alive(), (
+            "the racing claim did not return within 30 s; its connection is left OPEN deliberately "
+            "rather than closed under a live thread, which would raise psycopg2.InterfaceError "
+            "inside it and reach pytest as a PytestUnhandledThreadExceptionWarning -- promoted to "
+            "a second error by -W error, on top of this one"
+        )
     finally:
         holder.close()
-        racer.close()
+        # Only when the thread is done with it (re-review N3). A connection closed under a thread
+        # still using it masks the real failure with a second, unrelated one; the scratch database
+        # is dropped WITH (FORCE) at teardown, so a connection left open here is reclaimed anyway.
+        if not thread.is_alive():
+            racer.close()
     assert set(answers) == {"holder", "racer"}, answers
     won = [row for row in answers.values() if row is not None]
     assert len(won) == 1, f"both connections claimed the same row: {answers}"
