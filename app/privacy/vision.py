@@ -24,11 +24,15 @@ SDK documents is a recorded VISION_FAILED, not an exception out of a worker chil
 the dict the privacy row's `vision` column takes. It logs the SDK's request id and the exception
 class and nothing else -- never the image, never the prompt, never the response text, never the key
 -- and it holds the SDK to the same rule: `anthropic._base_client` dumps the whole request body at
-DEBUG (its `exclude={"content"}` arm is pydantic v1 only and this project is v2), so one
-`LOG_LEVEL=DEBUG` on the worker would have put the base64 photograph, the prompt and the practice's
-name into `railway logs`. `_silence_sdk_logging()` pins that logger at INFO before any client is
-built. `httpx2`/`httpcore2` are NOT pinned: measured, their DEBUG traces carry
-`<Request [b'POST']>` and never the body.
+DEBUG (its `exclude={"content"}` arm is pydantic v1 only and this project is v2), which would put
+the base64 photograph, the prompt and the practice's name into `railway logs`. TWO doors reach it,
+and neither is `LOG_LEVEL` -- `app.main._configure_logging` scopes to the `app` logger, is api-only,
+and the worker never calls it (re-review Minor 2): **`ANTHROPIC_LOG=debug`**, which the SDK itself
+acts on at import (`anthropic/_utils/_logs.py`), and **celery's own `--loglevel`**, which sets the
+ROOT logger (`scripts/start.sh` runs `--loglevel=info`; `debug` there opens it).
+`_silence_sdk_logging()` runs inside `_client()` AFTER the lazy import and beats both.
+`httpx2`/`httpcore2` are NOT pinned: measured, their DEBUG traces carry `<Request [b'POST']>` and
+never the body.
 
 D-IDP-1 is queued for John: whether to send at all, which model, and a monthly cap. With the key
 absent -- which is every deployed environment today -- this module makes no request."""
@@ -110,6 +114,24 @@ class VisionResult(BaseModel):
     regions: list[VisionRegion]
 
 
+def _key() -> str:
+    """The credential, decided ONCE and used once (A-IDP-12, extended 2026-09-14).
+
+    The setting is what the operator pasted; this is what the key IS. Fix round 1 made
+    `_configured()` decide on `key.strip()` and left the SDK receiving the raw value, so a real key
+    pasted with a trailing newline or a surrounding space was "configured" and then failed every
+    photograph: httpx2 accepts the header at construction, httpcore2 opens TCP and then TLS, and
+    h11 refuses the value only at header build (`Illegal header value`) -- which the SDK maps to
+    `APIConnectionError` and retries twice, so three connections per photograph, `VISION_FAILED`,
+    and a log line pointing the operator at the network. One door removes the inconsistency: the
+    bytes the guard accepted are the bytes the SDK is given.
+
+    The spec's C.5 client literal states PROVENANCE -- read from `Settings`, never `os.environ`, so
+    no ambient credential can satisfy an unset Railway variable -- not bytes, so stripping keeps it.
+    """
+    return (settings.anthropic_api_key or "").strip()
+
+
 def _configured() -> bool:
     """Whether a key is CONFIGURED, which is not whether the setting is non-None (A-IDP-12).
 
@@ -119,16 +141,18 @@ def _configured() -> bool:
     allowed to open a connection. Every sibling secret in the tree already tests falsiness
     (`app/mail/tasks.py`, `app/census/client.py`); this adds `.strip()` on top of that, because
     `"   "` is truthy."""
-    return bool((settings.anthropic_api_key or "").strip())
+    return bool(_key())
 
 
 def _silence_sdk_logging() -> None:
     """Pin the SDK's own logger at INFO, before any client exists (Global Constraint (h)).
 
     `anthropic._base_client` emits `log.debug("Request options: %s", ...)` with NOTHING excluded on
-    pydantic v2, and it propagates to the root logger `app.main._configure_logging` sets from
-    `LOG_LEVEL`. Setting the level on the SDK's OWN logger beats the root's, so a DEBUG deploy still
-    gets this module's warnings and the transport's connection trace and never the photograph.
+    pydantic v2. The two doors that reach it are `ANTHROPIC_LOG=debug`, which sets this very logger
+    to DEBUG inside `import anthropic`, and celery's `--loglevel debug`, which sets the ROOT logger
+    the SDK propagates to. Setting the level on the SDK's OWN logger beats the root's and, because
+    the call sits after the lazy import, beats `ANTHROPIC_LOG` too -- so a DEBUG worker still gets
+    this module's warnings and the transport's connection trace and never the photograph.
 
     Idempotent and cheap: it raises a level that is below INFO and touches nothing else, so it can
     run on every call without accumulating handlers or overriding a deliberate WARNING/ERROR."""
@@ -144,7 +168,7 @@ def _client() -> Any:
     import anthropic  # lazy -- the api imports this module's siblings, never this
 
     _silence_sdk_logging()
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=SDK_RETRIES, timeout=TIMEOUT_S)
+    return anthropic.Anthropic(api_key=_key(), max_retries=SDK_RETRIES, timeout=TIMEOUT_S)
 
 
 def _failed(code: str, request_id: str | None = None, *, model: str = VISION_MODEL, **extra: Any) -> dict[str, Any]:
@@ -160,7 +184,7 @@ def analyse(display: bytes, *, name: str | None, city: str | None, state: str | 
         # Global Constraint (h): refused where it is USED, NAMING the variable and never its value.
         # `unavailable` is a status rather than a raised refusal, so this line is the only place an
         # operator reading a privacy row is told what to set (review Minor 8).
-        log.info("[vision] ANTHROPIC_API_KEY is not set; vision skipped")
+        log.info("[vision] ANTHROPIC_API_KEY is not set or blank; vision skipped")
         return {"status": "unavailable"}
     # Bound before the `try` so the exception arm can still report the answer's own model and
     # request id when the failure came from READING a response rather than from fetching one.

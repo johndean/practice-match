@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import logging
 import socket
-from typing import Any, NoReturn, get_args
+from typing import Any, NoReturn
 
 import pytest
 
@@ -33,6 +33,35 @@ def _banned_connect(self: socket.socket, address: object) -> NoReturn:
 
 def _banned_getaddrinfo(*args: object, **kwargs: object) -> NoReturn:
     raise AssertionError(f"the test suite must never resolve a name: {args!r}")
+
+
+class _SdkClient:
+    """A stand-in for a CONSTRUCTED `anthropic.Anthropic`, so the real `_client()` can run."""
+
+    def __init__(self, answer: Any) -> None:
+        self.beta = type("B", (), {"messages": type("M", (), {"create": lambda *a, **k: answer})()})()
+
+    def close(self) -> None:
+        return None
+
+
+def _record_sdk_constructor(monkeypatch: pytest.MonkeyPatch, answer: Any = None) -> list[dict[str, Any]]:
+    """Patch `anthropic.Anthropic` itself and record every constructor call.
+
+    Patching the SDK's own constructor rather than the adapter's `_client` is what lets a test run
+    the PRODUCTION path -- the lazy import, the logger pin, the keyword arguments the adapter
+    actually passes -- and still open no socket. Returns the list the spy appends to, so
+    `len(built)` is a count that can go up."""
+    import anthropic
+
+    built: list[dict[str, Any]] = []
+
+    def _factory(**kwargs: Any) -> _SdkClient:
+        built.append(kwargs)
+        return _SdkClient(answer)
+
+    monkeypatch.setattr(anthropic, "Anthropic", _factory)
+    return built
 
 
 class _Client:
@@ -72,17 +101,17 @@ def test_no_key_is_unavailable_and_not_a_failure(monkeypatch: pytest.MonkeyPatch
     THE PHOTOGRAPH with a junk credential -- the third-party egress D-IDP-1 is still unruled on, and
     the one thing this branch exists to prevent.
 
-    Blank is UNAVAILABLE: no client is built, no socket is opened, nothing is sent."""
-    built: list[object] = []
-    attempted: list[object] = []
+    Blank is UNAVAILABLE: no client is built, and therefore nothing is sent. The egress proof is the
+    CONSTRUCTOR count through the production door -- `anthropic.Anthropic` itself, with the real
+    `_client()` left in place -- rather than a socket assertion taken around a stubbed `_client`,
+    which could not fail (re-review Minor 5): `_client()` is the only door to the SDK, so with it
+    stubbed no mutation of the guarded code could ever reach a socket and the assertion was
+    vacuous. A spy that COUNTS bites: move the guard and it reads 1."""
     monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", key)
-    monkeypatch.setattr("app.privacy.vision._client", lambda: built.append(object()))
-    monkeypatch.setattr(socket.socket, "connect", lambda self, address: attempted.append(address))
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: attempted.append(a))
+    built = _record_sdk_constructor(monkeypatch)
     result = vision.analyse(IMAGE, **PROMPT_FACTS)
     assert result == {"status": "unavailable"}
-    assert built == [], "a blank key must not reach the SDK client constructor"
-    assert attempted == [], "a blank key must not open a socket or resolve a name"
+    assert len(built) == 0, "a blank key must not reach the SDK client constructor"
 
 
 def test_the_unavailable_branch_names_the_variable_and_never_a_value(
@@ -96,6 +125,10 @@ def test_the_unavailable_branch_names_the_variable_and_never_a_value(
     with caplog.at_level(logging.DEBUG):
         vision.analyse(IMAGE, **PROMPT_FACTS)
     assert "ANTHROPIC_API_KEY" in caplog.text
+    # "is not set" alone is false for the case A-IDP-12 exists for -- the variable IS set, to a
+    # blank -- and sends an operator who can see it in Railway looking for another cause
+    # (re-review Minor 3).
+    assert "not set or blank" in caplog.text
     assert "Hill Country Animal Hospital" not in caplog.text
 
 
@@ -106,11 +139,12 @@ def test_the_sdk_never_logs_the_photograph_the_prompt_or_the_practice_at_debug(
 
     `anthropic._base_client` emits `log.debug("Request options: %s", model_dump(options, ...))`, and
     its `exclude={"content"}` arm applies to pydantic v1 only -- this project is on v2, so NOTHING is
-    excluded. `app.main._configure_logging` puts `settings.log_level` on the root logger and the SDK
-    logger propagates to it, so a single `LOG_LEVEL=DEBUG` on the worker put the base64 photograph,
-    the whole prompt and the practice's name into `railway logs` -- three times over, once per SDK
-    retry -- which is precisely the un-redacted hospital photograph this sub-project exists to
-    protect.
+    excluded. The doors are `ANTHROPIC_LOG=debug`, which sets that logger to DEBUG inside
+    `import anthropic`, and a worker started with celery's `--loglevel debug`, which sets the ROOT
+    logger it propagates to -- NOT `LOG_LEVEL`, which reaches only the `app` logger on the api
+    (re-review Minor 2). Either put the base64 photograph, the whole prompt and the practice's name
+    into `railway logs`, three times over, once per SDK retry -- precisely the un-redacted hospital
+    photograph this sub-project exists to protect.
 
     This drives the REAL SDK -- `anthropic.Anthropic`, the real `_base_client`, the real request
     build, which is when the dump happens -- over an `httpx2.MockTransport`, so the whole path runs
@@ -138,7 +172,11 @@ def test_the_sdk_never_logs_the_photograph_the_prompt_or_the_practice_at_debug(
     client = anthropic.Anthropic(api_key="sk-test", max_retries=0,
                                  http_client=httpx2.Client(transport=httpx2.MockTransport(_answer)))
     monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", "sk-test")
-    monkeypatch.setattr("app.privacy.vision._client", lambda: (vision._silence_sdk_logging(), client)[1])
+    # The SDK's CONSTRUCTOR is replaced, never the adapter's `_client` -- so the production line
+    # that applies the pin runs. Patching `_client` (fix round 1's own shape) meant the one wired
+    # call could be deleted with every test green at 100 % coverage: a gate that could not fail on
+    # the wiring it claimed to prove (re-review Minor 1).
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: client)
     monkeypatch.setattr(socket.socket, "connect", _banned_connect)  # belt and braces: nothing may dial out
     monkeypatch.setattr(socket, "getaddrinfo", _banned_getaddrinfo)
     monkeypatch.setattr(logging.getLogger("anthropic"), "level", logging.NOTSET)  # an operator's DEBUG, not ours
@@ -153,6 +191,9 @@ def test_the_sdk_never_logs_the_photograph_the_prompt_or_the_practice_at_debug(
         client.close()
     blob = "\n".join(captured)
     assert result["status"] == "ok"  # the whole request/response path really did run
+    # Stated directly, not only implied by the capture: line 144 put the SDK logger back to NOTSET,
+    # so INFO here can only have come from `_client()`'s own call on the production path.
+    assert logging.getLogger("anthropic").level == logging.INFO, "_client() did not pin the SDK logger"
     assert base64.b64encode(PHOTOGRAPH).decode()[:40] not in blob, "the photograph reached the log"
     assert "could let a reader identify" not in blob, "the prompt reached the log"
     assert "Hill Country Animal Hospital" not in blob, "the practice name reached the log"
@@ -177,6 +218,38 @@ def test_pinning_the_sdk_logger_is_idempotent_and_never_lowers_it(
     assert sdk.level == expected
     vision._silence_sdk_logging()
     assert sdk.level == expected
+
+
+@pytest.mark.parametrize("configured", ["sk-test", "sk-test\n", "  sk-test  ", "sk-test\r\n", "\tsk-test"])
+def test_the_sdk_receives_the_stripped_key_it_was_configured_by(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    """Controller amendment A-IDP-12 EXTENDED, 2026-09-14 (re-review Important 1).
+
+    Fix round 1 made `_configured()` decide on `key.strip()` and left `_client()` handing the SDK
+    the RAW value, so a real key pasted into Railway with a trailing newline or a surrounding space
+    was "configured" and then failed EVERY photograph: httpx2 accepts the header at construction,
+    httpcore2 opens TCP and then TLS, and only then does h11 refuse the value
+    (`LocalProtocolError: Illegal header value`) -- which the SDK maps to `APIConnectionError` and
+    retries twice, so three connections per photograph, `VISION_FAILED`, PROCESSING_FAILED, three
+    task attempts, REVIEW_REQUIRED for every seller, under a log line pointing at the network.
+
+    One value, decided once, used once: `_key()` is what `_configured()` asks and what the SDK is
+    given. The spec's C.5 literal states PROVENANCE -- from `Settings`, never `os.environ` -- not
+    bytes, so stripping keeps it.
+
+    The constructor is the SPY, so this asserts what the adapter PASSED rather than what an object
+    happens to hold, and no socket can exist to be opened."""
+    monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", configured)
+    built = _record_sdk_constructor(monkeypatch)
+    vision._client()
+    assert len(built) == 1
+    assert built[0]["api_key"] == "sk-test", "the SDK must receive the key the guard accepted"
+    assert built[0]["max_retries"] == vision.SDK_RETRIES
+    assert built[0]["timeout"] == vision.TIMEOUT_S
+    # No base_url override: the single egress is the SDK's own default host, pinned for real in
+    # `test_the_client_takes_its_key_from_settings_and_reaches_only_anthropic` below.
+    assert "base_url" not in built[0]
 
 
 def test_the_client_takes_its_key_from_settings_and_reaches_only_anthropic(
@@ -255,13 +328,12 @@ def test_a_refusal_is_read_before_the_content_is(monkeypatch: pytest.MonkeyPatch
     """`stop_reason == "refusal"` is checked FIRST: reading `content[0].text` on a refusal is how a
     caller gets an IndexError instead of a recorded outcome.
 
-    The category is one the pinned SDK can actually send, asserted against the SDK's own literal
-    rather than chosen (review Minor 5: the first fixture used `"image_safety"`, which
-    `BetaRefusalStopDetails.category` does not declare -- the adapter records whatever it is handed,
-    so nothing was wrong, but the case exercised a value the API cannot produce)."""
-    from anthropic.types.beta import BetaRefusalStopDetails
-
-    assert REFUSAL_CATEGORY in get_args(get_args(BetaRefusalStopDetails.model_fields["category"].annotation)[0])
+    The category is one the pinned SDK can actually send (review Minor 5). It is pinned by VALUE in
+    `REFUSAL_CATEGORY` and asserted through BEHAVIOUR -- what `analyse` records -- rather than by
+    reading the SDK's annotation SHAPE: `get_args(get_args(...)[0])` assumed `Optional[Literal[...]]`
+    and would have turned an SDK bump that flattened the field into `assert 'general_harms' in ()`
+    inside the refusal-ordering case, an opaque failure in a test about something else
+    (re-review Minor 6)."""
     refused = type("Message", (), {"content": [], "stop_reason": "refusal", "model": "claude-opus-5",
                                    "stop_details": type("D", (), {"category": REFUSAL_CATEGORY})(),
                                    "_request_id": "req_x"})()
@@ -289,8 +361,14 @@ def test_every_post_call_outcome_records_the_model_that_answered(
     assert result["status"] == "failed" and result["model"] == "claude-sonnet-5"
 
 
+@pytest.mark.parametrize(("unreadable", "recorded"), [
+    # the answering model is there to read: record IT, never the constant
+    (type("Message", (), {"_request_id": "req_y", "model": "claude-sonnet-5"})(), "claude-sonnet-5"),
+    # nothing to read: the constant is the honest fallback
+    (type("Message", (), {"_request_id": "req_y"})(), vision.VISION_MODEL),
+])
 def test_an_unreadable_answer_is_a_recorded_outcome_and_never_an_exception(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, unreadable: Any, recorded: str
 ) -> None:
     """"This module NEVER raises" must cover the ANSWER, not only the call (review Minor 3).
 
@@ -298,12 +376,18 @@ def test_an_unreadable_answer_is_a_recorded_outcome_and_never_an_exception(
     dict build outside it -- a response object missing `stop_reason` raised `AttributeError` straight
     out of `analyse`, which in the worker is a dead child instead of a written PROCESSING_FAILED.
     Every response type SDK 1.5.0 documents carries both attributes, so this is the contract's
-    scope rather than a live defect; the guarantee is what is being held."""
+    scope rather than a live defect; the guarantee is what is being held.
+
+    Parametrised over the model BEING there and NOT being there, because the arm reads
+    `getattr(message, "model", VISION_MODEL)` and fix round 1's single fixture carried no `model`
+    at all -- so replacing that whole expression with the bare constant left all 27 tests green,
+    and a fallback-routed turn whose answer the adapter could not read would have been audited
+    against a model that did not produce it: Minor 1's defect surviving on the one arm nothing
+    covered (re-review Minor 4)."""
     monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", "sk-test")
-    monkeypatch.setattr("app.privacy.vision._client",
-                        lambda: _Client(type("Message", (), {"_request_id": "req_y"})()))
+    monkeypatch.setattr("app.privacy.vision._client", lambda: _Client(unreadable))
     result = vision.analyse(IMAGE, **PROMPT_FACTS)
-    assert result == {"status": "failed", "code": "VISION_FAILED", "model": vision.VISION_MODEL,
+    assert result == {"status": "failed", "code": "VISION_FAILED", "model": recorded,
                       "request_id": "req_y"}
 
 
