@@ -1725,6 +1725,24 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     return (await mapZoom(page)) as number;
   }
 
+  /** The basemap tiles the layer is actually SHOWING, classified the same way the requests are.
+   *  Necessary as well as the request log, and deterministic where it is not: once a URL has been
+   *  loaded, Chromium serves it from the memory cache and emits no network event at all, so
+   *  switching BACK to a basemap whose tiles are already in hand can legitimately make zero
+   *  requests. What the layer asked for is still written on every `<img>` in the tile pane — and
+   *  an EMPTY tile pane is exactly the blank map A35.6's reset exists to prevent. */
+  const tileSrcs = (page: Page): Promise<TileHit[]> => page.evaluate(() => {
+    const SRC: Record<string, string> = {
+      'Canvas/World_Light_Gray_Base': 'gray-base',
+      'Canvas/World_Light_Gray_Reference': 'gray-labels',
+      World_Imagery: 'imagery'
+    };
+    return [...document.querySelectorAll('.leaflet-tile-pane img')].flatMap((el) => {
+      const m = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//.exec((el as HTMLImageElement).src);
+      return m && SRC[m[1]] ? [{ service: SRC[m[1]], z: Number(m[2]) }] : [];
+    });
+  });
+
   /** Painted pixels on the polygon layer's own canvas — the shading must survive the whole climb,
    *  because the canvas renderer has no zoom limit and the tiles beneath it now do. */
   const paintedOverlay = (page: Page) => page.evaluate(() => {
@@ -1777,30 +1795,36 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     // upscaled basemap is underneath them, not instead of them.
     expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
 
-    // (v) The other basemap, switched at the ceiling: imagery is real to 19 and is asked for at 19.
+    // (v) The other basemap, switched AT the ceiling — which is where A35.6's reset is load-bearing,
+    // because the two services clamp to different tile zooms and `redraw()` alone leaves the
+    // layer holding the previous zoom's world range. An empty tile pane here is the blank map.
     const beforeSat = hits.length;
     const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
     await satTab.click();
     await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
     await page.waitForTimeout(1500);
-    const imagery = hits.slice(beforeSat).filter((h) => h.service === 'imagery');
-    expect(imagery.length, 'switching to Satellite asked for no imagery at all').toBeGreaterThan(0);
-    expect([...new Set(imagery.filter((h) => h.z > NATIVE_MAX.imagery).map((h) => h.z))],
+    const shown = await tileSrcs(page);
+    expect(shown.length, 'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
+    expect([...new Set(shown.map((h) => h.service))], 'the tile pane is not showing the imagery service').toEqual(['imagery']);
+    expect(Math.max(...shown.map((h) => h.z)), 'Satellite is not drawing at its own native max').toBe(NATIVE_MAX.imagery);
+    expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
       'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
-    expect(Math.max(...imagery.map((h) => h.z)), 'Satellite stopped short of its own native max').toBe(NATIVE_MAX.imagery);
 
-    const beforeMap = hits.length;
     await page.getByRole('button', { name: 'Map', exact: true }).click();
     await page.waitForTimeout(1500);
-    const backToGray = hits.slice(beforeMap).filter((h) => h.service === 'gray-base');
-    expect(backToGray.length, 'switching back to Map asked for no gray tiles at all').toBeGreaterThan(0);
-    expect([...new Set(backToGray.filter((h) => h.z > NATIVE_MAX['gray-base']).map((h) => h.z))],
-      'A35.6: the native max must be written BEFORE setUrl, or the redraw re-reads the old one').toEqual([]);
+    const back = await tileSrcs(page);
+    expect(back.length, 'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
+    expect([...new Set(back.map((h) => h.service))], 'the tile pane is not showing the gray canvas').toEqual(['gray-base']);
+    expect(Math.max(...back.map((h) => h.z)),
+      'the gray canvas is drawing past the level Esri has a tile for').toBe(NATIVE_MAX['gray-base']);
 
     // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
     // for a tile the service that serves it does not have.
     const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
     expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
+
+    // …and nothing is DRAWN past it either, on either basemap, at any point in the run.
+    expect((await tileSrcs(page)).filter((h) => h.z > NATIVE_MAX[h.service])).toEqual([]);
 
     const byZoom = [...new Set(hits.map((h) => h.service))].sort().map((s) => {
       const zs = hits.filter((h) => h.service === s).map((h) => h.z);
