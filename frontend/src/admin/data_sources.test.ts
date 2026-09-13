@@ -38,7 +38,9 @@ const ACS: DataSourceItem = {
   last_verified_at: null,
   drift_flagged: false,
   notes: null,
+  vintage: '2019–2023',
   active_vintage: null,
+  active_vintage_note: null,
   last_run: null
 };
 const item = (over: Partial<DataSourceItem>): DataSourceItem => ({ ...ACS, ...over });
@@ -53,7 +55,7 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
     // `last_verified_at` is null for every dataset the quarterly sweep has not read a body for,
     // and "never" is what that means — never the date of a failed attempt
     // (`app/api/admin_data_sources.py`'s own note on the field's two authors).
-    expect(row[0].sub).toBe('Annual (Dec) · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Terms verified never');
   });
 
   it('serves the attribution string VERBATIM — it is never composed here (spec §12)', () => {
@@ -74,24 +76,55 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
 
   it('reports a successful load with its month and its row count', () => {
     const [row] = rows([item({ last_run: { status: 'succeeded', finished_at: '2026-06-14T09:12:00+00:00', rows_written: 4200 } })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Loaded June 2026 (4,200 rows) · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Loaded June 2026 (4,200 rows) · Declared vintage 2019–2023 · Terms verified never');
   });
 
   it('never reports a load that did not succeed as a load', () => {
     const [row] = rows([item({ last_run: { status: 'failed', finished_at: '2026-06-14T09:12:00+00:00', rows_written: 0 } })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Last load failed June 2026 · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Last load failed June 2026 · Declared vintage 2019–2023 · Terms verified never');
   });
 
   it('omits the month of a run that has not finished, and counts a null row tally as none', () => {
     expect(rows([item({ last_run: { status: 'running', finished_at: null, rows_written: null } })])[0][0].sub)
-      .toBe('Annual (Dec) · Last load running · Terms verified never');
+      .toBe('Annual (Dec) · Last load running · Declared vintage 2019–2023 · Terms verified never');
     expect(rows([item({ last_run: { status: 'succeeded', finished_at: null, rows_written: null } })])[0][0].sub)
-      .toBe('Annual (Dec) · Loaded (0 rows) · Terms verified never');
+      .toBe('Annual (Dec) · Loaded (0 rows) · Declared vintage 2019–2023 · Terms verified never');
   });
 
   it('names the vintage the app is actually allowed to read, and when the terms were verified', () => {
     const [row] = rows([item({ active_vintage: '2019–2023', last_verified_at: '2026-06-02T00:00:00+00:00' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Live vintage 2019–2023 · Terms verified June 2026');
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2019–2023 · Terms verified June 2026');
+  });
+
+  // A38 fix round 1 (review M6, D-C53's "everything must be surfaced"): three fields the route
+  // serves were not on the tab. TWO of them are now, and the third is recorded as deliberately not.
+  it('names the DECLARED vintage beside the live one, so the two can be read against each other', () => {
+    // `dataset_registry.vintage` is what the platform registered; `active_vintage.vintage` is what
+    // the app is allowed to read today. A row where they differ is a real operational state — an
+    // activation that has not happened — and before this the tab showed only the second of them.
+    const [row] = rows([item({ vintage: '2019–2023', active_vintage: '2014–2018' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2014–2018 · Terms verified never');
+  });
+
+  it('has no vintage clause where the registry declares none', () => {
+    expect(rows([item({ vintage: null })])[0][0].sub).toBe('Annual (Dec) · Terms verified never');
+  });
+
+  it('carries the operator\'s activation note, in the design\'s own parenthesis, beside the vintage it explains', () => {
+    // A-C7 (6)'s persisted "why": the CLI REQUIRES it when an activation is forced past the
+    // row-count guard, and `app/api/admin_data_sources.py`'s own docstring says this tab is the
+    // only surface that reads it back. The parenthesis is the design's own idiom on this very
+    // sub-line ("Loaded June 2026 (4,200 rows)"), so it needs no word the design does not have.
+    const [row] = rows([item({ active_vintage: '2022', active_vintage_note: 'forced past the row-count guard' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · Live vintage 2022 (forced past the row-count guard) · Terms verified never');
+  });
+
+  it('still shows an activation note where the live vintage itself is missing', () => {
+    // `active_vintage.vintage` is NOT NULL, so this cannot happen through the CLI — but dropping
+    // an operator's written note on the tab that IS its only reader is the one outcome this
+    // module must not have, so the note takes its own clause rather than vanishing with its host.
+    const [row] = rows([item({ active_vintage: null, active_vintage_note: 'why' })]);
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2019–2023 · why · Terms verified never');
   });
 
   it('reads a date in UTC, so a reviewer\'s own browser offset cannot move the month', () => {
@@ -254,6 +287,17 @@ describe('makeAdminDataSourcesAdapter, against the real fetch boundary', () => {
     expect(calls[0].url).toBe('/api/admin/data-sources');
     expect(calls[0].init.method).toBe('GET');
     expect(calls[0].init.credentials).toBe('same-origin');
+  });
+
+  // A38 fix round 1 (review M4): a READ carries neither header. `admin/listings.ts`'s own `send`
+  // and `auth/api.ts` both gate them on `method !== 'GET'`, for the reason `auth/api.ts` records —
+  // `check_origin_and_csrf` returns early on GET/HEAD/OPTIONS, so the token is never checked, and
+  // sending it anyway is a value the server would refuse if it were ever empty. This module claims
+  // to be those two copied verbatim, so it behaves like them.
+  it('sends no CSRF token and no Content-Type on the read, as both siblings do', async () => {
+    const calls = stubFetch({ status: 200, body: [] });
+    await makeAdminDataSourcesAdapter().list();
+    expect(calls[0].init.headers ?? {}).toEqual({});
   });
 
   it('rejects when the registry cannot be read — which empties the tab, never falls back', async () => {

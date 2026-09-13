@@ -38,7 +38,6 @@
  * those two need a server-side `counts` object and this one does not. The rule is the design's
  * own: its literal "2" is the two of its five fixture rows that are not Cleared.
  */
-import { csrfToken } from '../auth/api';
 
 export interface ActionButton { label: string; go: () => Promise<void>; style: string }
 
@@ -126,14 +125,24 @@ export interface IngestRun { status: string; finished_at: string | null; rows_wr
 /**
  * One row of `GET /api/admin/data-sources` (`app/api/admin_data_sources.py::_row`), narrowed to
  * what the table reads. A structural interface, so the real payload is assignable without
- * restating the fields this tab does not print (`api_dataset_id`, `vintage`,
- * `active_vintage_note`).
+ * restating the one field this tab does not print.
+ *
+ * **`api_dataset_id` is deliberately NOT rendered** (fix round 1, review M6). D-C53's rule is that
+ * everything must be SURFACED, and every other served field now is — `vintage` and
+ * `active_vintage_note` joined the Dataset sub-line in the same round. This one is an IDENTIFIER,
+ * not information: it is the dataset's path on the provider's own API (`2023/acs/acs5`,
+ * `Canvas/World_Light_Gray_Base + Canvas/World_Light_Gray_Reference`), the string the loader puts
+ * in a URL. A reviewer of the licence gate never acts on it, it is the longest value the row
+ * carries, and the Source column's own height budget is measured and tight
+ * (`tests/census/test_registry.py::test_every_registry_note_fits_the_design_s_source_column`). It
+ * is recorded here rather than left to be noticed as an omission.
  */
 export interface DataSourceItem {
   dataset_key: string; display_name: string; refresh_cadence: string;
   license_status: string; license_name: string | null; license_url: string | null;
   attribution_text: string; last_verified_at: string | null; drift_flagged: boolean;
-  notes: string | null; active_vintage: string | null; last_run: IngestRun | null;
+  notes: string | null; vintage: string | null;
+  active_vintage: string | null; active_vintage_note: string | null; last_run: IngestRun | null;
 }
 
 /**
@@ -198,7 +207,20 @@ export function toDataSourceRows(items: (DataSourceItem | DesignDataSourceRow)[]
     const dataset = [item.refresh_cadence];
     const note = loadNote(item.last_run);
     if (note !== null) dataset.push(note);
-    if (item.active_vintage !== null) dataset.push(`Live vintage ${item.active_vintage}`);
+    // Fix round 1 (review M6, D-C53's "everything must be surfaced"): the DECLARED vintage beside
+    // the live one. They are two different facts — what the platform registered and what the app is
+    // allowed to read today — and a row where they differ is an activation that has not happened.
+    if (item.vintage !== null) dataset.push(`Declared vintage ${item.vintage}`);
+    // The operator's activation note (A-C7 (6)) rides in the design's OWN parenthesis, the one this
+    // sub-line already uses for "Loaded June 2026 (4,200 rows)", beside the vintage it explains.
+    // `app/api/admin_data_sources.py`'s own docstring says this tab is its only intended reader.
+    // `active_vintage.vintage` is NOT NULL so the second arm cannot be reached through the CLI, but
+    // a written note is never dropped on the one surface that shows it.
+    if (item.active_vintage !== null) {
+      dataset.push(`Live vintage ${item.active_vintage}` + (item.active_vintage_note ? ` (${item.active_vintage_note})` : ''));
+    } else if (item.active_vintage_note) {
+      dataset.push(item.active_vintage_note);
+    }
     // Always stated, both ways round: "never" is what a null means here, and a console that
     // simply omitted the line would read as "recently verified" to anyone skimming.
     dataset.push(`Terms verified ${item.last_verified_at === null ? 'never' : formatMonth(item.last_verified_at)}`);
@@ -229,10 +251,12 @@ export interface AdminDataSourcesAdapter {
 export function makeAdminDataSourcesAdapter(): AdminDataSourcesAdapter {
   return {
     list: async () => {
-      const res = await fetch('/api/admin/data-sources', {
-        method: 'GET', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() }
-      });
+      // NO `X-CSRF-Token` and NO `Content-Type`: this is a read, and both siblings gate those on
+      // `method !== 'GET'` (`admin/listings.ts`'s `send`, `auth/api.ts`) for the reason the latter
+      // records — `check_origin_and_csrf` returns early on GET/HEAD/OPTIONS, which is also where an
+      // empty value would be refused. Fix round 1, review M4: this module sent both, which
+      // contradicted its own "copied verbatim from the M6 pattern" claim.
+      const res = await fetch('/api/admin/data-sources', { method: 'GET', credentials: 'same-origin' });
       if (!res.ok) throw new Error('the dataset registry could not be read');
       // The route answers the WHOLE registry as a bare array, ordered by key — no envelope and no
       // cursor (`list_data_sources`). Real production rows are `DataSourceItem`-shaped; the pixel

@@ -1207,6 +1207,76 @@ ESRI_REGISTRY_MIGRATION = "092_esri_basemap_registry.sql"
 ESRI_LAYERS = {"map": "esri_tiles", "satellite": "esri_imagery"}
 
 
+def _sql_literals(tuple_text: str) -> list[str | None]:
+    """One `VALUES (...)` tuple split into its literals, quote-aware.
+
+    A38 fix round 1 (review M2): the pin below used to ask whether the credit appeared ANYWHERE in
+    the row's text, which a row carrying it in `license_name` and something else entirely in
+    `attribution_text` satisfies — reproduced, and it passed. Attribution is legally load-bearing,
+    so the pin has to read the COLUMN. `notes` carries commas, parentheses and doubled quotes, so
+    splitting on `,` is not enough: this walks the tuple, tracks whether it is inside a quoted
+    literal, and treats `''` as an escaped quote rather than as a close."""
+    out: list[str | None] = []
+    buf: list[str] = []
+    quoted = False
+    in_quote = False
+    i = 0
+    while i < len(tuple_text):
+        c = tuple_text[i]
+        if in_quote:
+            if c == "'" and tuple_text[i + 1 : i + 2] == "'":
+                buf.append("'")
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+                i += 1
+                continue
+            buf.append(c)
+        elif c == "'":
+            in_quote, quoted = True, True
+        elif c == ",":
+            out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+            buf, quoted = [], False
+        else:
+            buf.append(c)
+        i += 1
+    out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+    return out
+
+
+def _insert_row(sql: str, key: str) -> dict[str, str | None]:
+    """The named `dataset_registry` INSERT row of a migration, as {column: value}.
+
+    The column list is read out of the migration itself rather than restated, so a column added
+    between two others cannot silently shift what this pin compares."""
+    columns = re.search(r"INSERT INTO dataset_registry\s*\n?\s*\(([^)]*)\)\s*VALUES", sql)
+    assert columns, "the migration does not name its dataset_registry columns"
+    names = [c.strip() for c in columns.group(1).split(",")]
+    start = sql.index(f"('{key}',")
+    depth, i, in_quote = 0, start, False
+    while i < len(sql):
+        c = sql[i]
+        if in_quote:
+            if c == "'" and sql[i + 1 : i + 2] == "'":
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+        elif c == "'":
+            in_quote = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    values = _sql_literals(sql[start + 1 : i])
+    assert len(values) == len(names), f"{key}: {len(values)} values for {len(names)} columns"
+    return dict(zip(names, values, strict=True))
+
+
 def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
     """Task A38 / controller ruling 17. Attribution is LEGALLY load-bearing (Census spec §12;
     CLAUDE.md "Attribution stays visible on every map"), and it is now stated in two places: the
@@ -1217,10 +1287,13 @@ def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
     current `copyrightText` on 2026-09-13, and nothing outside that one file would have noticed if
     the registry had been seeded with the stale one.
 
-    So the two are pinned against each other, by VALUE and in both directions: every registered
-    Esri row's attribution is the one its own layer draws, and no OTHER string appears in either
-    place. Read out of the migration's text rather than the database, so it holds on a checkout
-    with no Postgres — the schema drift tests' own rule."""
+    So the two are pinned against each other BY VALUE, on the COLUMN: the migration's tuple is split
+    positionally against the column list it declares, and `attribution_text` must equal the string
+    its own layer draws, character for character. Fix round 1 (review M2): the first version asked
+    whether the credit appeared anywhere in the row's text, which a row carrying the right credit in
+    `license_name` and `'© OpenStreetMap contributors'` in `attribution_text` passed — the reviewer
+    reproduced exactly that. Read out of the migration's text rather than the database, so it holds
+    on a checkout with no Postgres — the schema drift tests' own rule."""
     migration = (ROOT / "migrations" / ESRI_REGISTRY_MIGRATION).read_text()
     leaflet = (ROOT / "frontend" / "src" / "lib" / "leaflet.js").read_text()
     for basemap, dataset_key in ESRI_LAYERS.items():
@@ -1231,13 +1304,14 @@ def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
         assert drawn, f"frontend/src/lib/leaflet.js declares no attribution for BASEMAPS.{basemap}"
         # leaflet.js escapes the © as \u00a9; the SQL carries the character itself.
         text = drawn.group(1).replace("\\u00a9", "\u00a9")
-        row = re.search(rf"\('{dataset_key}',(.*?)\)[,;]\n", migration, re.DOTALL)
-        assert row, f"{ESRI_REGISTRY_MIGRATION} registers no {dataset_key} row"
-        assert f"'{text}'" in row.group(1), (
-            f"{dataset_key}'s attribution_text is not the string BASEMAPS.{basemap} actually draws "
-            f"({text!r}). One of the two has moved; a credit must never change in one place only."
+        assert f"('{dataset_key}'," in migration, f"{ESRI_REGISTRY_MIGRATION} registers no {dataset_key} row"
+        row = _insert_row(migration, dataset_key)
+        assert row["attribution_text"] == text, (
+            f"{dataset_key}'s attribution_text is {row['attribution_text']!r}, not the string "
+            f"BASEMAPS.{basemap} actually draws ({text!r}). One of the two has moved; a credit must "
+            "never change in one place only."
         )
-        assert "'unresolved'" in row.group(1), (
+        assert row["license_status"] == "unresolved", (
             f"{dataset_key} is no longer registered as unresolved. Clearing a basemap licence is "
             "the VIN Foundation's decision under the Census plan's one basemap decision record."
         )

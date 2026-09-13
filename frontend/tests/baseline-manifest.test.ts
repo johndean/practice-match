@@ -48,6 +48,17 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines,
 // name the design as it stood at this re-pin; the rows in LOCAL_AMENDMENTS.md carry the ones
 // re-checked after later insertions.)
 //
+// Amendment A38 (Task A38, D-C53, 2026-09-13; controller ruling 18) re-based ONE row, the fourth
+// ruled re-pin. `admin-data-sources` is the Admin screen's Data Sources tab, and A38.4/A38.5 take
+// two buttons out of the design's own table — "Assign review" on the pet-ownership row and "Open
+// question" on the practice-locations one — under D-C53's rule that a button which calls nothing is
+// REMOVED by amendment rather than shipped as a no-op: neither had a route, a table or a status
+// transition behind it. Two elements leaving a table move its pixels, so that hash is re-pinned
+// under the ruling. The other TWELVE did not move, which is the proof the change stayed on the one
+// tab: A38's other five entries are script-only and paint nothing without an adapter, and the
+// reference and the Claude Design preview pass none. (The three `admin-*` siblings are captured on
+// the same screen and kept their hashes, so nothing leaked through the shared admin shell either.)
+//
 // From here a moved hash means a CODE change moved a screen the design did not.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 

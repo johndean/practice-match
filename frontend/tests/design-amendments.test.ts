@@ -1326,6 +1326,26 @@ describe('local design amendments (spec D15)', () => {
   // A6/A7 block appended after everything. The set case below could not see it, and the file is
   // read by people. The order that matters is the order the edits are APPLIED, which is also the
   // order the ids are pinned in above.
+  // A38 fix round 1 (review M1): the seven A38 rows were appended after a BLANK line, which ends a
+  // GitHub-flavoured Markdown table — so they rendered as literal `| A38.4 | … |` text in the one
+  // file CLAUDE.md calls the per-amendment record, and nothing could see it: every other ledger
+  // case here matches rows by their `| A<id> |` prefix, which a broken table satisfies exactly as
+  // well as a live one. The table is ONE table from its delimiter row to the last amendment, and
+  // the file ends with a newline like every other text file in the repository.
+  it('LOCAL_AMENDMENTS.md is one unbroken table, so every row renders as a row', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const lines = md.split('\n');
+    const delimiter = lines.findIndex((l) => /^\|-{3}\|/.test(l));
+    expect(delimiter, 'the ledger has no `|---|---|---|---|` delimiter row').toBeGreaterThan(0);
+    const last = lines.map((l) => /^\|\s*A[\w.]+\s*\|/.test(l)).lastIndexOf(true);
+    const broken = lines.slice(delimiter + 1, last + 1)
+      .map((l, i) => [delimiter + 2 + i, l] as const)
+      .filter(([, l]) => !/^\|/.test(l));
+    expect(broken, 'a line inside the table does not start a table row, which ends the table there')
+      .toEqual([]);
+    expect(md.endsWith('\n'), 'LOCAL_AMENDMENTS.md does not end with a newline').toBe(true);
+  });
+
   it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);

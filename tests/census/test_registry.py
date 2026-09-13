@@ -83,3 +83,74 @@ def test_dataset_cleared_property_reflects_license_status(conn):
     reg = load(conn)
     assert reg["acs5"].cleared is True
     assert reg["pet_ownership"].cleared is False
+
+# ---------------------------------------------------------------------------------------
+# A38 fix round 1, review I1 / controller ruling (2026-09-13): a note that does not fit the
+# approved design's row.
+#
+# The admin Data Sources tab prints `notes` VERBATIM into the Source column's sub-line -- no
+# truncation and no clamping, by ruling: this is the platform's legal gate and hidden text is not
+# an option there. So the fit has to be true of the DATA, and this is where it is made true.
+#
+# MEASURED, not chosen, in real Chromium at the design's own 1440x940 with the design's own three
+# stylesheets, against the app's own markup (`frontend/src/App.vue`'s admin table, grid
+# `1.1fr 1.6fr .8fr .8fr`, `gap: 20px`, row `padding: 16px 20px`, card `max-width: 1180px`):
+#
+#   * the Source column is **376 px** wide;
+#   * the design's own five fixture rows are 75, 94, 75, 94 and 93 px tall, and the tallest of them
+#     is **94 px** -- a 61 px Source cell, which is one line of `attribution_text` at 14 px plus
+#     TWO lines of sub-line at 12.5 px/1.5;
+#   * probing the composed sub-line at word lengths 4, 5, 6, 8, 10 and 12 characters, the first
+#     length to need a THIRD line was 120 characters (five-letter words). **115** is the largest
+#     that stayed on two lines for every mix probed, and that is the cap below. A second probe, at
+#     word lengths 5 to 22 behind the registry's own longest `license_name`
+#     ("CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)", 57 characters), put nothing
+#     over two lines up to 120 either, so 115 is a floor under both.
+#
+# WHAT THIS CAP CANNOT FIX, recorded rather than implied: `attribution_text` is the Source cell's
+# MAIN line and is legally verbatim (spec §12), so a long credit takes two or three lines of its
+# own -- `overture_places`' 117-character credit renders three, and its row is 136 px whatever its
+# note says. Measured after these migrations, every row's SUB-LINE is at most the design's own two
+# lines and the tallest row is 136 px, against 226 px before (zbp). The rows still over 94 px are
+# over it on a string no one may shorten.
+#
+# The sub-line is `license_name or "Licence not recorded"`, then ` · ` and the note, then
+# ` · Terms drift flagged` while the quarterly sweep has the row flagged
+# (`frontend/src/admin/data_sources.ts`'s own composition, restated here because this is a
+# cross-language pin and there is no way to import it). The drift clause is counted only when the
+# row actually carries the flag, as the tab renders it -- and it costs 22 characters, which is why
+# the migrations leave headroom where a row can afford it.
+#
+# A character count is a PROXY for a wrap: the same 115 characters of longer words can still take a
+# third line, which is why the probe took the worst mix rather than an average. It is the cap the
+# ruling asked for, and it is the one thing a migration can be held to.
+SOURCE_SUBLINE_CAP = 115
+DRIFT_CLAUSE = " · Terms drift flagged"
+
+
+def test_every_registry_note_fits_the_design_s_source_column(conn):
+    """Every `dataset_registry.notes` value, after every migration, renders inside the approved
+    design's own row height.
+
+    RED before migrations 092 (rewritten) and 093: `zbp` carried a 458-character note that rendered
+    226 px tall against the design's 94, with `practice_locations` at 187 px,
+    `google_places_aggregate` at 190 px and six more over the design -- measured, on the real
+    registry, in the browser."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT dataset_key, license_name, notes, drift_flagged FROM dataset_registry "
+            "WHERE notes IS NOT NULL AND notes <> '' ORDER BY dataset_key"
+        )
+        rows = cur.fetchall()
+    assert rows, "no registry row carries a note, so this pin measures nothing"
+    over = []
+    for key, license_name, notes, drift in rows:
+        sub = f"{license_name or 'Licence not recorded'} · {notes}" + (DRIFT_CLAUSE if drift else "")
+        if len(sub) > SOURCE_SUBLINE_CAP:
+            over.append(f"{key}: {len(sub)} characters, {len(sub) - SOURCE_SUBLINE_CAP} over")
+    assert not over, (
+        "these registry notes do not fit the approved design's Source column "
+        f"({SOURCE_SUBLINE_CAP} characters of sub-line, measured): " + "; ".join(over) +
+        ". The tab prints notes verbatim by ruling, so shorten the note in a migration -- never the "
+        "rendering."
+    )
