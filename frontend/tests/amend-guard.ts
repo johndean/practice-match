@@ -37,13 +37,25 @@
  * and the ledger stayed green, because a third consumer still declared (fix round 2, ruled a defect
  * on the re-review, 2026-09-13). Every consumer declares its own consumption.
  *
- * The one narrowing that keeps: two entries can introduce byte-identical lines — A24.35
- * (households) and A24.36 (income) both write
- * `source: "U.S. Census ACS 5-year estimates (2023) · Census tract",` — so that text has TWO
- * consumers and the text alone cannot say which took which. Either consumer's token counts for it,
- * which is what lets A24.46 declare A24.36 and A24.47 declare A24.35, each the one its own `find`
- * anchor addresses, instead of one row being made to state a falsehood (which is what happened at
- * A24.46 before the task review caught it).
+ * The one narrowing that keeps, stated as it is CODED: where a consumed line has SEVERAL takers,
+ * any one of them may declare it. Four consumed lines in this ledger have more than one, in two
+ * kinds (measured 2026-09-13, round-2 re-review; the first draft of this paragraph named only the
+ * first kind and described the rule more narrowly than the code):
+ *
+ *   1. BYTE-IDENTICAL lines introduced by two entries. A24.35 (households) and A24.36 (income) both
+ *      write `source: "U.S. Census ACS 5-year estimates (2023) · Census tract",`, so both lines are
+ *      taken by both A24.46 and A24.47 and the text alone cannot say which took which. Either
+ *      taker's token counts, which is what lets A24.46 declare A24.36 and A24.47 declare A24.35 —
+ *      each the id its own `find` anchor addresses — instead of one row being made to state a
+ *      falsehood, which is what happened at A24.46 before the task review caught it.
+ *   2. LONG lines that several later `find`s sit INSIDE, each addressing a different part. A5.6's
+ *      and A5.7's escaped `data-props` JSON lines are 614 and 528 characters: A5.6's is taken by
+ *      A5.7 (splicing `me` in after `startGate`) and by A8.8a (widening the enum), A5.7's by A8.8a
+ *      and A8.8b. Nothing is ambiguous here — every taker really does edit that line — and the
+ *      declaring taker need not be the first the guard finds.
+ *
+ * Both kinds have their own fixture case in `amend-guard.test.ts`, and both go red if the rule is
+ * narrowed back to the first taker.
  *
  * The logic lives here rather than inline in the test so that it can be run against a HISTORICAL
  * tree — the same code, an older ledger — which is how its RED was proved, and so that

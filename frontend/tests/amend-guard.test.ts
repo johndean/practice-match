@@ -103,11 +103,13 @@ describe('the LINE tier', () => {
     expect(out.findings[0]).toContain('F1 -> F3');
   });
 
-  // …and the ONE narrowing that keeps: where two entries introduced byte-identical lines (A24.35's
-  // and A24.36's `source:` lines), the same text has TWO consumers and the guard cannot tell which
-  // took which. Either consumer's token counts for that line, which is what lets A24.46 declare
-  // A24.36 and A24.47 declare A24.35 — each the one its own `find` anchor addresses — instead of
-  // one row being made to state a falsehood.
+  // …and the ONE narrowing that keeps, as CODED: where a consumed line has SEVERAL takers, any one
+  // of them may declare it. Four consumed lines in this ledger have more than one, of two kinds —
+  // this case is the FIRST kind, byte-identical lines introduced by two entries (A24.35's and
+  // A24.36's `source:` lines), where the guard cannot tell which taker took which, so either
+  // token counts and A24.46 declares A24.36 while A24.47 declares A24.35, each the id its own
+  // `find` anchor addresses, instead of one row being made to state a falsehood. The second kind
+  // — long lines several later finds sit inside — has its own case below.
   it('accepts the token from any entry that consumes THAT line, when a line has several', () => {
     const alpha = entry('F1', 'a', 'a\n  same: "identical",');
     const beta = entry('F2', 'b', 'b\n  same: "identical",');
@@ -117,6 +119,25 @@ describe('the LINE tier', () => {
       list: [alpha, beta, consumerA, consumerB],
       final: 'a\n  same: "A took it",\nb\n  same: "B took it",\n',
       rowOf: (id) => (id === 'F3' ? '| F3 | … | Consumes F1. |' : id === 'F4' ? '| F4 | … | Consumes F2. |' : ''),
+    });
+    expect(out.findings).toEqual([]);
+  });
+
+  // The SECOND kind of multi-taker line (round-2 re-review, Minor): a line long enough that several
+  // later `find`s sit INSIDE it, each addressing a different part. A5.6's and A5.7's escaped
+  // `data-props` JSON lines are 614 and 528 characters and are taken that way — A5.6's by A5.7 and
+  // A8.8a, A5.7's by A8.8a and A8.8b. The declaring taker need not be the first one the guard
+  // finds, so the narrowing is asked of the SECOND here.
+  it('accepts the token from a later taker when several finds sit inside one long line', () => {
+    const long = `  props: { ${'alpha: "one", '.repeat(8)}beta: "two", gamma: "three" },`;
+    const first = entry('F1', 'props: {},', long);
+    const takerA = entry('F2', 'beta: "two"', 'beta: "TWO"');
+    const takerB = entry('F3', 'gamma: "three"', 'gamma: "THREE"');
+    const out = ruledTextFindings({
+      list: [first, takerA, takerB],
+      final: long.replace('beta: "two"', 'beta: "TWO"').replace('gamma: "three"', 'gamma: "THREE"'),
+      // The SECOND taker declares; the first says nothing.
+      rowOf: (id) => (id === 'F3' ? '| F3 | … | Consumes F1. |' : ''),
     });
     expect(out.findings).toEqual([]);
   });
