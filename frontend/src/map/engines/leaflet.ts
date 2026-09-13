@@ -105,9 +105,15 @@ export class LeafletMapEngine implements MapEngine {
     this.tile.options.maxNativeZoom = cfg.maxNativeZoom;
     this.tile.setUrl(cfg.url, true);
     this.tile.remove();
+    // Fix round 1, Important-1 and Important-2: BETWEEN the remove and the add, never after.
+    // `Control.Attribution` keeps a REGISTRY written from `getAttribution()` at add time and
+    // cleared from it at remove time, and `_update()` rebuilds the footer from that registry and
+    // not from this option — so assigned after `addTo` the first switch re-registered the OLD
+    // credit (A35.7's string never reached the footer on Satellite) and the second left BOTH in it
+    // for the life of the map. Attribution is legally load-bearing (CLAUDE.md).
+    this.tile.options.attribution = cfg.attribution;
     this.tile.addTo(this.map);
     if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
-    this.tile.options.attribution = cfg.attribution;
     if (this.map.attributionControl._update) this.map.attributionControl._update();
   }
   circle(center: LatLng, radiusM: number, s: CircleStyle, group: string): Handle {

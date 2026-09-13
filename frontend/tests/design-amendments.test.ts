@@ -1515,21 +1515,26 @@ describe('local design amendments (spec D15)', () => {
     expect(jsx).toContain('L.tileLayer(LABEL_TILES, { maxZoom: 18, maxNativeZoom: 16, pane: "shadowPane" });');
     // The map's own ceiling, so `getMaxZoom()` stops reading it off whichever layers are on.
     expect(jsx).toContain('zoomControl: false, attributionControl: true, maxZoom: 20 });');
-    // A35.6: the option is written FIRST and the layer is then RESET rather than redrawn.
-    // `GridLayer.redraw()` moves `_tileZoom` to the new clamp but never calls `_resetGrid()`
-    // (leaflet-src.js:11330-11341), so a redraw alone leaves the previous zoom's
-    // `_globalTileRange` in place and `_isValidTile` rejects every tile at the new tile zoom —
-    // measured in Chromium as a switch to Satellite at zoom 20 that requested NOTHING.
+    // A35.6, whole, as fix round 1 leaves it. The option is written FIRST and the layer is then
+    // RESET rather than redrawn — `GridLayer.redraw()` moves `_tileZoom` to the new clamp but
+    // never calls `_resetGrid()` (leaflet-src.js:11330-11341), so a redraw alone leaves the
+    // previous zoom's `_globalTileRange` in place and `_isValidTile` rejects every tile at the new
+    // tile zoom (measured in Chromium as a switch to Satellite at zoom 20 that requested NOTHING).
+    // The credit is assigned BETWEEN the remove and the add — Important-1/2: `Control.Attribution`
+    // rebuilds from a registry written at add time and cleared at remove time, so assigned after
+    // `addTo` the footer ended up carrying BOTH basemaps' credits for the life of the map.
     expect(jsx).toContain(
       '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
       + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
       + '    tileRef.current.setUrl(cfg.url, true);\n'
       + '    tileRef.current.remove();\n'
+      + '    tileRef.current.options.attribution = cfg.attribution;\n'
       + '    tileRef.current.addTo(map);\n'
     );
-    // …and the attribution assignment still sits on the line below, which is what keeps the
-    // control removing and re-adding the one string it already held.
-    expect(jsx).toContain('    tileRef.current.addTo(map);\n    tileRef.current.options.attribution = cfg.attribution;\n');
+    // The credit is assigned ONCE, and on the inside of the reset — never after it.
+    expect(jsx.split('tileRef.current.options.attribution = cfg.attribution;')).toHaveLength(2);
+    expect(jsx, 'the credit is assigned after the layer is back on the map, which is the defect')
+      .not.toContain('addTo(map);\n    tileRef.current.options.attribution');
 
     // Both directions: the pristine bundle really did carry the un-capped pair (so none of the
     // assertions above is vacuous), and nothing in the amended file still asks a Canvas layer for

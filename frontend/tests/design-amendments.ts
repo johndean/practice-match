@@ -6377,7 +6377,8 @@ const A35_5: Amendment = {
 
 /** A35.6 — a basemap switch writes the new native max and then hands the layer a CLEAN RESET,
  *  because the two basemaps clamp to different tile zooms and `setUrl`'s own redraw cannot carry
- *  that.
+ *  that. Revised in FIX ROUND 1 (2026-09-13) on the review's Important-1 and Important-2; the values
+ *  D-C52 ruled are untouched, and what changed is where one assignment sits.
  *
  *  MEASURED in real Chromium (this branch's own e2e, which is why it exists). `setUrl` ->
  *  `GridLayer.redraw()` moves `this._tileZoom` to the new clamp and calls `_updateLevels()` and
@@ -6394,18 +6395,31 @@ const A35_5: Amendment = {
  *  clears `_levels`/`_tiles` and calls `_resetView()` -> `_setView()` with `_tileZoom` undefined,
  *  which is the full, public reset including `_resetGrid()`. It costs nothing a switch was not
  *  paying anyway — `setUrl`'s redraw already removes every tile, and every tile of the new service
- *  is a new request either way — and it leaves the attribution exactly where it was, because
- *  `options.attribution` is still assigned on the LINE BELOW this edit, so the control removes and
- *  re-adds the one string it already held. The write stays BEFORE both, because the re-add is what
- *  reads it. */
+ *  is a new request either way.
+ *
+ *  FIX ROUND 1, Important-1 and Important-2 — THE CREDIT IS ASSIGNED BETWEEN `remove()` AND
+ *  `addTo()`, and that placement is the whole of it. `Control.Attribution._update()`
+ *  (leaflet-src.js:5838-5860) rebuilds the footer from its own `_attributions` REGISTRY, never
+ *  from the layer's current `options.attribution`; `_addAttribution` (:5794-5801) writes that
+ *  registry from `getAttribution()` at ADD time and its `once('remove')` handler clears it from
+ *  `getAttribution()` at REMOVE time. With the assignment on the line AFTER `addTo`, the first
+ *  switch re-registered the OLD credit (so A35.7's string was never displayed on Satellite at all
+ *  — the pre-existing half) and the second de-registered a string that had never been registered
+ *  while registering the new one, leaving BOTH credits in the footer for the life of the map —
+ *  measured as "Tiles (c) Esri, Source: Esri, Vantor, Earthstar Geographics, and the GIS User
+ *  Community" on the GRAY basemap, which is new on this branch and is the half that matters,
+ *  attribution being legally load-bearing (CLAUDE.md). Assigned between the two, every add
+ *  registers the credit the layer is about to show and every remove clears exactly that one. */
 const A35_6: Amendment = {
   id: 'A35.6', ...ESRI_ZOOM,
   find: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
-    + '    tileRef.current.setUrl(cfg.url);\n',
+    + '    tileRef.current.setUrl(cfg.url);\n'
+    + '    tileRef.current.options.attribution = cfg.attribution;\n',
   replace: '    const cfg = BASEMAPS[basemap] || BASEMAPS.map;\n'
     + '    tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;\n'
     + '    tileRef.current.setUrl(cfg.url, true);\n'
     + '    tileRef.current.remove();\n'
+    + '    tileRef.current.options.attribution = cfg.attribution;\n'
     + '    tileRef.current.addTo(map);\n',
   count: 1
 };

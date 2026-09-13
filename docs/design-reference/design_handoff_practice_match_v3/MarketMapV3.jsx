@@ -191,8 +191,8 @@ function MarketMapV3(props) {
     tileRef.current.options.maxNativeZoom = cfg.maxNativeZoom;
     tileRef.current.setUrl(cfg.url, true);
     tileRef.current.remove();
-    tileRef.current.addTo(map);
     tileRef.current.options.attribution = cfg.attribution;
+    tileRef.current.addTo(map);
     if (labelRef.current) {
       if (basemap === "map") labelRef.current.addTo(map);
       else map.removeLayer(labelRef.current);

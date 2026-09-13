@@ -1659,22 +1659,33 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
    *  is real at z19 everywhere probed, rural Texas included). */
   const NATIVE_MAX: Record<string, number> = { 'gray-base': 16, 'gray-labels': 16, imagery: 19 };
   const CEILING = 20;
+  /** The two credits, as the design and both ports spell them. The STRINGS are pinned in
+   *  `tests/design-amendments.test.ts` (A35.7) and `src/lib/leaflet.test.ts`; what is measured here
+   *  is which of them the attribution control is RENDERING. */
+  const CREDIT: Record<string, string> = {
+    map: 'Tiles © Esri',
+    satellite: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  };
 
   type TileHit = { service: string; z: number };
+  // ONE table and ONE pattern, shared by the request log and the pane reads — the two used to carry
+  // their own copies, which is the drift the bundle's own dead-code rule exists to stop.
   const SERVICE: Record<string, string> = {
     'Canvas/World_Light_Gray_Base': 'gray-base',
     'Canvas/World_Light_Gray_Reference': 'gray-labels',
     World_Imagery: 'imagery'
   };
+  const TILE_URL = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//;
+  function classify(url: string): TileHit[] {
+    const m = TILE_URL.exec(url);
+    return m !== null && SERVICE[m[1]] !== undefined ? [{ service: SERVICE[m[1]], z: Number(m[2]) }] : [];
+  }
 
   /** Every basemap tile the page asks for, from before the first navigation — a tile requested at
    *  mount counts as much as one requested after a click. */
   function recordTiles(page: Page): TileHit[] {
     const hits: TileHit[] = [];
-    page.on('request', (r) => {
-      const m = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//.exec(r.url());
-      if (m && SERVICE[m[1]]) hits.push({ service: SERVICE[m[1]], z: Number(m[2]) });
-    });
+    page.on('request', (r) => hits.push(...classify(r.url())));
     return hits;
   }
 
@@ -1682,30 +1693,25 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
    *  transforms to `scale(getZoomScale(zoom, 1))`, i.e. 2^(zoom-1), on every `moveend`
    *  (leaflet-src.js:4756). Read from the DOM rather than through a hook, because the production
    *  code must not grow a test-only seam: the app exposes no zoom and this case does not ask it to.
-   *  The TILE z cannot stand in — separating the two is the whole point of the ruling.
-   *
-   *  `animating` comes back with it because Leaflet SWALLOWS a zoom request made during a zoom
-   *  animation (`Map._tryAnimatedZoom`: `if (this._animatingZoom) { return true; }`), and the proxy
-   *  carries the TARGET zoom from `zoomanim` onward — so a press timed off the proxy alone lands
-   *  inside the previous transition and is discarded, which is what held an early draft of this
-   *  case at zoom 11. `leaflet-zoom-anim` is on the MAP PANE, not on the container
-   *  (leaflet-src.js:4808/4834), and is carried for exactly the length of that transition. */
-  const mapState = (page: Page) => page.evaluate(() => {
-    const pane = document.querySelector('.leaflet-map-pane') as HTMLElement | null;
+   *  The TILE z cannot stand in — separating the two is the whole point of the ruling. */
+  const mapZoom = (page: Page) => page.evaluate(() => {
     const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
-    if (pane === null || proxy === null) return null;
+    if (proxy === null) return null;
     const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
-    return {
-      zoom: m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1,
-      animating: pane.classList.contains('leaflet-zoom-anim')
-    };
+    return m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1;
   });
-  const mapZoom = async (page: Page) => (await mapState(page))?.zoom ?? null;
 
   /** One press of the design's own "+" control, waited out rather than slept through — in the PAGE,
    *  because every zoom step also settles a new viewport and pulls six layers of boundary polygons,
    *  and a poll driven from the test would be spending its budget on those round trips. Returns the
-   *  zoom it settled on — equal to `from` when the map refused to move, which is the ceiling. */
+   *  zoom it settled on — equal to `from` when the map refused to move, which is the ceiling.
+   *
+   *  The wait is on `leaflet-zoom-anim` LEAVING the map pane as well as on the zoom changing,
+   *  because Leaflet SWALLOWS a zoom request made during a zoom animation (`Map._tryAnimatedZoom`:
+   *  `if (this._animatingZoom) { return true; }`) and the proxy carries the TARGET zoom from
+   *  `zoomanim` onward — so a press timed off the proxy alone lands inside the previous transition
+   *  and is discarded, which is what held an early draft of this case at zoom 11. The class is on
+   *  the MAP PANE, not on the container (leaflet-src.js:4808/4834). */
   const STEP_TIMEOUT_MS = 10_000;
   async function zoomInOnce(page: Page, from: number): Promise<number> {
     await page.getByRole('button', { name: 'Zoom in' }).first().click();
@@ -1725,23 +1731,36 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     return (await mapZoom(page)) as number;
   }
 
-  /** The basemap tiles the layer is actually SHOWING, classified the same way the requests are.
-   *  Necessary as well as the request log, and deterministic where it is not: once a URL has been
-   *  loaded, Chromium serves it from the memory cache and emits no network event at all, so
-   *  switching BACK to a basemap whose tiles are already in hand can legitimately make zero
-   *  requests. What the layer asked for is still written on every `<img>` in the tile pane — and
-   *  an EMPTY tile pane is exactly the blank map A35.6's reset exists to prevent. */
-  const tileSrcs = (page: Page): Promise<TileHit[]> => page.evaluate(() => {
-    const SRC: Record<string, string> = {
-      'Canvas/World_Light_Gray_Base': 'gray-base',
-      'Canvas/World_Light_Gray_Reference': 'gray-labels',
-      World_Imagery: 'imagery'
+  /** The basemap tiles one Leaflet PANE is actually SHOWING. Necessary as well as the request log,
+   *  and deterministic where it is not: once a URL has been loaded, Chromium serves it from the
+   *  memory cache and emits no network event at all, so switching BACK to a basemap whose tiles are
+   *  already in hand can legitimately make zero requests. What the layer asked for is still written
+   *  on every `<img>` — and an EMPTY tile pane is exactly the blank map A35.6's reset prevents.
+   *
+   *  The pane is a parameter because the two grid layers do not share one: the base draws into
+   *  `.leaflet-tile-pane` and the labels are created with `pane: "shadowPane"`, so a read of the
+   *  tile pane alone can say nothing at all about A35.4's ruled hiding above z18. */
+  const TILE_PANE = '.leaflet-tile-pane';
+  const SHADOW_PANE = '.leaflet-shadow-pane';
+  async function paneTiles(page: Page, pane: string): Promise<TileHit[]> {
+    const srcs = await page.evaluate(
+      (p) => [...document.querySelectorAll(`${p} img`)].map((el) => (el as HTMLImageElement).src), pane);
+    return srcs.flatMap(classify);
+  }
+  /** The services a pane is showing and the deepest level each is drawn at — one value to poll on,
+   *  so the case waits for the state it is about to assert instead of for a fixed number of ms. */
+  async function paneState(page: Page, pane: string): Promise<{ services: string[]; maxZ: number; count: number }> {
+    const tiles = await paneTiles(page, pane);
+    return {
+      services: [...new Set(tiles.map((h) => h.service))].sort(),
+      maxZ: tiles.length === 0 ? -1 : Math.max(...tiles.map((h) => h.z)),
+      count: tiles.length
     };
-    return [...document.querySelectorAll('.leaflet-tile-pane img')].flatMap((el) => {
-      const m = /arcgisonline\.com\/ArcGIS\/rest\/services\/(.+?)\/MapServer\/tile\/(\d+)\//.exec((el as HTMLImageElement).src);
-      return m && SRC[m[1]] ? [{ service: SRC[m[1]], z: Number(m[2]) }] : [];
-    });
-  });
+  }
+
+  /** What the map's own attribution control is RENDERING. Leaflet's default prefix (its own link)
+   *  is always in there, so the assertions are about which CREDITS the text carries. */
+  const attributionText = (page: Page) => page.locator('.leaflet-control-attribution').first().innerText();
 
   /** Painted pixels on the polygon layer's own canvas — the shading must survive the whole climb,
    *  because the canvas renderer has no zoom limit and the tiles beneath it now do. */
@@ -1754,17 +1773,23 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     return n;
   });
 
+  /** Browse, signed in, with the map up and settled at the design's own zoom 10. */
+  async function browseMap(page: Page): Promise<void> {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await expect.poll(() => mapZoom(page), { timeout: 15_000 })
+      .toBe(10);                                  // the design opens Austin at zoom 10
+    await expect.poll(() => paneState(page, TILE_PANE).then((s) => s.count > 0), { timeout: 15_000 }).toBe(true);
+  }
+
   // Ten zoom steps, each settling a new viewport and pulling six layers of real boundary polygons
   // through the harness — the cost of measuring the real chain rather than a stub of it.
   test.setTimeout(180_000);
 
   test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
     const hits = recordTiles(page);
-    await prepare(page);
-    await signInAs(page, 'design', '/browse');
-    await waitMap(page);
-    await page.waitForTimeout(600);
-    expect(await mapZoom(page), 'the design opens Austin at zoom 10 — read through the same channel as the rest').toBe(10);
+    await browseMap(page);
 
     // Press + until the map stops. The count is bounded well above the ceiling so a map that keeps
     // going says so by failing the equality below rather than by looping.
@@ -1774,8 +1799,9 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
       if (next === z) break;
       z = next;
     }
-
-    await page.waitForTimeout(1200);           // let the last level's tiles and the last boundary load fly
+    // Settled on the state the assertions are about, rather than on a timer.
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
 
     const gray = hits.filter((h) => h.service !== 'imagery');
     expect(gray.length, 'the gray canvas asked for no tiles at all — the recorder is not watching').toBeGreaterThan(0);
@@ -1802,29 +1828,28 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
     await satTab.click();
     await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
-    await page.waitForTimeout(1500);
-    const shown = await tileSrcs(page);
-    expect(shown.length, 'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
-    expect([...new Set(shown.map((h) => h.service))], 'the tile pane is not showing the imagery service').toEqual(['imagery']);
-    expect(Math.max(...shown.map((h) => h.z)), 'Satellite is not drawing at its own native max').toBe(NATIVE_MAX.imagery);
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['imagery'], maxZ: NATIVE_MAX.imagery, count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
     expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
       'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
 
     await page.getByRole('button', { name: 'Map', exact: true }).click();
-    await page.waitForTimeout(1500);
-    const back = await tileSrcs(page);
-    expect(back.length, 'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
-    expect([...new Set(back.map((h) => h.service))], 'the tile pane is not showing the gray canvas').toEqual(['gray-base']);
-    expect(Math.max(...back.map((h) => h.z)),
-      'the gray canvas is drawing past the level Esri has a tile for').toBe(NATIVE_MAX['gray-base']);
+    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
+      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
+    expect((await paneState(page, TILE_PANE)).count,
+      'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
 
     // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
     // for a tile the service that serves it does not have.
     const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
     expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
 
-    // …and nothing is DRAWN past it either, on either basemap, at any point in the run.
-    expect((await tileSrcs(page)).filter((h) => h.z > NATIVE_MAX[h.service])).toEqual([]);
+    // …and nothing is DRAWN past it either, in either pane, at any point in the run.
+    for (const pane of [TILE_PANE, SHADOW_PANE]) {
+      expect((await paneTiles(page, pane)).filter((h) => h.z > NATIVE_MAX[h.service])).toEqual([]);
+    }
 
     const byZoom = [...new Set(hits.map((h) => h.service))].sort().map((s) => {
       const zs = hits.filter((h) => h.service === s).map((h) => h.z);
@@ -1832,4 +1857,34 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     });
     console.log(`[A35] map zoom reached ${z}; ${byZoom.join('; ')}`);
   });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 and Important-2. Attribution is legally load-bearing (CLAUDE.md), and
+  // nothing on this branch read what the control RENDERS — the unit case only counted `_update()`
+  // calls. `Control.Attribution._update()` rebuilds from its own `_attributions` registry, not from
+  // the layer's current `options.attribution`, and the registry is written by `_addAttribution` at
+  // ADD time and by its `once('remove')` handler at REMOVE time. A35.6 assigned the new credit
+  // AFTER `addTo`, so the first switch re-registered the OLD string (A35.7's credit was never shown
+  // on Satellite at all) and the second de-registered a string that had never been registered while
+  // registering the new one — leaving BOTH credits in the footer for the life of the map.
+  // Assigning between `remove()` and `addTo()` fixes both, and this case is what says so.
+  // -----------------------------------------------------------------------------------------
+  test('the attribution control shows exactly the current basemap\'s credit, never both', async ({ page }) => {
+    await browseMap(page);
+    const other = (kind: string) => (kind === 'map' ? CREDIT.satellite : CREDIT.map);
+
+    for (const step of ['map', 'satellite', 'map', 'satellite'] as const) {
+      if (step !== 'map' || (await attributionText(page)).includes(CREDIT.satellite)) {
+        await page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }).click();
+        await expect(page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }))
+          .toHaveAttribute('aria-pressed', 'true');
+      }
+      await expect.poll(() => attributionText(page), { timeout: 10_000 })
+        .toContain(CREDIT[step]);
+      expect(await attributionText(page), `the footer carries BOTH credits on the ${step} basemap`)
+        .not.toContain(other(step));
+    }
+    console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
+  });
+
 });
