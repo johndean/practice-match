@@ -1740,6 +1740,34 @@ def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
     for gone in ("fixed 24 h bucket", "the bucket\n  rolls over sooner", "per FIXED"):
         assert gone not in text, f"docs/RUNBOOK-identity.md still describes a fixed window: {gone!r}"
 
+    # Controller amendment A-RL1 (2026-09-14). The SPEC is where the mechanism is contracted, and it
+    # said the opposite of the code for as long as the code was wrong: §3's endpoint row states the
+    # limits as a RATE ("10 failures/email/15 min") while §3's Rate limits paragraph named the
+    # mechanism "Redis fixed windows", which is what `app/ratelimit.py`'s own docstring cited as
+    # acceptance of the 2x-limit overshoot a boundary allows. Both documents are pinned together
+    # here, on the one word, so neither can drift back on its own.
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    rate_limits = next((line for line in spec.splitlines() if line.startswith("**Rate limits.**")), None)
+    assert rate_limits is not None, "the identity spec no longer carries a **Rate limits.** paragraph"
+    assert "sliding" in rate_limits.lower(), (
+        f"the identity spec's Rate limits paragraph does not name the mechanism as sliding: {rate_limits!r}"
+    )
+    assert "A-RL1" in rate_limits, "the amendment that corrected that sentence is not named on it"
+    # The LIMITS sentence (§3's endpoint row) is the contract and is deliberately NOT touched by the
+    # amendment, so it is pinned as still stating the same two numbers this table transcribes.
+    assert "Lockout 10 failures/email/15 min and 30/IP/15 min" in spec, (
+        "the identity spec no longer states the sign-in lockout as 10/email and 30/IP per 15 minutes"
+    )
+
+    # The four corrected places — the spec's paragraph and the runbook's three — all say "sliding",
+    # and neither document describes a fixed window anywhere.
+    for label, body, places in (("the identity spec", spec, 1), ("docs/RUNBOOK-identity.md", text, 4)):
+        assert len(re.findall(r"sliding", body, re.IGNORECASE)) >= places, (
+            f"{label} names the sliding window fewer than {places} time(s)"
+        )
+        stale = re.findall(r"fixed[ -]window|fixed calendar window|fixed \d+ ?h bucket", body, re.IGNORECASE)
+        assert stale == [], f"{label} still describes a fixed window: {stale}"
+
 
 def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
