@@ -49,3 +49,23 @@ def test_the_coverage_report_is_ignored_and_untracked():
         ["git", "check-ignore", "-q", "coverage.xml"], cwd=ROOT, capture_output=True, text=True, check=False,
     )
     assert ignored.returncode == 0, "coverage.xml is not covered by .gitignore"
+
+
+def test_qa_clickthrough_screenshots_are_ignored():
+    """HOUSEKEEPING-C item 3 (2026-09-13). The controller's browser checks write `qa-*.png` into
+    the repository ROOT before the files are moved into the workspace, and the QA persona checks
+    write the same names into `screenshots/`. Neither was ignored, so every click-through left
+    binary scratch in `git status` one `git add -A` away from being committed.
+
+    `git check-ignore` is what makes the RULE the subject: "not tracked" is true of a file nobody
+    has created yet and would go on passing if the line were deleted."""
+    for name in ("qa-0123-admin-buyer-url-gate.png", "screenshots/qa-0124-browse.png"):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", name], cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        assert ignored.returncode == 0, f"{name} is not covered by .gitignore"
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "qa-*.png", "screenshots"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    assert [name for name in tracked if name] == []

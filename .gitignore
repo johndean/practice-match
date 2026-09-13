@@ -33,6 +33,12 @@ coverage.xml
 .DS_Store
 *.log
 
+# --- QA click-through screenshots (scratch; never committed) ---
+# The controller's browser checks write `qa-*.png` into the repository root before the files are
+# moved into the workspace, and `PW_OUTPUT_DIR` sends a persona check's artefacts to screenshots/.
+qa-*.png
+screenshots/
+
 # --- third-party POI exports (Google Places content: never commit) ---
 Report_Hospital_Competitor*.csv
 
