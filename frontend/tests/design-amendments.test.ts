@@ -404,6 +404,24 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A34 — ONE VOCABULARY (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13): every figure's
+    // caption names its statistic, geography and basis in ONE vocabulary, and no two figures of
+    // different measure read alike. Appended last, as every family is, and it has to be: seven of
+    // the fourteen are CHAINED — A34.3 on A31.12b, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on
+    // A21.4d, A34.8 on A31.11, A34.10 on A21.5b and A34.14 on A24.50 — and A34.14 also reads the
+    // object literal A34.13 has just shortened, which orders the two deletions.
+    'A34.1', 'A34.2', 'A34.3', 'A34.4', 'A34.5', 'A34.6', 'A34.7', 'A34.8', 'A34.9', 'A34.10',
+    'A34.11', 'A34.12', 'A34.13', 'A34.14',
+    // Fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). A34.15 takes the econ tooltip's
+    // margin sentence into the vocabulary (Important 2), A34.16/A34.17 give the served
+    // `income_note` an area on BOTH of the server's arms (Important 3), and A34.18–A34.22 delete
+    // the five orphans A34.11's own deletion left and the controller then ruled out (Important 4,
+    // ruling (a)) — `md.symbols` deliberately NOT among them, it has a reader.
+    'A34.15', 'A34.16', 'A34.17', 'A34.18', 'A34.19', 'A34.20', 'A34.21', 'A34.22',
+    // A34.23 — the data-sources audit's own finding: the competition layer's VALUE_LAYERS label
+    // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
+    // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
+    'A34.23',
     // A38 (Task A38, D-C53) — the Data Sources tab reads the dataset registry. The two
     // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
     // fixture rows, so taking a button out afterwards would be an entry eating text an
@@ -525,7 +543,13 @@ describe('local design amendments (spec D15)', () => {
     // so "Figures describe the area around each practice" became false by this release's own act
     // (the A27.5 rule). The paragraph states both modes now, and A24.20's growth caveat still
     // stands beside them byte for byte, because growth is measured at place or county in either.
-    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own community figure.');
+    // A34.8 (Task ONE-VOCABULARY, ruling D-C51) revises the SECOND half of that sentence and
+    // nothing else: the growth and payroll cards contradict "that practice's own community
+    // figure" on their own captions since A31.12 gave them "surrounding city or county" and
+    // "surrounding county", so the clause says what is true of all six. The AREA clause is
+    // carried forward byte for byte, and A34.8's own three-kinds paragraph sits in front of it.
+    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    expect(footnote, 'the three kinds of figure are no longer distinguished on the strip').toContain('Three kinds of figure appear here and they measure different things.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
     // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
     expect(footnote, 'the superseded per-practice sentence survives in the footnote').not.toContain('not the practice itself');
@@ -600,7 +624,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(335);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(358);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
