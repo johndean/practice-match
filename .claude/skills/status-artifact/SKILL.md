@@ -46,3 +46,6 @@ Baseline (2026-09-13, no skill): the board and nodes were replaced by prose. Wit
 
 ## The header strip (slot 0)
 Above the section, the page header carries `<div class="strip">` with three spans: **QA** (sha · version · mode · when verified), **Production** (same), **one sentence on how they relate** ("Both on the same code — 0.1.24 in progress"). It goes stale silently because it is outside the status section — update it in the same edit, and the header's "updated <date> WITA" stamp with it.
+
+## An unreleased version is never a bare number
+The stakeholder read "0.1.24 in progress" as QA being on 0.1.24. A version that is not on a host is always written "next (0.1.24) · being built · not deployed" — in the strip, the rail node and the board `tid` — and the hero's h2 names only versions measured from `/api/healthz`.
