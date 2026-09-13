@@ -18,6 +18,40 @@ describe('makePermsAdapter — the prototype\'s window on the generated matrix (
     expect(buyer.allowed('page.browse')).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
+  // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+  // need to see it all!!!"
+  //
+  // The header hides exactly what the API would refuse, so the header's own answer for an
+  // admin-only account is now yes to everything. Written against `makePermsAdapter` rather than
+  // against the generated table directly because THIS is what `logic.js` asks: John's account
+  // holds `admin` alone, and the seeded design persona holds all four roles, which is why every
+  // test in the suite passed while his header was missing two items.
+  // ---------------------------------------------------------------------------------------
+  it('gives an admin-only account every member door too — the superset rule (D-C54)', () => {
+    const admin = makePermsAdapter({ me: ref(me(['admin'])) });
+    expect(admin.allowed('page.seller'), '"List a Practice"').toBe(true);
+    expect(admin.allowed('request.read_own'), '"My Requests"').toBe(true);
+    expect(admin.allowed('request.create')).toBe(true);
+    expect(admin.allowed('listing.manage_own')).toBe(true);
+    expect(admin.allowed('request.answer_own')).toBe(true);
+    expect(admin.allowed('seller.apply')).toBe(true);
+    // ...and what it always held.
+    expect(admin.allowed('page.admin')).toBe(true);
+    expect(admin.allowed('page.browse')).toBe(true);
+  });
+
+  // `staff` is unchanged by D-C54 — the ruling names `admin` and nothing else — which is what
+  // makes the case above a statement about one role rather than about privilege in general.
+  it('leaves the staff reviewer exactly where it was: not a seller, not a buyer', () => {
+    const staff = makePermsAdapter({ me: ref(me(['staff'])) });
+    expect(staff.allowed('page.seller')).toBe(false);
+    expect(staff.allowed('request.read_own')).toBe(false);
+    expect(staff.allowed('request.create')).toBe(false);
+    expect(staff.allowed('seller.apply')).toBe(false);
+  });
+
   it('refuses every member permission to a visitor with no account at all', () => {
     const anon = makePermsAdapter({ me: ref(null) });
     expect(anon.allowed('page.admin')).toBe(false);

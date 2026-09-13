@@ -6466,3 +6466,74 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
       .toContain('Population growth is measured for the city or county named on its own tile.');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-SUPERSET fix round 1 (review Important-1, chained on A16.9, ruling D-C54, John,
+// 2026-09-13, verbatim: "as logged in VIN FOUNDATION ADMIN i can no longer access nor see MY
+// REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i need to see it all!!!").
+//
+// D-C54 made `admin` a superset of the whole permission matrix — the FIRST commit of this task —
+// so an admin-only account may now file `seller.apply` and reach `page.seller` and CREATE a
+// listing. But `componentDidMount`'s own seller-listing bootstrap gate was a SECOND, unrelated
+// copy of the matrix, written before D-C54 existed: `(me.roles || []).indexOf("seller") > -1`, a
+// literal role-string test nothing in D-C54 touched. An admin-only account could create a listing
+// and then never see it again — a reload's `componentDidMount` asked the account's ROLE STRINGS,
+// which is empty for an account whose only grant is `admin`, and `myListings` stayed unset.
+//
+// A16.23 replaces the literal check with `this.props.perms.allowed("page.seller")` — the GENERATED
+// matrix, through the same `perms` adapter A40.3 already reads, and the same permission the
+// router's own `go('seller')` guard asks. These cases are RED against the pre-fix line (reverted
+// locally and re-proved failing before this file was written) and green against the fix.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — an admin-only account reaches its own listings on boot (A16.23, D-C54)', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const ADMIN_ONLY = { email: 'admin@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin'] };
+  const SELLER = { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] };
+  const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+  const listings = (rows: unknown[] = []) => {
+    const calls: string[] = [];
+    return { calls, list: () => { calls.push('list()'); return Promise.resolve(rows); } };
+  };
+
+  it('an admin-only account whose matrix grants page.seller loads its own listings on boot', async () => {
+    const api = listings([{ id: 'x1', name: 'An admin-created listing' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api, perms: perms(['page.seller']) });
+    c2.componentDidMount();
+    expect(api.calls, 'the PERMISSION gates the load, not the literal role string').toEqual(['list()']);
+    await flush();
+    expect(c2.state.myListings).toEqual([{ id: 'x1', name: 'An admin-created listing' }]);
+  });
+
+  it('a seller account is unaffected — the same permission, asked the same way', async () => {
+    const api = listings([{ id: 's1' }]);
+    const c2: any = new Component({ me: { ...SELLER }, listings: api, perms: perms(['page.seller']) });
+    c2.componentDidMount();
+    expect(api.calls).toEqual(['list()']);
+    await flush();
+    expect(c2.state.myListings).toEqual([{ id: 's1' }]);
+  });
+
+  it('an account whose matrix does NOT grant page.seller loads nothing, admin roles included', async () => {
+    const api = listings([{ id: 'x1' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api, perms: perms(['page.browse']) });
+    c2.componentDidMount();
+    expect(api.calls, 'the API would refuse it; the client does not ask').toEqual([]);
+    await flush();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+
+  it('with no perms adapter the load never fires — the reference and the Claude Design preview', async () => {
+    const api = listings([{ id: 'x1' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api });
+    c2.componentDidMount();
+    expect(api.calls, 'this.props.perms is undefined off the app, and the guard fails closed').toEqual([]);
+    await flush();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+
+  it('with no listings adapter at all, nothing is asked regardless of perms — the reference again', () => {
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, perms: perms(['page.seller']) });
+    expect(() => c2.componentDidMount()).not.toThrow();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+});

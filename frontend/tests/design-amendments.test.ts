@@ -217,6 +217,12 @@ describe('local design amendments (spec D15)', () => {
     // photographs only, routed by source through the adapter's overloaded `describe`) and one
     // template literal (the one `onClick` the script literal needs).
     'A16.21', 'A16.22',
+    // A16.23 (Task ADMIN-SUPERSET fix round 1, review Important-1, D-C54): the bootstrap's own
+    // seller-listing gate was a second, unrelated copy of the permission matrix — a literal role
+    // string, `(me.roles || []).indexOf("seller") > -1` — never asked to agree with D-C54's
+    // superset rule. Rewritten to `this.props.perms.allowed("page.seller")`, the same permission
+    // the router's own guard reads. Consumes A16.9.
+    'A16.23',
     // A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule:
     // "every Admin tab must show real database data, never dummy rows"). A17.1 is A16.1's own
     // shape applied to the review queue; A17.2 is A16.9's, one line after A16.11b's.
@@ -615,7 +621,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(350);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(351);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

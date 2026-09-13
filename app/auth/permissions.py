@@ -48,6 +48,26 @@ MATRIX: dict[str, frozenset[str]] = {
     "licence.decide": _ADMIN, "engine.activate": _ADMIN, "roles.grant": _ADMIN, "tokens.manage": _ADMIN,
     "audit.read": _STAFF, "permissions.read": _STAFF,
 }
+# Ruling D-C54 (John, 2026-09-13, verbatim: "as logged in VIN FOUNDATION ADMIN i can no longer
+# access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i need
+# to see it all!!!"). The `admin` role is a SUPERSET: it holds EVERY action in the table above.
+#
+# Six rows gave their action to buyers/sellers only — `listing.manage_own`, `page.seller`,
+# `request.answer_own`, `request.create`, `request.read_own`, `seller.apply` — so an account
+# holding `admin` alone was refused "My Requests" and "List a Practice". Task ADMIN-GATE (D-C53)
+# is what exposed it rather than what caused it: before 0.1.23 the header nav bypassed the route
+# guard, so the matrix was never asked and the refusal was invisible; making the guard run on every
+# path — correctly — surfaced a matrix that had never treated admin as a superset. The seeded
+# all-roles persona (`design@`) masked it in every test; John's own account holds `admin` alone.
+#
+# Applied STRUCTURALLY, in one statement, rather than by adding "admin" to six literals: a row
+# added tomorrow cannot forget it. `staff` is deliberately NOT widened — the ruling names `admin`
+# and nothing else — and the rows that were already `_ADMIN`-only are unchanged by a union with
+# what they already contain. Nothing else moves: `REAUTH` (the six step-up actions) still gates
+# what an admin must re-confirm a password for, `TOKEN_DENIED` still keeps `tokens.manage` off
+# every api token whatever its role, and the delivery and licence gates are not role checks at all.
+MATRIX = {perm: holders | _ADMIN for perm, holders in MATRIX.items()}
+
 REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke", "signups.notify"})
 # "users.revoke" joins the list in I3 fix round 1's follow-up (John, 2026-09-06): it is a staff
 # decision exactly like "users.decide", which is audited, and I5's decide endpoint writes the audit
@@ -131,10 +151,15 @@ def may_mint(role: str, minter_roles: frozenset[str]) -> bool:
 
     Compared over `ADMINISTRATIVE` rather than over the whole permission set because the matrix is
     not a ladder: `buyer`/`seller` carry `request.create`, `request.read_own`, `seller.apply`,
-    `page.seller`, `listing.manage_own` and `request.answer_own`, which no administrator holds, so
-    a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify` tokens the spec names. A
-    buyer token is not more powerful than the admin who minted it, only different; escalation here
-    means administrative reach, and that is exactly what this compares.
+    `page.seller`, `listing.manage_own` and `request.answer_own`, which `staff` does not hold, so a
+    plain subset test would refuse a staff minter the `k6-qa`/`e2e-qa`/`deploy-verify` tokens the
+    spec names. A buyer token is not more powerful than the staff member who minted it, only
+    different; escalation here means administrative reach, and that is exactly what this compares.
+
+    Ruling D-C54 (2026-09-13) made `admin` a superset, so an ADMIN minter would now satisfy a plain
+    subset test as well — today `tokens.manage` is admin-only, so an admin is the only minter there
+    is. The `ADMINISTRATIVE` comparison stays: it is the rule, not a workaround for the six rows,
+    and it is what keeps this honest if `tokens.manage` ever widens to `staff`.
     """
     return permissions_of(frozenset({role})) & ADMINISTRATIVE <= permissions_of(minter_roles)
 
