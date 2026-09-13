@@ -109,6 +109,19 @@ columns alone carried until an account holding `admin` alone was refused "My Req
 Practice". Built structurally in `app/auth/permissions.py`, so a permission this table gains later
 cannot be drawn with a stale `—` in this column.
 
+**§4 addendum (2026-09-13, ruling D-C54).** Two consequences of the superset, accepted rather than
+fixed (Task ADMIN-SUPERSET fix round 1, review Informational 1/2) and written here in the same words
+as `docs/RUNBOOK-identity.md` §4, which is the operator-facing twin of this section: an `api_token`
+minted for the `admin` role now also carries the six member actions the superset added, exactly as a
+human admin's session does — `TOKEN_DENIED` (`tokens.manage`) is the only thing an `api_token` is
+refused regardless of role, unchanged by this ruling — so an automation token that only ever needed
+`page.admin`-family permissions is, from this release on, also able to reach `/api/seller/*` and
+`/api/requests/*`; and an admin who acts as a seller (creating or editing a listing) leaves no
+`roles.grant` audit row the way a deliberate self-grant of `seller` would have, because none is
+needed — the only trace an admin used member powers is the listing's own `listing.edit` audit trail,
+not an identity-side one. Neither is a new route reachable from a session: both follow from the
+`admin` column above.
+
 **Scope predicates** ride with `*_own` permissions (`listing.seller_id = me`, `request.buyer_id = me`) and live in the same module; `users.review` never returns hashes; `abuse.investigate` is the only path to message bodies.
 
 **Enforcement.** (1) API: every route declares `Depends(require("perm"))`; `require` resolves session/api token → checks `state = active` → checks the permission → applies re-auth where marked → writes the audit row for audited permissions; undeclared routes fail a test unless in `PUBLIC_ROUTES`. (2) Router: Platform Task 2's `guard()` reads route→permission from `permissions.ts`; a missing permission renders the gate (signed out) or the design's "not available to your account" state (signed in), URL kept. (3) UI: nav items, admin tabs, actions and layer toggles render only with `can(perm)`; layers `enabled = licence ∧ engine ∧ permission`.

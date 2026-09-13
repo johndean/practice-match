@@ -1419,6 +1419,96 @@ def test_the_identity_spec_permission_matrix_admin_column_matches_matrix_py():
     assert "D-C54, 2026-09-13" in section, "spec §4 does not date the admin-column correction to ruling D-C54"
 
 
+# --- Task SUPERSET-MINORS: D-C54's two accepted consequences, one fact in both documents ---------
+
+D_C54_TOKEN_CONSEQUENCE = (
+    "an `api_token` minted for the `admin` role now also carries the six member actions the "
+    "superset added, exactly as a human admin's session does — `TOKEN_DENIED` (`tokens.manage`) "
+    "is the only thing an `api_token` is refused regardless of role, unchanged by this ruling — "
+    "so an automation token that only ever needed `page.admin`-family permissions is, from this "
+    "release on, also able to reach `/api/seller/*` and `/api/requests/*`"
+)
+
+D_C54_AUDIT_CONSEQUENCE = (
+    "an admin who acts as a seller (creating or editing a listing) leaves no `roles.grant` audit "
+    "row the way a deliberate self-grant of `seller` would have, because none is needed — the "
+    "only trace an admin used member powers is the listing's own `listing.edit` audit trail, not "
+    "an identity-side one"
+)
+
+
+def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documents():
+    """Task SUPERSET-MINORS, re-review Minors 1 and 3 (the hotfix's two Informationals).
+
+    Ruling D-C54 made `admin` a superset, and two consequences were ACCEPTED rather than fixed: an
+    `api_token` minted for `admin` now reaches `/api/seller/*` and `/api/requests/*` too, and an
+    admin who acts as a seller leaves no `roles.grant` breadcrumb because none is needed. The
+    hotfix's fix round wrote both into `docs/RUNBOOK-identity.md` §4 only — the ruling named the
+    identity SPEC, which is where a decision lives, and which carried neither — so a reader
+    following the release note to the spec found nothing and could conclude neither had been
+    considered. And the runbook's own paragraph was pinned by nothing: the runbook test above
+    asserts the superset sentence and the `staff` sentence and stops there, so the consequences
+    could be deleted or drift silently — the class of drift that let `frontend/tests/targets.ts`
+    read "fifteen" for a release.
+
+    So both documents carry the SAME two statements, and this is the one place that says so —
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document`'s arrangement, for the
+    same reason: two copies of one fact drift apart unless something compares them. Whitespace is
+    collapsed first (see `_collapse_whitespace`), because the runbook soft-wraps its prose at 100
+    columns and the spec does not wrap at all."""
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+
+    assert "## 4. Roles" in runbook, "docs/RUNBOOK-identity.md §4 'Roles' is missing or retitled"
+    assert "## 4. Permission matrix" in spec, "spec §4 'Permission matrix' section is missing or retitled"
+    runbook_section = _collapse_whitespace(runbook.split("## 4. Roles", 1)[1].split("\n## ", 1)[0])
+    spec_section = _collapse_whitespace(spec.split("## 4. Permission matrix", 1)[1].split("\n## ", 1)[0])
+
+    for name, section in (("docs/RUNBOOK-identity.md §4", runbook_section), ("the identity spec §4", spec_section)):
+        assert D_C54_TOKEN_CONSEQUENCE in section, (
+            f"{name} does not state D-C54's accepted api_token consequence (hotfix review Informational 1)"
+        )
+        assert D_C54_AUDIT_CONSEQUENCE in section, (
+            f"{name} does not state D-C54's accepted audit-breadcrumb consequence (hotfix review Informational 2)"
+        )
+        assert "D-C54" in section, f"{name} states the consequences without naming the ruling that caused them"
+
+    assert "2026-09-13" in spec_section, "the spec's §4 addendum does not date ruling D-C54"
+
+
+APPLICATIONS_PRE_D_C54_SELLER_RULE = "already `active` with the buyer role"
+
+APPLICATIONS_RULED_SELLER_RULE = "already `active` and allowed `seller.apply` — the buyer role, or `admin`"
+
+
+def test_the_seller_application_comment_states_the_ruled_rule_and_not_the_pre_d_c54_one():
+    """Task SUPERSET-MINORS, re-review Minor 2. `app/api/applications.py`'s `seller.apply` branch
+    carried a THIRD copy of the pre-D-C54 rule — "A seller application is made from an account that
+    is already `active` with the buyer role" — one line above the `NotABuyer` docstring the hotfix
+    had already corrected for the same reason. Since ruling D-C54 (2026-09-13) that branch refuses
+    on the PERMISSION (`PM.allowed("seller.apply", principal)`), which `admin` holds too, so the
+    comment stated a rule the code beneath it no longer applies and the next reader of this handler
+    would have learned the wrong one.
+
+    A grep rather than a behaviour: the behaviour is pinned already (`tests/auth/test_matrix.py`
+    proves `admin` holds every permission, `tests/api/test_applications.py` exercises the branch).
+    What drifted is the prose, so the prose is what this watches — the arrangement
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document` uses, old phrase absent
+    and new phrase present, so neither half can come back alone. Comment markers are stripped and
+    whitespace collapsed before comparing, because a soft-wrapped comment carries a `#` into the
+    middle of its own sentence."""
+    source = (ROOT / "app" / "api" / "applications.py").read_text()
+    prose = _collapse_whitespace(re.sub(r"(?m)^\s*#\s?", "", source))
+    assert APPLICATIONS_PRE_D_C54_SELLER_RULE not in prose, (
+        "app/api/applications.py still states the pre-D-C54 seller-application rule "
+        f"({APPLICATIONS_PRE_D_C54_SELLER_RULE!r}) — `admin` holds `seller.apply` too since 2026-09-13"
+    )
+    assert APPLICATIONS_RULED_SELLER_RULE in prose, (
+        f"app/api/applications.py does not state the ruled rule ({APPLICATIONS_RULED_SELLER_RULE!r})"
+    )
+    assert "D-C54" in prose, "app/api/applications.py states the seller-application rule without naming the ruling"
+
+
 def test_deploy_md_documents_how_to_seed_qa():
     """The seed run is a hand operation on QA; DEPLOY.md is where hand operations live."""
     deploy = (ROOT / "DEPLOY.md").read_text()
