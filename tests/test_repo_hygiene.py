@@ -49,3 +49,42 @@ def test_the_coverage_report_is_ignored_and_untracked():
         ["git", "check-ignore", "-q", "coverage.xml"], cwd=ROOT, capture_output=True, text=True, check=False,
     )
     assert ignored.returncode == 0, "coverage.xml is not covered by .gitignore"
+
+
+def test_qa_clickthrough_screenshots_are_ignored():
+    """HOUSEKEEPING-C item 3 (2026-09-13). The controller's browser checks write `qa-*.png` into
+    the repository ROOT before the files are moved into the workspace, and the QA persona checks
+    write the same names into `screenshots/`. Neither was ignored, so every click-through left
+    binary scratch in `git status` one `git add -A` away from being committed.
+
+    `git check-ignore` is what makes the RULE the subject: "not tracked" is true of a file nobody
+    has created yet and would go on passing if the line were deleted."""
+    for name in ("qa-0123-admin-buyer-url-gate.png", "screenshots/qa-0124-browse.png"):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", name], cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        assert ignored.returncode == 0, f"{name} is not covered by .gitignore"
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "qa-*.png", "screenshots"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    assert [name for name in tracked if name] == []
+
+
+def test_the_screenshots_ignore_is_anchored_to_the_repo_root():
+    """Review, HOUSEKEEPING-C fix round 1, Minor-2. `screenshots/` (no leading slash) ignores a
+    directory of that name at ANY depth — `frontend/tests/screenshots/`, `docs/screenshots/`, both
+    confirmed ignored — where the runbook's own recipe (`PW_OUTPUT_DIR=../screenshots/qa-<version>
+    -<persona>`, run from `frontend/`) only ever writes to the repository ROOT's `screenshots/`.
+    `/screenshots/` is the anchored form and matches the one path this rule is for."""
+    root_level = subprocess.run(
+        ["git", "check-ignore", "-q", "screenshots/qa-0124-browse.png"], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert root_level.returncode == 0, "the repo-root screenshots/ directory is not ignored"
+    nested = subprocess.run(
+        ["git", "check-ignore", "-q", "frontend/tests/screenshots/probe.png"], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert nested.returncode == 1, (
+        "screenshots/ is unanchored and reached a NESTED directory the runbook's recipe never "
+        "writes to — the ignore line should be /screenshots/"
+    )

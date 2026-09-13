@@ -408,6 +408,17 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
   budget: 7 + 2 + 4 + 2 + 1), so budget **one run per window**. A `429` mid-run means wait for the
   quarter-hour boundary and re-run — never loosen the limit to make it pass.
+* **Give every persona check its own `PW_OUTPUT_DIR`.** Playwright clears its output directory at
+  the start of every run, so a second run deletes the first one's screenshots and traces — which
+  cost the 0.1.23 release agent a third sign-in out of a budget of two, just to re-take two images.
+  Prefix the command with `PW_OUTPUT_DIR=../screenshots/qa-<version>-<persona>` (resolved against
+  the CWD, which is `frontend/` above) and nothing a run produced is lost to the next one.
+  `screenshots/` and `qa-*.png` are ignored by git (`tests/test_repo_hygiene.py`); move what you
+  are keeping into the workspace rather than committing it. This is NOT what keeps the
+  persona-session memo (`frontend/test-results/.persona-sessions.json`) safe across runs — that
+  file is hard-anchored and never moves, whatever `PW_OUTPUT_DIR` is set to; setting the variable
+  only stops Playwright's own wipe from landing on `test-results/` at all. The memo's own
+  staleness is `frontend/tests/global-setup.ts`'s job, which clears it on a run-stamp mismatch.
 * Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
   `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
   same fixtures and addresses.

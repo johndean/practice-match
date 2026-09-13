@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, allowAnonymousBootRefusal, allowsAnonymousBootRefusal, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designAdminDataSourceRows, designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
@@ -1447,5 +1447,89 @@ describe('the boundary stub refuses the boxes the real route refuses', () => {
     const m = /`MAX_BBOX_DEG = ([\d.]+)`/.exec(doc);
     expect(m, 'the contract document no longer states MAX_BBOX_DEG').not.toBeNull();
     expect(MAX_BBOX_DEG).toBe(Number(m![1]));
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The anonymous boot's own refusal, LIVE only (Task HOUSEKEEPING-C item 9, REL-0123 concern 2).
+//
+// `signin-form.spec.ts` could not run against `PW_APP_URL` at all: the tests load `/` anonymously,
+// the boot asks `GET /api/listings`, a real deployment answers 401, and `prepare()`'s console gate
+// threw at 1.3 s before a key was typed. The DECISION is `listingsStubUrl`'s, read once — where
+// the D6 stub is armed there is no real 401 and no allowance either — so these cases drive the
+// same function the live run does, from both environments, without setting `PW_APP_URL` for real.
+// ---------------------------------------------------------------------------------------
+describe('allowAnonymousBootRefusal — the live boot\'s ONE request, ONE status, and nothing else', () => {
+  const page = () => ({ url: () => `${appOrigin()}/` }) as unknown as Page;
+  const line = (status: number) => `Failed to load resource: the server responded with a status of ${status} ()`;
+  const live = { ...process.env, PW_APP_URL: 'https://qa.foundation.vin' };
+  // The anonymous boot's own request — the one URL the allowance may narrow to (review, HOUSEKEEPING-C
+  // fix round 1, Important-3). `matchesListings`'s own idiom: the bare path or the same path with a
+  // query, never a prefix, so a real server route under it is never swept in by accident.
+  const listingsUrl = (env: NodeJS.ProcessEnv) => new URL('/api/listings', appOrigin(env)).href;
+
+  it('is a NO-OP wherever the D6 stub answers, so local and CI keep the gate they have', () => {
+    const p = page();
+    const localEnv = { ...process.env, PW_APP_URL: undefined } as NodeJS.ProcessEnv;
+    allowAnonymousBootRefusal(p, localEnv);
+    expect(listingsStubUrl(localEnv)).not.toBeNull();
+    expect(allowsAnonymousBootRefusal(p, line(401), listingsUrl(localEnv)), 'a 401 still fails the test locally').toBe(false);
+  });
+
+  it('tolerates the boot\'s 401 on a LIVE target, on the page that armed it and no other', () => {
+    const armed = page();
+    const other = page();
+    allowAnonymousBootRefusal(armed, live);
+    expect(allowsAnonymousBootRefusal(armed, line(401), listingsUrl(live))).toBe(true);
+    expect(allowsAnonymousBootRefusal(armed, line(401), listingsUrl(live)), 'standing, not one-shot: a boot happens on every anonymous load').toBe(true);
+    expect(allowsAnonymousBootRefusal(other, line(401), listingsUrl(live)), 'armed per page, never run-wide').toBe(false);
+  });
+
+  it('tolerates 401 and NOTHING else — a 500 from the boot\'s own request is still a failure', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(500), listingsUrl(live))).toBe(false);
+    expect(allowsAnonymousBootRefusal(p, line(403), listingsUrl(live))).toBe(false);
+    expect(allowsAnonymousBootRefusal(p, 'pageerror: TypeError: something failed', listingsUrl(live))).toBe(false);
+  });
+
+  // Important-3 (review, HOUSEKEEPING-C fix round 1): the old shape matched on status ALONE, so a
+  // 401 from ANY request — not just the anonymous boot's own `GET /api/listings` — was tolerated for
+  // the whole life of the page. Narrowed to that one request: a 401 from a DIFFERENT route (a real
+  // refusal this gate exists to catch) still fails.
+  it('tolerates the boot\'s 401 from ITS OWN request only — a 401 from a different route still fails', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(401), listingsUrl(live))).toBe(true);
+    expect(
+      allowsAnonymousBootRefusal(p, line(401), new URL('/api/admin/listings', appOrigin(live)).href),
+      'a 401 from a different route is not the anonymous boot\'s own refusal'
+    ).toBe(false);
+    expect(
+      allowsAnonymousBootRefusal(p, line(401), new URL('/api/markets', appOrigin(live)).href),
+      'a 401 from a different route is not the anonymous boot\'s own refusal'
+    ).toBe(false);
+  });
+
+  it('matches the listings collection with a query string too, same as the D6 stub does', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(401), `${listingsUrl(live)}?state=TX`)).toBe(true);
+  });
+
+  // An exemption nothing reads is not an exemption. `guard()` takes a real `Page`, so the wiring
+  // is pinned in the source the way `playwright-config.test.ts` pins the config's own lines.
+  it('guard() consults it, in the console handler, after the expectApiStatus armings, with the message\'s own location', () => {
+    const src = readFileSync(join(HERE, 'harness.ts'), 'utf8');
+    const handler = src.slice(src.indexOf("page.on('console'"), src.indexOf('export async function prepare'));
+    expect(handler).toContain('if (consumeExpectedApiFailure(page, m.text())) return;');
+    expect(handler).toContain('if (allowsAnonymousBootRefusal(page, m.text(), m.location().url)) return;');
+    expect(handler.indexOf('allowsAnonymousBootRefusal')).toBeGreaterThan(handler.indexOf('consumeExpectedApiFailure'));
+  });
+
+  it('is armed by every signin-form test that loads the gate anonymously', () => {
+    const spec = readFileSync(join(HERE, 'signin-form.spec.ts'), 'utf8');
+    expect(spec.split('await prepare(page);').length - 1, 'the prepare() calls this allowance pairs with').toBe(3);
+    expect(spec.split('allowAnonymousBootRefusal(page);').length - 1, 'one arming per prepare()').toBe(3);
   });
 });

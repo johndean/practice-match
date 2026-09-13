@@ -220,6 +220,49 @@ export function ruledTextFindings({ list, final, rowOf }: GuardInput): { finding
  *     actually see — by following the chain forward, which is what `outputFor` does.
  *   * A pure REMOVAL amendment has no output to point at and must not carry a citation at all.
  */
+/**
+ * The measured distinctiveness threshold: a cited line's matching piece may occur at most this
+ * many times in the whole amended design. It lives HERE, with the rule it belongs to, because
+ * three readers need the one number — `design-amendments.test.ts`'s two citation cases and the
+ * `remap:citations` tool, which must accept exactly what the gate accepts or it would re-map a
+ * citation onto an anchor the gate then refuses. It is re-derived on every run by
+ * "the distinctiveness threshold is the smallest that accepts every correct citation".
+ */
+export const DISTINCTIVENESS_K = 4;
+
+/**
+ * THE GATE'S OWN OUTPUT-AND-DISTINCTIVENESS DERIVATION, in ONE place (review, HOUSEKEEPING-C fix
+ * round 1, Important-4). Before this only `DISTINCTIVENESS_K` was shared: `entriesFor`, `outputOf`
+ * and the distinctiveness predicate itself were a second copy in `citation-remap.ts`, and a THIRD
+ * in two closures inside `design-amendments.test.ts`'s own citation cases — three places that had
+ * to be changed together and were not, which is exactly the drift class this task's own tools
+ * exist to close. They live here because this file is what "the gate" already means to every
+ * caller (`DISTINCTIVENESS_K`'s own doc comment); `citation-remap.ts` imports and re-exports them
+ * so its own public shape does not change, and `design-amendments.test.ts`'s two cases import them
+ * directly instead of re-deriving their own.
+ */
+
+/** The entries a row's id owns. A1's 24 derived edits collapse to ONE row, exactly as the gate
+ *  reads them. */
+export function entriesFor(id: string, list: Amendment[]): Amendment[] {
+  return id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
+}
+
+/** What stands at this amendment's site today, one trimmed line per entry line: its own `replace`,
+ *  or — where a later entry's `find` swallowed that `replace` whole — whatever superseded it. */
+export function outputOf(a: Amendment, list: Amendment[]): string[] {
+  const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
+  return later === undefined ? a.replace.split('\n').map((s) => s.trim()).filter(Boolean) : outputOf(later, list);
+}
+
+/** Whether a piece of an amendment's own output is DISTINCTIVE enough to anchor a citation: a word
+ *  token of two or more characters, occurring at most `maxOccurrences` times in the whole amended
+ *  design. The ONE predicate both `citationFindings` below and `remap:citations`'s `anchorLines`
+ *  test a candidate line against, so the tool can never write a citation this gate then refuses. */
+export function isDistinctivePiece(piece: string, occurrences: (piece: string) => number, maxOccurrences: number): boolean {
+  return /[A-Za-z0-9]{2,}/.test(piece) && occurrences(piece) <= maxOccurrences;
+}
+
 export type CitationInput = {
   /** Every line of `LOCAL_AMENDMENTS.md`; rows are recognised by their leading `| A<id> |`. */
   rows: string[];
@@ -232,6 +275,109 @@ export type CitationInput = {
   /** The measured distinctiveness threshold. */
   maxOccurrences: number;
 };
+
+/**
+ * THE OTHER PLACE A LINE NUMBER CAN GO STALE (Task HOUSEKEEPING-C item 4, ADMIN-GATE concern 5).
+ *
+ * `citationFindings` reads `LOCAL_AMENDMENTS.md`'s rows and nothing else, so the `V3:<line>`
+ * references that had accumulated in `design-amendments.ts`'s OWN doc comments were checked by
+ * nobody. Measured on 2026-09-13 there were 58 of them and NOT ONE resolved under the row rule:
+ * thirty landed on a blank line or a bare closing brace, and several still pointed into the
+ * PRISTINE file's numbering from before the first insertion. A pointer that is wrong more often
+ * than right is worse than no pointer.
+ *
+ * They are gone, and the rule that replaces them is this function: a line number belongs in a
+ * `LOCAL_AMENDMENTS.md` row, where the citation gate follows it and `npm run remap:citations`
+ * re-takes it. In the engine's own prose, name the entry (`A13.1`) or the thing (`the docked
+ * panel's Next arrow`) — neither can go stale.
+ *
+ * COMMENTS ONLY, and that is not a softening. One `V3:` reference in this file lives inside an
+ * amendment's `replace` string: the design's own comment on the filter chevron, which is DESIGN
+ * BYTES and cannot be edited without a ruling. So the scanner tracks string and template literals
+ * and reports only what a comment carries — which is exactly the set this rule governs.
+ */
+/** A character that could plausibly precede the START of a regex literal rather than a division —
+ *  an operator, an opening bracket, or one of a handful of keywords a regex commonly follows.
+ *  Reviewed, HOUSEKEEPING-C fix round 1, Minor-1: `design-amendments.ts:34`'s own STYLED regex
+ *  carries a `"` inside it (`style="`), which the scanner below treated as a STRING delimiter —
+ *  it opened, found the NEXT `"` (one inside the regex's own `[^"]` character class) and closed
+ *  two characters later, then opened AGAIN on the regex's real closing `"` and hunted forward for
+ *  a partner it would not find until some later line's own quote — silently swallowing every `//`
+ *  and `/*` comment in between, `V3:` references included. This is what tells the scanner a `/`
+ *  opens a PATTERN rather than closing a division, so it can skip the whole literal — quotes,
+ *  character classes and all — as one token, the same way it already skips a string. */
+const REGEX_PRECEDING_KEYWORDS = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'case', 'yield', 'await', 'do', 'else', 'throw']);
+function precedesRegexLiteral(src: string, at: number): boolean {
+  let j = at - 1;
+  while (j >= 0 && /\s/.test(src[j])) j--;
+  if (j < 0) return true;
+  if ('=({[,;:!&|?+-~^%<>*'.includes(src[j])) return true;
+  if (!/\w/.test(src[j])) return false;
+  let k = j;
+  while (k >= 0 && /\w/.test(src[k])) k--;
+  return REGEX_PRECEDING_KEYWORDS.has(src.slice(k + 1, j + 1));
+}
+
+/** The index one past a regex literal's closing `/` and its flags, given `src[at] === '/'` opens
+ *  one — honouring `[...]` character classes (a `/` inside one does not close the literal) and
+ *  backslash escapes, exactly as the language does. `null` if no unescaped `/` closes it before
+ *  the line ends, meaning `at` was not really a regex literal after all (division followed by a
+ *  line break with nothing after it, or malformed source): the caller falls back to treating the
+ *  `/` as an ordinary character rather than risk running off the end of the file. */
+function regexLiteralEnd(src: string, at: number): number | null {
+  let j = at + 1;
+  let inClass = false;
+  while (j < src.length && src[j] !== '\n') {
+    if (src[j] === '\\') { j += 2; continue; }
+    if (src[j] === '[') { inClass = true; j++; continue; }
+    if (src[j] === ']') { inClass = false; j++; continue; }
+    if (src[j] === '/' && !inClass) {
+      j++;
+      while (j < src.length && /[a-zA-Z]/.test(src[j])) j++;
+      return j;
+    }
+    j++;
+  }
+  return null;
+}
+
+export function commentCitations(src: string): string[] {
+  const out: string[] = [];
+  const report = (text: string, at: number) => {
+    for (const m of text.matchAll(/V3:\d+/g)) out.push(`${src.slice(0, at).split('\n').length}: ${m[0]}`);
+  };
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const end = src.indexOf('\n', i);
+      const stop = end === -1 ? src.length : end;
+      report(src.slice(i, stop), i);
+      i = stop;
+      continue;
+    }
+    if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      report(src.slice(i, stop), i);
+      i = stop;
+      continue;
+    }
+    if (src[i] === '/' && precedesRegexLiteral(src, i)) {
+      const end = regexLiteralEnd(src, i);
+      if (end !== null) { i = end; continue; }
+    }
+    if (src[i] === '\'' || src[i] === '"' || src[i] === '`') {
+      const quote = src[i];
+      i++;
+      while (i < src.length && src[i] !== quote) i += src[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
 
 export function citationFindings({ rows, lines, outputFor, occurrences, maxOccurrences }: CitationInput): { findings: string[]; checked: number } {
   const findings: string[] = [];
@@ -252,7 +398,7 @@ export function citationFindings({ rows, lines, outputFor, occurrences, maxOccur
       findings.push(`${id}: a removal amendment puts nothing at a line, so its row may not cite one`);
       continue;
     }
-    const distinctive = output.filter((p) => /[A-Za-z0-9]{2,}/.test(p) && occurrences(p) <= maxOccurrences);
+    const distinctive = output.filter((p) => isDistinctivePiece(p, occurrences, maxOccurrences));
     for (const [start, end] of spans) {
       if (end !== null && end < start) {
         findings.push(`${id}: V3:${start}–${end} runs backwards — a range ends at or after it starts`);
