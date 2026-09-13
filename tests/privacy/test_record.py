@@ -329,39 +329,64 @@ def _executed_sql(module: Any) -> dict[str, list[str]]:
     JoinedStr, so `{RESET_COLUMNS}` contributes nothing -- which is right: every statement writes
     `updated_at = now()` in its own text, outside that fragment.
 
-    `AsyncFunctionDef` beside `FunctionDef` (re-review N4): `record.py` is psycopg2-sync and flat
+    `AsyncFunctionDef` beside `FunctionDef` (re-review 1, N4): `record.py` is psycopg2-sync and flat
     today, so nothing is missed either way, but a planted `async def` writer was invisible to this
     walk and to `_plain_calls` alike -- and a walk that cannot see a writer is exactly what the
-    counting pin below exists to prevent."""
+    counting pin below exists to prevent.
+
+    EVERY function, not only the module's top-level ones (re-review 2, Minor-2). The walk used to
+    read `ast.parse(...).body`, so a writer nested in a CLASS body was invisible to all three pins
+    at once -- a planted `class _PlantedSweeper` whose method issued an unguarded
+    `UPDATE listing_asset_privacy SET last_error = NULL WHERE asset_id = %s` left this suite and
+    `tests/test_docs.py` entirely green. "Assert the module declares no classes" was the cheaper
+    alternative and is NOT this module's contract: `record.py` declares `PrivacyRow`. So the walk
+    widens instead, and a class-nested writer is now counted, predicate-checked and
+    `updated_at`-checked like any other.
+
+    Each `execute` is attributed to its NEAREST enclosing function rather than to every function
+    that encloses it, so a nested `def` cannot make one statement count twice. Nothing in
+    `record.py` nests today; the count this pin makes exact is worth keeping exact."""
     import ast
     import inspect
 
+    def owned(node: Any) -> list[str]:
+        """The `execute` SQL this node owns, stopping at any nested function's boundary."""
+        out: list[str] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue     # the walk below reaches it as an owner in its own right
+            if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                    and child.func.attr == "execute" and child.args):
+                out.append(" ".join(piece.value for piece in ast.walk(child.args[0])
+                                    if isinstance(piece, ast.Constant) and isinstance(piece.value, str)))
+            out.extend(owned(child))
+        return out
+
     found: dict[str, list[str]] = {}
-    for top in ast.parse(inspect.getsource(module)).body:
-        if not isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        for node in ast.walk(top):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "execute" and node.args):
-                continue
-            found.setdefault(top.name, []).append(
-                " ".join(piece.value for piece in ast.walk(node.args[0])
-                         if isinstance(piece, ast.Constant) and isinstance(piece.value, str)))
+        for sql in owned(node):
+            found.setdefault(node.name, []).append(sql)
     return found
 
 
 def _plain_calls(module: Any, function: str) -> set[str]:
-    """The names of the plain-function calls one top-level function of `module` makes -- a
-    `read(...)` but not a `cur.execute(...)`, and never a word that only appears in a docstring,
-    which is why this is an AST walk and not a substring search over the source."""
+    """The names of the plain-function calls one function of `module` makes -- a `read(...)` but
+    not a `cur.execute(...)`, and never a word that only appears in a docstring, which is why this
+    is an AST walk and not a substring search over the source.
+
+    `ast.walk`, so a function reaches this whether it is `def` or `async def` and whether it sits
+    at the module's top level or in a class body -- the same widening `_executed_sql` takes, for
+    the same reason (re-review 1 N4, re-review 2 Minor-2)."""
     import ast
     import inspect
 
-    for top in ast.parse(inspect.getsource(module)).body:
-        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)) and top.name == function:
-            return {node.func.id for node in ast.walk(top)
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-    pytest.fail(f"{module.__name__} has no top-level function {function}")
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function:
+            return {call.func.id for call in ast.walk(node)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
+    pytest.fail(f"{module.__name__} declares no function {function}")
 
 
 def _privacy_updates(module: Any) -> dict[str, list[str]]:
@@ -421,6 +446,15 @@ CONDITIONAL_GUARDS = {
 }
 
 
+def _where_clause(sql: str) -> str:
+    """A statement's WHERE clause and nothing else: everything after the first `WHERE`, stopped at
+    `RETURNING`. The empty string when there is no WHERE at all -- a whole-table UPDATE, which the
+    caller reads as "no predicate" exactly as it reads a WHERE that names no state."""
+    if "WHERE" not in sql:
+        return ""
+    return sql.split("WHERE", 1)[1].split("RETURNING", 1)[0]
+
+
 def test_every_update_in_the_module_names_the_state_it_is_allowed_from() -> None:
     """The STRUCTURAL half of the module docstring's "every writer carries a state predicate".
 
@@ -435,14 +469,22 @@ def test_every_update_in_the_module_names_the_state_it_is_allowed_from() -> None
     can carry honestly: every counted UPDATE has a WHERE, and that WHERE names `processing_status`.
     It cannot tell a right predicate from a wrong one -- the per-transition and dead-end cases are
     what do that, against a real database -- but it can tell a predicate from NONE, which is the
-    failure that actually happened."""
+    failure that actually happened.
+
+    The scan is the WHERE CLAUSE PROPER and stops at `RETURNING` (re-review 2, Minor-1). Reading
+    the whole tail let a statement satisfy this by NAMING the column in what it gives BACK:
+    `… WHERE asset_id = %s RETURNING attempts, processing_status`, with no predicate whatsoever,
+    passed. No writer in `record.py` takes that shape today -- `claim` is the only one whose
+    RETURNING carries the column and it reaches it through the f-string `{_COLUMNS}`, which the
+    walk drops -- so the exposure was a FUTURE writer that returns the row it moved, P8's sweeper
+    among them. That is the one this pin most needs to catch."""
     by_function = _privacy_updates(record)
     assert by_function, "the walk found no privacy UPDATEs at all"
     missing = [
         f"{name}: {sql[:120]}"
         for name, sqls in by_function.items() if name not in UNGUARDED_UPDATES
         for sql in sqls
-        if "WHERE" not in sql or "processing_status" not in sql.split("WHERE", 1)[1]
+        if "processing_status" not in _where_clause(sql)
     ]
     assert missing == [], missing
     declared = set(UNGUARDED_UPDATES) | set(CONDITIONAL_GUARDS)
@@ -906,13 +948,36 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
     and matches nothing. That is exactly what a duplicate message and a redelivered task do."""
     asset_id, _ = _row(conn, processing_status="UPLOADED")
     holder = psycopg2.connect(scratch_dsn)   # NOT autocommit: it holds the row while the racer waits
-    racer = psycopg2.connect(scratch_dsn)
-    racer.autocommit = True
     answers: dict[str, record.PrivacyRow | None] = {}
+    escaped: list[psycopg2.Error] = []
+
+    def race() -> None:
+        """The racing claim, owning its connection from open to close and swallowing NOTHING.
+
+        The connection is opened AND closed in here (re-review 2, Minor-3): nothing outside this
+        thread can close it, and the scratch database's `DROP ... WITH (FORCE)` cannot terminate a
+        backend this thread is still using, because the `finally` below has run before the test
+        returns. And a DATABASE error does not ESCAPE this thread: one that does reaches pytest
+        through its `threadexception` hook as a `PytestUnhandledThreadExceptionWarning`, which
+        `-W error` promotes to an error on whichever test happens to be running when it lands --
+        the NEXT test's setup, once this one has returned, which is worse to read than the failure
+        it is attached to. It is recorded instead, and the test asserts on it below, in its own
+        name. `psycopg2.Error` and not a blind `Exception`: that is the whole class this finding is
+        about (`OperationalError: server closed the connection unexpectedly`, `InterfaceError:
+        connection already closed`), and a bug in `record.claim` itself is not a masking error --
+        it is one pytest SHOULD surface however loudly it can."""
+        racer = psycopg2.connect(scratch_dsn)
+        racer.autocommit = True
+        try:
+            answers["racer"] = record.claim(racer, asset_id, 1)
+        except psycopg2.Error as exc:
+            escaped.append(exc)
+        finally:
+            racer.close()
+
     # Built before the `try`, so the `finally` can always ask whether it is still running -- a
     # `finally` that cannot name the thread is the same defect one step further out.
-    thread = threading.Thread(
-        target=lambda: answers.__setitem__("racer", record.claim(racer, asset_id, 1)))
+    thread = threading.Thread(target=race)
     try:
         with holder.cursor() as cur:
             cur.execute("SELECT attempts FROM listing_asset_privacy WHERE asset_id = %s FOR UPDATE",
@@ -921,20 +986,16 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
         _wait_for_a_blocked_backend(conn)
         answers["holder"] = record.claim(holder, asset_id, 1)
         holder.commit()
-        thread.join(timeout=30)
-        assert not thread.is_alive(), (
-            "the racing claim did not return within 30 s; its connection is left OPEN deliberately "
-            "rather than closed under a live thread, which would raise psycopg2.InterfaceError "
-            "inside it and reach pytest as a PytestUnhandledThreadExceptionWarning -- promoted to "
-            "a second error by -W error, on top of this one"
-        )
     finally:
+        # The lock goes FIRST, so a racer blocked on it finishes in milliseconds, and only then do
+        # we wait -- the thread owns its own connection, so there is nothing here to close.
         holder.close()
-        # Only when the thread is done with it (re-review N3). A connection closed under a thread
-        # still using it masks the real failure with a second, unrelated one; the scratch database
-        # is dropped WITH (FORCE) at teardown, so a connection left open here is reclaimed anyway.
-        if not thread.is_alive():
-            racer.close()
+        thread.join(timeout=30)
+    assert not thread.is_alive(), (
+        "the racing claim did not return within 30 s of the lock being released; its connection is "
+        "the thread's own, so nothing here has closed it and no second error is masking this one"
+    )
+    assert escaped == [], f"the racing claim raised instead of answering: {escaped}"
     assert set(answers) == {"holder", "racer"}, answers
     won = [row for row in answers.values() if row is not None]
     assert len(won) == 1, f"both connections claimed the same row: {answers}"
