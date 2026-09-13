@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
+import { citationFindings, ruledTextFindings } from './amend-guard';
+
+/** The measured distinctiveness threshold: a cited line's matching piece may occur at most this
+ *  many times in the amended design. Re-derived by the case that pins the whole table. */
+const DISTINCTIVENESS_K = 4;
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -1326,9 +1331,9 @@ describe('local design amendments (spec D15)', () => {
   // A pure REMOVAL amendment (A6's) has no output to point at and must not carry a citation; the
   // assertion below says so rather than passing vacuously.
   // ---------------------------------------------------------------------------------------
-  it('every V3:<line> citation in LOCAL_AMENDMENTS.md lands on the line that amendment produced', () => {
+  it('every V3:<line> citation in LOCAL_AMENDMENTS.md lands on a distinctive line that amendment produced', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
-    const fileLines = readFileSync(AMENDED, 'utf8').split('\n');
+    const design = readFileSync(AMENDED, 'utf8');
     const list = amendments();
     const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
     /** What stands at this amendment's site in the amended file: its own `replace`, or — when a
@@ -1337,37 +1342,97 @@ describe('local design amendments (spec D15)', () => {
       const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
       return later ? outputOf(later) : trimmed(a.replace);
     };
-    // H3 (controller, 2026-09-11): this loop used to `expect(...).toBe(true)` inline, so the
-    // FIRST stale citation threw and the run stopped there — correct (it went red), but it
-    // named one of however many were actually stale and left a reader to conclude there was
-    // only one. Every citation is still checked, and every stale one is collected, so a single
-    // run names all of them.
-    let checked = 0;
-    const stale: string[] = [];
-    for (const row of md.split('\n')) {
-      const id = /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1];
-      if (id === undefined) continue;
-      // BOTH ENDS of a range, not only the first number (Task MP1). `V3:1974–1969` and
-      // `V3:2613-2431` both stood in this file with an end left behind by an earlier
-      // re-map, and both passed: the pattern stopped at the first number, so the half of
-      // the citation a reader uses to find the END of a multi-line edit was never measured.
-      const cited = [...row.matchAll(/V3:(\d+)(?:[\u2013-](\d+))?/g)].flatMap((c) => [Number(c[1]), ...(c[2] ? [Number(c[2])] : [])]);
-      if (cited.length === 0) continue;
-      const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-      expect(own.length, `${id}: the row cites a V3 line but no amendment carries that id`).toBeGreaterThan(0);
-      const output = own.flatMap(outputOf);
-      expect(output.length, `${id}: a removal amendment puts nothing at a line, so its row may not cite one`).toBeGreaterThan(0);
-      for (const n of cited) {
-        const window = [n - 1, n, n + 1].map((k) => fileLines[k - 1] ?? '');
-        if (!window.some((line) => output.some((piece) => line.includes(piece)))) {
-          stale.push(`${id}: V3:${n} is stale — that line of the amended design holds none of this amendment's text`);
-        }
-        checked++;
-      }
-    }
-    expect(stale, `${stale.length} stale citation(s) found`).toEqual([]);
+    // H3 (controller, 2026-09-11): every citation is checked and every stale one collected, so a
+    // single run names all of them rather than throwing on the first.
+    const { findings, checked } = citationFindings({
+      rows: md.split('\n'),
+      lines: design.split('\n'),
+      outputFor: (id) => {
+        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
+        return own.length === 0 ? null : own.flatMap(outputOf);
+      },
+      occurrences: (piece) => design.split(piece).length - 1,
+      // MEASURED, not chosen — the case below re-derives the whole table on every run.
+      maxOccurrences: DISTINCTIVENESS_K,
+    });
+    expect(findings, `${findings.length} stale citation(s) found`).toEqual([]);
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
-    expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(20);
+    expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(200);
+  });
+
+  // K is a property of THIS ledger, not a constant, so it is re-derived rather than asserted from
+  // a comment: the case runs the same rule at every threshold below the shipped one and pins how
+  // many correct citations each would reject. Run it alone with
+  //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
+  // The residue below 4 is text the design genuinely repeats: the three shared dismissal closures'
+  // identical `if (this.state.giveMenu) {` heads (3), and the `tickStyle:` declaration A26.2 and
+  // A26.3's filter families share (4).
+  it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const design = readFileSync(AMENDED, 'utf8');
+    const list = amendments();
+    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
+    const outputOf = (a: Amendment): string[] => {
+      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
+      return later ? outputOf(later) : trimmed(a.replace);
+    };
+    const staleAt = (k: number) => citationFindings({
+      rows: md.split('\n'),
+      lines: design.split('\n'),
+      outputFor: (id) => {
+        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
+        return own.length === 0 ? null : own.flatMap(outputOf);
+      },
+      occurrences: (piece) => design.split(piece).length - 1,
+      maxOccurrences: k,
+    }).findings.filter((f) => f.includes('is stale')).length;
+    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 28, 2: 7, 3: 4, 4: 0 });
+    expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // AMEND-GUARD (Task HOUSEKEEPING-B, 2026-09-13). The case above proves every citation POINTS
+  // somewhere; this one proves nothing ruled SILENTLY LEFT. The byte-equality case cannot see it:
+  // pristine + amendments still equals the amended file when one entry's `find` swallows text an
+  // earlier entry's `replace` introduced, the ids and the count are still right, and the sentence
+  // is simply gone. A24.20's "Population growth is measured for the surrounding city or county,
+  // not the tract." went that way on 2026-09-12 — A24.56's `find` spanned two ruled sentences of
+  // the Browse Market-data footnote and its `replace` returned one — while CLAUDE.md went on
+  // asserting it was there and the pixel gate re-based `browse-market-strip` without a question.
+  //
+  // THE RULE IS TWO TIERS, AND BOTH TAKE AN EXPLICIT TOKEN (`amend-guard.ts` carries it in full):
+  //   * a consumed LINE is declared by `consumes <id>` — or the stronger `supersedes <id>` — in
+  //     the row of an entry that TOOK that line;
+  //   * a consumed ruled SENTENCE is declared only by `supersedes <id>`, or by `superseded by <id>`
+  //     on the entry that put it there, which is A10 and A10.2's own vocabulary.
+  // A bare mention of the id does not count, and neither does a citation: at `db8bf67` A24.56's
+  // row both cited A24.20 and QUOTED the sentence it was dropping, and the sentence left the
+  // product all the same. Nor does a token on an entry that did not take THIS line — every
+  // consumer declares its own consumption (fix round 2, ruled 2026-09-13).
+  //
+  // The population, re-measured at this tip: 1,325 introduced lines and 59 ruled sentences walked;
+  // 98 consumed lines across 68 (superseded → consumer) pairs, and 6 consumed sentences. Every one
+  // carries a deliberate token. The 33 that no row named before this task were read one by one and
+  // verified independently: 33 RULED-REMOVAL, 0 SILENT-LOSS — legitimate chained edits under a
+  // named ruling, nothing ruled lost — so all were NAMED and none restored. The guard was not
+  // weakened to reach zero.
+  // ---------------------------------------------------------------------------------------
+  it('every sentence a ruled entry introduced is still in the design, unless a later entry names its removal', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const rowOf = (id: string) => {
+      const key = id.startsWith('A1.') ? 'A1' : id;
+      return md.split('\n').find((row) => /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1] === key) ?? '';
+    };
+    const silent: string[] = [];
+    let checked = 0;
+    for (const [file, path] of [['dc', AMENDED], ['jsx', AMENDED_JSX]] as const) {
+      const out = ruledTextFindings({ list: amendmentsFor(file), final: readFileSync(path, 'utf8'), rowOf });
+      silent.push(...out.findings);
+      checked += out.lines + out.sentences;
+    }
+    expect(silent, `${silent.length} ruled line(s) left the design with no entry naming the supersession`).toEqual([]);
+    // Not a vacuous pass: the ledger really was walked. Every entry introduces at least one line.
+    expect(checked, 'no introduced line was examined — the ledger or the diff stopped matching').toBeGreaterThan(amendments().length);
   });
 
   // ---------------------------------------------------------------------------------------
@@ -1390,10 +1455,12 @@ describe('local design amendments (spec D15)', () => {
     // `showDrive` (in the .dc.html, not here), are untouched.
     expect(jsx).toContain('fill: false, interactive: false');
     expect(jsx.split('L.circle(').length - 1, 'A28.1 added or removed a circle').toBe(pristineJsx.split('L.circle(').length - 1);
-    // A28.1 was the only jsx entry when this case was written, and the first the programme ever
-    // had; the A24 merge (real Census boundary polygons, 2026-09-11) added the four the partition
-    // was built for, and they are appended after it because A24 is appended after A28 in
-    // `amendments()`. The list is spelled out rather than counted so an entry that silently
+    // A28.1 was the only jsx entry when this case was written, and the first to REACH the file on
+    // `main`, by merging first — corrected 2026-09-13: A24.9-A24.12 (2026-09-10) were WRITTEN
+    // first and A28.1 rides the `file: 'jsx'` partition A24 introduced (spec §9.2), which is the
+    // same clause CLAUDE.md's A28 paragraph carries. The A24 merge (real Census boundary
+    // polygons, 2026-09-11) added the four the partition was built for, and they are appended
+    // after it because A24 is appended after A28 in `amendments()`. The list is spelled out rather than counted so an entry that silently
     // changes file still fails here.
     expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12']);
   });
