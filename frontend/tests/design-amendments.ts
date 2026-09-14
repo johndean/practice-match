@@ -7669,7 +7669,15 @@ const A48_1: Amendment = {
  *
  *  CHAINED on A34.7; consumes A34.7, whose whole introduced `<p>` line this rewrites. Every
  *  existing sentence is carried forward byte for byte, A27.4's straight-line sentence and A34.7's
- *  own three-kinds paragraph included. Re-bases `browse-market-panel` and `browse-panel-lightbox`.
+ *  own three-kinds paragraph included.
+ *
+ *  RE-BASES NO APPROVED STATE, MEASURED rather than predicted (the A33/A34 method: baselines
+ *  regenerated with this family removed and again with it, and the PNG hashes diffed). The two
+ *  states that render this panel — `browse-market-panel` and `browse-panel-lightbox` — capture a
+ *  1440 x 940 viewport with the panel's own `.rf-scroll` at the top, and this footnote sits far
+ *  below that fold, so the sentences reach the DOM and paint no pixel. Their DOM oracles DO move
+ *  (`tests/dom-snapshots/browse-market-panel.json` and `browse-panel-lightbox.json`), which is
+ *  what gates this entry; it has no pixel oracle and that is recorded rather than implied.
  *
  *  THE `find` IS `A34_7.replace` ITSELF, not the tail sentence of it, and that is load-bearing
  *  rather than tidy. `amend-guard.ts`'s `outputOf` follows a supersession chain only where a later
@@ -7694,8 +7702,13 @@ const A48_5: Amendment = {
  *  this one, whose units are ZIP areas.
  *
  *  CHAINED on A34.8; consumes A34.8, whose whole introduced `<p>` line this rewrites. A24.20's
- *  growth caveat and the derived-estimates sentence stay byte for byte. Re-bases
- *  `browse-market-strip` and `browse-market-strip-location`. */
+ *  growth caveat and the derived-estimates sentence stay byte for byte.
+ *
+ *  RE-BASES EXACTLY ONE approved state, `browse-market-strip`, MEASURED. Its twin
+ *  `browse-market-strip-location` does NOT move, and the reason is in `screens.ts`: the AREA
+ *  state scrolls this very footnote into frame and asserts `toBeInViewport({ ratio: 1 })` on it,
+ *  while the LOCATION state scrolls to the `LOCATION \u00b7` mode line instead and leaves the
+ *  footnote below the 940 px fold. Its DOM oracle moves all the same. */
 const A48_6: Amendment = {
   id: 'A48.6', ...COMP,
   find: 'Population growth is measured for the surrounding city or county, not the tract.</p>',
