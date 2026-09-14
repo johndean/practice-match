@@ -30,10 +30,16 @@ def _paths(router):
 
 
 def test_contract_doc_names_every_market_and_admin_route():
-    from app.api import admin_data_sources, market
+    """`admin_settings` joins the two routers this walks in Task 1 of the admin control surface
+    (2026-09-14). Its plan listed this file as "unchanged, new rows exercised", which it was not:
+    the walk names its routers one by one, so `GET /api/admin/settings` and
+    `POST /api/admin/vintages/{dataset_key}/activate` would have been documented with nothing
+    holding the document to them. One name, so the step's own instruction — "run it and fix the
+    doc, never the router" — has something to bite on."""
+    from app.api import admin_data_sources, admin_settings, market
 
     text = DOC.read_text(encoding="utf-8")
-    for path in _paths(market.router) + _paths(admin_data_sources.router):
+    for path in _paths(market.router) + _paths(admin_data_sources.router) + _paths(admin_settings.router):
         assert path in text, path
 
 

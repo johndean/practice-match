@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from app import config
 from app.api.admin_data_sources import router as admin_data_sources_router
 from app.api.admin_listings import router as admin_listings_router
+from app.api.admin_settings import router as admin_settings_router
 from app.api.admin_signups import router as admin_signups_router
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
@@ -134,6 +135,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # only and its licence decisions are admin-and-re-authenticated, so behind the Coming Soon
         # page it is absent rather than merely guarded, like every other /api/admin/* path.
         app.include_router(admin_data_sources_router)
+        # Same gate, same reason (decision D2, 2026-09-14): Settings reads the registry and the
+        # sign-up counts and its one write flips `active_vintage` — staff/admin and
+        # admin-and-re-authenticated respectively, so behind the Coming Soon page it is absent
+        # rather than merely guarded, like every other /api/admin/* path.
+        app.include_router(admin_settings_router)
         # Same gate again (Seed Listings A-L5.1): the three listing reads are MEMBER endpoints
         # — `listing.read` is buyer/seller/staff/admin — so behind the Coming Soon page they are
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
