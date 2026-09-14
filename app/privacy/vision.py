@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import unicodedata
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -126,10 +127,22 @@ def _key() -> str:
     and a log line pointing the operator at the network. One door removes the inconsistency: the
     bytes the guard accepted are the bytes the SDK is given.
 
+    EXTENDED AGAIN the same day (re-review Finding 1): `.strip()` alone leaves the INVISIBLE paste
+    artefacts -- `"sk-test\u200b".strip()` is unchanged, and a zero-width space, a BOM or a
+    left-to-right mark is invisible in Railway's variable editor. Those are worse than a newline
+    rather than milder: h11 REFUSES a newline before a body is written, while httpx2 falls back from
+    ascii to utf-8 and h11 accepts obs-text, so a `Cf` character TRAVELS -- one connection, the
+    photograph on the wire, and a 401 the operator reads as a key that looks right. Every character
+    of Unicode general category `Cf` is removed before the whitespace strip (so a BOM in FRONT of
+    the padding is handled too); nothing else is touched, because interior text is a different key
+    rather than an invisible one, and inventing a character set an Anthropic key "must" match is not
+    this module's to decide.
+
     The spec's C.5 client literal states PROVENANCE -- read from `Settings`, never `os.environ`, so
-    no ambient credential can satisfy an unset Railway variable -- not bytes, so stripping keeps it.
+    no ambient credential can satisfy an unset Railway variable -- not bytes, so cleaning keeps it.
     """
-    return (settings.anthropic_api_key or "").strip()
+    raw = settings.anthropic_api_key or ""
+    return "".join(ch for ch in raw if unicodedata.category(ch) != "Cf").strip()
 
 
 def _configured() -> bool:
@@ -139,8 +152,8 @@ def _configured() -> bool:
     pasted a newline into reaches it as whitespace. Neither can authenticate; both must be the
     `unavailable` outcome rather than a per-photograph failure, and the whitespace one must not be
     allowed to open a connection. Every sibling secret in the tree already tests falsiness
-    (`app/mail/tasks.py`, `app/census/client.py`); this adds `.strip()` on top of that, because
-    `"   "` is truthy."""
+    (`app/mail/tasks.py`, `app/census/client.py`); this asks `_key()` on top of that, because
+    `"   "` is truthy and `"\u200b"` is truthy even after `.strip()`."""
     return bool(_key())
 
 

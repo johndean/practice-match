@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import socket
 from typing import Any, NoReturn
 
 import pytest
+from pydantic import ValidationError
 
 from app.privacy import vision
 
@@ -23,7 +25,10 @@ IMAGE = b"\x00" * 64
 #: Distinctive bytes, so a base64 fragment of THIS is searchable in a log capture.
 PHOTOGRAPH = b"\x89PNG\r\n\x1a\nPHOTOBYTES-DO-NOT-LOG-ME" * 8
 PROMPT_FACTS = {"name": "Hill Country Animal Hospital", "city": "Cedar Park", "state": "TX"}
-#: One of the five `BetaRefusalStopDetails.category` values the pinned SDK declares (Minor 5).
+#: A `BetaRefusalStopDetails.category` value the pinned SDK actually declares — measured on
+#: anthropic 1.5.0 as `cyber`, `bio`, `frontier_llm`, `reasoning_extraction`, `general_harms`, and
+#: pinned by `test_the_refusal_fixture_uses_a_category_the_sdk_declares` rather than by this comment
+#: (review Minor 5; re-review Finding 3, which found the pin deleted rather than made robust).
 REFUSAL_CATEGORY = "general_harms"
 
 
@@ -36,16 +41,19 @@ def _banned_getaddrinfo(*args: object, **kwargs: object) -> NoReturn:
 
 
 class _SdkClient:
-    """A stand-in for a CONSTRUCTED `anthropic.Anthropic`, so the real `_client()` can run."""
+    """A stand-in for a CONSTRUCTED `anthropic.Anthropic`, so the real `_client()` can run.
 
-    def __init__(self, answer: Any) -> None:
-        self.beta = type("B", (), {"messages": type("M", (), {"create": lambda *a, **k: answer})()})()
+    It answers nothing: the one test that installs it asserts the constructor is NEVER reached, so
+    the only way `create` is called is a mutation, and what that mutation must fail on is the
+    constructor COUNT. (`close()` is deliberately absent -- `app/privacy/vision.py` never closes the
+    client it builds, which the first report records as its own open concern; a `close()` here would
+    read as a path something exercises.)"""
 
-    def close(self) -> None:
-        return None
+    def __init__(self) -> None:
+        self.beta = type("B", (), {"messages": type("M", (), {"create": lambda *a, **k: None})()})()
 
 
-def _record_sdk_constructor(monkeypatch: pytest.MonkeyPatch, answer: Any = None) -> list[dict[str, Any]]:
+def _record_sdk_constructor(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Patch `anthropic.Anthropic` itself and record every constructor call.
 
     Patching the SDK's own constructor rather than the adapter's `_client` is what lets a test run
@@ -58,7 +66,7 @@ def _record_sdk_constructor(monkeypatch: pytest.MonkeyPatch, answer: Any = None)
 
     def _factory(**kwargs: Any) -> _SdkClient:
         built.append(kwargs)
-        return _SdkClient(answer)
+        return _SdkClient()
 
     monkeypatch.setattr(anthropic, "Anthropic", _factory)
     return built
@@ -191,13 +199,68 @@ def test_the_sdk_never_logs_the_photograph_the_prompt_or_the_practice_at_debug(
         client.close()
     blob = "\n".join(captured)
     assert result["status"] == "ok"  # the whole request/response path really did run
-    # Stated directly, not only implied by the capture: line 144 put the SDK logger back to NOTSET,
-    # so INFO here can only have come from `_client()`'s own call on the production path.
+    # Stated directly, not only implied by the capture: the NOTSET line in this test's own setup
+    # above put the SDK logger back to NOTSET, so INFO here can only have come from `_client()`'s
+    # own call on the production path.
     assert logging.getLogger("anthropic").level == logging.INFO, "_client() did not pin the SDK logger"
     assert base64.b64encode(PHOTOGRAPH).decode()[:40] not in blob, "the photograph reached the log"
     assert "could let a reader identify" not in blob, "the prompt reached the log"
     assert "Hill Country Animal Hospital" not in blob, "the practice name reached the log"
     assert "sk-test" not in blob
+
+
+#: Run in a FRESH interpreter by the test below. `import anthropic` runs the SDK's own
+#: `setup_logging()`, which reads `ANTHROPIC_LOG` and sets `logging.getLogger("anthropic")` to DEBUG
+#: — so the pin only holds if it runs AFTER that import. Every socket door is banned before the
+#: adapter is touched; constructing a client dials nothing, and the ban is what proves it.
+_ORDER_PROBE = """
+import socket, sys
+for name in ("connect", "connect_ex"):
+    setattr(socket.socket, name, lambda *a, **k: (_ for _ in ()).throw(AssertionError("socket banned")))
+socket.create_connection = lambda *a, **k: (_ for _ in ()).throw(AssertionError("socket banned"))
+socket.getaddrinfo = lambda *a, **k: (_ for _ in ()).throw(AssertionError("socket banned"))
+import logging
+from app.privacy import vision
+vision.settings.anthropic_api_key = "sk-test"
+vision._client()
+print(logging.getLogger("anthropic").level)
+"""
+
+
+def test_the_pin_runs_after_the_lazy_import_so_anthropic_log_cannot_win(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ORDER inside `_client()` is load-bearing and needs its own red (re-review Finding 2).
+
+    `_silence_sdk_logging()` beats `ANTHROPIC_LOG=debug` only because it runs AFTER the lazy
+    `import anthropic`: that import calls the SDK's `setup_logging()`, which reads the variable and
+    raises `logging.getLogger("anthropic")` to DEBUG (and installs a root StreamHandler). Hoist the
+    pin above the import — the shape a linter or a reviewer "moving the side effect first" produces
+    — and on a worker started with `ANTHROPIC_LOG=debug` the FIRST `_client()` in each prefork child
+    pins INFO, the import then puts it back to DEBUG, and that child's first photograph writes its
+    whole request body to `railway logs`. Every later call re-pins, so nothing in a long-lived
+    child's log looks wrong.
+
+    The in-process suite cannot see this: `anthropic` is already in `sys.modules` by the time any
+    case runs, so `setup_logging()` never fires again and the swapped order stays green. A FRESH
+    interpreter is the only honest oracle, and it is where the environment variable can be set at
+    all."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # This interpreter, a literal program, no shell -- and it is the only way to reach a FRESH
+    # import of the SDK, which is what the order under test is about.
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", _ORDER_PROBE],
+        cwd=Path(vision.__file__).resolve().parents[2],
+        env={**os.environ, "ANTHROPIC_LOG": "debug", "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True, text=True, timeout=120, check=True,
+    )
+    assert result.stdout.strip() == str(logging.INFO), (
+        f"the SDK logger is at {result.stdout.strip()} under ANTHROPIC_LOG=debug, not INFO — "
+        f"the pin ran before the import\n{result.stderr}"
+    )
 
 
 @pytest.mark.parametrize(("start", "expected"), [
@@ -220,53 +283,42 @@ def test_pinning_the_sdk_logger_is_idempotent_and_never_lowers_it(
     assert sdk.level == expected
 
 
-@pytest.mark.parametrize("configured", ["sk-test", "sk-test\n", "  sk-test  ", "sk-test\r\n", "\tsk-test"])
-def test_the_sdk_receives_the_stripped_key_it_was_configured_by(
+#: Every form a real key reaches Settings in when a person pastes it. The last three are INVISIBLE
+#: in Railway's variable editor: `str.strip()` leaves a Unicode FORMAT character (category `Cf`)
+#: exactly where it was, and unlike a newline — which h11 REFUSES before any body is written — a
+#: `Cf` character travels: httpx2 falls back from ascii to utf-8 and h11 accepts obs-text, so one
+#: connection opens and the PHOTOGRAPH leaves with a credential the API cannot match.
+PASTED_KEYS = ["sk-test", "sk-test\n", "  sk-test  ", "sk-test\r\n", "\tsk-test",
+               "sk-test\u200b", "\ufeffsk-test", "sk-test\u200e"]
+
+
+@pytest.mark.parametrize("configured", PASTED_KEYS)
+def test_the_client_takes_its_key_from_settings_stripped_and_reaches_only_anthropic(
     monkeypatch: pytest.MonkeyPatch, configured: str
-) -> None:
-    """Controller amendment A-IDP-12 EXTENDED, 2026-09-14 (re-review Important 1).
-
-    Fix round 1 made `_configured()` decide on `key.strip()` and left `_client()` handing the SDK
-    the RAW value, so a real key pasted into Railway with a trailing newline or a surrounding space
-    was "configured" and then failed EVERY photograph: httpx2 accepts the header at construction,
-    httpcore2 opens TCP and then TLS, and only then does h11 refuse the value
-    (`LocalProtocolError: Illegal header value`) -- which the SDK maps to `APIConnectionError` and
-    retries twice, so three connections per photograph, `VISION_FAILED`, PROCESSING_FAILED, three
-    task attempts, REVIEW_REQUIRED for every seller, under a log line pointing at the network.
-
-    One value, decided once, used once: `_key()` is what `_configured()` asks and what the SDK is
-    given. The spec's C.5 literal states PROVENANCE -- from `Settings`, never `os.environ` -- not
-    bytes, so stripping keeps it.
-
-    The constructor is the SPY, so this asserts what the adapter PASSED rather than what an object
-    happens to hold, and no socket can exist to be opened."""
-    monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", configured)
-    built = _record_sdk_constructor(monkeypatch)
-    vision._client()
-    assert len(built) == 1
-    assert built[0]["api_key"] == "sk-test", "the SDK must receive the key the guard accepted"
-    assert built[0]["max_retries"] == vision.SDK_RETRIES
-    assert built[0]["timeout"] == vision.TIMEOUT_S
-    # No base_url override: the single egress is the SDK's own default host, pinned for real in
-    # `test_the_client_takes_its_key_from_settings_and_reaches_only_anthropic` below.
-    assert "base_url" not in built[0]
-
-
-def test_the_client_takes_its_key_from_settings_and_reaches_only_anthropic(
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`_client()` is the one place a credential and a destination are chosen, and every other case
     here replaces it -- so without this the adapter's own constructor would never run under the
     100 % gate, and Global Constraints (h) and (i) would rest on a comment.
 
-    Constructing the SDK client opens no connection and sends nothing: this asserts what the
-    adapter CONFIGURED, not what it called. The key comes from SETTINGS, never `os.environ`, so an
-    ambient `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, an `ant auth login` profile or a workload
-    identity cannot stand in for an unset Railway variable; and the base URL is the single egress
-    this sub-project adds."""
-    monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", "sk-test")
+    Controller amendment **A-IDP-12 EXTENDED** (2026-09-14) and **EXTENDED AGAIN** (the same day):
+    `_configured()` decides on the cleaned key and `_client()` must hand the SDK that SAME value.
+    Fix round 1 left the SDK receiving the raw setting, so a key pasted with a trailing newline was
+    "configured" and then failed every photograph -- httpx2 accepts the header at construction,
+    httpcore2 opens TCP and then TLS, and h11 refuses only at header build, which the SDK maps to
+    `APIConnectionError` and retries twice. Fix round 2 stripped whitespace and left the INVISIBLE
+    class: `"sk-test\u200b".strip()` is unchanged, so a zero-width space, a BOM or a left-to-right
+    mark survived and was SENT -- one connection, the photograph on the wire, a 401 the operator
+    reads as a key that looks right in Railway.
+
+    The assertion is the HEADER, which is the thing the defect was ever about, and reading it costs
+    no socket (re-review Finding 4): the raw SDK builds `{"X-Api-Key": "sk-test\n"}` and this one
+    must build `{"X-Api-Key": "sk-test"}` for every form above. `max_retries`, `timeout` and the base
+    URL -- the single egress this sub-project adds -- are asserted on the same real object, so
+    nothing can drift between two stand-ins."""
+    monkeypatch.setattr("app.privacy.vision.settings.anthropic_api_key", configured)
     client = vision._client()
     try:
+        assert client.auth_headers == {"X-Api-Key": "sk-test"}, "the SDK must be given the key the guard accepted"
         assert client.api_key == "sk-test"
         assert client.max_retries == vision.SDK_RETRIES and client.timeout == vision.TIMEOUT_S
         assert str(client.base_url).startswith("https://api.anthropic.com")
@@ -322,6 +374,28 @@ def test_every_other_outcome_is_failed_with_its_own_code(
     monkeypatch.setattr("app.privacy.vision._client", lambda: _Client(answer))
     result = vision.analyse(IMAGE, **PROMPT_FACTS)
     assert result["status"] == "failed" and result["code"] == code
+
+
+def test_the_refusal_fixture_uses_a_category_the_sdk_declares() -> None:
+    """The fixture must exercise a value the API can actually send, and the pin must survive an SDK
+    bump reshaping the field.
+
+    Round 1's version read the SDK's ANNOTATION SHAPE (`get_args(get_args(...)[0])`, assuming
+    `Optional[Literal[...]]`), which would have turned a flattened annotation into
+    `assert 'general_harms' in ()` inside the refusal-ORDERING test; round 2 deleted it instead of
+    making it robust, and nothing then noticed a fixture the API cannot produce — the original
+    Minor 5 defect (`"image_safety"`) with its gate removed (re-review Finding 3).
+
+    This asks the SDK's OWN TYPE instead of its annotation: `BetaRefusalStopDetails` validates
+    `category` against whatever literal it declares, so a declared value constructs and an undeclared
+    one raises `ValidationError`. No shape is assumed, the failure names the field, and it lives in
+    its own test so the ordering case stays about ordering."""
+    from anthropic.types.beta import BetaRefusalStopDetails
+
+    details = BetaRefusalStopDetails.model_validate({"type": "refusal", "category": REFUSAL_CATEGORY})
+    assert details.category == REFUSAL_CATEGORY
+    with pytest.raises(ValidationError):  # the pin is real: an undeclared category is refused
+        BetaRefusalStopDetails.model_validate({"type": "refusal", "category": "image_safety"})
 
 
 def test_a_refusal_is_read_before_the_content_is(monkeypatch: pytest.MonkeyPatch) -> None:
