@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminUsersBody } from './design-admin-users.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody } from './design-summary.mjs';
 
@@ -339,7 +340,7 @@ export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string 
  *  stands between a stub and a QA parity run. */
 export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
-  return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
+  return ['/api/seller/listings', '/api/admin/listings', '/api/admin/users'].map((path) => new URL(path, appOrigin(env)).href);
 }
 
 /** What each of them answers: the design's own four seller rows, and — for the admin collection
@@ -347,7 +348,12 @@ export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string
  *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit). Never "no
  *  page": an error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
 export function collectionStubBody(href: string): string {
-  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : designAdminListingsBody();
+  if (href.endsWith('/api/seller/listings')) return designSellerPageBody();
+  // Task A36: the Users tab now reads this endpoint too, so the oracle answers it with the
+  // design's own four rows AND the design's own badge (`counts.open`, read off the tab literal
+  // by `design-admin-users.mjs`) — the frozen `admin-users` capture keeps its pixels through the
+  // SUCCESS path, exactly as `admin-listings` does.
+  return href.endsWith('/api/admin/users') ? designAdminUsersBody() : designAdminListingsBody();
 }
 
 /** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid
