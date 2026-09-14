@@ -7,9 +7,14 @@ Celery task.
 `qa()` compares the candidate vintage's row count against whatever vintage is CURRENTLY active
 for that dataset (not the previous ingest_run) -- `rows_prior`/`ratio` are `0`/`None` for a
 dataset's first-ever activation, since there is nothing yet to divide by. `activate()` refuses
-(`ActivationRefused`, never a bare exception) unless the vintage's latest `ingest_run` succeeded
-and, when a prior vintage exists, the row-count ratio falls inside `[LOW, HIGH]`; `force=True`
-records the same operator name as always in `active_vintage.activated_by` and only afterwards.
+(`ActivationRefused`, never a bare exception) unless the vintage's latest `ingest_run` succeeded,
+that same run skipped NOTHING (`ingest_run.notes` is NULL -- Task CENSUS-204 fix round 1: a
+loader that meets the Census's "no data for this request" answer records the geography it lost
+and completes, so a `succeeded` run is no longer a claim that the vintage is whole), and, when a
+prior vintage exists, the row-count ratio falls inside `[LOW, HIGH]`; `force=True` overrides the
+RATIO alone -- neither the run's status nor its completeness has an override, because the route
+past those is to fix the run, not to wave it through. `force=True` records the same operator name
+as always in `active_vintage.activated_by` and only afterwards.
 
 `active_vintage.note` (A-C7 concern 1) is the persisted "why": `activate(..., note=None)` stores
 whatever the caller passes (`None` by default) and the returned `Report` carries the SAME value
@@ -50,6 +55,7 @@ class Report:
     ratio: float | None
     last_run_status: str | None
     note: str | None = None  # `qa()` never sets this (it is not a diff of anything); `activate()` fills it in from its own `note` argument
+    run_notes: str | None = None  # `ingest_run.notes` for that same run: what the loader SKIPPED and carried on without (NULL when it skipped nothing)
 
 
 def active(conn: psycopg2.extensions.connection) -> dict[str, str]:
@@ -83,12 +89,15 @@ def qa(conn: psycopg2.extensions.connection, dataset_key: str, vint: str) -> Rep
         if prior and prior != vint:
             rows_prior = _count(cur, table, dataset_key, prior)
         cur.execute(
-            "SELECT status FROM ingest_run WHERE dataset_key = %s AND vintage = %s ORDER BY id DESC LIMIT 1",
+            "SELECT status, notes FROM ingest_run WHERE dataset_key = %s AND vintage = %s ORDER BY id DESC LIMIT 1",
             (dataset_key, vint),
         )
         row = cur.fetchone()
     ratio = (rows_new / rows_prior) if rows_prior else None
-    return Report(dataset_key, vint, prior if prior != vint else None, rows_new, rows_prior, ratio, row[0] if row else None)
+    return Report(
+        dataset_key, vint, prior if prior != vint else None, rows_new, rows_prior, ratio,
+        row[0] if row else None, run_notes=row[1] if row else None,
+    )
 
 
 def activate(
@@ -97,6 +106,29 @@ def activate(
     rep = qa(conn, dataset_key, vint)
     if rep.last_run_status != "succeeded":
         raise ActivationRefused(f"latest ingest_run for {dataset_key} {vint} is {rep.last_run_status!r}, not 'succeeded'")
+    if rep.run_notes is not None:
+        # Task CENSUS-204 fix round 1, Important-1. A loader that met the Census's "no data for
+        # this request" answer (HTTP 204, zero-byte body) records the geography it lost and
+        # carries on -- which is right for the RUN and is what defect 3 asked for. It is NOT
+        # right for ACTIVATION: before that tolerance the same run was recorded `failed` and the
+        # check above refused it, so the tolerance made a PARTIAL vintage activatable, crossing
+        # the principle `app/census/ingest.py`'s own docstring states for `VariableMissing`.
+        #
+        # `ingest_run.notes` is written by exactly one thing -- a loader's own `if rows is None:`
+        # skip arm (five of them, measured) -- so a run that carries any note is a run that did
+        # not load everything it was asked for, and that is exactly the decision this function
+        # has to make. The ratio guard cannot make it: on a first-ever activation `rows_prior`
+        # is 0, so `ratio is None` and the guard never runs at all, and ACS's six summary levels
+        # are so unequal in size that losing `state` or `county` leaves a ratio near 0.98.
+        #
+        # NO `force` term, deliberately (the succeeded-run check above carries none either, I2):
+        # the route to activating a deliberately partial vintage is to RE-RUN the missing
+        # geographies, not to override the gate. `qa()` reads the LATEST run for the vintage, so
+        # a later run that skipped nothing clears this on its own.
+        raise ActivationRefused(
+            f"latest ingest_run for {dataset_key} {vint} skipped part of its work, so the vintage is PARTIAL and must not go "
+            f"active; re-run the missing geographies, then activate:\n{rep.run_notes}"
+        )
     if rep.ratio is not None and not (LOW <= rep.ratio <= HIGH) and not force:
         raise ActivationRefused(
             f"row count ratio {rep.ratio:.2f} vs active vintage {rep.prior_vintage} is outside [{LOW}, {HIGH}]; pass force=True after review"

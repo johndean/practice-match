@@ -42,7 +42,14 @@ is unreachable (retryable) OR a `psycopg2.Error` raised after connect, e.g. `Und
 unmigrated database (A-C7 (7) / I12: every `cmd_*` closes its connection in `try`/`finally` and
 prints only the exception's type name here, never its text, which can carry the statement or the
 DSN); 4 a download or API fetch
-failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
+failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)) -- and, since Task CENSUS-204
+fix round 1 (Important-2), `qwi`'s latest-quarter probe walking its whole twelve-quarter window
+without the Census publishing a table for any of it (`qwi.NoQuarterAvailable`, the shape
+`--states 02` produces): twelve real requests were made and every one answered with no table, so
+it is the FETCH that failed to produce a quarter, not a refusal before anything was opened, and
+unlike every other arm in this file that one writes its own `failed` `ingest_run` row
+(`_record_probe_failure`) before it exits, because the probe runs BEFORE any loader's own
+`ingest.run` context could record the attempt; 5 validation failed -- every
 loader raises this when a response is missing an expected variable (`VariableMissing`; spec
 §4/¶12, a partial vintage that must never go active) -- reserved more broadly for malformed
 bodies or bounds (`tiger`'s own arm, A-C11 (3): a truncated or corrupt boundary zip --
@@ -81,6 +88,49 @@ def _conn(dsn: str) -> psycopg2.extensions.connection:
     c = psycopg2.connect(normalize_dsn(dsn))
     c.autocommit = True
     return c
+
+
+def _narrow_states(cmd: str, states: list[str], wanted: list[str] | None) -> list[str] | None:
+    """`--states` NARROWS a load to the states named; it never widens it past the states this
+    deployment covers, and a code that is not in `market_state` is refused BY NAME rather than
+    quietly loading nothing. Returns `None` for that refusal, having printed it -- the caller
+    answers exit 2 (A-C4 ¶2's "refused before anything is opened"), which is why every call site
+    puts this immediately after the `market_state` query and before an archive or a client is
+    built: an argument the operator got wrong should cost nothing.
+
+    Task CENSUS-204 gave this to `qwi`; fix round 1 (Minor-2) gives it to `cbp` and `bds` as
+    well -- the other two loaders that walk `market_state` and that gained the same per-state
+    "no data for this state; skipped" arm, so every state a run can skip now has a door to
+    re-run it through on its own. `zbp` is deliberately absent: it loops NAICS codes rather than
+    states, and its own skip note names a code."""
+    if not wanted:
+        return states
+    unknown = [s for s in wanted if s not in set(states)]
+    if unknown:
+        print(f"[census_load] {cmd} refused: --states {' '.join(unknown)} — not in market_state", file=sys.stderr)
+        return None
+    return list(wanted)
+
+
+def _record_probe_failure(
+    conn: psycopg2.extensions.connection, dataset_key: str, vintage: str, exc: BaseException, requests: int
+) -> None:
+    """Writes the `failed` `ingest_run` row for a probe that runs BEFORE a loader's own
+    `ingest.run` context opens (Task CENSUS-204 fix round 1, Important-2).
+
+    `qwi.latest_available` is the only such call in the package, and `app/tasks/census.py` was
+    given exactly this handler for the SCHEDULED job in the same task (defect 2). The CLI kept
+    the shape defect 2 removed, one door over: an operator running the `--states` re-run
+    DEPLOY.md advertises got a refusal on stderr and left nothing in the ledger. Same guarantee
+    for both doors, and `requests` is what the attempt actually cost rather than `finish`'s
+    default of 0 (Minor-3) -- `client.request_count` counts a 204 like any other request.
+
+    The exception's own message is used verbatim: `CensusHTTPError.__init__` has already passed
+    its URL through `redact()`, so a `key=` never reaches the ledger (red-team C6)."""
+    from app.census import ingest
+
+    run_id = ingest.start(conn, dataset_key, vintage)
+    ingest.finish(conn, run_id, "failed", requests=requests, error=f"{type(exc).__name__}: {exc}"[:2000])
 
 
 def cmd_tiger(args: argparse.Namespace) -> int:
@@ -242,6 +292,10 @@ def cmd_cbp(args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
+        narrowed = _narrow_states("cbp", states, args.states)   # Minor-2: the re-run door for a skipped state
+        if narrowed is None:
+            return 2
+        states = narrowed
         archive = ObjectStore.from_settings(settings)
         require_archive(archive, settings)
 
@@ -346,6 +400,10 @@ def cmd_bds(args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
+        narrowed = _narrow_states("bds", states, args.states)   # Minor-2: the re-run door for a skipped state
+        if narrowed is None:
+            return 2
+        states = narrowed
         archive = ObjectStore.from_settings(settings)
         require_archive(archive, settings)
 
@@ -398,16 +456,12 @@ def cmd_qwi(args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
-        if args.states:
-            # Task CENSUS-204, defect 3: `--states` NARROWS the run; it never widens it past the
-            # states this deployment covers, and a typo is refused by name rather than quietly
-            # loading nothing. Checked first, before an archive or a client is built, because an
-            # argument the operator got wrong should cost nothing.
-            unknown = [s for s in args.states if s not in set(states)]
-            if unknown:
-                print(f"[census_load] qwi refused: --states {' '.join(unknown)} — not in market_state", file=sys.stderr)
-                return 2
-            states = list(args.states)
+        # Task CENSUS-204, defect 3: `--states` NARROWS the run (see `_narrow_states`). Checked
+        # first, before an archive or a client is built.
+        narrowed = _narrow_states("qwi", states, args.states)
+        if narrowed is None:
+            return 2
+        states = narrowed
         archive = ObjectStore.from_settings(settings)
         require_archive(archive, settings)
 
@@ -436,14 +490,31 @@ def cmd_qwi(args: argparse.Namespace) -> int:
                 try:
                     year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
                 except CensusHTTPError as exc:
+                    _record_probe_failure(conn, "qwi", ds.vintage, exc, client.request_count)
                     print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
                     return 4
                 except VariableMissing as exc:
                     # Mi1 (A6 review): a 200 response missing the `Emp` column (a schema drift, a
                     # malformed 200) is "validation failed", not an uncaught exception -- every
                     # other exception arm in this file already maps `VariableMissing` to exit 5.
+                    _record_probe_failure(conn, "qwi", ds.vintage, exc, client.request_count)
                     print(f"[census_load] qwi validation failed: {exc}", file=sys.stderr)
                     return 5
+                except qwi.NoQuarterAvailable as exc:
+                    # Task CENSUS-204 fix round 1, Important-2. The walk ran its full
+                    # twelve-quarter window and the Census published a table for none of it --
+                    # newly REACHABLE by this task's own change, because before it the first 204
+                    # raised `JSONDecodeError` from inside the client and the walk never
+                    # completed a single step. `--states 02` is precisely this, and DEPLOY.md
+                    # tells an operator to run it.
+                    #
+                    # Exit 4, the same code as its sibling above and for the same reason: twelve
+                    # real requests were made and the Census answered every one of them with no
+                    # table, so the fetch is what did not produce a quarter. Exit 2 is "refused
+                    # before anything is opened", which twelve network requests are past.
+                    _record_probe_failure(conn, "qwi", ds.vintage, exc, client.request_count)
+                    print(f"[census_load] qwi download failed: {exc} — the Census published nothing for state {states[0]} in any of them", file=sys.stderr)
+                    return 4
 
         try:
             n = qwi.load(conn, factory, states, year=year, quarter=quarter)
@@ -710,6 +781,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="restrict to these ACS summary levels (e.g. 860 for ZCTAs alone); default is every geography")
     a.set_defaults(fn=cmd_acs)
     c = sub.add_parser("cbp", help="load County Business Patterns (county-level competition benchmark) for every market_state state")
+    c.add_argument("--states", nargs="+", default=None, metavar="FIPS",
+                   help="load only these state FIPS codes (default: every market_state state). Task CENSUS-204: a state "
+                        "the Census publishes nothing for is skipped and recorded, and this is how one is re-run on its own")
     c.set_defaults(fn=cmd_cbp)
     z = sub.add_parser("zbp", help="load ZIP Code Business Patterns (community-level competition, plan D11) for every market_state state")
     z.set_defaults(fn=cmd_zbp)
@@ -723,6 +797,9 @@ def main(argv: list[str] | None = None) -> int:
     q.set_defaults(fn=cmd_qwi)
     b = sub.add_parser("bds", help="load Business Dynamics Statistics for every market_state state")
     b.add_argument("--year", type=int, required=True, help="BDS data year, e.g. 2022")
+    b.add_argument("--states", nargs="+", default=None, metavar="FIPS",
+                   help="load only these state FIPS codes (default: every market_state state). Task CENSUS-204: a state "
+                        "the Census publishes nothing for is skipped and recorded, and this is how one is re-run on its own")
     b.set_defaults(fn=cmd_bds)
     v = sub.add_parser("activate", help="flip active_vintage for a dataset after a QA diff -- the only path that makes a loaded vintage the one the API reads")
     v.add_argument("dataset_key", choices=sorted(vintage.TABLE_FOR), help="dataset_registry key to activate (e.g. acs5)")

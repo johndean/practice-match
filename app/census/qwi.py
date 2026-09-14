@@ -21,6 +21,19 @@ from app.census.registry import load as load_registry
 VARS = ["EarnBeg", "Emp", "HirA"]
 EXTRA = {"industry": "5419", "ownercode": "A05", "seasonadj": "U"}
 
+
+class NoQuarterAvailable(RuntimeError):
+    """`latest_available` probed its whole twelve-quarter window and the Census published a
+    table for none of it -- which is a real, reachable answer for a state absent from the QWI
+    programme (Alaska, Michigan), and the exact shape `--states 02` produces.
+
+    Named rather than left a bare `RuntimeError` for the same reason `zbp.MissingBoundaries` is:
+    `scripts/census_load.py` maps it to one of the documented exit codes, and a CLI arm that
+    caught every `RuntimeError` would swallow unrelated ones. A `RuntimeError` subclass, so
+    nothing that already caught the bare class stops catching it (Task CENSUS-204 fix round 1,
+    Important-2)."""
+
+
 UPSERT = """
 INSERT INTO qwi_measure (geo_id, summary_level, naics_code, year, quarter, avg_monthly_earnings, sector_employment, sector_hires, ingest_run_id)
 VALUES (%s, '050', '5419', %s, %s, %s, %s, %s, %s)
@@ -63,7 +76,7 @@ def latest_available(client: CensusClient, state: str, *, today: tuple[int, int]
         q -= 1
         if q == 0:
             y, q = y - 1, 4
-    raise RuntimeError("no QWI quarter available in the last 12")
+    raise NoQuarterAvailable("no QWI quarter available in the last 12")
 
 
 def load(

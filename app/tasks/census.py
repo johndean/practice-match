@@ -254,9 +254,16 @@ def load_qwi(year: int | None = None, quarter: int | None = None) -> dict[str, o
                 # and crash the task instead of recording a named, failed `ingest_run`.
                 return _refuse(conn, "qwi", ds.vintage, "market_state has no rows yet; qwi's latest-quarter resolution needs at least one state")
             now = datetime.now(UTC)
+            # Bound before the `with`, and read back in the handler: the probe can make up to
+            # twelve requests before it gives up, and `ingest.finish`'s `requests` default of 0
+            # said none of them happened (Task CENSUS-204 fix round 1, Minor-3). `None` is what
+            # a failure of `factory(ds)` itself leaves here -- `with X as y` binds `y` only once
+            # `X` has been built and entered -- so the row is still written, recording the 0
+            # requests that really were made rather than dying on an unbound name.
+            probe: CensusClient | None = None
             try:
-                with factory(ds) as client:
-                    year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
+                with factory(ds) as probe:
+                    year, quarter = qwi.latest_available(probe, states[0], today=(now.year, (now.month - 1) // 3 + 1))
             except BaseException as exc:
                 # Task CENSUS-204, defect 2 -- THE scheduled failure. `latest_available` is the
                 # only network call in this package that runs BEFORE a loader's own `ingest.run`
@@ -280,7 +287,8 @@ def load_qwi(year: int | None = None, quarter: int | None = None) -> dict[str, o
                 # for the same reason): the guarantee is that NOTHING from the probe reaches the
                 # scheduler unrecorded, which a named list of exception types cannot make.
                 run_id = ingest.start(conn, "qwi", ds.vintage)
-                ingest.finish(conn, run_id, "failed", error=f"{type(exc).__name__}: {exc}"[:2000])
+                ingest.finish(conn, run_id, "failed", requests=probe.request_count if probe is not None else 0,
+                              error=f"{type(exc).__name__}: {exc}"[:2000])
                 log.error("[census] qwi could not resolve the latest published quarter: %s", type(exc).__name__)
                 raise
         rows = qwi.load(conn, factory, states, year=year, quarter=quarter)

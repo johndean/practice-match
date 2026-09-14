@@ -466,7 +466,8 @@ def test_load_qwi_records_a_failed_ingest_run_when_the_first_probe_raises(conn, 
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
 
     def boom(client, state, *, today):
-        raise RuntimeError("no QWI quarter available in the last 12")
+        client.request_count = 7   # what the walk cost before it gave up; the real walk counts the same way
+        raise census_qwi.NoQuarterAvailable("no QWI quarter available in the last 12")
     monkeypatch.setattr(census_qwi, "latest_available", boom)
     monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load when the quarter never resolved"))
 
@@ -477,10 +478,13 @@ def test_load_qwi_records_a_failed_ingest_run_when_the_first_probe_raises(conn, 
         CT.load_qwi()
 
     with conn.cursor() as cur:
-        cur.execute("SELECT status, vintage, error_detail FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
-        status, vintage, error = cur.fetchone()
+        cur.execute("SELECT status, vintage, error_detail, request_count FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, vintage, error, requests = cur.fetchone()
     assert status == "failed" and vintage == "latest quarter"
-    assert "RuntimeError" in error and "no QWI quarter available" in error
+    assert "NoQuarterAvailable" in error and "no QWI quarter available" in error
+    # Minor-3: the one ledger row this task exists to create must not understate what the failure
+    # cost -- the probe can make up to twelve requests, and `finish`'s default of 0 said none.
+    assert requests == 7
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM ingest_run WHERE dataset_key='qwi' AND status='running'")
         assert cur.fetchone()[0] == 0   # and no orphaned 'running' row is left behind
@@ -506,6 +510,29 @@ def test_load_qwi_records_a_failed_ingest_run_when_the_probe_fails_on_the_networ
     assert status == "failed" and "503" in error
     # red-team C6: the recorded reason goes through the exception's own redacted message.
     assert "SECRET" not in error and "key=<redacted>" in error
+
+
+def test_load_qwi_records_the_failed_run_even_when_the_client_itself_cannot_be_built(conn, monkeypatch):
+    """Minor-3's other half. Binding the probe's request count is not free: if `factory(ds)`
+    raises, there is no client to read it off, and a handler that reached for one would replace
+    the ledger row this task exists to write with an `UnboundLocalError`. The row is still
+    written, and it records 0 requests, because none was made."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+
+    def cannot_build(ds):
+        raise RuntimeError("the client could not be built")
+    monkeypatch.setattr(CT, "_factory", lambda key, contact, archive: cannot_build)
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not probe without a client"))
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load without a client"))
+
+    with pytest.raises(RuntimeError, match="the client could not be built"):
+        CT.load_qwi()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, error_detail, request_count FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, error, requests = cur.fetchone()
+    assert status == "failed" and "the client could not be built" in error and requests == 0
 
 
 def test_load_qwi_trims_to_20_quarters(conn, monkeypatch):

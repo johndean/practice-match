@@ -333,6 +333,20 @@ def test_a_body_that_is_present_but_not_json_is_still_an_error():
         c.fetch_table(["NAME"], "us:1", ["NAME"])
 
 
+def test_a_header_only_table_is_schema_drift_and_not_a_second_kind_of_no_data():
+    """Task CENSUS-204 fix round 1, Minor-5. `fetch_table`'s docstring used to justify `None`
+    over `[]` by saying "the Census published a table with no rows" is a different fact the
+    caller may skip -- a distinction the code has never drawn. A header-only body PARSES, so it
+    is not the empty-body outcome above; it reaches `validate_variables([], expected)` with
+    `present` empty and raises `VariableMissing`, which `ingest.run` records as `aborted`
+    (schema drift, a partial vintage that must never go active). Pinned here so the corrected
+    sentence in that docstring cannot drift away from what the code does."""
+    c = make(lambda r: httpx.Response(200, json=[["NAME", "B01003_001E"]]))
+    with pytest.raises(VariableMissing) as e:
+        c.fetch_table(["NAME", "B01003_001E"], "tract:*", ["B01003_001E"], "state:48")
+    assert e.value.missing == ["B01003_001E"]
+
+
 # --- 2xx-only success / 3xx is an error (M2) ------------------------------------------------
 
 def test_a_3xx_response_is_an_error_not_a_success():

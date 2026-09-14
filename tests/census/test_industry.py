@@ -10,7 +10,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.census import bds, cbp, qwi, zbp
+from app.census import bds, cbp, qwi, vintage, zbp
 from app.census.client import CensusClient
 
 CONTACT = "contact@vinfoundation.org"
@@ -367,3 +367,46 @@ def test_zbp_skips_a_naics_code_with_no_data_and_records_it(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT status, notes FROM ingest_run WHERE dataset_key='zbp' ORDER BY id DESC LIMIT 1")
         assert cur.fetchone() == ("succeeded", "zbp: no data for NAICS 541940; skipped")
+
+
+# --- QWI is untouched by the partial-vintage gate (Task CENSUS-204 fix round 1, Important-1) ---
+
+def test_a_skipped_qwi_state_still_completes_and_qwi_has_no_activation_to_refuse_it(conn):
+    """Important-1 makes `vintage.activate` refuse any vintage whose run carries a note. That
+    gate must not reach QWI -- the dataset defect 3 was actually about -- and this measures both
+    halves rather than asserting them.
+
+    QWI has no activation path at all: it is not in `vintage.TABLE_FOR`, so there is no table to
+    count, no QA diff and no `active_vintage` row, and `qa()` cannot even name a table for it.
+    A mutant that added `"qwi"` to `TABLE_FOR` would put the whole QWI programme behind a gate
+    that nothing can clear, because Alaska and Michigan publish no QWI at ANY quarter and every
+    correct run therefore carries notes forever."""
+    def handler(r):
+        st = r.url.params["in"].split(":")[1]
+        if st == "02":
+            return httpx.Response(204)
+        return httpx.Response(200, json=[["EarnBeg", "Emp", "HirA", "state", "county", "year", "quarter", "industry"],
+                                         ["6120", "4200", "310", st, "453", "2025", "4", "5419"]])
+
+    assert qwi.load(conn, factory_for(handler), ["02", "48"], year=2025, quarter=4) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, rows_written, notes FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone() == ("succeeded", 1, "qwi: no data for state 02 at 2025Q4; skipped")
+    assert "qwi" not in vintage.TABLE_FOR
+    with pytest.raises(KeyError):
+        vintage.qa(conn, "qwi", "2025Q4")
+
+
+def test_qwi_records_every_state_as_skipped_when_none_of_them_publishes(conn):
+    """Minor-1: the "every state skipped" outcome had no characterisation test, so a later
+    ruling that it should be `failed` would have had no RED to watch. This pins what it does
+    TODAY, measured: `succeeded`, `rows_written = 0`, and one note per state -- not silence, but
+    not a failure either. The CLI's own half of the same outcome (exit 0) is pinned in
+    `tests/scripts/test_census_load.py`."""
+    written = qwi.load(conn, factory_for(lambda r: httpx.Response(204)), ["01", "02", "26", "48"], year=2026, quarter=3)
+    assert written == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, rows_written, request_count, notes FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, rows, requests, notes = cur.fetchone()
+    assert (status, rows, requests) == ("succeeded", 0, 4)
+    assert notes.splitlines() == [f"qwi: no data for state {st} at 2026Q3; skipped" for st in ("01", "02", "26", "48")]

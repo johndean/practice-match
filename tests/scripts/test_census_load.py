@@ -32,6 +32,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import httpx
 import psycopg2
 import pytest
 import shapefile  # pyshp
@@ -614,6 +615,40 @@ def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
     assert "cbp: 42 rows" in capsys.readouterr().out
 
 
+def test_cmd_cbp_states_narrows_the_load_to_the_named_states(scratch_dsn, monkeypatch, capsys):
+    """Task CENSUS-204 fix round 1, Minor-2. `cbp` gained the same per-state skip arm `qwi` did,
+    and it loops the same `market_state` states -- so a CBP state the Census answered 204 for had
+    no re-run door at all, only a whole-country reload. `--states` is that door, in `qwi`'s own
+    shape: it NARROWS and never widens."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states):
+        captured["states"] = list(states)
+        return 3
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp", "--states", "48"]) == 0
+
+    assert captured["states"] == ["48"]
+    assert "cbp: 3 rows" in capsys.readouterr().out
+
+
+def test_cmd_cbp_refuses_a_state_that_is_not_in_market_state(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(census_cbp, "load", lambda *a, **kw: pytest.fail("must not load an unknown state"))
+
+    assert census_load.main(["cbp", "--states", "48", "99"]) == 2
+
+    err = capsys.readouterr().err
+    assert "99" in err and "market_state" in err
+
+
 def test_cmd_cbp_returns_two_without_a_database_url(monkeypatch, capsys):
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
@@ -841,6 +876,39 @@ def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, 
     assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2022
     assert "bds 2022: 6 rows" in capsys.readouterr().out
+
+
+def test_cmd_bds_states_narrows_the_load_to_the_named_states(scratch_dsn, monkeypatch, capsys):
+    """Minor-2, the finding's own example: `bds` loops the same 51 states and gained the same
+    skip arm, so a skipped BDS state needs the same re-run door."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states, *, year):
+        captured["states"] = list(states)
+        captured["year"] = year
+        return 1
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2023", "--states", "02"]) == 0
+
+    assert captured["states"] == ["02"] and captured["year"] == 2023
+    assert "bds 2023: 1 rows" in capsys.readouterr().out
+
+
+def test_cmd_bds_refuses_a_state_that_is_not_in_market_state(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(census_bds, "load", lambda *a, **kw: pytest.fail("must not load an unknown state"))
+
+    assert census_load.main(["bds", "--year", "2023", "--states", "99"]) == 2
+
+    err = capsys.readouterr().err
+    assert "99" in err and "market_state" in err
 
 
 def test_cmd_bds_returns_two_without_a_database_url(monkeypatch, capsys):
@@ -1113,6 +1181,10 @@ def test_cmd_qwi_returns_four_when_resolving_the_latest_quarter_fails(scratch_ds
     assert census_load.main(["qwi"]) == 4
     err = capsys.readouterr().err
     assert "qwi download failed" in err and "SECRET" not in err
+    # Important-2: the attempt leaves a ledger row, the same guarantee defect 2 gave the
+    # scheduled job -- and the recorded reason goes through the exception's redacted message.
+    status, _, error, _ = _last_run(scratch_dsn, "qwi")
+    assert status == "failed" and "CensusHTTPError" in error and "SECRET" not in error and "key=<redacted>" in error
 
 
 def test_cmd_qwi_returns_five_when_resolving_the_latest_quarter_fails_validation(scratch_dsn, monkeypatch, capsys):
@@ -1133,6 +1205,93 @@ def test_cmd_qwi_returns_five_when_resolving_the_latest_quarter_fails_validation
     assert census_load.main(["qwi"]) == 5
     err = capsys.readouterr().err
     assert "qwi validation failed" in err and "Emp" in err
+    status, _, error, _ = _last_run(scratch_dsn, "qwi")
+    assert status == "failed" and "VariableMissing" in error
+
+
+def _always_204(monkeypatch):
+    """Every Census request answers the live "no data" shape -- HTTP 204 with a zero-byte body
+    (measured 2026-09-14). `cmd_qwi` builds its own `CensusClient` from
+    `app.census.client.CensusClient` at call time, so replacing the name on that module is the
+    seam that lets the REAL `qwi.latest_available` walk, rather than a stub standing in for it."""
+    from app.census import client as census_client
+
+    real = census_client.CensusClient
+
+    def factory(key, ds, archive, **kw):
+        return real(key, ds, None, transport=httpx.MockTransport(lambda r: httpx.Response(204)), contact=kw["contact"])
+
+    monkeypatch.setattr(census_client, "CensusClient", factory)
+
+
+def _last_run(dsn, dataset_key):
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, vintage, error_detail, request_count FROM ingest_run WHERE dataset_key=%s ORDER BY id DESC LIMIT 1", (dataset_key,))
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def test_cmd_qwi_refuses_inside_the_exit_code_scheme_when_no_quarter_is_published(scratch_dsn, monkeypatch, capsys):
+    """Task CENSUS-204 fix round 1, Important-2 -- the re-run door this change advertises.
+    `census_load.py qwi --states 02` run BEFORE Alaska starts publishing probes Alaska alone,
+    walks twelve quarters of 204s and gives up. `cmd_qwi` caught only `CensusHTTPError` and
+    `VariableMissing` around the probe, and `main()` has no catch-all, so the operator got a
+    Python stack trace and exit **1** -- outside the shared scheme the very next paragraph of
+    DEPLOY.md tells them to check against -- and NOTHING was written to `ingest_run`, which is
+    the precise blind spot defect 2 removed from the scheduled job one door over.
+
+    The real `qwi.latest_available` runs here; only the transport is a stand-in."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    _always_204(monkeypatch)
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load when the quarter never resolved"))
+
+    assert census_load.main(["qwi", "--states", "02"]) == 4
+
+    err = capsys.readouterr().err
+    assert "no QWI quarter available" in err and "state 02" in err
+    status, vintage, error, requests = _last_run(scratch_dsn, "qwi")
+    assert status == "failed" and vintage == "latest quarter"
+    assert "NoQuarterAvailable" in error and "no QWI quarter available" in error
+    assert requests == 12   # what the attempt cost, not the default 0 (Minor-3)
+
+
+def test_cmd_qwi_returns_zero_when_every_state_was_skipped(scratch_dsn, monkeypatch, capsys):
+    """Task CENSUS-204 fix round 1, Minor-1 -- a CHARACTERISATION test, pinning what this does
+    today rather than changing it. A run in which every state answered 204 completes
+    `succeeded` with `rows_written = 0` and one note per state, and the CLI prints `0 rows` and
+    returns **exit 0**. The ledger is not silent; the exit code is, and under DEPLOY.md's own
+    "stop on the first non-zero" rule an operator script reads that as a green light for a load
+    that wrote nothing. That is the cost of the implementer's recorded judgement (report,
+    "Two judgements ... 1"), which the controller has not ruled on -- so it is pinned, not
+    altered, and a later ruling that this should be non-zero now has a RED to watch.
+
+    The real `qwi.load` and `qwi.trim` run here; only the transport is a stand-in, and
+    `--year/--quarter` are given so the probe never resolves anything."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    _always_204(monkeypatch)
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve when --year/--quarter are given"))
+
+    assert census_load.main(["qwi", "--year", "2025", "--quarter", "4"]) == 0
+
+    assert "qwi 2025Q4: 0 rows (0 trimmed)" in capsys.readouterr().out
+    status, _vintage, error, requests = _last_run(scratch_dsn, "qwi")
+    assert (status, error) == ("succeeded", None) and requests == len(_STATES)
+    conn = psycopg2.connect(scratch_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT rows_written, notes FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+            rows, notes = cur.fetchone()
+    finally:
+        conn.close()
+    assert rows == 0
+    assert notes.splitlines() == [f"qwi: no data for state {fips} at 2025Q4; skipped" for _a, fips, _n in _STATES]
 
 
 def test_cmd_qwi_returns_two_when_the_load_itself_is_licence_gated(scratch_dsn, monkeypatch, capsys):

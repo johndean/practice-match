@@ -306,11 +306,24 @@ class CensusClient:
         report measured the same "no JSON body" answer for BDS; a body that is present but not
         JSON is still a malformed response and still raises.
 
-        `None` rather than `[]` deliberately: "the Census published nothing for this request" and
-        "the Census published a table with no rows" are different facts, and only the first is a
-        state a caller may skip. Because the return type is `... | None`, mypy --strict makes
-        every caller say out loud what it does about it -- which is the point (a silent `for row
-        in []` would have hidden Alaska's absence exactly as the decode error hid the quarter's)."""
+        `None` rather than `[]` deliberately, and the argument is the TYPE, not a distinction
+        this function draws between two kinds of emptiness: because the return type is
+        `... | None`, mypy --strict makes every caller say out loud what it does about it, which
+        is what named all six call sites the moment the type changed (a silent `for row in []`
+        would have hidden Alaska's absence exactly as the decode error hid the quarter's).
+
+        A header-only table is NOT a second, quieter "no data" outcome, and this docstring used
+        to imply it was (Task CENSUS-204 fix round 1, Minor-5): it parses, reaches
+        `validate_variables([], expected)` with `present` empty, and raises `VariableMissing` --
+        so `ingest.run` records the run `aborted` as schema drift, exactly as it did before this
+        change. One outcome is skippable here; the other is not, and neither is new.
+
+        ONE residual risk, recorded rather than closed (Minor-7): a 2xx that closes cleanly with
+        zero bytes and no `Content-Length` is indistinguishable at this layer from the Census's
+        own 204, and is now skipped where it previously raised a decode error. Nothing in the
+        response tells the two apart, so no threshold fixes it; what bounds it is that a body
+        truncated against a DECLARED length still raises (httpx's `RemoteProtocolError`) and a
+        body that is present but not JSON still raises (its own test)."""
         url = self._build_url(get, for_, in_, extra)
         body = self._get(url)
         if not body.strip():
