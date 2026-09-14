@@ -457,7 +457,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <x-import component="MarketMapV3" from="./MarketMapV3.jsx" on-basemap="{{ md.setBasemap }}" practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}" on-area="{{ md.selectArea }}" center="{{ md.mapCenter }}" zoom="{{ md.mapZoom }}" drive-center="{{ md.driveCenter }}" show-drive="{{ md.showDrive }}" resize-key="{{ md.resizeKey }}" recenter-key="{{ md.recenterKey }}" hint-size="100%,100%"></x-import>
+            <x-import component="MarketMapV3" from="./MarketMapV3.jsx" practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}" on-area="{{ md.selectArea }}" center="{{ md.mapCenter }}" zoom="{{ md.mapZoom }}" drive-center="{{ md.driveCenter }}" show-drive="{{ md.showDrive }}" resize-key="{{ md.resizeKey }}" recenter-key="{{ md.recenterKey }}" hint-size="100%,100%"></x-import>
 
             <!-- LEVEL 2 — Market layer. The layer SELECT lives here, so switching the
                  active layer never requires opening the Layers drawer. -->
@@ -1667,14 +1667,6 @@
                     </div>
                   </div>
 
-                  <div style="border-top: 1px solid var(--rf-line); padding-top: 16px;">
-                    <div style="font-size: 9.5px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: var(--vf-accent);">Basemap</div>
-                    <div style="display: flex; gap: 8px; margin-top: 9px;">
-                      <sc-for list="{{ mob.basemaps }}" as="b" hint-placeholder-count="2">
-                        <button onClick="{{ b.go }}" style="{{ b.style }}">{{ b.label }}</button>
-                      </sc-for>
-                    </div>
-                  </div>
                 </div>
 
                 <div style="flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--rf-line);">
@@ -2515,7 +2507,6 @@ class Component extends DCLogic {
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
         (s.mdStrip ? "0deg" : "-90deg") + "); transition: transform 150ms var(--easing-out);",
       basemap: s.mdBasemap || "map",
-      setBasemap: (k) => this.setState({ mdBasemap: k }),
       railStyle: (() => {
         const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
         // Panel open on a narrow viewport: the detail replaces the list rather than
@@ -3259,17 +3250,6 @@ class Component extends DCLogic {
       resizeKey: s.screen + s.viewport + (s.mobSheet ? "-sheet" : "") + (s.mobileTab || ""),
       rowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; font-size: 13.5px; font-weight: 500; color: var(--vf-navy); background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
       datasetRowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
-      basemaps: [
-        { key: "map", label: "Map" },
-        { key: "satellite", label: "Satellite" }
-      ].map((b) => ({
-        label: b.label,
-        go: () => this.setState({ mdBasemap: b.key }),
-        style: "flex: 1; height: 46px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-white)" : "var(--vf-navy)") + "; background: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--vf-white)") + "; border: 1px solid " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--border-subtle)") + ";"
-      })),
       toggle: [
         { key: "list", label: "List" },
         { key: "map", label: "Map" }

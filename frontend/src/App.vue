@@ -386,7 +386,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
 
             
             <div class="rf-scroll" style="position: absolute; left: 16px; top: 16px; bottom: 72px; z-index: 600; width: 300px; min-height: 0; overflow-y: auto; overflow-x: visible; padding-right: 2px;">
@@ -1591,14 +1591,6 @@
                     </div>
                   </div>
 
-                  <div style="border-top: 1px solid var(--rf-line); padding-top: 16px;">
-                    <div style="font-size: 9.5px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: var(--vf-accent);">Basemap</div>
-                    <div style="display: flex; gap: 8px; margin-top: 9px;">
-                      <template v-for="(b, $index) in __arr(v.mob?.basemaps)" :key="$index">
-                        <button @click="b?.go" :style="b?.style"><span v-if="__s(b?.label) !== null" class="sc-interp">{{ __s(b?.label) }}</span></button>
-                      </template>
-                    </div>
-                  </div>
                 </div>
 
                 <div style="flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--rf-line);">

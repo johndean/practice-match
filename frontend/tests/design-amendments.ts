@@ -7402,6 +7402,117 @@ const A34_23: Amendment = {
   count: 1
 };
 
+
+/**
+ * A49 — the Satellite basemap control ships DISABLED until the imagery licence is signed
+ * (Task SATELLITE-GATE, controller ruling 2026-09-15, on the marketing-analysis data audit's
+ * Tier 1 item 1).
+ *
+ * The audit found the toggle unconditional on desktop and in the phone frame — every signed-in
+ * member of every role one click from Esri's satellite imagery — while `dataset_registry`'s
+ * `imagery` row is `unresolved` and its own note claims a feature flag protects it. No such flag
+ * existed anywhere in the running code. The approved Census & Market Data Source Specification
+ * says it twice: §2, "Rows marked Unresolved or Blocked must not ship. The satellite basemap …
+ * require[s] a signed license before the layer is enabled", and §15, "Until answered, the
+ * Satellite toggle ships disabled". This enforces a decision already made; it makes none.
+ *
+ * NOT A ROLE GATE, and the measurement is why. `layer.satellite` holds
+ * `{buyer, seller, staff, admin}` — the SAME set `page.browse` holds — so every account that can
+ * reach the Browse map holds it and gating the control on it would have hidden the control from
+ * NOBODY. The identity spec designs it as one conjunct of two ("satellite toggle (∧ cleared
+ * imagery/engine row)"): it is the POST-clearance role gate and is left untouched in the matrix,
+ * waiting for its second conjunct. D-C54 unions every matrix row with `admin` in any case, so
+ * "nobody until a licence is signed" is not writable as a matrix row at all.
+ *
+ * REMOVED FROM THE DESIGN, which is A6's launch-removal mechanism: the reference and the app lose
+ * it together, so no ninth prototype prop, no server seam and no app/oracle divergence — the wall
+ * A40.1/A40.2 are still reserved and unwritten against.
+ *
+ * Four literal edits, none chained, all `dc`: the two MOUNTS that hand a control to a surface
+ * (A49.1 the desktop `on-basemap`, A49.3 the phone sheet's Basemap section) and the two render
+ * values each leaves orphaned (A49.2 `setBasemap`, A49.4 `basemaps`), under the bundle's own
+ * dead-code rule. `MarketMapV3.jsx` is NOT edited: its control block is already guarded on
+ * `onBasemap &&` — the design's own off switch, which the phone mount has always used — so A49
+ * never meets A35's seven entries in that file.
+ *
+ * What survives is `basemap: s.mdBasemap || "map"`, because the map still has to be told what to
+ * draw. Both WRITERS of `mdBasemap` go, so the key has no writer left and the gray canvas is the
+ * only basemap reachable: an imagery tile becomes unrequestable rather than merely unclicked.
+ * That is pinned from the source side in `tests/census/test_design_satellite_gate.py` and from
+ * the render values in `frontend/src/logic.test.ts`.
+ *
+ * REVERSIBLE by design: restoring these four declarations is the whole of re-instatement the day
+ * the VIN Foundation clears the row. The real bill at that point is elsewhere and is recorded in
+ * the task report — the licence conjunct has no seam today (`imagery` is absent from
+ * `app/api/market.py`'s `LAYERS`/`_STATE_FOR`/`/api/layers`), so serving clearance to the client
+ * plus the A40 oracle work is what a licensed re-instatement actually costs.
+ */
+const SATELLITE_GATE = {
+  date: '2026-09-15',
+  ruling: 'Census & Market Data Source Specification §15: "Until answered, the Satellite toggle ships disabled" '
+    + '(and §2: rows marked Unresolved "must not ship"). The dataset_registry `imagery` row is unresolved, '
+    + 'so the control is removed from the design until the VIN Foundation clears it.'
+} as const;
+
+/** A49.1 — the DESKTOP mount stops handing the map a basemap callback. `MarketMapView`'s own
+ *  `v-if="props.onBasemap"` (and `MarketMapV3.jsx`'s `onBasemap &&`) is what reads it, so
+ *  withdrawing the prop is the whole of the desktop removal — the phone frame's own mount has
+ *  never passed it (C13), and this makes the two mounts agree. */
+const A49_1: Amendment = {
+  id: 'A49.1', ...SATELLITE_GATE,
+  find: "<x-import component=\"MarketMapV3\" from=\"./MarketMapV3.jsx\" on-basemap=\"{{ md.setBasemap }}\" practices=",
+  replace: "<x-import component=\"MarketMapV3\" from=\"./MarketMapV3.jsx\" practices=",
+  count: 1
+};
+
+/** A49.2 — the orphan A49.1 leaves: `setBasemap`'s only reader was that `on-basemap`. The READ
+ *  above it stays, and has to: the map is still drawn on a basemap, and with no writer left
+ *  `s.mdBasemap` is for ever undefined, so this line can only ever answer "map". */
+const A49_2: Amendment = {
+  id: 'A49.2', ...SATELLITE_GATE,
+  find: "      basemap: s.mdBasemap || \"map\"," + '\n'
+    + "      setBasemap: (k) => this.setState({ mdBasemap: k })," + '\n',
+  replace: "      basemap: s.mdBasemap || \"map\",\n",
+  count: 1
+};
+
+/** A49.3 — the PHONE frame's own control: the market-data sheet's whole "Basemap" section,
+ *  heading included. The section is removed rather than the `sc-for` alone, which would leave
+ *  a heading over nothing. */
+const A49_3: Amendment = {
+  id: 'A49.3', ...SATELLITE_GATE,
+  find: '\n'
+    + "                  <div style=\"border-top: 1px solid var(--rf-line); padding-top: 16px;\">" + '\n'
+    + "                    <div style=\"font-size: 9.5px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: var(--vf-accent);\">Basemap</div>" + '\n'
+    + "                    <div style=\"display: flex; gap: 8px; margin-top: 9px;\">" + '\n'
+    + "                      <sc-for list=\"{{ mob.basemaps }}\" as=\"b\" hint-placeholder-count=\"2\">" + '\n'
+    + "                        <button onClick=\"{{ b.go }}\" style=\"{{ b.style }}\">{{ b.label }}</button>" + '\n'
+    + "                      </sc-for>" + '\n'
+    + "                    </div>" + '\n'
+    + "                  </div>" + '\n',
+  replace: "\n",
+  count: 1
+};
+
+/** A49.4 — the orphan A49.3 leaves: `mob.basemaps`, whose only reader was that section. This is
+ *  the second and last writer of `mdBasemap`. */
+const A49_4: Amendment = {
+  id: 'A49.4', ...SATELLITE_GATE,
+  find: "      basemaps: [" + '\n'
+    + "        { key: \"map\", label: \"Map\" }," + '\n'
+    + "        { key: \"satellite\", label: \"Satellite\" }" + '\n'
+    + "      ].map((b) => ({" + '\n'
+    + "        label: b.label," + '\n'
+    + "        go: () => this.setState({ mdBasemap: b.key })," + '\n'
+    + "        style: \"flex: 1; height: 46px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: \" +" + '\n'
+    + "          ((s.mdBasemap || \"map\") === b.key ? \"var(--vf-white)\" : \"var(--vf-navy)\") + \"; background: \" +" + '\n'
+    + "          ((s.mdBasemap || \"map\") === b.key ? \"var(--vf-navy)\" : \"var(--vf-white)\") + \"; border: 1px solid \" +" + '\n'
+    + "          ((s.mdBasemap || \"map\") === b.key ? \"var(--vf-navy)\" : \"var(--border-subtle)\") + \";\"" + '\n'
+    + "      }))," + '\n',
+  replace: "",
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7599,5 +7710,11 @@ export function amendments(): Amendment[] {
     // A34.23 -- the data-sources audit's own finding (2026-09-13): the competition layer's
     // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
     // pristine bundle's own declaration.
-    A34_23];
+    A34_23,
+    // A49 -- the Satellite basemap control ships DISABLED until the imagery licence is signed
+    // (Task SATELLITE-GATE, controller ruling 2026-09-15). Appended last, as every family is.
+    // None of the four is chained: every `find` occurs exactly once in the pristine twin, and no
+    // earlier entry introduced any of the lines they take. A49.2 and A49.4 are the dead-code
+    // orphans A49.1 and A49.3 leave, in the order that makes each one's `find` still present.
+    A49_1, A49_2, A49_3, A49_4];
 }

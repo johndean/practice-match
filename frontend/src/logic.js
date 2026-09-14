@@ -765,7 +765,6 @@ class Component extends DCLogic {
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
         (s.mdStrip ? "0deg" : "-90deg") + "); transition: transform 150ms var(--easing-out);",
       basemap: s.mdBasemap || "map",
-      setBasemap: (k) => this.setState({ mdBasemap: k }),
       railStyle: (() => {
         const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
         // Panel open on a narrow viewport: the detail replaces the list rather than
@@ -1509,17 +1508,6 @@ class Component extends DCLogic {
       resizeKey: s.screen + s.viewport + (s.mobSheet ? "-sheet" : "") + (s.mobileTab || ""),
       rowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; font-size: 13.5px; font-weight: 500; color: var(--vf-navy); background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
       datasetRowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
-      basemaps: [
-        { key: "map", label: "Map" },
-        { key: "satellite", label: "Satellite" }
-      ].map((b) => ({
-        label: b.label,
-        go: () => this.setState({ mdBasemap: b.key }),
-        style: "flex: 1; height: 46px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-white)" : "var(--vf-navy)") + "; background: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--vf-white)") + "; border: 1px solid " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--border-subtle)") + ";"
-      })),
       toggle: [
         { key: "list", label: "List" },
         { key: "map", label: "Map" }

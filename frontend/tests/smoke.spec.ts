@@ -503,32 +503,41 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     for (const r of [...options, ...datasets]) {
       expect(r.minHeight, `"${r.label}" computes to min-height ${r.minHeight}px, under the design's 46px`).toBeGreaterThanOrEqual(46);
     }
-    const basemaps = rows.filter((r) => r.label === 'Map' || r.label === 'Satellite');
-    expect(basemaps.length, 'the Basemap section\'s two buttons').toBe(2);
-    for (const b of basemaps) {
-      expect(Math.round(b.height), `the "${b.label}" basemap button is ${b.height}px, not the design's 46px`).toBe(46);
-    }
+    // The sheet's "Basemap" section used to be measured here too. A49 removed it with the rest of
+    // the Satellite control (the imagery licence is unresolved), so there is nothing left to size;
+    // its ABSENCE is asserted in the A49 case below rather than left unsaid here.
   });
 
-  // Fix round 1, minor 4. C13's whole point: the mobile mount omits `on-basemap`
-  // (Practice Match V3.dc.html:1359 vs the desktop's :324), so the map's 132px Map|Satellite
-  // cluster cannot fight a full-width key on a 388px map — the SHEET owns basemap switching
-  // instead. That was gated only by `mobile-map` at zero tolerance, which names the failure as
-  // a pixel diff; this names it in words, on both sides of the contrast.
-  test('the phone has no basemap tabs on the map — the sheet owns basemap switching', async ({ page }) => {
+  // A49 (controller ruling, 2026-09-15 — Task SATELLITE-GATE). These two cases used to assert the
+  // CONTRAST C13 drew: the phone's mount omits `on-basemap` so the map's 132 px Map|Satellite
+  // cluster cannot fight a full-width key on a 388 px map, while the desktop's passes it and the
+  // SHEET owns basemap switching on the phone. The Satellite basemap is now gated in the design
+  // until the imagery licence is signed — Census & Market Data Source Specification §15, "Until
+  // answered, the Satellite toggle ships disabled" — so BOTH mounts omit it and the sheet's
+  // Basemap section is gone with them. C13's contrast is not contradicted; it is subsumed.
+  //
+  // In a real browser rather than at the pixel level, because "the control is not painted" and
+  // "the control cannot be reached" are different claims and only the second one is the ruling:
+  // an accessible-name query finds a button a zero-tolerance screenshot of a 1440 px page can
+  // miss behind a scroll, a collapse or a z-index.
+  test('no surface offers the satellite basemap while its licence is unresolved (A49)', async ({ page }) => {
     await mobileMap(page);
-    const tabs = page.getByRole('button', { name: 'Satellite', exact: true });
-    await expect(tabs, 'a Map|Satellite tab pair leaked onto the phone map — on-basemap reached the mobile mount').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Satellite', exact: true }),
+      'a Map|Satellite tab pair is on the phone map').toHaveCount(0);
     await openSheet(page);
-    await expect(sheet(page).getByRole('button', { name: 'Satellite', exact: true }), 'the sheet does not own basemap switching').toHaveCount(1);
-  });
+    await expect(sheet(page).getByRole('button', { name: 'Satellite', exact: true }),
+      'the phone sheet still carries its Basemap section — the imagery licence is still unresolved').toHaveCount(0);
 
-  test('the desktop map keeps the basemap tabs the phone gives up', async ({ page }) => {
     await prepare(page);
     await signInAs(page, 'design', '/browse');
     await waitMap(page);
-    await expect(page.getByRole('button', { name: 'Satellite', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
-    await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Satellite', exact: true }),
+      'the desktop map still offers the satellite basemap (spec §15)').toHaveCount(0);
+    // The gray canvas is not gated and must still be drawn — a licence gate that blanked the
+    // basemap would be a regression wearing a ruling's clothes. `Map` was the pair's other half,
+    // so its absence AS A BUTTON is the second half of the removal.
+    await expect(page.getByRole('button', { name: 'Map', exact: true }),
+      'the Map half of the pair survived its twin').toHaveCount(0);
   });
 
   // Review I1 (controller ruling, 2026-09-07): redraw-after-selection, MEASURED. What this
@@ -2028,7 +2037,7 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
   // through the harness — the cost of measuring the real chain rather than a stub of it.
   test.setTimeout(180_000);
 
-  test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
+  test('+ reaches zoom 20, every Canvas request stops at 16, and no imagery tile is ever asked for', async ({ page }) => {
     const hits = recordTiles(page);
     await browseMap(page);
 
@@ -2072,28 +2081,26 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     // upscaled basemap is underneath them, not instead of them.
     expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
 
-    // (v) The other basemap, switched AT the ceiling — which is where A35.6's reset is load-bearing,
-    // because the two services clamp to different tile zooms and `redraw()` alone leaves the
-    // layer holding the previous zoom's world range. An empty tile pane here is the blank map.
-    const beforeSat = hits.length;
-    const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
-    await satTab.click();
-    await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
-      .toEqual({ services: ['imagery'], maxZ: NATIVE_MAX.imagery, count: expect.any(Number) });
-    expect((await paneState(page, TILE_PANE)).count,
-      'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
-    expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
-      'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
+    // (v) WAS the satellite half: switch AT the ceiling and switch back, which is where A35.6's
+    // reset is load-bearing because the two services clamp to different tile zooms. A49 gated the
+    // Satellite control out of the design (the imagery licence is unresolved, spec §15), so there
+    // is no longer a control to switch with and this leg is UNREACHABLE THROUGH THE PRODUCT —
+    // retired here rather than rewritten around a back door, because an e2e that reaches a surface
+    // no member can reach is not evidence about the product. A35.6's reset keeps its own gate at
+    // the unit level, where it never needed a control: `src/map/engines/leaflet.test.ts` drives
+    // `setBase('satellite')` directly and pins the `remove()`/`addTo()` rebuild, the per-service
+    // `maxNativeZoom` (16 and 19) and the attribution hand-over. When the licence lands and A49 is
+    // reverted, this leg comes back with it.
+    //
+    // (v, A49) What replaces it is the licence assertion the ruling is actually about, and the
+    // recorder above has been watching for it the whole climb: across a full Browse session and
+    // ten zoom steps, the member's browser never asked Esri for one tile of satellite imagery.
+    expect(hits.filter((h) => h.service === 'imagery'),
+      'an imagery tile was requested while the satellite licence is unresolved — the gate leaks')
+      .toEqual([]);
 
-    await page.getByRole('button', { name: 'Map', exact: true }).click();
-    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
-      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
-    expect((await paneState(page, TILE_PANE)).count,
-      'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
-
-    // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
-    // for a tile the service that serves it does not have.
+    // (vi) The whole recording, in one sentence: not one request, at any zoom, on the basemap the
+    // product actually ships, for a tile the service that serves it does not have.
     const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
     expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
 
@@ -2120,22 +2127,20 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
   // registering the new one — leaving BOTH credits in the footer for the life of the map.
   // Assigning between `remove()` and `addTo()` fixes both, and this case is what says so.
   // -----------------------------------------------------------------------------------------
-  test('the attribution control shows exactly the current basemap\'s credit, never both', async ({ page }) => {
+  //
+  // A49 (2026-09-15) narrowed this case to the one basemap that ships. The ROUND TRIP it was
+  // written for needs the Satellite control, which the licence gate removed, so what is left is
+  // the half that is still reachable — and that half is the legally load-bearing one: attribution
+  // is load-bearing per CLAUDE.md, and a footer crediting an imagery vendor whose licence is
+  // unresolved would be a claim the product has no right to make. `src/lib/leaflet.test.ts` keeps
+  // A35.7's satellite CREDIT STRING pinned and `src/map/engines/leaflet.test.ts` keeps the
+  // hand-over between the two, so the round trip comes back with the control.
+  test('the attribution control credits the gray canvas, and never the unlicensed imagery (A35, narrowed by A49)', async ({ page }) => {
     await browseMap(page);
-    const other = (kind: string) => (kind === 'map' ? CREDIT.satellite : CREDIT.map);
-
-    for (const step of ['map', 'satellite', 'map', 'satellite'] as const) {
-      if (step !== 'map' || (await attributionText(page)).includes(CREDIT.satellite)) {
-        await page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }).click();
-        await expect(page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }))
-          .toHaveAttribute('aria-pressed', 'true');
-      }
-      await expect.poll(() => attributionText(page), { timeout: 10_000 })
-        .toContain(CREDIT[step]);
-      expect(await attributionText(page), `the footer carries BOTH credits on the ${step} basemap`)
-        .not.toContain(other(step));
-    }
-    console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
+    await expect.poll(() => attributionText(page), { timeout: 10_000 }).toContain(CREDIT.map);
+    expect(await attributionText(page), 'the footer credits satellite imagery the product is not licensed to show')
+      .not.toContain(CREDIT.satellite);
+    console.log(`[A35/A49] attribution on the only basemap that ships: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
   });
 
   // -----------------------------------------------------------------------------------------

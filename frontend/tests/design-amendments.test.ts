@@ -422,6 +422,11 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A49 — the Satellite basemap control ships DISABLED until the imagery licence is signed
+    // (Task SATELLITE-GATE, controller ruling 2026-09-15). The two MOUNTS that hand a surface
+    // the control, and the two render values each leaves orphaned. `MarketMapV3.jsx` is not
+    // edited: its block is already guarded on `onBasemap &&`, so A49 never meets A35 there.
+    'A49.1', 'A49.2', 'A49.3', 'A49.4',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -618,7 +623,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(351);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(355);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -106,9 +106,36 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(typeof mob.closeSheet).toBe('function');
     expect(mob.sheetOpen).toBe(false);
     expect(typeof mob.layerLabel).toBe('string');
-    expect(Array.isArray(mob.basemaps)).toBe(true);
+    // `mob.basemaps` was C13's own row here and A49 removed it with the sheet's Basemap
+    // section (the imagery licence is unresolved); the A49 case below is what pins its absence.
     expect(mob).not.toHaveProperty('hasPeek');
     expect(mob).not.toHaveProperty('peek');
+  });
+
+  // A49 (controller ruling, 2026-09-15 — Task SATELLITE-GATE). The Satellite basemap control
+  // ships DISABLED until the imagery licence is signed. The approved Census & Market Data Source
+  // Specification says it twice: §2, "Rows marked Unresolved or Blocked must not ship", and §15,
+  // "Until answered, the Satellite toggle ships disabled" — and `dataset_registry`'s `imagery`
+  // row is `unresolved` today.
+  //
+  // The control was removed from the DESIGN rather than gated on a role, so the reference and the
+  // app lose it together (A6's launch-removal mechanism). `layer.satellite` is deliberately NOT
+  // the gate and is untouched in the matrix: it holds `buyer|seller|staff|admin`, exactly the set
+  // `page.browse` holds, so gating on it would have hidden the control from NOBODY — it is the
+  // POST-clearance role gate, waiting for the second conjunct the identity spec gives it
+  // ("satellite toggle (∧ cleared imagery/engine row)").
+  //
+  // What survives is `md.basemap`, because the map still has to be told which basemap to draw.
+  // Both WRITERS of `mdBasemap` are gone — `md.setBasemap` (the desktop mount's `on-basemap`)
+  // and `mob.basemaps` (the phone sheet's Basemap section) — so the state key has no writer left
+  // and `md.basemap` can only ever be "map". That is what makes an imagery tile unrequestable
+  // rather than merely unclicked, and it is pinned from the source side in
+  // `tests/census/test_design_satellite_gate.py`.
+  it('the design offers no way to reach the satellite basemap while the imagery licence is unresolved (A49)', () => {
+    const v = c.renderVals();
+    expect(v.md, 'the desktop mount can still hand MarketMapView an onBasemap').not.toHaveProperty('setBasemap');
+    expect(v.mob, 'the phone sheet still renders its Basemap section').not.toHaveProperty('basemaps');
+    expect(v.md.basemap, 'the map is drawn on something other than the gray canvas').toBe('map');
   });
 
   // A2 (spec D17, John: "resolve this"). Root cause: the mobile results card's `open` set
