@@ -31,7 +31,10 @@ from app.api.admin_signups import COUNTS_SQL as SIGNUPS_COUNTS_SQL
 from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
+from app.api.admin_users import COUNTS_SQL as USERS_COUNTS_SQL
+from app.api.admin_users import DECIDABLE_STATES as USERS_DECIDABLE_STATES
 from app.api.admin_users import LIST_SQL, MAX_LIST
+from app.api.admin_users import OPEN_STATUSES as USERS_OPEN_STATUSES
 from app.api.market import _METRO_ACS_SQL, _SUMMARY_SQL, METRO_POPULATION, METRO_VARIABLE, SUMMARY_FRACTIONS
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
@@ -105,6 +108,18 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
         {"state": "pending", "kind": None, "role": None, "cursor_at": None, "cursor_id": None, "limit": MAX_LIST + 1},
+    ),
+    # Task A36: the SECOND query `GET /api/admin/users` runs on a tab load — the count that answers
+    # the Users tab's badge (fix round 1, review Minor 1: on the FIRST page only, never once per
+    # page of a paging client). No `INDEXES` claim and the same two exemptions `signups_counts`
+    # carries below, for the same reason: a full, ungated aggregate over the whole `account` table
+    # is CORRECTLY an `Aggregate` over a `Seq Scan`, there being no covering index on `state` to
+    # choose and no reason to add one. It is here so the query's SHAPE is pinned and visible beside
+    # the list query it ships with — fix round 1 widened it with the semi-join on `application`
+    # that counts a seller applying from an `active` account.
+    "users_counts": (
+        "EXPLAIN (FORMAT JSON) " + USERS_COUNTS_SQL,
+        {"open": list(USERS_OPEN_STATUSES), "decidable": list(USERS_DECIDABLE_STATES)},
     ),
     "session_lookup": (
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",
@@ -549,8 +564,8 @@ def test_hot_query_uses_an_index(conn, name):
     # assertions below — a full, ungated `GROUP BY` over the whole table has no index to use BY
     # DESIGN (there is no covering index on `(source, consent_version, launch_mailed_at)`), so a
     # `HashAggregate` over a `Seq Scan` is the correct plan, not a regression to catch.
-    assert any("Index" in t for t in types) or name == "signups_counts", types
-    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts"), types   # the registry is ~20 rows; a seq scan there is fine
+    assert any("Index" in t for t in types) or name in ("signups_counts", "users_counts"), types
+    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts", "users_counts"), types   # the registry is ~20 rows; a seq scan there is fine
 
 
 def test_both_scope_name_branches_descend_geo_area_s_primary_key(conn):

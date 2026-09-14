@@ -1109,8 +1109,9 @@ def _users_ts_literal(name: str) -> object:
         reason = str(exc)
     pytest.fail(
         f"frontend/src/admin/users.ts: {name} is no longer DOUBLE-QUOTED JSON on a single line, "
-        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS "
-        f"and PILLS is written that way for exactly that reason; the file says so beside them. "
+        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS, "
+        f"PILLS and ROLE_LABELS is written that way for exactly that reason; the file says so "
+        f"beside them. "
         f"Got: {match.group(1)[:120]}"
     )
 
@@ -1125,7 +1126,42 @@ def test_the_admin_users_tables_match_the_api():
     have rendered its raw key. The design deliberately offers a SUBSET of the transitions (the
     API also allows `revoke` from five other states), so what is pinned is that the subset is
     legal — not that it is complete."""
-    from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+    from app.api.admin_users import (
+        ACCOUNT_STATES,
+        APPLICATION_ACTIONS,
+        DECIDABLE_STATES,
+        NOTE_REQUIRED,
+        OPEN_STATUSES,
+        TRANSITIONS,
+    )
+    from app.auth.labels import role_label
+
+    # Task A36: the tab names an account's VIN Foundation role under the applicant's name, and the
+    # product already has ONE place that turns a role into words — the label the header prints over
+    # this very screen. Pinned by asking `role_label` itself rather than by restating its strings,
+    # so a change to the vocabulary fails here instead of leaving two spellings of one role live at
+    # once. `affiliation=None`, because the tab states the affiliation in its own column.
+    labels = cast("dict[str, str]", _users_ts_literal("ROLE_LABELS"))
+    assert labels == {role: role_label(frozenset({role}), None) for role in labels}
+    assert sorted(labels) == ["admin", "staff"], (
+        "the Admin Users table labels exactly the two VIN Foundation roles; a buyer's or a "
+        "seller's standing is what the Status pill says"
+    )
+
+    # Fix round 2, re-review Minor 2. The two tables that decide WHICH FACT a row is about were
+    # mirrored client-side by hand, and the round's own claim — that the badge and the rows cannot
+    # disagree about what "open" means — was held by nothing. A third waiting status, or a widened
+    # state machine, must fail on both sides at once.
+    assert _users_ts_literal("OPEN_STATUSES") == list(OPEN_STATUSES)
+    assert _users_ts_literal("DECIDABLE_STATES") == list(DECIDABLE_STATES)
+    # And `DECIDABLE_STATES` is not a third list to keep by hand either: it is exactly the states
+    # the API accepts an APPLICATION action from — `TRANSITIONS`' union over `APPLICATION_ACTIONS`,
+    # plus the `active` a seller application is decided from and to (`_seller_decision`).
+    from_application_actions = set().union(*(TRANSITIONS[a][0] for a in APPLICATION_ACTIONS))
+    assert set(DECIDABLE_STATES) == from_application_actions | {"active"}, (
+        "DECIDABLE_STATES must be the states a staff decision on an APPLICATION is legal from; "
+        "outside it an open application is stale and the tab renders the account's own treatment"
+    )
 
     assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
     assert sorted(cast("dict[str, object]", _users_ts_literal("PILLS"))) == sorted(ACCOUNT_STATES)
@@ -1164,14 +1200,24 @@ def test_the_admin_listings_table_matches_the_api():
     offered from a status `DECISIONS` refuses would take a 409 the same way; and a
     `listing.status` the API can report with no pill would render its raw key.
 
-    The design deliberately offers a legal SUBSET of `DECISIONS` (its Paused row's "Contact
-    seller" is not wired, and the API also allows `publish` from `declined`/`paused`, which the
-    design's own In review row does not offer) and pictures only three of the six real statuses
-    (A-SL24 (4)) — what is pinned is that the subset is legal, not that it is complete."""
+    Task A39 (D-C53, 2026-09-13) turns the PILLS half into a TWO-WAY pin. It used to be `<=`,
+    because the design pictures only three of the six real statuses and `draft`, `withdrawn` and
+    `declined` rendered the column's own key, muted (A-SL24 (4)) — John ruled the three words, so
+    every `listing.status` the API can report now has a label and no raw key can reach the table.
+    A seventh status added to the column must be given one here before it ships; the `??` fallback
+    in `toListingRows` is left for a status that is not `listing.status`'s at all, which is exactly
+    what the design's own oracle-only "Flagged" row is.
+
+    `ACTIONS` stays a legal SUBSET: A39 adds the design's own primary Publish to the `paused` and
+    `declined` rows (ruling 3 — `DECISIONS` has always allowed it and the tab's footnote promises
+    "reversible"), and what is pinned is that every button offered is legal from the status it is
+    offered on, not that every legal decision is offered somewhere."""
     from app.api.admin_listings import DECISIONS, NOTE_REQUIRED, STATUSES
 
     assert _listings_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
-    assert set(cast("dict[str, object]", _listings_ts_literal("PILLS"))) <= set(STATUSES)
+    pills = set(cast("dict[str, object]", _listings_ts_literal("PILLS")))
+    assert pills <= set(STATUSES), f"the Admin Listings table labels {sorted(pills - set(STATUSES))!r}, which listing.status cannot hold"
+    assert set(STATUSES) <= pills, f"the Admin Listings table has no ruled label for {sorted(set(STATUSES) - pills)!r}, so the raw key would render"
     for status, offered in cast("dict[str, list[str]]", _listings_ts_literal("ACTIONS")).items():
         for action in offered:
             assert action in DECISIONS, f"the Admin Listings table offers {action!r}, which app/api/admin_listings.py has no decision for"
@@ -1938,6 +1984,94 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     )
 
 
+def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
+    """Task RATE-LIMIT-WINDOW. §9's table is the page an operator reads when somebody cannot sign
+    in, and until this pin NOTHING watched it: the limits were transcribed by hand from
+    `app/auth/limits.py`, and the WINDOW semantics were stated in prose three sections apart — §8
+    said "a fixed 24 h bucket" (§8, not §7: the `verify_email` row lives under "I never got the
+    email"), §9 said the counter "rolls over", §12 said to wait for the quarter-hour boundary — all three of them descriptions of a mechanism, and all three wrong the
+    moment the mechanism changed.
+
+    So two things are pinned. The numbers, against the module the server actually runs, which is
+    what stops a row drifting the way the QA parity budget did. And the WORD: every one of these
+    is a sliding window now, and an operator told to wait for a boundary that does not exist has
+    been given an instruction that cannot be followed."""
+    from app.auth import limits as L
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = text.split("## 9. A locked-out member")[1].split("\n## ")[0]
+
+    assert "sliding" in section.lower(), (
+        "docs/RUNBOOK-identity.md §9 no longer tells an operator the windows are sliding"
+    )
+    assert "| Counter | Limit | Sliding window |" in section, "§9's limiter table lost its header"
+
+    # EXACTLY, and positionally (fix round 1, Minor 1). This compared `str(limit) in cell`, so a
+    # row could overstate a limit TENFOLD and pass — `"10" in "100"` — and a constant could shrink
+    # under it, `"3" in "5 / 3"`. `TOKEN_IP` tightened 30 -> 3 passed EVERY test in the suite,
+    # because `"3" in "30"` and nothing else named it. Each row now names its own constants and
+    # each cell is split on ` / ` and compared with `==` against the module, position by position.
+    rows = [r for r in re.findall(r"^\| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|$", section, re.MULTILINE)
+            if "`" in r[0]]  # the header and the `|---|` rule name no constant
+    assert len(rows) == 5, f"§9's limiter table has {len(rows)} data rows"
+    windows = {900: "15 min", 3600: "1 h", 86_400: "24 h"}
+    named = {name for label, _, _ in rows for name in re.findall(r"`([A-Z_]+)`", label)}
+    expected = {"SIGNIN_EMAIL", "SIGNIN_IP", "SIGNUP_IP", "SIGNUP_EMAIL",
+                "FORGOT_EMAIL", "FORGOT_IP", "TOKEN_IP"}
+    assert named == expected, f"§9's table names {sorted(named)}; the sign-in limits are {sorted(expected)}"
+
+    for label, limit_cell, window_cell in rows:
+        constants = re.findall(r"`([A-Z_]+)`", label)
+        limit_parts = [c.strip() for c in limit_cell.split("/")]
+        window_parts = [c.strip() for c in window_cell.split("/")]
+        assert len(limit_parts) == len(window_parts) == len(constants), (
+            f"§9's {label!r} row names {len(constants)} constants but {len(limit_parts)} limits "
+            f"and {len(window_parts)} windows — every cell must carry one value per constant"
+        )
+        for i, constant in enumerate(constants):
+            limit, window_s = getattr(L, constant)
+            assert limit_parts[i] == str(limit), (
+                f"§9's {label!r} row states {constant} as {limit_parts[i]!r}; "
+                f"app/auth/limits.py says {limit}"
+            )
+            assert window_parts[i] == windows[window_s], (
+                f"§9's {label!r} row states {constant}'s window as {window_parts[i]!r}; "
+                f"app/auth/limits.py says {window_s} s ({windows[window_s]})"
+            )
+
+    # And the three sentences elsewhere in the page that described the OLD mechanism.
+    for gone in ("fixed 24 h bucket", "the bucket\n  rolls over sooner", "per FIXED"):
+        assert gone not in text, f"docs/RUNBOOK-identity.md still describes a fixed window: {gone!r}"
+
+    # Controller amendment A-RL1 (2026-09-14). The SPEC is where the mechanism is contracted, and it
+    # said the opposite of the code for as long as the code was wrong: §3's endpoint row states the
+    # limits as a RATE ("10 failures/email/15 min") while §3's Rate limits paragraph named the
+    # mechanism "Redis fixed windows", which is what `app/ratelimit.py`'s own docstring cited as
+    # acceptance of the 2x-limit overshoot a boundary allows. Both documents are pinned together
+    # here, on the one word, so neither can drift back on its own.
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    rate_limits = next((line for line in spec.splitlines() if line.startswith("**Rate limits.**")), None)
+    assert rate_limits is not None, "the identity spec no longer carries a **Rate limits.** paragraph"
+    assert "sliding" in rate_limits.lower(), (
+        f"the identity spec's Rate limits paragraph does not name the mechanism as sliding: {rate_limits!r}"
+    )
+    assert "A-RL1" in rate_limits, "the amendment that corrected that sentence is not named on it"
+    # The LIMITS sentence (§3's endpoint row) is the contract and is deliberately NOT touched by the
+    # amendment, so it is pinned as still stating the same two numbers this table transcribes.
+    assert "Lockout 10 failures/email/15 min and 30/IP/15 min" in spec, (
+        "the identity spec no longer states the sign-in lockout as 10/email and 30/IP per 15 minutes"
+    )
+
+    # The four corrected places — the spec's paragraph and the runbook's three — all say "sliding",
+    # and neither document describes a fixed window anywhere.
+    for label, body, places in (("the identity spec", spec, 1), ("docs/RUNBOOK-identity.md", text, 4)):
+        assert len(re.findall(r"sliding", body, re.IGNORECASE)) >= places, (
+            f"{label} names the sliding window fewer than {places} time(s)"
+        )
+        stale = re.findall(r"fixed[ -]window|fixed calendar window|fixed \d+ ?h bucket", body, re.IGNORECASE)
+        assert stale == [], f"{label} still describes a fixed window: {stale}"
+
+
 def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
     as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
@@ -1956,7 +2090,7 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     assert harness_match, f"could not read the traced sign-in count out of: {budget_line!r}"
 
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
-    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per FIXED", runbook)
+    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per SLIDING", runbook)
     assert runbook_match, "docs/RUNBOOK-identity.md no longer states the QA parity sign-in budget this way"
 
     assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (
