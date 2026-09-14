@@ -96,6 +96,41 @@ def test_the_paid_employee_universe_is_one_sentence_the_catalogue_serves() -> No
     assert EMPLOYER_UNIVERSE.endswith("."), "a caveat is composed by joining sentences with a space"
 
 
+def test_the_paid_employee_universe_is_the_same_sentence_in_the_design() -> None:
+    """The DESIGN half of the pin Task 1 opened. Amendment A48.1 puts the sentence on the "What
+    this means" card, which is the one surface whose whole purpose is that layer's prose, and it
+    is a SUBSTRING of that card's string -- so the design states the fact once and both sides read
+    one wording. Same shape as `test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_design`."""
+    design = DESIGN.read_text(encoding="utf-8")
+    assert EMPLOYER_UNIVERSE in design, "the design's card no longer states the universe the API states"
+    assert design.count(EMPLOYER_UNIVERSE) == 1, "the universe is stated once in the design, not twice"
+
+
+def test_the_competition_prose_names_the_geography_that_layer_shades() -> None:
+    """D-C57's other label fix, pinned the way `test_every_layer_row_names_the_geography_that_layer_shades`
+    pins the drawer rows: the card's prose names `SHADING["competition"]["label"]` and no other
+    layer's geography, so a layer that moves geography again fails on both sides at once.
+
+    SCOPED TO COMPETITION DELIBERATELY. D-C57 reached one layer's `means`; the other five are
+    unruled prose about what a figure is FOR (`households` says "in each community", `econ` says
+    "market-level") and sweeping them here would assert a ruling nobody has made."""
+    design = DESIGN.read_text(encoding="utf-8")
+    start = design.index("const LAYER_META = {")
+    block = design[start:design.index("\n};", start)]
+    comp = block[block.index("  competition: {"):]
+    m = re.search(r'    means: "([^"]*)",', comp)
+    assert m, "the design no longer declares LAYER_META.competition.means"
+    means = m.group(1)
+    own = RULED_LABEL["competition"]
+    assert own in means, f"the competition card does not name its own geography {own!r}: {means!r}"
+    for label in RULED_LABEL.values():
+        if label == own:
+            continue
+        assert label.lower() not in means.lower(), (
+            f"the competition card names {label!r}, which is not the geography it shades"
+        )
+
+
 # ---------------------------------------------------------------------------------------------
 # A33.3 (Task SCREEN-LABELS, 2026-09-13; D-C51 caption audit §3.2, rows R13-R18) — EVERY LAYER
 # ROW NAMES THE GEOGRAPHY IT SHADES.

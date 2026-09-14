@@ -422,6 +422,12 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A48 — COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14): the stakeholder asked what area
+    // the veterinary-competition number describes and the product named it nowhere. D-C57 — every
+    // surface showing the figure or its area names it, in D-C51's vocabulary. Appended last, as
+    // every family is: A48.5 reads A34.7's output and A48.6 A34.8's, so each runs after the entry
+    // whose text its `find` takes; A48.1 alone takes a pristine line.
+    'A48.1', 'A48.5', 'A48.6',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -618,7 +624,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(351);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(354);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1688,6 +1694,26 @@ describe('local design amendments (spec D15)', () => {
       + '\n'
       + '    // A footer card is the SOURCE switch for its dataset: off means the dataset\n'
     );
+  });
+
+  it('A48.5/A48.6 append the SAME two competition sentences to both footnotes, and rewrite neither', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const APPORTION = 'A practice\u2019s competition figure apportions each ZIP area\u2019s published count to the part of that ZIP within about 5 miles of the practice.';
+    const FLOOR = 'A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.';
+    // Rule 3 (spec §2): the same figure appears on both surfaces, so it is described in the same
+    // words on both — two wordings of one fact is how they come to disagree (A34.7/A34.8).
+    expect(amended.split(`${APPORTION} ${FLOOR}`).length - 1, 'the pair is on the panel footnote and the strip footnote, and nowhere else').toBe(2);
+    // Every sentence that was there is still there, byte for byte — the fix-round-3 lesson.
+    for (const carried of [
+      'A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.',
+      'Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.',
+      'Population growth is measured for the surrounding city or county, not the tract.',
+      'Pet-household counts and average practice payroll are derived estimates, not observed values.'
+    ]) {
+      expect(amended.split(carried).length - 1, `A48.5/A48.6 dropped a ruled sentence: ${carried}`).toBe(1);
+    }
+    // …and each pair is at the END of its own paragraph, not spliced into the middle of one.
+    expect(amended.split(`${FLOOR}</p>`).length - 1, 'the sentences were not appended at the end of both paragraphs').toBe(2);
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

@@ -861,7 +861,7 @@
                     View full listing<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s. A practice’s competition figure apportions each ZIP area’s published count to the part of that ZIP within about 5 miles of the practice. A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.</p>
                   </sc-if>
                 </div>
               </sc-if>
@@ -919,7 +919,7 @@
                   </div>
                 </sc-for>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract. A practice’s competition figure apportions each ZIP area’s published count to the part of that ZIP within about 5 miles of the practice. A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.</p>
             </div>
           </sc-if>
 
@@ -1950,7 +1950,7 @@ const LAYER_META = {
     sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
     dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
-    means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
+    means: "Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. They say nothing about size, quality or overlap in services.",
     why: "Competitive density helps you judge whether a market is underserved or already crowded."
   },
   growth: {
