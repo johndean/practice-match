@@ -290,12 +290,35 @@ class CensusClient:
         expected: list[str],
         in_: str | None = None,
         extra: dict[str, str] | None = None,
-    ) -> list[dict[str, str | None]]:
+    ) -> list[dict[str, str | None]] | None:
         """Fetches, parses and validates one Census table; archives the raw body only after
         both the shape and `expected` variables check out (M2) -- the archive is append-only, so
-        a body that failed validation must never occupy a key forever."""
+        a body that failed validation must never occupy a key forever.
+
+        Returns `None` -- NOT `[]`, and never an exception -- when the Census answers "there is
+        no data for this request" (Task CENSUS-204, defect 1). Measured on the live API on
+        2026-09-14 (`.superpowers/sdd/2026-09-11-neighbourhood-shading/task-qwi-bds-runs-report.md`
+        §3): an unpublished QWI quarter, and BDS 2024, answer **HTTP 204 with a zero-byte body**.
+        204 is a 2xx, so this used to hand `""` to `json.loads` and raise `JSONDecodeError` from
+        inside the client -- a decode error standing in for an absence, which is why
+        `qwi.latest_available`'s own 404/400 arm could never be reached and the loader died on
+        its first probe. The test is the EMPTY BODY rather than the status code, because the
+        report measured the same "no JSON body" answer for BDS; a body that is present but not
+        JSON is still a malformed response and still raises.
+
+        `None` rather than `[]` deliberately: "the Census published nothing for this request" and
+        "the Census published a table with no rows" are different facts, and only the first is a
+        state a caller may skip. Because the return type is `... | None`, mypy --strict makes
+        every caller say out loud what it does about it -- which is the point (a silent `for row
+        in []` would have hidden Alaska's absence exactly as the decode error hid the quarter's)."""
         url = self._build_url(get, for_, in_, extra)
         body = self._get(url)
+        if not body.strip():
+            # Nothing to parse, nothing to validate and therefore nothing to archive: M2's rule
+            # (archive only after BOTH checks pass) already says an unparseable body must never
+            # occupy an archive key. `request_count` has already counted the request, so the
+            # `ingest_run` row still reports it.
+            return None
         table = json.loads(body)
         if not table or not isinstance(table[0], list):
             raise ValueError(f"unexpected Census response shape from {redact(url)}")

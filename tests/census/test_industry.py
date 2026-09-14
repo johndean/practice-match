@@ -193,6 +193,35 @@ def test_qwi_latest_available_walks_back_from_404s():
     assert qwi.latest_available(client, "48", today=(2026, 3)) == (2024, 4)
 
 
+def test_qwi_latest_available_walks_back_from_the_204s_the_census_actually_sends():
+    """Task CENSUS-204, defect 1. Measured on the live API (`task-qwi-bds-runs-report.md` §3):
+    an unpublished QWI quarter is **204 with a zero-byte body**, never 404/400 -- and
+    `latest_available` seeds its walk at TODAY's quarter while QWI publishes about three quarters
+    in arrears, so the very FIRST probe is always one of those. The walk must cross them."""
+    from app.census.registry import Dataset
+
+    def handler(r):
+        y, q = int(r.url.params["year"]), int(r.url.params["quarter"])
+        if (y, q) <= (2025, 4):
+            return httpx.Response(200, json=[["Emp", "state"], ["1", "48"]])
+        return httpx.Response(204)   # the live shape: 2xx, no body at all
+
+    ds = Dataset("qwi", "QWI", "timeseries/qwi/sa", "https://api.census.gov/data", "latest quarter", None, "Quarterly", "cleared", "Public domain", None, "x", None, None)
+    client = CensusClient("K", ds, None, transport=httpx.MockTransport(handler), contact=CONTACT)
+    assert qwi.latest_available(client, "48", today=(2026, 3)) == (2025, 4)
+
+
+def test_qwi_latest_available_gives_up_after_twelve_quarters_of_204s():
+    """The bound still holds when every quarter answers the live "no data" shape rather than a
+    404 -- a state absent from QWI entirely (Alaska, Michigan) must not loop for ever."""
+    from app.census.registry import Dataset
+
+    ds = Dataset("qwi", "QWI", "timeseries/qwi/sa", "https://api.census.gov/data", "latest quarter", None, "Quarterly", "cleared", "Public domain", None, "x", None, None)
+    client = CensusClient("K", ds, None, transport=httpx.MockTransport(lambda r: httpx.Response(204)), contact=CONTACT)
+    with pytest.raises(RuntimeError, match="no QWI quarter available"):
+        qwi.latest_available(client, "02", today=(2026, 3))
+
+
 def test_qwi_latest_available_reraises_a_non_404_400_error():
     """A status other than 404/400 (e.g. a real outage) is not "this quarter doesn't exist yet"
     -- it must propagate, not be swallowed into an endless walk backwards."""
@@ -242,3 +271,99 @@ def test_bds_refuses_a_dataset_that_is_not_cleared(conn):
 
     with pytest.raises(PermissionError):
         bds.load(conn, factory, ["48"], year=2022)
+
+
+# --- one absent state must not fail a whole run (Task CENSUS-204, defect 3) --------------------
+# Measured on the live API on 2026-09-14 (`task-qwi-bds-runs-report.md` §3, root cause B): Alaska
+# (02) and Michigan (26) are absent from the QWI programme entirely -- 204 with a zero-byte body
+# at every quarter back to 2022Q4, with no industry filter at all, so this is not small-cell
+# suppression and waiting never fixes it. `SELECT state_fips FROM market_state ORDER BY 1` puts
+# Alaska SECOND, so the run used to write Alabama and then die. Nothing here hard-codes those two
+# states: the rule is "this state returned no data for this request", measured per run.
+
+def test_qwi_skips_a_state_with_no_data_and_loads_the_rest(conn):
+    asked = []
+
+    def handler(r):
+        st = r.url.params["in"].split(":")[1]
+        asked.append(st)
+        if st in ("02", "26"):
+            return httpx.Response(204)   # absent from the programme, not late
+        return httpx.Response(200, json=[["EarnBeg", "Emp", "HirA", "state", "county", "year", "quarter", "industry"],
+                                         [f"{6000 + int(st)}", "4200", "310", st, "453", "2025", "4", "5419"]])
+
+    written = qwi.load(conn, factory_for(handler), ["01", "02", "26", "48"], year=2025, quarter=4)
+    assert written == 2                       # the two states that publish
+    assert asked == ["01", "02", "26", "48"]  # every state was still tried, in order
+    with conn.cursor() as cur:
+        cur.execute("SELECT geo_id FROM qwi_measure ORDER BY geo_id")
+        assert [r[0] for r in cur.fetchall()] == ["01453", "48453"]
+        cur.execute("SELECT status, rows_written, notes FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, rows, notes = cur.fetchone()
+    assert status == "succeeded" and rows == 2
+    # The run row says WHICH states were skipped and WHY -- the ledger is the only durable record
+    # a scheduled run leaves behind.
+    assert notes == "qwi: no data for state 02 at 2025Q4; skipped\nqwi: no data for state 26 at 2025Q4; skipped"
+
+
+def test_qwi_records_no_notes_when_every_state_publishes(conn):
+    def handler(r):
+        st = r.url.params["in"].split(":")[1]
+        return httpx.Response(200, json=[["EarnBeg", "Emp", "HirA", "state", "county", "year", "quarter", "industry"],
+                                         ["6120", "4200", "310", st, "453", "2025", "4", "5419"]])
+
+    qwi.load(conn, factory_for(handler), ["01", "48"], year=2025, quarter=4)
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone()[0] is None
+
+
+def test_bds_skips_a_state_with_no_data_and_records_it(conn):
+    """Not QWI-specific: the report measured BDS **2024** answering with no body at all while
+    2021-2023 serve cleanly, so the same absence can arrive one year or one state at a time."""
+    def handler(r):
+        st = r.url.params["for"].split(":")[1]
+        if st == "02":
+            return httpx.Response(204)
+        return httpx.Response(200, json=[["FIRM", "ESTABS_ENTRY", "state", "YEAR", "NAICS"], ["18300", "2100", st, "2023", "54"]])
+
+    assert bds.load(conn, factory_for(handler), ["02", "48"], year=2023) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT geo_id FROM bds_measure")
+        assert [r[0] for r in cur.fetchall()] == ["48"]
+        cur.execute("SELECT status, notes FROM ingest_run WHERE dataset_key='bds' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone() == ("succeeded", "bds: no data for state 02 in 2023; skipped")
+
+
+def test_cbp_skips_a_state_and_naics_code_with_no_data_and_records_it(conn):
+    def handler(r):
+        st, code = r.url.params["in"].split(":")[1], r.url.params["NAICS2017"]
+        if st == "02":
+            return httpx.Response(204)
+        return httpx.Response(200, json=[["NAME", "ESTAB", "EMP", "PAYANN", "EMP_N", "PAYANN_N", "state", "county", "NAICS2017"],
+                                         ["Travis County, Texas", "12", "410", "38500", None, None, st, "453", code]])
+
+    assert cbp.load(conn, factory_for(handler), ["02", "48"]) == 3   # one county x three NAICS codes
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, notes FROM ingest_run WHERE dataset_key='cbp' ORDER BY id DESC LIMIT 1")
+        status, notes = cur.fetchone()
+    assert status == "succeeded"
+    assert notes.splitlines() == ["cbp: no data for state 02, NAICS 541940; skipped",   # cbp.NAICS order
+                                  "cbp: no data for state 02, NAICS 812910; skipped",
+                                  "cbp: no data for state 02, NAICS 459910; skipped"]
+
+
+def test_zbp_skips_a_naics_code_with_no_data_and_records_it(conn):
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES ('78704','860','2023','ZCTA5 78704', ST_Multi(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))',4269)))")
+
+    def handler(r):
+        code = r.url.params["NAICS2017"]
+        if code == "541940":
+            return httpx.Response(204)
+        return httpx.Response(200, json=[["ESTAB", "ZIPCODE", "NAICS2017"], ["7", "78704", code]])
+
+    assert zbp.load(conn, factory_for(handler), ["48"]) == 3   # four codes requested, one absent
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, notes FROM ingest_run WHERE dataset_key='zbp' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone() == ("succeeded", "zbp: no data for NAICS 541940; skipped")

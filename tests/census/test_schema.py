@@ -6,7 +6,8 @@ def _cols(cur, table):
 def test_registry_and_ledger_tables_match_spec_13(conn):
     with conn.cursor() as cur:
         assert _cols(cur, "ingest_run") == ["id", "dataset_key", "vintage", "started_at", "finished_at", "status",
-                                            "rows_written", "request_count", "raw_payload_uri", "error_detail"]
+                                            "rows_written", "request_count", "raw_payload_uri", "error_detail",
+                                            "notes"]  # 092_ingest_run_notes.sql (Task CENSUS-204, defect 3)
         assert _cols(cur, "dataset_registry") == ["dataset_key", "display_name", "api_dataset_id", "base_url", "vintage",
                                                   "naics_param", "refresh_cadence", "license_status", "license_name",
                                                   "license_url", "attribution_text", "last_verified_at", "notes",

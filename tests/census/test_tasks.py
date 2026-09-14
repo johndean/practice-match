@@ -26,6 +26,7 @@ from app.census import license as census_license
 from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import zbp as census_zbp
+from app.census.client import CensusHTTPError
 from app.census.registry import load as load_registry
 from app.census.states import STATES as _STATES
 from app.tasks import census as CT
@@ -451,6 +452,60 @@ def test_load_qwi_resolves_the_latest_quarter_when_omitted(conn, monkeypatch):
     assert result == {"year": 2025, "quarter": 1, "rows": 4, "trimmed": 0}
     assert len(resolve_calls) == 1
     assert resolve_calls[0][0] == _STATES[0][1] == "01"  # states[0] -- market_state's first state_fips, Alabama since 065
+
+
+def test_load_qwi_records_a_failed_ingest_run_when_the_first_probe_raises(conn, monkeypatch):
+    """Task CENSUS-204, defect 2 -- THE scheduled failure. `qwi.latest_available` runs BEFORE
+    `qwi.load` opens its `ingest.run` context, so when the QA run of 2026-09-14 died on its first
+    probe it left **no `ingest_run` row at all**: nothing in the ledger, nothing to alert on. The
+    `qwi-quarterly` beat entry (06:00 UTC on the 15th of Feb/May/Aug/Nov, next due 2026-11-15)
+    calls this same function with no arguments, which is exactly the shape that failed -- so the
+    unattended run would have failed identically and INVISIBLY. Whatever the probe raises, the
+    attempt must be recorded."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+
+    def boom(client, state, *, today):
+        raise RuntimeError("no QWI quarter available in the last 12")
+    monkeypatch.setattr(census_qwi, "latest_available", boom)
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load when the quarter never resolved"))
+
+    # RE-RAISED, not swallowed: a probe that fails is an outage, and `qwi.load`'s own failures
+    # already propagate so Celery marks the task FAILED. A task that returned normally here would
+    # report SUCCESS for a run that resolved no quarter and loaded nothing.
+    with pytest.raises(RuntimeError, match="no QWI quarter available"):
+        CT.load_qwi()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage, error_detail FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, vintage, error = cur.fetchone()
+    assert status == "failed" and vintage == "latest quarter"
+    assert "RuntimeError" in error and "no QWI quarter available" in error
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM ingest_run WHERE dataset_key='qwi' AND status='running'")
+        assert cur.fetchone()[0] == 0   # and no orphaned 'running' row is left behind
+
+
+def test_load_qwi_records_a_failed_ingest_run_when_the_probe_fails_on_the_network(conn, monkeypatch):
+    """The same guarantee for the shape the QA run actually hit: an HTTP failure out of the
+    client, not a resolution that ran out of quarters."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+
+    def boom(client, state, *, today):
+        raise CensusHTTPError(503, "https://api.census.gov/data/timeseries/qwi/sa?key=SECRET")
+    monkeypatch.setattr(census_qwi, "latest_available", boom)
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load when the quarter never resolved"))
+
+    with pytest.raises(CensusHTTPError):
+        CT.load_qwi()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, error_detail FROM ingest_run WHERE dataset_key='qwi' ORDER BY id DESC LIMIT 1")
+        status, error = cur.fetchone()
+    assert status == "failed" and "503" in error
+    # red-team C6: the recorded reason goes through the exception's own redacted message.
+    assert "SECRET" not in error and "key=<redacted>" in error
 
 
 def test_load_qwi_trims_to_20_quarters(conn, monkeypatch):

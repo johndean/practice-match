@@ -994,6 +994,66 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
     assert "qwi 2024Q4: 6 rows (0 trimmed)" in capsys.readouterr().out
 
 
+def test_cmd_qwi_states_narrows_the_load_to_the_named_states(scratch_dsn, monkeypatch, capsys):
+    """Task CENSUS-204, defect 3. The audit found no way to re-run ONE state: the subcommand took
+    only `--year`/`--quarter`, and the alternative -- deleting rows from `market_state` -- is a
+    destructive data change nobody authorised. With per-state tolerance in place, an operator
+    needs exactly this to re-run a state that was skipped once it starts publishing."""
+    captured: dict = {}
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        captured["states"] = list(states)
+        return 2
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+    monkeypatch.setattr(census_qwi, "trim", lambda conn, keep=20: 0)
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve when --year/--quarter are given"))
+
+    assert census_load.main(["qwi", "--year", "2025", "--quarter", "4", "--states", "26"]) == 0
+
+    assert captured["states"] == ["26"]
+    assert "qwi 2025Q4: 2 rows" in capsys.readouterr().out
+
+
+def test_cmd_qwi_states_accepts_several_and_resolves_the_quarter_from_the_first_of_them(scratch_dsn, monkeypatch, capsys):
+    """The quarter is resolved against the first state ACTUALLY being loaded, not `market_state`'s
+    first row: `--states 26` must not probe Alabama."""
+    captured: dict = {}
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_latest_available(client, state, *, today):
+        captured["probed"] = state
+        return (2025, 4)
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        captured["states"] = list(states)
+        return 1
+    monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+    monkeypatch.setattr(census_qwi, "trim", lambda conn, keep=20: 0)
+
+    assert census_load.main(["qwi", "--states", "26", "48"]) == 0
+
+    assert captured["states"] == ["26", "48"] and captured["probed"] == "26"
+
+
+def test_cmd_qwi_refuses_a_state_that_is_not_in_market_state(scratch_dsn, monkeypatch, capsys):
+    """`--states` narrows the run; it does not widen it past the states this deployment covers.
+    A typo must be refused by name rather than quietly loading nothing."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not probe for an unknown state"))
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not load an unknown state"))
+
+    assert census_load.main(["qwi", "--states", "02", "99"]) == 2
+
+    err = capsys.readouterr().err
+    assert "99" in err and "market_state" in err
+
+
 def test_cmd_qwi_returns_two_without_a_database_url(monkeypatch, capsys):
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")

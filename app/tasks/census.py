@@ -254,8 +254,35 @@ def load_qwi(year: int | None = None, quarter: int | None = None) -> dict[str, o
                 # and crash the task instead of recording a named, failed `ingest_run`.
                 return _refuse(conn, "qwi", ds.vintage, "market_state has no rows yet; qwi's latest-quarter resolution needs at least one state")
             now = datetime.now(UTC)
-            with factory(ds) as client:
-                year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
+            try:
+                with factory(ds) as client:
+                    year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
+            except BaseException as exc:
+                # Task CENSUS-204, defect 2 -- THE scheduled failure. `latest_available` is the
+                # only network call in this package that runs BEFORE a loader's own `ingest.run`
+                # context opens, so anything it raised used to escape with **no `ingest_run` row
+                # at all**: the QA run of 2026-09-14 died on its first probe and left nothing in
+                # the ledger, and the `qwi-quarterly` beat entry (06:00 UTC on the 15th of
+                # Feb/May/Aug/Nov, next due 2026-11-15) calls exactly this no-argument shape, so
+                # the unattended run would have failed the same way and invisibly.
+                #
+                # RECORDED AND RE-RAISED, not swallowed into a summary dict. The `_refuse` shape
+                # above is for a missing PREREQUISITE (no key, no archive, a blocked licence) --
+                # a configuration fact, where a returned dict is safe because the failed row
+                # carries it durably. A probe that raises is an OUTAGE, which is what
+                # `qwi.load`'s own failures already are: they propagate, Celery marks the task
+                # FAILED, and the ledger row says why. Returning normally here would make a
+                # worker that resolved no quarter report SUCCESS -- the "silence that looks like
+                # success" this module's own docstring names as the failure mode this programme
+                # keeps getting bitten by.
+                #
+                # `BaseException` and a bare re-raise, exactly as `ingest.run` itself does (and
+                # for the same reason): the guarantee is that NOTHING from the probe reaches the
+                # scheduler unrecorded, which a named list of exception types cannot make.
+                run_id = ingest.start(conn, "qwi", ds.vintage)
+                ingest.finish(conn, run_id, "failed", error=f"{type(exc).__name__}: {exc}"[:2000])
+                log.error("[census] qwi could not resolve the latest published quarter: %s", type(exc).__name__)
+                raise
         rows = qwi.load(conn, factory, states, year=year, quarter=quarter)
         trimmed = qwi.trim(conn, keep=20)
         return {"year": year, "quarter": quarter, "rows": rows, "trimmed": trimmed}

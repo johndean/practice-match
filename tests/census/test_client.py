@@ -291,6 +291,48 @@ def test_fetch_succeeds_and_archives_when_the_expected_variables_are_present():
     assert len(rows) == 2 and len(archive.puts) == 1
 
 
+# --- the Census's "no data for this request" answer (Task CENSUS-204, defect 1) ----------------
+# Measured on the live API 2026-09-14 (`task-qwi-bds-runs-report.md` §3): a QWI quarter that does
+# not exist, and BDS 2024, answer **HTTP 204 with a zero-byte body**. 204 is a 2xx, so the client
+# used to hand that empty string to `json.loads` and raise `JSONDecodeError` -- a decode error
+# standing in for "there is nothing here". It is an OUTCOME, not an error: `fetch_table` answers
+# `None`, and mypy --strict makes every caller say what it does about it.
+
+def test_a_204_with_an_empty_body_is_no_data_not_a_decode_error():
+    c = make(lambda r: httpx.Response(204))
+    assert c.fetch_table(["Emp"], "state:02", ["Emp"], None, {"year": "2025", "quarter": "4"}) is None
+
+
+def test_a_200_with_an_empty_body_is_also_no_data():
+    """The rule is the EMPTY BODY, not the status code: the report measured "no JSON body" for
+    BDS 2024 as well, and a 200 carrying nothing says exactly as little as a 204 does."""
+    c = make(lambda r: httpx.Response(200, content=b""))
+    assert c.fetch_table(["FIRM"], "state:48", ["FIRM"], None, {"YEAR": "2024"}) is None
+
+
+def test_a_body_of_only_whitespace_is_no_data():
+    c = make(lambda r: httpx.Response(200, content=b"\n  \n"))
+    assert c.fetch_table(["FIRM"], "state:48", ["FIRM"]) is None
+
+
+def test_no_data_archives_nothing_and_still_counts_the_request():
+    """M2's rule, unchanged: nothing is archived until a body has parsed AND validated. An empty
+    body never parses, so it must never occupy an archive key -- while the request itself still
+    happened and `request_count` must say so, since that is what the `ingest_run` row reports."""
+    archive = Archive()
+    c = make(lambda r: httpx.Response(204), archive)
+    assert c.fetch_table(["NAME"], "us:1", ["NAME"]) is None
+    assert archive.puts == [] and c.request_count == 1
+
+
+def test_a_body_that_is_present_but_not_json_is_still_an_error():
+    """Only an EMPTY body is "no data". A 200 carrying HTML (an error page, a proxy notice) is a
+    malformed response and must still fail loudly rather than be read as an absence."""
+    c = make(lambda r: httpx.Response(200, content=b"<html>nope</html>"))
+    with pytest.raises(json.JSONDecodeError):
+        c.fetch_table(["NAME"], "us:1", ["NAME"])
+
+
 # --- 2xx-only success / 3xx is an error (M2) ------------------------------------------------
 
 def test_a_3xx_response_is_an_error_not_a_success():

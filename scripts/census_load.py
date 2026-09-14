@@ -398,6 +398,16 @@ def cmd_qwi(args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
+        if args.states:
+            # Task CENSUS-204, defect 3: `--states` NARROWS the run; it never widens it past the
+            # states this deployment covers, and a typo is refused by name rather than quietly
+            # loading nothing. Checked first, before an archive or a client is built, because an
+            # argument the operator got wrong should cost nothing.
+            unknown = [s for s in args.states if s not in set(states)]
+            if unknown:
+                print(f"[census_load] qwi refused: --states {' '.join(unknown)} — not in market_state", file=sys.stderr)
+                return 2
+            states = list(args.states)
         archive = ObjectStore.from_settings(settings)
         require_archive(archive, settings)
 
@@ -706,6 +716,10 @@ def main(argv: list[str] | None = None) -> int:
     q = sub.add_parser("qwi", help="load Quarterly Workforce Indicators for every market_state state, then trim to the newest 20 quarters")
     q.add_argument("--year", type=int, default=None, help="QWI year (default: resolved via the latest published quarter)")
     q.add_argument("--quarter", type=int, default=None, help="QWI quarter, 1-4 (default: resolved via the latest published quarter)")
+    q.add_argument("--states", nargs="+", default=None, metavar="FIPS",
+                   help="load only these state FIPS codes, e.g. --states 26 (default: every market_state state). "
+                        "Task CENSUS-204: a state the Census publishes nothing for is skipped and recorded, and this "
+                        "is how one is re-run on its own once it starts publishing")
     q.set_defaults(fn=cmd_qwi)
     b = sub.add_parser("bds", help="load Business Dynamics Statistics for every market_state state")
     b.add_argument("--year", type=int, required=True, help="BDS data year, e.g. 2022")

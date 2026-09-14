@@ -151,6 +151,14 @@ def load(
     with ingest.run(conn, dataset_key, ds.vintage) as run, client_factory(ds) as client:
         for geo in wanted:
             rows = client.fetch_table(["NAME", *variables], geo.for_, variables, geo.in_)
+            if rows is None:
+                # Task CENSUS-204, defect 1: the Census's own "no data for this request" answer
+                # (HTTP 204, zero-byte body). Recorded on the run and skipped -- one absent
+                # geography must not cost the other twelve, and an unrecorded skip is the silence
+                # this task exists to remove.
+                run.notes.append(f"{dataset_key}: no data for summary level {geo.summary_level} "
+                                 f"({geo.for_}{f', in {geo.in_}' if geo.in_ else ''}); skipped")
+                continue
             measures = to_measures(rows, variables, geo.summary_level)
             with conn.cursor() as cur:
                 cur.executemany(

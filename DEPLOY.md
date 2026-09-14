@@ -463,6 +463,18 @@ env PYTHONPATH=/app python scripts/census_load.py qwi      # resolves the latest
 env PYTHONPATH=/app python scripts/census_load.py bds --year 2022
 ```
 
+**A QWI run that reports `succeeded` with fewer than 51 states is expected, not a fault** (Task
+CENSUS-204, measured on the live API 2026-09-14). Alaska (`02`) and Michigan (`26`) are
+long-standing LEHD non-participants and publish no QWI at any quarter — the Census answers
+`204 No Content` with an empty body — so the loader records each such state on the run and carries
+on with the rest. Read `ingest_run.notes` for that run to see exactly which states were skipped and
+why; `error_detail` stays for what ENDED a run. Nothing in the code names a state, so a state that
+starts or stops publishing needs no change. To re-run one state on its own once it does start:
+
+```bash
+env PYTHONPATH=/app python scripts/census_load.py qwi --states 26
+```
+
 Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
 e.g. a licence gate or a missing prerequisite · `3` database unreachable or failed · `4` a
 download/fetch failed · `5` validation failed) and stop on the first non-zero — nothing later
