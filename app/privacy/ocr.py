@@ -167,9 +167,11 @@ def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]
     rectangle written properly -- silently, so every 2x twin would have survived as a duplicate.
     And it is what `_min_area_rect` measures a merged cluster's footprint over.
 
-    Its one precondition is at least three points that are not all the same, which every caller
-    meets: `_iou` is reached only through `_boxes_overlap`, which needs a quad of positive extent
-    in both axes, and `_min_area_rect` is called only for a cluster of two or more such quads."""
+    It answers fewer than three points for input that carries fewer than three DISTINCT ones, or
+    that is collinear, and `[]` for input that is all one point -- so a caller must not divide by
+    its area. `_iou` does not: it refuses an unmeasurable quad outright and returns 0.0 for a
+    zero intersection before any division. `_min_area_rect` does not either: it is seeded with the
+    axis-aligned box, which is an answer whatever the hull turns out to be."""
     ordered = sorted(set(points))
 
     def half(source: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -255,7 +257,24 @@ def _iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
     docstring says the quad is four points rather than a rectangle for precisely that reason."""
     if not _boxes_overlap(a, b):
         return 0.0
-    left, right = _convex_hull(a), _convex_hull(b)
+    # SORTED, so the pair is canonical: `_merge` asks `_iou(lines[i], lines[j])` for `i < j`, and
+    # without this which quad was the Sutherland-Hodgman subject and which the clipper followed
+    # arrival order. The two answers differ in the last bit, invisible everywhere except exactly at
+    # `DUPLICATE_IOU`, where `>=` flipped: review round 3's m-1 measured 89 of 2,000 CONSTRUCTED
+    # exactly-half-contained pairs, and this round re-measured 380 of 4,000 ROTATED ones. The rate
+    # is a property of whoever generates the pairs; the DEPENDENCE on arrival order is not, and it
+    # is what is closed here. A canonical order rather than a tolerance: a tolerance moves the
+    # threshold instead of removing the dependence, and leaves the same flip one epsilon further out.
+    #
+    # It is also what makes an UNMEASURABLE quad harmless. A NaN coordinate reaches the geometry
+    # intact -- every comparison against it is False, so `_boxes_overlap`'s `min`/`max` answer the
+    # finite operand and the pre-check says the two overlap -- and an all-NaN quad hulls to nothing.
+    # An empty hull sorts FIRST, so it is the subject rather than the clipper, and `_clip` returns
+    # `[]` at its first edge: intersection 0, and the guard below answers before any division. That
+    # is the `ZeroDivisionError` review round 3's m-2 measured, and it is closed by construction
+    # rather than by a branch no test could kill. `read_text` catches the rest (`_merge` runs inside
+    # its envelope now), so nothing from this geometry can reach a caller without a reason code.
+    left, right = sorted((_convex_hull(a), _convex_hull(b)))
     intersection = _area(_clip(left, right))
     if intersection <= 0:
         return 0.0
@@ -271,7 +290,15 @@ def _rank(line: Line) -> tuple[float, float, str]:
     detections and never of the order they arrived in (review M-6). Confidence is the ruling's own
     rule (A-IDP-11, review N4); area breaks a tie towards the fuller reading, which is the safer one
     to carry; the text is the last resort and exists only so that two readings agreeing on both
-    numbers still answer deterministically."""
+    numbers still answer deterministically.
+
+    It is NOT a strict total order on `Line`, and that is deliberate rather than overlooked: two
+    detections agreeing on all three terms still tie, and `<` then leaves whichever was seen first
+    in place. Harmless, because a cluster emits `Line(winner.text, winner.confidence, footprint)`
+    and the footprint is the CLUSTER's (review I-1) -- so two members of equal rank produce the same
+    `Line` byte for byte whichever of them wins. What the third term buys is the case where the two
+    numbers tie and the SPELLINGS do not, which is routine here (one sign read twice) and is what
+    review round 3's I-2 gated."""
     return (-line.confidence, -_area(line.quad), line.text)
 
 
@@ -348,8 +375,12 @@ def read_text(image: Image.Image) -> list[Line]:
             found = list(engine.run(doubled))
         else:
             found = []
+        halved = [Line(line.text, line.confidence, [(x / 2, y / 2) for x, y in line.quad])
+                  for line in found]
+        # `_merge` is INSIDE the envelope (review round 3, m-2). It reads the engine's own
+        # coordinates, so a quad outside `Engine.run`'s declared `list[tuple[float, float]]` --
+        # a list of lists, say -- raises from the geometry, and review M2 already ruled that
+        # `app/tasks/media.py` may never be handed something it has no reason code for.
+        return _merge(lines + halved)
     except Exception as exc:  # the engine's own failures are not a documented, catchable set
         raise OcrError("OCR_ERROR") from exc
-    halved = [Line(line.text, line.confidence, [(x / 2, y / 2) for x, y in line.quad])
-              for line in found]
-    return _merge(lines + halved)

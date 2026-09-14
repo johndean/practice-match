@@ -188,6 +188,15 @@ def test_a_module_without_an_engine_class_is_unavailable_not_an_attribute_error(
     assert isinstance(caught.value.__cause__, AttributeError)
 
 
+def _rotated_about(quad: list[tuple[float, float]], degrees: float,
+                   cx: float, cy: float) -> list[tuple[float, float]]:
+    """`quad` turned about an arbitrary centre, so two quads can share one."""
+    angle = math.radians(degrees)
+    cos, sin = math.cos(angle), math.sin(angle)
+    return [(cx + (x - cx) * cos - (y - cy) * sin, cy + (x - cx) * sin + (y - cy) * cos)
+            for x, y in quad]
+
+
 def _rotated(x0: float, y0: float, x1: float, y1: float, degrees: float) -> list[tuple[float, float]]:
     """`_quad` turned about its own centre — a sign photographed at an angle, which is the only
     thing the four-point quad exists for and the one shape the suite never had."""
@@ -430,6 +439,115 @@ def test_a_merged_footprint_can_only_ever_grow_what_is_covered() -> None:
         for member in cluster:
             assert _covers(footprint, member.quad), (footprint, member.quad)
             assert _area(footprint) >= _area(member.quad) - 1e-9
+
+
+def test_the_last_tie_break_term_is_the_text_and_it_decides_the_same_way_in_either_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 3, I-2: `_rank`'s THIRD term is what the ruling names as making the tie total,
+    and it was the one term no mutation could kill — replacing it with `""` left the whole suite
+    green while the surviving TEXT followed arrival order.
+
+    The triggering shape is this suite's own, not a contrivance. Equal confidence is routine (two
+    readings of one sign at 0.99). Equal area is routine too, and EXACT: the 2x pass's coordinates
+    are divided by two, so a doubled quad halves back onto its first-pass twin as the identical
+    tuple — which is the premise two other cases here are built on. Different text is the case the
+    whole de-duplication rule exists for: the real wheel answered `HILL COUNTRYVET` at display size
+    and `HILLCOUNTRYVET` at 2x for one painted line. `(-0.99, -2280.0, text)` against
+    `(-0.99, -2280.0, other)` is decided by the text and by nothing else.
+
+    Only the SPELLING handed onward is at stake — the quad is the cluster's footprint either way and
+    the confidences are equal — but P5's identity matcher is what receives it, and which of two
+    spellings that is may not depend on the order an engine happened to answer in."""
+    quad = _quad(10.0, 10.0, 200.0, 22.0)
+    first = ocr.Line("HILL COUNTRYVET", 0.99, quad)
+    twin = ocr.Line("HILLCOUNTRYVET", 0.99, quad)          # identical quad, so identical area
+    assert _area(first.quad) == _area(twin.quad)
+
+    answers = set()
+    for order in ((first, twin), (twin, first)):
+        monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass(
+            [], [ocr.Line(m.text, m.confidence, [(x * 2, y * 2) for x, y in m.quad]) for m in order]))
+        lines = ocr.read_text(_image())
+        assert len(lines) == 1
+        answers.add(lines[0].text)
+    assert answers == {"HILL COUNTRYVET"}, answers
+
+
+def test_a_pair_exactly_on_the_threshold_decides_the_same_way_in_either_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 3, m-1. `_merge` asks `_iou(lines[i].quad, lines[j].quad)` for `i < j`, so which
+    quad is the Sutherland-Hodgman SUBJECT and which the CLIPPER followed arrival order, and the two
+    answers differ in the last bit. Invisible everywhere except exactly at `DUPLICATE_IOU`, where
+    `>=` flips: a 150x20 reading wholly inside a 200x30 one is intersection 3000 over union 6000 —
+    exactly 0.5 — and measured 0.49999999999999994 one way against 0.5000000000000001 the other, so
+    the same two detections merged or did not according to which arrived first.
+
+    No coverage was at stake either way (merged, the footprint covers both; unmerged, both are
+    kept), but a count and a text that change with arrival order are not a function of the set.
+    Measure-zero on the wheel's own float coordinates and 4.5 % on round-number geometry, which is
+    what every stub engine here and any vector source produces."""
+    # A 100x26 reading and its own left half, both turned 7 degrees about their shared corner. The
+    # rotation is what puts the arithmetic where the two orders disagree: measured before the fix,
+    # 0.5000000000000002 one way (MERGE, one line back) against 0.4999999999999999 the other (do
+    # not, two lines back) -- and 380 of 4,000 randomly placed and rotated pairs of this exact shape
+    # flipped their verdict, against the 89 of 2,000 the review measured on its own unrotated ones.
+    # The rate belongs to the generator; the dependence on arrival order belonged to `_iou`.
+    outer = _rotated_about(_quad(60.0, 50.0, 160.0, 76.0), 7.0, 60.0, 50.0)
+    inner = _rotated_about(_quad(60.0, 50.0, 110.0, 76.0), 7.0, 60.0, 50.0)
+    assert _area(inner) * 2 == pytest.approx(_area(outer)), "3000 inside 6000 — the exact knife-edge"
+    assert ocr._iou(outer, inner) == pytest.approx(ocr.DUPLICATE_IOU)
+    # The fix is a CANONICAL ORDER, not a tolerance: `_iou` sorts the two hulls before clipping, so
+    # both calls do identical arithmetic. A tolerance would have moved the threshold instead of
+    # removing the dependence, and left the same flip one epsilon further out.
+    assert ocr._iou(outer, inner) == ocr._iou(inner, outer)
+
+    counts = set()
+    for order in ((outer, inner), (inner, outer)):
+        monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass(
+            [], [ocr.Line("X", 0.9, [(x * 2, y * 2) for x, y in quad]) for quad in order]))
+        counts.add(len(ocr.read_text(_image())))
+    assert len(counts) == 1, f"the same set answered {counts} depending on arrival order"
+
+
+def test_a_quad_carrying_a_nan_is_its_own_line_and_never_a_division_by_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 3, m-2. A NaN coordinate slips through `_boxes_overlap` — every comparison
+    against NaN is False, so `min`/`max` answer the finite operand and the pre-check says "overlap"
+    — and then hulls to nothing, which made `_iou`'s union exactly zero and raised a raw
+    `ZeroDivisionError` straight past `read_text`'s `OcrError` envelope.
+
+    A quad nobody can measure is a quad nobody can merge, so it clusters with nothing and keeps its
+    place in the answer — `app/privacy/ocr.py`'s own version of the rule A25 states for a listing
+    with no coordinates: a missing point omits the pin and never fabricates one."""
+    good = ocr.Line("GOOD", 0.9, _quad(10.0, 10.0, 210.0, 40.0))
+    nowhere = (float("nan"), float("nan"))
+    broken = ocr.Line("NAN", 0.8, [nowhere, nowhere, nowhere, nowhere])
+    assert ocr._iou(good.quad, broken.quad) == 0.0 == ocr._iou(broken.quad, good.quad)
+
+    monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass(
+        [], [ocr.Line(m.text, m.confidence, [(x * 2, y * 2) for x, y in m.quad]) for m in (good, broken)]))
+    assert [line.text for line in ocr.read_text(_image())] == ["GOOD", "NAN"]
+
+
+def test_a_quad_outside_the_engine_contract_is_an_error_and_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of m-2. `Engine.run` declares `list[tuple[float, float]]`; an engine that
+    answers a list of LISTS is outside that contract, and the geometry's own `set(points)` then
+    raises `TypeError: unhashable type: 'list'`. `_merge` used to run OUTSIDE `read_text`'s
+    `except Exception -> OcrError`, so it escaped with no reason code — the exact shape review M2
+    ruled out for the lazy-iterable engine, reintroduced by a later round's own helper."""
+    class Unhashable:
+        def run(self, image: Image.Image) -> list[ocr.Line]:
+            return [ocr.Line("A", 0.9, [[10.0, 10.0], [210.0, 10.0], [210.0, 22.0], [10.0, 22.0]]),
+                    ocr.Line("B", 0.8, [[11.0, 10.0], [209.0, 10.0], [209.0, 23.0], [11.0, 23.0]])]
+
+    monkeypatch.setattr("app.privacy.ocr._LOADED", Unhashable())
+    with pytest.raises(ocr.OcrError):
+        ocr.read_text(_image())
 
 
 def test_the_engine_is_built_once_per_process() -> None:

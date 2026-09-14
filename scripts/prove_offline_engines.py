@@ -1,4 +1,12 @@
-"""Prove that the OCR and 2D-symbol engines open no socket — constraint (i), made runnable.
+"""Check that the OCR and 2D-symbol engines reach no network — constraint (i), made runnable.
+
+WHAT THIS PROVES, exactly (review round 3, m-3). It removes the PYTHON-level doors onto a socket
+and then builds and runs both real engines, so it catches the failure M-8 was raised for: a future
+`rapidocr-onnxruntime` release that fetches its models at first run, as its own upstream line
+already does — that fetch goes through `urllib`/`requests` and therefore through `socket`. It does
+NOT prove a compiled extension cannot call the OS directly: `_socket`, the C accelerator, still
+constructs a socket after these five names are cleared, and onnxruntime and zxing-cpp are both
+compiled. For that, the image's own egress rules are the control, not this script.
 
     DATABASE_URL=postgresql://x/y REDIS_URL=redis://localhost:6379/0 API_SECRET_KEY=x \
     ENVIRONMENT=test poetry run python scripts/prove_offline_engines.py
@@ -26,10 +34,20 @@ from __future__ import annotations
 import socket
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from PIL import Image, ImageDraw
+
+# Unconditionally, before the `app.*` imports inside `main()`: `python scripts/<this>.py` puts
+# `scripts/` on sys.path, not the repository root, and `pyproject.toml` is `package-mode = false`
+# so nothing installs `app` into the venv either. Without this the command this file's own
+# docstring gives died with `ModuleNotFoundError: No module named 'app'` (review round 3, I-1) —
+# and the in-process test could not see it, because pytest already has the repository root on the
+# path. `scripts/bootstrap_admin.py`'s idiom, verbatim, and five sibling scripts carry it.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 #: Every name in `socket` that hands back a usable connection. Removing all five is stricter than
 #: the suite's own `_no_stray_network` guard, which only refuses a non-local `connect`.

@@ -9,8 +9,11 @@ depend on a compiled wheel and a system OpenGL library; the point of the script 
 can run it against the real ones, which is what the report records."""
 from __future__ import annotations
 
+import os
 import runpy
 import socket
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -69,3 +72,30 @@ def test_the_script_runs_end_to_end_and_leaves_no_socket_open(
     printed = capsys.readouterr().out
     assert "socket.socket is None" in printed and "lines returned: 1" in printed
     assert socket.socket is None, "the script really did close the doors"
+
+
+def test_the_documented_command_runs_from_the_repository_root(tmp_path: Path) -> None:
+    """Review round 3, I-1: the `runpy` case above drives the script from INSIDE pytest, where the
+    repository root is already on `sys.path` — so it could never see the one thing that was broken.
+
+    `pyproject.toml` is `package-mode = false`, so nothing installs `app` into the venv; it resolves
+    only because the root is the working directory. `python scripts/<file>.py` puts `scripts/` on
+    `sys.path[0]` and NOT the root, so the command the script's own docstring and the plan both give
+    died with `ModuleNotFoundError: No module named 'app'` — M-8 asked for a RUNNABLE command.
+
+    A SUBPROCESS from the repository root, therefore, which is the only shape that can fail. The
+    engines are the stub pair through `PRIVACY_ENGINE_MODULE`, so this owes nothing to a compiled
+    wheel or to a system OpenGL library; what it proves is the bootstrap and the exit code."""
+    home = tmp_path / "home"
+    home.mkdir()
+    finished = subprocess.run(
+        [sys.executable, "scripts/prove_offline_engines.py"], cwd=ROOT, capture_output=True,
+        text=True, check=False,
+        env={**os.environ, "HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"),
+             "ENVIRONMENT": "test", "PRIVACY_ENGINE_MODULE": "tests.e2e.stub_engines",
+             "DATABASE_URL": "postgresql://x/y", "REDIS_URL": "redis://localhost:6379/0",
+             "API_SECRET_KEY": "x", "PYTHONPATH": ""},
+    )
+    assert finished.returncode == 0, finished.stderr
+    assert "socket.socket is None" in finished.stdout
+    assert "ocr engine: rapidocr-onnxruntime/" in finished.stdout
