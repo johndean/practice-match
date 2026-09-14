@@ -2280,3 +2280,72 @@ async def test_a_republish_sets_the_dedupe_key_whatever_the_path_spells(
                                  json={"action": "republish"}, headers=signed)
     assert response.status_code == 200, response.text
     assert redis.get(f"geocode:{listing_id}") is not None
+
+
+async def test_the_identity_documents_audit_sentence_is_what_the_seller_routes_write(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """Task SUPERSET-MINORS fix round 2 — re-review Minors 2 and 3, promoted by the controller
+    because an OPERATOR acts on this sentence.
+
+    `docs/RUNBOOK-identity.md` §4 and the identity spec's §4 addendum told an operator auditing
+    "did an admin use member powers?" that the only trace is the listing's own `listing.edit` audit
+    trail, for an admin "creating or editing a listing". Both halves were false for the common case:
+    `create` writes NO audit row, and `patch_step` writes `EDIT_ACTION` only inside `if re_entering:`
+    — only where the edit moves a listing in `EDIT_REENTERS_REVIEW` back to `in_review`. An admin who
+    created a listing and filled in its draft through the wizard left zero `listing.edit` rows, so
+    the operator would have concluded no member powers were used.
+
+    `tests/test_docs.py`'s two-document pin could not see that: it checked the NAME `EDIT_ACTION`
+    against `seller_listings`, never the CONDITION under which the row is written. This is the half
+    that reaches it — the three acts the sentence describes are DRIVEN here and the rows they leave
+    are counted, then the sentence both documents carry is required to say exactly that. Living in
+    this module rather than in `tests/test_docs.py` because it needs the API, the database and this
+    file's own seller fixtures; `tests/test_docs.py` owns the other direction (the composed sentence
+    is what the two markdown files must contain, byte for byte)."""
+    from app.api import seller_listings as SL
+    from tests.test_docs import d_c54_audit_consequence
+
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+
+    def listing_audit(listing_id: str) -> list[str]:
+        with conn.cursor() as cur:
+            cur.execute("SELECT action FROM audit_log WHERE target_type='listing' AND target_id=%s",
+                        (str(listing_id),))
+            return sorted(row[0] for row in cur.fetchall())
+
+    # 1. Creating a listing writes NO audit row — the claim the old sentence made loudest.
+    draft_id = await _create(client, cookies, headers)
+    assert listing_audit(draft_id) == [], "POST /api/seller/listings has grown an audit row"
+
+    # 2. ...and neither does editing it while it is a draft, which is most of a wizard session.
+    assert (await client.patch(f"/api/seller/listings/{draft_id}?step=1",
+                               json={"name": "A"}, headers=signed)).status_code == 200
+    assert listing_audit(draft_id) == [], "a DRAFT edit now writes an audit row"
+
+    # 3. The one edit that does write it, for each state `EDIT_REENTERS_REVIEW` names — a fresh
+    #    listing per state, so the count is that state's own and not a running total.
+    for state in sorted(SL.EDIT_REENTERS_REVIEW):
+        listing_id = await _create(client, cookies, headers)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE listing SET status=%s, name='A', city='C', zip='7', type='Small animal',"
+                        " est=1998, price=1, sqft=3000, state='TX', market='Austin, TX', area='C'"
+                        " WHERE id=%s", (state, listing_id))
+        assert (await client.patch(f"/api/seller/listings/{listing_id}?step=4",
+                                   json={"rooms": "6"}, headers=signed)).status_code == 200
+        assert listing_audit(listing_id) == [SL.EDIT_ACTION], (
+            f"an edit re-entering review from {state!r} no longer writes exactly one {SL.EDIT_ACTION} row"
+        )
+
+    # ...and the sentence the two identity documents carry says exactly what was just measured.
+    sentence = d_c54_audit_consequence()
+    states = " or ".join(f"`{state}`" for state in sorted(SL.EDIT_REENTERS_REVIEW))
+    assert f"`{SL.EDIT_ACTION}` lands only where an edit re-enters review from {states}" in sentence, (
+        "the identity documents' audit sentence does not state the CONDITION under which "
+        f"{SL.EDIT_ACTION} is written: {sentence!r}"
+    )
+    assert "(creating a listing and editing a draft write none)" in sentence, (
+        "the identity documents' audit sentence does not say that creating a listing and editing a "
+        f"draft leave no audit row, which is what this test just measured: {sentence!r}"
+    )
