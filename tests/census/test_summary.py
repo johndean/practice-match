@@ -39,6 +39,25 @@ MEASURED = [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000]
 QUANTILES = [18000.0, 30000.0, 50000.0, 70000.0, 82000.0]
 
 
+def drop_summary_cache() -> None:
+    """Drop only the keys THIS route writes, never the whole database (review 1, Minor-7).
+
+    `sync_redis()` here is the REAL client at `REDIS_URL`, whose `tests/conftest.py` default is
+    `redis://localhost:6380/0` — the shared compose stack's database 0, which also holds every
+    other worktree's warm market/listing cache, the local rate-limit buckets and the Celery
+    broker. `flushdb()` took all of it, and a reviewer running this file's own command cleared a
+    colleague's Redis on 2026-09-14. `tests/census/test_market_api.py`'s `client` fixture — which
+    every case in this file takes — already deletes `listing:*`, `backfill:*`, `gate:*` and
+    `market:*` by pattern for exactly that reason; `summary:*` is the one prefix it does not cover
+    and the only one this file needs, because the cache key is
+    `summary:{cbsa}:{vintages}:g{gate}:m{geo}` (`app/api/market.py`) and nothing else in the
+    database can serve this route a stale body.
+    """
+    r = sync_redis()
+    for key in r.scan_iter("summary:*"):
+        r.delete(key)
+
+
 def _tract(i: int) -> str:
     """A real-shaped Travis County tract geoid: state(2) + county(3) + tract(6), eleven digits."""
     return f"48453{i:06d}"
@@ -59,7 +78,7 @@ def seeded(conn):
     earlier test would otherwise be served to a later one. `tests/census/test_boundaries.py` does
     the same, for the same reason.
     """
-    sync_redis().flushdb()
+    drop_summary_cache()
     with conn.cursor() as cur:
         for key, vintage in (("tiger_cb", "2023"), ("acs5", "2019\u20132023"),
                              ("acs5_prior", "2014\u20132018"), ("cbp", "2022"), ("zbp", "2022")):
@@ -183,7 +202,7 @@ async def test_a_suppressed_or_absent_value_is_counted_and_never_summarised(clie
     # counts, and answers with NO figures at all (A21.2n/o's posture, one level down).
     with conn.cursor() as cur:
         cur.execute("UPDATE geo_metric SET suppressed = true, suppress_reason = 'high_moe' WHERE metric_key = 'median_hh_income'")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     income = _layer(body, "income")
     assert (income["median"], income["quantiles"]) == (None, None)
@@ -236,7 +255,7 @@ async def test_a_layer_whose_licence_is_not_cleared_carries_its_state_and_no_fig
         cur.execute("UPDATE dataset_registry SET license_status = 'blocked', notes = 'Licence refused by the vendor.' WHERE dataset_key = 'cbp'")
     gate.invalidate(sync_redis(), "zbp")
     gate.invalidate(sync_redis(), "cbp")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     comp = _layer(body, "competition")
     assert comp["state"] == "disabled"
@@ -257,7 +276,7 @@ async def test_growths_own_gate_is_the_prior_acs_vintage(client, seeded, conn, H
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5_prior'")
     gate.invalidate(sync_redis(), "acs5_prior")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     assert _layer(body, "growth")["state"] == "disabled"
     assert _layer(body, "income")["state"] == "enabled", "income must not follow growth's own gate"
@@ -270,7 +289,7 @@ async def test_growths_own_gate_is_the_prior_acs_vintage(client, seeded, conn, H
         cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5_prior'")
         cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
     gate.invalidate(sync_redis(), "acs5")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     assert _layer(body, "growth")["state"] == "disabled"
     assert _layer(body, "growth")["with_value"] == 0
@@ -404,7 +423,7 @@ def published(seeded, conn):
             cur.execute(
                 "INSERT INTO acs_measure (geo_id, summary_level, vintage, variable, estimate, moe, ingest_run_id) "
                 "VALUES ('12420','310',%s,%s,%s,%s,%s)", (vintage, variable, estimate, moe, run))
-    sync_redis().flushdb()
+    drop_summary_cache()
     return conn
 
 
@@ -467,7 +486,7 @@ async def test_a_published_figure_with_no_published_margin_is_not_served(client,
     with conn.cursor() as cur:
         cur.execute("UPDATE acs_measure SET moe = NULL WHERE variable = 'B19013_001E'")
         cur.execute("UPDATE acs_measure SET moe = 900000 WHERE variable = 'B11001_001E'")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     assert _layer(body, "income")["metro"] is None, "no margin, no published metro figure"
     assert _layer(body, "households")["metro"] is None, "a margin this wide is high_moe"
@@ -479,7 +498,7 @@ async def test_a_layer_whose_licence_is_not_cleared_carries_no_metro_figure(clie
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
     gate.invalidate(sync_redis(), "acs5")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     for key in ("income", "households", "pets", "growth"):
         assert _layer(body, key)["state"] == "disabled", key
@@ -491,7 +510,7 @@ async def test_growth_with_only_one_of_the_two_published_periods_serves_no_metro
     period is not a rate at all."""
     with conn.cursor() as cur:
         cur.execute("DELETE FROM acs_measure WHERE vintage = '2014\u20132018'")
-    sync_redis().flushdb()
+    drop_summary_cache()
     _r, body = await _body(client, H)
     assert _layer(body, "growth")["metro"] is None
     assert _layer(body, "income")["metro"] is not None, "income must not follow growth's own inputs"
@@ -515,7 +534,7 @@ async def test_a_row_the_census_published_no_estimate_for_is_skipped(client, pub
     coerced: `float(None)` here would take the whole route down for one metro."""
     with conn.cursor() as cur:
         cur.execute("UPDATE acs_measure SET estimate = NULL WHERE variable = 'B01003_001E'")
-    sync_redis().flushdb()
+    drop_summary_cache()
     r, body = await _body(client, H)
     assert r.status_code == 200
     assert _layer(body, "growth")["metro"] is None, "a rate was built from a figure the Census did not publish"

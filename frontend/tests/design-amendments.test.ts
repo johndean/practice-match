@@ -427,6 +427,10 @@ describe('local design amendments (spec D15)', () => {
     // the shape beneath it. Appended after A34 because A31.14c and A31.14d take the definition
     // sentence A34.8 and A34.7 wrote into the two footnotes.
     'A31.14a', 'A31.14b', 'A31.14c', 'A31.14d', 'A31.14e',
+    // A31.14f/A31.14g — fix round 1 (review 1's Important-2, 2026-09-14): a card whose headline
+    // is the METRO's own figure names ONE geography, on its note, and its source line carries the
+    // dataset alone — and `metaSource`'s own head comment says so.
+    'A31.14f', 'A31.14g',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -492,7 +496,12 @@ describe('local design amendments (spec D15)', () => {
     // gone under the bundle's own dead-code rule (A31.9).
     // …and A31.12 (fix round 1, 2026-09-13) takes the basis OFF the LOCATION arm: the card's
     // own note carries the geography there, so the source line carries the dataset alone.
-    expect(amended).toContain("            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),");
+    // A31.14f (SNAP-METRO fix round 1, review 1's Important-2, 2026-09-14) spells the same term
+    // for a served METRO figure, for the same reason: its geography is on the card's own note,
+    // so printing the map's would put a SECOND geography on the card, attached to the figure it
+    // does not describe. The derived path — no `metro` — keeps the map's geography, which IS
+    // what it measures.
+    expect(amended).toContain("            src: metaSource(k, (sel || metro) ? \"\" : (AREA_LABEL[k] || \"\")),");
     expect(amended, 'metaSource still glues a separator onto an empty basis')
       .toContain('  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;');
     expect(amended, 'the interim per-listing basis survived A31.8').not.toContain('stripBasis');
@@ -631,7 +640,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(356);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(358);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

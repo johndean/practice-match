@@ -161,7 +161,10 @@ const SYMBOL_KEYS = ["pets", "households", "competition"];
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
 // by its caller - the map's own geography for the legend and the tip, the map's community
-// notes, and the snapshot strip's AREA mode, which measures those same polygons.
+// notes, and the snapshot strip's AREA mode wherever the card's own headline IS those
+// polygons. A31.14f: where the route served the METRO's own figure the card's note carries
+// its geography, so the strip hands this line nothing and it prints the dataset alone,
+// exactly as LOCATION mode does.
 //
 // A34 (D-C51): all six layers declare a `dataset:` now, so the `source` arm below is the
 // guard for a key `LAYER_META` does not hold and nothing else - "" beats "undefined · X".
@@ -1139,7 +1142,12 @@ class Component extends DCLogic {
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis
             // printed ten times on one strip before this, four cards printing it twice.
-            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),
+            // A31.14f (review 1, Important-2): …and a card whose headline is the METRO's own
+            // figure has no geography left to give this line either - A31.14b's note carries
+            // it, and printing `· Census tract` under it would put a SECOND geography on the
+            // card, attached to the figure it does not describe. Same term, same reason, one
+            // fact per string; the derived path keeps the tract line, which is its own.
+            src: metaSource(k, (sel || metro) ? "" : (AREA_LABEL[k] || "")),
             bars: dist.map((b) => ({
               style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +
                 "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +

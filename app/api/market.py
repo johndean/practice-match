@@ -454,23 +454,35 @@ def _metro_figure(layer: str, measures: dict[tuple[str, str], tuple[float, float
         Census published beside it. `kind: "published"`.
       * `pets` and `growth` are not published for anything: `pets` is a published household count
         at the design's own documented rate and `growth` is the difference of two published
-        populations, both through `app.census.metrics` and never a second spelling of either
-        formula. `kind: "derived"`, and NO margin -- a rounded model output and a difference of
-        two ACS periods each have none to publish (`geo_metric._pets`/`_growth`' own rule).
+        METRO populations, both through `app.census.metrics` and never a second spelling of
+        either formula. `kind: "derived"`, and NO margin -- a rounded model output and a
+        difference of two ACS periods each have none to publish (`geo_metric._pets`/`_growth`'
+        own rule). GROWTH'S KIND IS MEASURED, not inherited from the brief, which asked for
+        `"published"` (review 1, Important-1): `acs_measure` carries `B01003_001E` at level 310
+        for BOTH ACS periods and carries no growth RATE at any level, so the GEOGRAPHY is the
+        metro's own and the STATISTIC is this pipeline's -- which is `derived`, and calling it
+        published would be the label the bullet below refuses for `econ`.
       * `econ` and `competition` are Business Patterns, which publishes nothing at summary level
-        310 in this database, so they answer `None` and the card keeps the median of its own
-        counties or ZIP areas. A SUM over those areas is deliberately NOT substituted: this
-        route's population is the metro's ENVELOPE (`_SUMMARY_SQL`'s `ST_Intersects`), which is
-        the right population for a DISTRIBUTION and the wrong one for a total -- it takes in
-        counties and ZIP areas outside the metro -- and ZIP Code Business Patterns withholds
-        every category under three establishments, so a ZCTA sum is a floor of unknown depth
-        (393 of Dallas's 535 ZIP areas, measured in A24 fix round 1). Recorded in the task
-        report, not solved by a number nobody can defend.
+        310, so they answer `None` and the card keeps the median of its own counties or ZIP
+        areas. **CONTROLLER RULING, 2026-09-14 (review 1, Important-1): serving NULL here is
+        RIGHT and the brief's own sentence asking for an AGGREGATE was wrong** -- the Census
+        publishes no metro-level average practice payroll and no metro establishment count at
+        NAICS 541940, so an aggregate would be a derived number wearing a published label, which
+        is the one thing D-C51 forbids. Two further facts stand behind it and are recorded rather
+        than lost: this route's population is the metro's ENVELOPE (`_SUMMARY_SQL`'s
+        `ST_Intersects`), the right population for a DISTRIBUTION and the wrong one for a total
+        -- it takes in counties and ZIP areas outside the metro -- and ZIP Code Business Patterns
+        withholds every category under three establishments, so a ZCTA sum is a floor of unknown
+        depth (393 of Dallas's 535 ZIP areas, measured in A24 fix round 1).
 
-    `_suppression` is the ONE decision about a margin, imported here exactly as
-    `app/census/geo_metric.py` imports it: a present estimate with no published margin is
-    unmeasured rather than certain, and a margin wide enough to fail `high_moe` hides the figure.
-    The metro headline cannot claim a confidence the tract layer beneath it would refuse."""
+    `_suppression` is the one decision about a margin ON THE PUBLISHED ARM, imported here exactly
+    as `app/census/geo_metric.py` imports it: a present estimate with no published margin is
+    unmeasured rather than certain, and a margin wide enough to fail `high_moe` hides the figure,
+    so the metro headline cannot claim a confidence the tract layer beneath it would refuse. The
+    DERIVED arm does not go through it and must not (review 1, Minor-5): a difference of two ACS
+    periods has no published combined margin at all, and `materialize.py` computes a place's
+    growth from the estimates alone for exactly that reason (`geo_metric._growth`'s own comment,
+    D-NS17) -- running a marginless figure through `_suppression` would withhold every one."""
     variable = METRO_VARIABLE.get("households" if layer == "pets" else layer)
     if variable is not None and acs is not None:
         found = measures.get((variable, acs))
@@ -863,8 +875,11 @@ async def summary(cbsa: str) -> Response:
         # the per-layer loop — four rows at most, and the same two ACS vintages the loop's own
         # figures are stamped with, so a cache key that already spans them spans these too. A
         # database with NO activated ACS vintage at all sends an empty array here and matches
-        # nothing, which is the same answer a guard would have given at the cost of a branch
-        # nothing can reach; `_metro_figure` returns `None` on that path anyway.
+        # nothing -- measured through the real asyncpg engine, `vintages=[]` gives 0 rows and no
+        # encoding error, the `CAST(... AS text[])` supplying the element type -- which is the
+        # same answer a guard would have given at the cost of a branch no TEST can reach (the
+        # STATE is reachable; its coverage is not -- review 1, Minor-4). `_metro_figure` returns
+        # `None` on that path anyway.
         vintages = [v for v in (act.get("acs5"), act.get("acs5_prior")) if v is not None]
         published: dict[tuple[str, str], tuple[float, float | None]] = {}
         for m in (await conn.execute(text(_METRO_ACS_SQL), {

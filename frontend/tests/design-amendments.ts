@@ -7513,7 +7513,7 @@ const A31_14c: Amendment = {
 const A31_14d: Amendment = {
   id: 'A31.14d', ...SNAPMETRO,
   find: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.</p>',
-  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.</p>',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.</p>',
   count: 1
 };
 
@@ -7534,6 +7534,63 @@ const A31_14e: Amendment = {
   id: 'A31.14e', ...SNAPMETRO,
   find: '      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",\n',
   replace: '      stripModeSub: sel ? (sel.communityLabel || "") : "The metro\u2019s own figures, with the Census areas the map shades beneath them",\n',
+  count: 1
+};
+
+/** A31.14f — the source line beneath a served metro figure. CHAINED on A31.12.
+ *
+ *  IMPORTANT-2 of review 1 (2026-09-14), ruled by the controller: **when the published metro
+ *  figure is shown the card names ONE geography, the metro, and the tract line belongs only to
+ *  the derived figure.**
+ *
+ *  MEASURED on the served path before this entry, through the real `Component`:
+ *
+ *      $98K   Census published for the metro          <- the CBSA's own level-310 estimate
+ *      [ five bars ]                                  <- the metro's Census TRACTS
+ *      U.S. Census ACS 5-year estimates (2023) · Census tract
+ *
+ *  Two geographies on one card, and the more source-like of them attached to the figure it does
+ *  NOT describe — which is D-C51's own complaint ("THEY ARE ALL LABELED THE SAME SO THE LOGIC
+ *  WOULD BE THEY ARE SAME"), one line below where A31.14b had just answered it. Worse, the same
+ *  line means two different things across one strip: on `econ` and `competition`, which have no
+ *  metro figure, `· County` and `· ZIP Code Tabulation Area` still describe the HEADLINE.
+ *
+ *  The fix is A31.12b's own rule, not a new one: "a caller with NO geography to name gets the
+ *  dataset alone". A card whose headline geography is already on its own note has none left to
+ *  give this line, exactly as LOCATION mode has none — so the same term that spells `sel` spells
+ *  `metro` beside it, and the bars' geography stays where A31.14c's footnote already puts it
+ *  ("with the bars beneath it the distribution across the metro's Census tracts, places,
+ *  counties or ZIP areas"). The DERIVED path is byte-identical: there the headline IS the
+ *  metro's tracts, so the line names them exactly as A31.12 left it. */
+const A31_14f: Amendment = {
+  id: 'A31.14f', ...SNAPMETRO,
+  find: '            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),\n',
+  replace: "            // A31.14f (review 1, Important-2): …and a card whose headline is the METRO's own\n"
+    + "            // figure has no geography left to give this line either - A31.14b's note carries\n"
+    + "            // it, and printing `\u00b7 Census tract` under it would put a SECOND geography on the\n"
+    + "            // card, attached to the figure it does not describe. Same term, same reason, one\n"
+    + "            // fact per string; the derived path keeps the tract line, which is its own.\n"
+    + '            src: metaSource(k, (sel || metro) ? "" : (AREA_LABEL[k] || "")),\n',
+  count: 1
+};
+
+/** A31.14g — the sentence A31.14f makes half-false, in `metaSource`'s own head comment.
+ *  Supersedes A34.3's own clause, which is the text standing at this line today.
+ *
+ *  The comment names the callers that hand this helper a geography: "the map's own geography for
+ *  the legend and the tip, the map's community notes, and the snapshot strip's AREA mode, which
+ *  measures those same polygons." From A31.14f the strip's AREA mode is no longer one of them
+ *  whenever the route served a metro figure — on four of six layers, on any real metro — and a
+ *  comment describing a rule the code no longer follows is the thing AMEND-GUARD exists to stop
+ *  being left behind. The first two members of the list stay byte for byte and the third gains
+ *  the condition it now carries; A34.3's own following paragraph is untouched. */
+const A31_14g: Amendment = {
+  id: 'A31.14g', ...SNAPMETRO,
+  find: "// notes, and the snapshot strip's AREA mode, which measures those same polygons.\n",
+  replace: "// notes, and the snapshot strip's AREA mode wherever the card's own headline IS those\n"
+    + "// polygons. A31.14f: where the route served the METRO's own figure the card's note carries\n"
+    + "// its geography, so the strip hands this line nothing and it prints the dataset alone,\n"
+    + "// exactly as LOCATION mode does.\n",
   count: 1
 };
 
@@ -7741,5 +7798,9 @@ export function amendments(): Amendment[] {
     // and A31.14e on A31.7 -- and two of those predecessors are A34's, which is why this block
     // runs after A34 rather than beside A31.13b. Definition order in this file matches this list
     // (m8).
-    A31_14a, A31_14b, A31_14c, A31_14d, A31_14e];
+    A31_14a, A31_14b, A31_14c, A31_14d, A31_14e,
+    // A31.14f/A31.14g -- fix round 1 (review 1's Important-2, 2026-09-14). A31.14f is CHAINED on
+    // A31.12's own `src:` line and A31.14g on A34.3's own clause in `metaSource`'s head comment,
+    // so both run after them, which appending the family last already guarantees.
+    A31_14f, A31_14g];
 }

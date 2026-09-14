@@ -6561,6 +6561,9 @@ describe('the Market snapshot AREA card prefers the metro’s own published figu
   });
   const card = (c: any, title = 'Median household income') =>
     c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === title)[0];
+  // The design's own `LAYER_META[k].dataset`, read through the design rather than retyped, so the
+  // assertions below cannot drift from the string the card actually composes.
+  const LAYER_DATASET = { income: 'U.S. Census ACS 5-year estimates (2023)' };
 
   it('the published metro figure is the headline and its own caption is the one the route sent', () => {
     const c: any = new Component(adapter());
@@ -6569,9 +6572,18 @@ describe('the Market snapshot AREA card prefers the metro’s own published figu
       mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
     });
     const income = card(c);
-    expect(income.value, 'the card still prints the median of the metro’s tracts').toBe(c.fmtMetric('income', 97638));
+    expect(income.value, 'the headline is the tract median, not the published metro figure').toBe(c.fmtMetric('income', 97638));
     expect(income.value).not.toBe(c.fmtMetric('income', 94801));
     expect(income.valueNote).toBe('Census published for the metro');
+    // IMPORTANT-2 (review 1, 2026-09-14). The card names ONE geography and it is the metro's:
+    // the note carries it and the source line carries the DATASET ALONE, which is A31.12b's own
+    // rule for a caller with no geography to name and exactly what LOCATION mode already does.
+    // Before this the card read "$98K · Census published for the metro" over "U.S. Census ACS
+    // 5-year estimates (2023) · Census tract" — two geographies, the more source-like of them
+    // attached to the figure it does not describe, which is the D-C51 defect this family exists
+    // to remove, one line down from where it removed it.
+    expect(income.src, 'the source line still names the TRACT beneath a metro figure').toBe(LAYER_DATASET.income);
+    expect(income.src).not.toContain('Census tract');
     // The BARS are untouched: they are the polygons the map shades, which is the shape this
     // figure sits in, and they are the whole reason the distribution is still fetched.
     expect(income.bars).toHaveLength(5);
@@ -6595,6 +6607,9 @@ describe('the Market snapshot AREA card prefers the metro’s own published figu
     c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: row(null) });
     expect(card(c).value).toBe(c.fmtMetric('income', 94801));
     expect(card(c).valueNote).toBe('median of 541 Census tracts');
+    // The DERIVED path is byte-identical: the figure IS the metro's tracts, so the source line
+    // names them exactly as it did before this family existed (A31.12's own output).
+    expect(card(c).src).toBe(`${LAYER_DATASET.income} · Census tract`);
     // …and a metro object whose own value is null is the same absence, not a headline of nothing.
     c.setState({ mdSummary: row({ value: null, moe: null, kind: 'published', basis: 'Census published for the metro' }) });
     expect(card(c).value).toBe(c.fmtMetric('income', 94801));
@@ -6638,9 +6653,10 @@ describe('the Market snapshot AREA card prefers the metro’s own published figu
     }
   });
 
-  it('the mode sub-line and both footnotes say what a metro figure is', () => {
-    // The three prose strings this family corrects — A31.7's sub-line and A34.7/A34.8's shared
-    // definition sentence — all of which claimed a metro figure is always a median of areas.
+  it('the AREA mode sub-line says what a metro figure is (A31.14e)', () => {
+    // A31.7's own sentence, one of the three prose strings this family corrects. The two
+    // FOOTNOTES (A31.14c, A31.14d) are template text and are asserted where template text is
+    // asserted — `tests/design-amendments.test.ts`'s own footnote case — not here.
     const c: any = new Component({});
     c.setState({ auth: true, screen: 'browse', market: AUSTIN });
     expect(c.renderVals().md.stripModeSub)

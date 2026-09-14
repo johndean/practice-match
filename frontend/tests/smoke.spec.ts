@@ -1911,17 +1911,26 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
     await expect(card).toContainText(`$${Math.round(PUBLISHED / 1000)}K`);
     await expect(card).toContainText(BASIS);
+    // IMPORTANT-2 (review 1, 2026-09-14): ONE geography on the card, and it is the metro's. The
+    // note carries it; the source line carries the DATASET ALONE, which is A31.12b's own rule for
+    // a caller with no geography to name and what LOCATION mode already does. Measured before the
+    // fix: "$98K · Census published for the metro" sat above "U.S. Census ACS 5-year estimates
+    // (2023) · Census tract" — two geographies, the source-looking one attached to the figure it
+    // does not describe, which is the D-C51 defect one line below where this family answered it.
+    await expect(card, 'the source line still names the TRACT beneath a metro figure').not.toContainText('Census tract');
     // …and the DERIVED figure it replaced is gone from the card, caption and all. Read off the
     // body the page was actually answered with rather than retyped, so the case cannot drift.
     expect(Math.round(median / 1000), 'the fixture median equals the published figure, so this case proves nothing')
       .not.toBe(Math.round(PUBLISHED / 1000));
-    await expect(card, 'the card still prints the median of the metro’s tracts').not.toContainText(`$${Math.round(median / 1000)}K`);
+    await expect(card, 'the headline is the tract median, not the published metro figure').not.toContainText(`$${Math.round(median / 1000)}K`);
     await expect(card, 'the derived caption survives beside a published figure').not.toContainText('median of');
     // The layers the route serves no metro figure for are UNTOUCHED — `econ` and `competition` are
     // Business Patterns, which publishes nothing at summary level 310, so those cards keep the
     // median of their own counties or ZIP areas and say so.
     const households = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Households' }).first();
     await expect(households).toContainText('median of');
+    // …and their source line KEEPS its geography, because there the headline IS those polygons.
+    await expect(households, 'the derived path lost the geography its own figure is measured at').toContainText('Census tract');
     console.log(`[A31.14] the income card reads "$${Math.round(PUBLISHED / 1000)}K · ${BASIS}" where the derived figure was $${Math.round(median / 1000)}K`);
     expect(errors).toEqual([]);
   });
