@@ -109,7 +109,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **(f) A guard must test the sentinel the producer actually emits.** Before writing any guard, run the real producer and print what it returns. Two this plan leans on, measured at `3a318aa`:
   - `permissions.effective_roles` returns `frozenset({'applicant'})` for **every** state but `active`, which is why `loadAdmin`'s guard does not restate `me.state === "active"`.
   - `frontend/src/auth/can.ts::can()` **THROWS** for a permission not in `MATRIX`. A typo in a `perm:` string is a `pageerror` Playwright fails on — deliberately, not a silent `false`.
-- **(g) NEVER edit an applied migration.** `scripts/migrate.py` records each file's SHA-256 and refuses a tree whose bytes moved. New files only. **The free range is `094` and up**: `migrations/` on `main` ends at `091_listing_provenance.sql`, and across every branch in the repo (`040`–`042` on the identifiability branches, `092`–`093` on `feat/admin-data-sources`) the highest reserved is **093**. This plan reserves **`094_request.sql`** (Task 8) and nothing else.
+- **(g) NEVER edit an applied migration.** `scripts/migrate.py` records each file's SHA-256 and refuses a tree whose bytes moved. New files only. **The free range is `097` and up** (see `docs/MIGRATIONS.md`, the one ledger — `092`–`094` are `feat/admin-data-sources`, `095` is `fix/census-204`): `migrations/` on `main` ends at `091_listing_provenance.sql`, and across every branch in the repo (`040`–`042` on the identifiability branches, `092`–`093` on `feat/admin-data-sources`) the highest claimed is **095**. This plan reserves **`096_request.sql`** (Task 8) and nothing else; claim it by adding its row to `docs/MIGRATIONS.md` in the same commit.
 - **(h) NO VERSION BUMP.** `frontend/package.json` and `pyproject.toml` stay at whatever `main` carries (0.1.25 at `3a318aa`). The lockstep bump and the release are the controller's, after acceptance. `tests/test_versions.py` keeps the two in step either way.
 - **(i) Playwright ports and databases never collide across worktrees, and there is NEVER a second compose stack.** The one dev stack is `docker compose -f docker-compose.dev.yml` on **5433** (Postgres) and **6380** (Redis) and it is shared; never start another on those ports or any other, and never `FLUSHDB` it. Each family exports, explicitly, in every shell that runs Playwright:
 
@@ -259,7 +259,7 @@ console.log(Object.keys(out).length+" baselines hashed");
 | `frontend/tests/screens.ts` | modify | the appended approved states | 5, 7, 13, 16, 19, 21, 23 |
 | `frontend/tests/harness.ts` | modify | the new collection stubs, per tab | 5, 7, 13, 16, 19, 21, 23 |
 | `frontend/tests/design-admin-settings.mjs`, `design-admin-requests.mjs`, `design-admin-tokens.mjs` | create | the oracle fixtures, derived from `adminVals()` | 5, 13, 19 |
-| `migrations/094_request.sql` | create | `request` + `request_event` | 8 |
+| `migrations/096_request.sql` | create | `request` + `request_event` | 8 |
 | `app/api/requests.py` | create | buyer + seller + admin request routes | 8, 9, 10 |
 | `app/api/seller_listings.py:1251-1297` | modify | the buyer-with-an-accepted-request arm of `read_document` | 9 |
 | `app/api/auth.py:287-302` | modify | `me_payload` gains `license_state` | 10 |
@@ -285,7 +285,7 @@ console.log(Object.keys(out).length+" baselines hashed");
 | 5 | A41 | Revoke through the dialog, the two real-browser states, the ledger |
 | 6 | A42 | `decideLicense` on the data-sources adapter, and the dialog's note slot |
 | 7 | A42 | Clear / Block on the Data Sources tab — the oracle and the ledger |
-| 8 | A43 | `migrations/094_request.sql` and the buyer routes |
+| 8 | A43 | `migrations/096_request.sql` and the buyer routes |
 | 9 | A43 | The seller routes, and the document packet the accept releases |
 | 10 | A43 | The admin routes, and `/api/me`'s two served facts |
 | 11 | A43 | `requests/buyer.ts`, `requests/seller.ts`, `admin/requests.ts` |
@@ -1899,14 +1899,14 @@ Hand back: the base and final SHAs, the baseline-hash diff, the three A42 entry 
 
 ---
 
-## Task 8: `migrations/094_request.sql` and the buyer routes (A43)
+## Task 8: `migrations/096_request.sql` and the buyer routes (A43)
 
 **There is no request table and no request route anywhere in the product.** The buyer's "I'm interested", My Requests, the seller inbox and the admin tab are four in-memory fixtures in `logic.js`. This is the build, and it starts with the model and the two routes the BUYER needs.
 
 **Re-basing states: NONE** (no design file changes). **The thirteen frozen hashes must not move.**
 
 **Files:**
-- Create: `migrations/094_request.sql`, `app/api/requests.py`, `tests/api/test_requests.py`
+- Create: `migrations/096_request.sql`, `app/api/requests.py`, `tests/api/test_requests.py`
 - Modify: `app/main.py` (mount `requests_router` inside the `site_mode == "app"` block, beside `listings_router`)
 - Modify: `docs/integrations/market-data-api.md`
 
@@ -1932,7 +1932,7 @@ Hand back: the base and final SHAs, the baseline-hash diff, the three A42 entry 
   ```
   **Task 9 adds `GET /api/seller/requests` and `POST /api/seller/requests/{id}/decide` to this same module; Task 10 adds the two admin routes. Neither re-shapes `RequestOut`.**
 
-- [ ] **Step 1: Write `migrations/094_request.sql`**
+- [ ] **Step 1: Write `migrations/096_request.sql`**
 
 ```sql
 -- The buyer's request to a seller, and its history (admin control surface spec §5).
@@ -2056,7 +2056,7 @@ surface spec §5).
 
 Before this module there was no `request` table and no request route anywhere in the product: the
 interest modal, My Requests, the seller inbox and the admin Requests tab were four in-memory
-fixtures in the design's own script. `migrations/094_request.sql` is the model.
+fixtures in the design's own script. `migrations/096_request.sql` is the model.
 
 Three statuses, V3's own three. The design's fourth pill — "Review", over a row reading "Volume
 pattern flagged automatically" — backs no detector and is NOT built; it stays an oracle-only
@@ -2200,7 +2200,7 @@ Expected: PASS.
 ```bash
 poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"
 poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100
-git add migrations/094_request.sql app/api/requests.py app/main.py tests/api/test_requests.py tests/api/conftest.py docs/integrations/market-data-api.md
+git add migrations/096_request.sql app/api/requests.py app/main.py tests/api/test_requests.py tests/api/conftest.py docs/integrations/market-data-api.md
 git commit -m "feat(requests): the request model, and the buyer's two routes
 
 There was no request table and no request route anywhere in the product.
@@ -2385,7 +2385,7 @@ The query already selects `l.documents_disclosed` and `l.status` and binds them 
 
 ```python
         # Owner, staff, or a buyer the SELLER accepted (Major-1, A-SL18 (1); the arm this comment
-        # has named since Task SL7 now exists — `migrations/094_request.sql`). All three terms are
+        # has named since Task SL7 now exists — `migrations/096_request.sql`). All three terms are
         # required, and each one is a different person's decision:
         #   * `documents_released` — the seller ACCEPTED this buyer's request (`POST
         #     /api/seller/requests/{id}/decide`), which is the act the design's own copy describes
