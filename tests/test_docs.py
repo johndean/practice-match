@@ -1592,6 +1592,253 @@ def test_the_identity_spec_permission_matrix_admin_column_matches_matrix_py():
     assert "D-C54, 2026-09-13" in section, "spec §4 does not date the admin-column correction to ruling D-C54"
 
 
+# --- Task SUPERSET-MINORS: D-C54's two accepted consequences, one fact in both documents ---------
+#
+# Fix round 1 (review Minors 1-5). The two sentences are still one fact in two documents, but the
+# pin no longer only compares the documents to each other: the token sentence is COMPOSED from the
+# constants it describes and the route family it names is checked against the app's own router
+# table, so a document and the code cannot drift apart in unison (Minor 5, the gap Minors 2 and 3
+# were the live instance of).
+#
+# Fix round 2 (re-review Minors 1-5). BOTH sentences are composed now, and neither types a number:
+# the member-action COUNT is derived from the matrix (re-review Minor 4), the `REAUTH` list is one
+# helper the §4 addendum and the spec's own §3 Automation-tokens paragraph share (re-review Minor
+# 1), and the audit sentence states the CONDITION under which the row it names is written, checked
+# against the routes themselves by
+# `tests/api/test_seller_listings.py::test_the_identity_documents_audit_sentence_is_what_the_seller_routes_write`
+# (re-review Minors 2 and 3, the controller's promoted ruling: an operator acts on this sentence).
+
+
+def reauth_actions() -> str:
+    """`REAUTH`'s own membership, spelled the way both identity paragraphs spell it.
+
+    Re-review Minor 1: the spec said the set two ways — §3's parenthetical listed FIVE human
+    phrases ("Revoke, licence decisions, engine activation, role grants, token creation") while §4's
+    addendum, composed from `PM.REAUTH`, listed six; `signups.notify` joined `REAUTH` at `0ebba68`
+    and §3 never followed. One helper, so the two paragraphs cannot count differently again."""
+    from app.auth import permissions as PM
+
+    return ", ".join(f"`{perm}`" for perm in sorted(PM.REAUTH))
+
+
+def member_actions() -> frozenset[str]:
+    """The permissions D-C54 added to `admin`: what a buyer or a seller holds and a reviewer does not.
+
+    Re-review Minor 4: the count was the one clause of the composed token sentence still TYPED, so a
+    seventh buyer/seller-only row would leave both identity documents saying "six" with the pin
+    green — the `_ADMIN` union at `app/auth/permissions.py` gives admin a new row automatically and
+    `tests/auth/test_matrix.py`'s superset assertion would not notice a stale word."""
+    from app.auth import permissions as PM
+
+    return PM.permissions_of(frozenset({"buyer", "seller"})) - PM.permissions_of(frozenset({"staff"}))
+
+
+def d_c54_audit_consequence() -> str:
+    """D-C54's audit-breadcrumb consequence, composed from the routes' own constants.
+
+    Re-review Minors 2 and 3, promoted by the controller because an operator ACTS on this sentence.
+    It used to read "an admin who acts as a seller (creating or editing a listing) … the only trace
+    an admin used member powers is the listing's own `listing.edit` audit trail", which is false for
+    the common case: `app/api/seller_listings.py`'s `create` writes NO audit row at all, and
+    `patch_step` writes `EDIT_ACTION` only inside `if re_entering:` — that is, only where the edit
+    moves a listing in `EDIT_REENTERS_REVIEW` back to `in_review`. An operator grepping `audit_log`
+    for `listing.edit` after reading runbook §4 would have found nothing for an admin who created a
+    listing and filled in its draft, and concluded no member powers were used.
+
+    Composed from `EDIT_ACTION` and `sorted(EDIT_REENTERS_REVIEW)` so the clause moves with the
+    condition rather than with the action's NAME alone — the name is what fix round 1 pinned, and a
+    name pin stays green while the sentence around it goes false."""
+    from app.api.seller_listings import EDIT_ACTION, EDIT_REENTERS_REVIEW
+
+    states = " or ".join(f"`{state}`" for state in sorted(EDIT_REENTERS_REVIEW))
+    return (
+        "an admin who acts as a seller leaves no `roles.grant` audit row the way a deliberate "
+        "self-grant of `seller` would have, because none is needed — and the trace is on the "
+        "listing side rather than the identity side: the listing's own `seller_id`, and the "
+        f"`listing.*` rows its own routes write, of which `{EDIT_ACTION}` lands only where an edit "
+        f"re-enters review from {states} (creating a listing and editing a draft write none)"
+    )
+
+
+def d_c54_token_consequence() -> str:
+    """D-C54's `api_token` consequence, composed from the two constants it describes.
+
+    Review Minors 2 and 3. The sentence this replaces said "`TOKEN_DENIED` (`tokens.manage`) is the
+    only thing an `api_token` is refused regardless of role", which is false about the code —
+    `app/auth/deps.py`'s `require` ALSO refuses a token principal of any role every `PM.REAUTH`
+    permission with `TokenCannotReauth`, and `deps.py`'s own comment says "The two things an
+    `api_token` can never do, whatever role it carries", as does the same spec's §3 Automation-tokens
+    paragraph ("two exceptions"). It also promised a `/api/requests/*` family that no router serves:
+    the three `request.*` rows gate PAGES, and `tests/auth/test_permissions.py` records that those
+    routes "do not exist until I4-I6".
+
+    Composing it from `PM.REAUTH` and `PM.TOKEN_DENIED` rather than typing it is what keeps it true:
+    add a permission to either constant and the expected sentence changes, so the pin below names
+    the stale one in both documents instead of going on comparing two copies of a wrong statement to
+    each other."""
+    from app.auth import permissions as PM
+
+    denied = ", ".join(f"`{perm}`" for perm in sorted(PM.TOKEN_DENIED))
+    count = NUMBER_WORDS[len(member_actions())].lower()
+    return (
+        f"an `api_token` minted for the `admin` role now also carries the {count} member actions "
+        "the superset added, exactly as a human admin's session does — the two refusals a token "
+        f"meets whatever role it carries are unchanged by this ruling: {denied} (`TOKEN_DENIED`), "
+        f"and every step-up action (`REAUTH`: {reauth_actions()}), which a token has no password "
+        "to re-authenticate with — so an automation token that only ever needed `page.admin`-family "
+        "permissions is, from this release on, also able to reach `/api/seller/*`"
+    )
+
+
+def _one_paragraph(section: str, opening: str, where: str) -> str:
+    """The one blank-line-delimited markdown paragraph in `section` that begins with `opening`.
+
+    Review Minor 4: the date and ruling-citation assertions used to read the whole §4 SECTION, where
+    "ruling D-C54, 2026-09-13" already appears in prose that predates the addendum — so they could
+    not fail for the paragraph they claimed to pin. Slicing the paragraph is also what scopes the
+    two sentences themselves: it keeps the section check (the paragraph has to be found inside §4)
+    and adds "…and in this paragraph, not merely somewhere in the section"."""
+    blocks = [block for block in section.split("\n\n") if block.lstrip().startswith(opening)]
+    assert len(blocks) == 1, f"{where}: expected exactly one paragraph opening {opening!r}, found {len(blocks)}"
+    return blocks[0]
+
+
+def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documents():
+    """Task SUPERSET-MINORS, re-review Minors 1 and 3 (the hotfix's two Informationals).
+
+    Ruling D-C54 made `admin` a superset, and two consequences were ACCEPTED rather than fixed: an
+    `api_token` minted for `admin` now reaches `/api/seller/*` too, and an admin who acts as a
+    seller leaves no `roles.grant` breadcrumb because none is needed. The hotfix's fix round wrote
+    both into `docs/RUNBOOK-identity.md` §4 only — the ruling named the identity SPEC, which is
+    where a decision lives, and which carried neither — so a reader following the release note to
+    the spec found nothing and could conclude neither had been considered. And the runbook's own
+    paragraph was pinned by nothing: the runbook test above asserts the superset sentence and the
+    `staff` sentence and stops there, so the consequences could be deleted or drift silently — the
+    class of drift that let `frontend/tests/targets.ts` read "fifteen" for a release.
+
+    So both documents carry the SAME two statements, and this is the one place that says so —
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document`'s arrangement, for the
+    same reason: two copies of one fact drift apart unless something compares them. Whitespace is
+    collapsed before comparing, because the two documents soft-wrap the same sentence at different
+    points.
+
+    Fix round 1 adds the half that arrangement cannot give on its own (review Minor 5): the token
+    sentence is composed from `PM.REAUTH`/`PM.TOKEN_DENIED`, the audit sentence has to name
+    `seller_listings.EDIT_ACTION`, and every `/api/…*` family the sentence promises is checked
+    against the app's own router table — so a change to a constant, an audit action or a route
+    prefix fails HERE, beside the sentence that has to be rewritten, instead of leaving two
+    identity documents lying in unison."""
+    from app.main import app
+    from tests.conftest import walk_routes
+
+    token_consequence = d_c54_token_consequence()
+    audit_consequence = d_c54_audit_consequence()
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+
+    assert "## 4. Roles" in runbook, "docs/RUNBOOK-identity.md §4 'Roles' is missing or retitled"
+    assert "## 4. Permission matrix" in spec, "spec §4 'Permission matrix' section is missing or retitled"
+    runbook_section = runbook.split("## 4. Roles", 1)[1].split("\n## ", 1)[0]
+    spec_section = spec.split("## 4. Permission matrix", 1)[1].split("\n## ", 1)[0]
+
+    runbook_name, spec_name = "docs/RUNBOOK-identity.md §4", "the identity spec §4"
+    runbook_paragraph = _one_paragraph(runbook_section, "Two consequences of the superset", runbook_name)
+    spec_paragraph = _one_paragraph(spec_section, "**§4 addendum", spec_name)
+
+    for name, paragraph in ((runbook_name, runbook_paragraph), (spec_name, spec_paragraph)):
+        flat = _collapse_whitespace(paragraph)
+        assert token_consequence in flat, (
+            f"{name}'s consequences paragraph does not state D-C54's accepted api_token consequence "
+            "in the words app/auth/permissions.py's REAUTH/TOKEN_DENIED compose (hotfix review "
+            f"Informational 1): {token_consequence!r}"
+        )
+        assert audit_consequence in flat, (
+            f"{name}'s consequences paragraph does not state D-C54's accepted audit-breadcrumb "
+            "consequence (hotfix review Informational 2)"
+        )
+        assert "Task ADMIN-SUPERSET fix round 1, review Informational 1/2" in flat, (
+            f"{name}'s consequences paragraph does not say which review accepted them"
+        )
+
+    # Scoped to the addendum itself, never to the section around it (Minor 4): spec §4's own
+    # admin-column note already reads "(ruling D-C54, 2026-09-13, John: …)". Matched on the
+    # COLLAPSED paragraph like every assertion above it (re-review Minor 5): the header sentence is
+    # 100 characters wide in a file soft-wrapped at 100, so a legitimate re-wrap that moves one line
+    # break used to fail this gate with the words unchanged.
+    for token in ("ruling D-C54", "2026-09-13"):
+        assert token in _collapse_whitespace(spec_paragraph), (
+            f"the spec's §4 addendum does not carry {token!r}"
+        )
+
+    # ...and every route family it promises is one the app actually serves (Minor 3): the sentence
+    # this replaces named `/api/requests/*`, which no router has ever mounted.
+    templates = {path for _method, path, _route in walk_routes(app.routes)}
+    families = re.findall(r"`(/api/[^`*]*)\*`", token_consequence)
+    assert families, "the api_token consequence names no route family at all"
+    for family in families:
+        assert any(path.startswith(family) for path in templates), (
+            f"the api_token consequence promises {family}* , which app.main serves no route under"
+        )
+
+
+def test_the_identity_spec_names_one_reauth_refusal_set_in_section_3_and_section_4():
+    """Re-review Minor 1. §3's Automation-tokens paragraph said a token "never satisfies a re-auth
+    gate (Revoke, licence decisions, engine activation, role grants, token creation)" — FIVE items —
+    while the §4 addendum, composed from `PM.REAUTH`, lists six: `signups.notify` joined `REAUTH` at
+    `0ebba68` (Task I5d.1) and §3's parenthetical never followed.
+
+    An automation author reads §3, concludes an admin `api_token` can drive
+    `POST /api/admin/signups/*/notify`, and meets 403 `REAUTH_TOKEN` — contradicted by the same
+    document forty lines below. Both paragraphs now spell the set through one helper, so they cannot
+    count differently again; the human phrases stay beside it, which is what §3 is for."""
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    paragraph = _collapse_whitespace(_one_paragraph(spec, "**Automation tokens", "the identity spec §3"))
+    assert f"`REAUTH`: {reauth_actions()}" in paragraph, (
+        "the identity spec's Automation-tokens paragraph does not name the re-auth refusal set the "
+        f"way app/auth/permissions.py's REAUTH composes it: `REAUTH`: {reauth_actions()}"
+    )
+
+
+APPLICATIONS_PRE_D_C54_SELLER_RULE = "already `active` with the buyer role"
+
+# Review Minor 1: the citation is INSIDE the pinned clause. It used to be a separate module-wide
+# `"D-C54" in prose`, which the `NotABuyer` docstring 72 lines above satisfied on its own, so the
+# comment could lose its citation with the test still green and its failure message still claiming
+# otherwise.
+APPLICATIONS_RULED_SELLER_RULE = (
+    "already `active` and allowed `seller.apply` — the buyer role, or `admin`, which has held every "
+    "permission the buyer role does since ruling D-C54 (2026-09-13)"
+)
+
+
+def test_the_seller_application_comment_states_the_ruled_rule_and_not_the_pre_d_c54_one():
+    """Task SUPERSET-MINORS, re-review Minor 2. `app/api/applications.py`'s `seller.apply` branch
+    carried a THIRD copy of the pre-D-C54 rule — "A seller application is made from an account that
+    is already `active` with the buyer role" — one line above the `NotABuyer` docstring the hotfix
+    had already corrected for the same reason. Since ruling D-C54 (2026-09-13) that branch refuses
+    on the PERMISSION (`PM.allowed("seller.apply", principal)`), which `admin` holds too, so the
+    comment stated a rule the code beneath it no longer applies and the next reader of this handler
+    would have learned the wrong one.
+
+    A grep rather than a behaviour: the behaviour is pinned already (`tests/auth/test_matrix.py`
+    proves `admin` holds every permission, `tests/api/test_applications.py` exercises the branch).
+    What drifted is the prose, so the prose is what this watches — the arrangement
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document` uses, old phrase absent
+    and new phrase present, so neither half can come back alone. Comment markers are stripped and
+    whitespace collapsed before comparing, because a soft-wrapped comment carries a `#` into the
+    middle of its own sentence."""
+    source = (ROOT / "app" / "api" / "applications.py").read_text()
+    prose = _collapse_whitespace(re.sub(r"(?m)^\s*#\s?", "", source))
+    assert APPLICATIONS_PRE_D_C54_SELLER_RULE not in prose, (
+        "app/api/applications.py still states the pre-D-C54 seller-application rule "
+        f"({APPLICATIONS_PRE_D_C54_SELLER_RULE!r}) — `admin` holds `seller.apply` too since 2026-09-13"
+    )
+    assert APPLICATIONS_RULED_SELLER_RULE in prose, (
+        "app/api/applications.py does not state the ruled seller-application rule, citation and all "
+        f"({APPLICATIONS_RULED_SELLER_RULE!r})"
+    )
+
+
 def test_deploy_md_documents_how_to_seed_qa():
     """The seed run is a hand operation on QA; DEPLOY.md is where hand operations live."""
     deploy = (ROOT / "DEPLOY.md").read_text()
