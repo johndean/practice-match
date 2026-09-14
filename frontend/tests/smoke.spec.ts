@@ -81,6 +81,59 @@ test.describe('smoke', () => {
   });
 
   // ---------------------------------------------------------------------------------------
+  // Task A39 (D-C53, 2026-09-13): a decision lands and the table it was taken on catches up.
+  //
+  // `admin/listings.ts` posted the decide and DISCARDED the updated draft the route has always
+  // answered with, so the pill, the buttons and the badge all stood until the reviewer reloaded
+  // the page — which is what made a reviewer press Publish a second time on a listing that was
+  // already published. Unit tests prove the adapter asks for the reload and `logic.test.ts` proves
+  // `loadAdmin` answers it; only a real browser can prove the two meet and the ROW changes.
+  //
+  // The queue is stubbed here rather than seeded, for `prepare()`'s own reason: this asserts the
+  // app's behaviour against a known payload, and the API path is pytest's. Registered AFTER
+  // `prepare()`, so it wins over the design-fixture page for this one test (Playwright matches the
+  // last registered handler first).
+  // ---------------------------------------------------------------------------------------
+  test('a Publish in Admin > Listings posts the decision and the row settles with no reload (A39)', async ({ page }) => {
+    await prepare(page);
+    const collection = new URL('/api/admin/listings', appOrigin()).href;
+    // `state` is set, so this is a REPUBLISH and the reviewer is asked for nothing (D12).
+    const row = (status: string) => ({
+      id: 'aaaaaaaa-0000-4000-8000-000000000001', status, name: 'Hill Country Animal Hospital',
+      type: 'Mixed', city: 'Bastrop', price: 860000, rev: null, docs: null, bldg: null,
+      state: 'TX', seller_name: 'Dr. Susan Ortiz', submitted_at: '2026-09-01T12:00:00Z',
+      listed_at: '2026-08-24T09:00:00Z', status_changed_at: null, status_changed_by: null,
+      decline_reason: null
+    });
+    let status = 'in_review';
+    await page.route((url) => url.href === collection || url.href.startsWith(`${collection}?`),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ items: [row(status)], next_cursor: null, counts: { in_review: status === 'in_review' ? 1 : 0, total: 1 } })
+      }));
+    const posted: unknown[] = [];
+    await page.route((url) => url.href.startsWith(`${collection}/`) && url.href.endsWith('/decide'), (route) => {
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      status = 'published';
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row('published')) });
+    });
+
+    await signInAs(page, 'design', '/admin');
+    await page.getByRole('button', { name: /^Listings\s*1$/ }).first().click();
+    await expect(page.getByText('In review', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+
+    // The pill, the buttons and the badge — all three from the RE-READ, none of them from a reload.
+    await expect(page.getByText('Published', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unpublish', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Listings\s*0$/ })).toBeVisible();
+    expect(posted, 'the decision the API was actually asked for').toEqual([{ action: 'publish', reason: '' }]);
+    await expect(page, 'the page never navigated').toHaveURL(/\/admin\?tab=listings$/);
+  });
+
+  // ---------------------------------------------------------------------------------------
   // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
   // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
   // need to see it all!!!"

@@ -18,5 +18,15 @@
     "anchor": "    sub: \"Total households by Census tract · ACS 5-year\",",
     "offset": 2,
     "why": "A24.35's consumer, with the same ambiguity for the same reason: A24.46 (income) and A24.47 (households) also write identical `dataset:` lines. The ledger's own rule decides it by the `find` anchor each carries — A24.46 declares A24.36, A24.47 declares A24.35 — so A24.47's line is the households card's."
+  },
+  "A39.4": {
+    "anchor": "    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());",
+    "offset": -1,
+    "why": "A39.4's `replace` CARRIES A40.4's `this.loadAdmin();` forward and adds the `onDecision` line beneath it, so its own output is those two lines and its range starts on the first. `this.loadAdmin();` is not unique (A40.6 writes it inside its own line too), so the pin names the line that IS unique — the `onDecision` arming — and steps one line up. Without it the re-mapper's nearest-anchor rung chose 2159 for a −9 line shift whose gap between this entry's own anchors is 1, and the +1 slip then rode forward through every later renumbering (fix round 2, re-review Minor 4)."
+  },
+  "A39.5": {
+    "anchor": "    const token = this._adminLoad = (this._adminLoad || 0) + 1;",
+    "offset": 0,
+    "why": "A39.4's twin, one rung down the same slip: A39.5 rewrites A39.2's whole `adminListings` line and puts the token line above it, so its own output is those two lines and the range starts on the token — the line that IS the amendment. The nearest-anchor rung chose 3204 (the `loads.push` line) for a −43 line shift, which ends the range on A40.3's own `return Promise.all(loads);` — a line this entry did not write."
   }
 }
