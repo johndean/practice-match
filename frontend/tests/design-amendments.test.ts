@@ -426,8 +426,20 @@ describe('local design amendments (spec D15)', () => {
     // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
     // fixture rows, so taking a button out afterwards would be an entry eating text an
     // earlier entry had just put there (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both
-    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40.
-    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3a', 'A38.3b', 'A38.3c',
+    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40 —
+    // and BEFORE A39, whose A39.2/A39.5 rewrite the same `adminListings` line A38.2 anchors on.
+    // A38.3a and A38.3b are RETIRED, not missing: A39.3b and A39.3a are the same two edits and
+    // reached main first, and the two pairs cannot coexist (see `design-amendments.ts`). Their
+    // ids may not be reused.
+    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3c',
+    // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
+    // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
+    // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
+    // `adminListings` line and A39.4 reads A40.4's, which is A24's own precedent for a family
+    // whose id is lower than the one it chains on.
+    'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
+    // Fix round 1 (review Minor-3, 2026-09-14): A39.5 is CHAINED on A39.2 and consumes it.
+    'A39.5',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -624,7 +636,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(358);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(362);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

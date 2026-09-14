@@ -8,6 +8,10 @@ import {
   type Cell, type ListingItem, type ListingsUi
 } from './listings';
 
+/** `list()` answers a PAGE now (A39, ruling 1) — the rows the table renders and the number the
+ *  tab badges. Every case below that only cares about the rows reads them through this. */
+const listRows = async (): Promise<Cell[][]> => (await makeAdminListingsAdapter().list()).rows;
+
 // ---------------------------------------------------------------------------------------
 // The design's OWN `adminVals()` output is the oracle for every style string below — exactly
 // `admin/users.test.ts`'s own method, applied a second time so a drift in either copy fails on
@@ -46,7 +50,11 @@ function recordingUi(note: string | null = 'a reviewer note', fields: { state: s
 const BASE: ListingItem = {
   id: 'l1', status: 'in_review', name: 'Mixed practice', type: 'Mixed', city: 'Bastrop',
   price: 860000, rev: 1200000, docs: 2, bldg: 'Leased', state: null, seller_name: 'Dr. Susan Ortiz',
-  submitted_at: '2026-09-01T12:00:00Z'
+  submitted_at: '2026-09-01T12:00:00Z',
+  // A39: the three the queue now serves beside the draft (`app/api/admin_listings.py::list_all`)
+  // and the decline reason `serialise_draft` has carried since A-SL19 (9).
+  listed_at: '2026-08-24T09:00:00Z', status_changed_at: '2026-08-12T18:30:00Z',
+  status_changed_by: 'buyer,seller', decline_reason: null
 };
 const item = (over: Partial<ListingItem>): ListingItem => ({ ...BASE, ...over });
 const rowsFor = (items: ListingItem[]): Cell[][] => toListingRows(items, recordingUi().ui);
@@ -55,7 +63,9 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
   it('reproduces the listing and figures cells the approved design shows for an in-review row', () => {
     const [row] = rowsFor([BASE]);
     expect(row[0]).toMatchObject({ hasMain: true, main: 'Mixed practice — Bastrop', hasSub: true, sub: 'Submitted September 1' });
-    expect(row[1]).toMatchObject({ hasMain: true, main: 'Dr. Susan Ortiz', hasSub: true, sub: '$860K asking · $1.20M revenue · 2 doctors · building leased' });
+    // A39: an in-review listing is not on the market, and the row says so — the design's own
+    // words from its own Paused row, now on every status a buyer cannot find.
+    expect(row[1]).toMatchObject({ hasMain: true, main: 'Dr. Susan Ortiz', hasSub: true, sub: '$860K asking · $1.20M revenue · 2 doctors · building leased · hidden from search' });
     expect(row[2]).toMatchObject({ pill: 'In review', pillStyle: PILL.warn });
   });
 
@@ -64,14 +74,26 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
     expect(row[0].main).toBe('Untitled listing');
   });
 
-  it('falls back to "Small animal" when the type is not yet set, and to "Asking price not set"', () => {
+  it('never calls a listing of unknown type a "Small animal practice" (fix round 1, D-C53)', () => {
+    // This was the one place left on the tab that FABRICATED a datum: a listing whose `type` is
+    // null rendered "Small animal practice — Bastrop", a clinical category no seller had chosen
+    // and no column held, on a screen whose whole ruling is "zero-fake data". The honest copy was
+    // already in the same expression — the seller dashboard's own "Untitled listing", which is
+    // what a row with nothing to name itself by has always read.
     const [row] = rowsFor([item({ type: null, price: null })]);
-    expect(row[0].main).toBe('Small animal practice — Bastrop');
+    expect(row[0].main).toBe('Untitled listing');
+    expect(row[0].main).not.toContain('Small animal');
+    // The absent price is still named as absent rather than omitted: a row with no asking price
+    // is a real state of a real draft, and "Asking price not set" states it.
     expect(row[1].sub.startsWith('Asking price not set')).toBe(true);
   });
 
+  it('...and still names the practice when the type IS set', () => {
+    expect(rowsFor([item({ type: 'Mixed' })])[0][0].main).toBe('Mixed practice — Bastrop');
+  });
+
   it('omits a figure the listing does not have, rather than inventing one', () => {
-    const [row] = rowsFor([item({ rev: null, docs: null, bldg: null })]);
+    const [row] = rowsFor([item({ rev: null, docs: null, bldg: null, status: 'published' })]);
     expect(row[1].sub).toBe('$860K asking');
   });
 
@@ -149,47 +171,149 @@ describe('the pill and the decision buttons, per listing status', () => {
     expect(pillOf('paused')).toMatchObject({ pill: 'Paused', pillStyle: PILL.info });
   });
 
-  it('shows the status itself, muted, for a status the design never pictured here', () => {
-    // `draft`, `withdrawn` and `declined` are real `listing.status` values with no ruled Admin
-    // Listings pill (D24 (4)) — the state key stands rather than prose nobody approved, exactly
-    // `admin/users.ts`'s own fallback for an unpictured account state. The "mute" tone comes from
-    // this module's own `cell()`, not a hand-transcribed hex string.
+  it('names draft, withdrawn and declined in the mute tone, never their raw key (A39, ruling 5)', () => {
+    // Until this task these three rendered the COLUMN's own value — "in_review" would have, too,
+    // had the design not pictured it — so a reviewer read `withdrawn` where every other row read
+    // English. The words are John's ruling; the "mute" tone comes from this module's own `cell()`,
+    // not a hand-transcribed hex string, and it is the tone the design itself gives an inactive
+    // pill (`cell()`'s own default).
     const mute = cell(null, null, null, 'no-such-tone').pillStyle;
-    for (const status of ['draft', 'withdrawn', 'declined']) {
-      expect(pillOf(status)).toMatchObject({ pill: status, pillStyle: mute });
+    for (const [status, label] of [['draft', 'Draft'], ['withdrawn', 'Withdrawn'], ['declined', 'Declined']]) {
+      expect(pillOf(status)).toMatchObject({ pill: label, pillStyle: mute });
     }
   });
 
-  it('offers the buttons the approved design shows for in-review, published and paused rows', () => {
-    // A-SL33 (3), fix round 1 on the SL8 review's Important finding: "Edit" (published) and
-    // "Contact seller" (paused) are the design's own remaining buttons — no decision backs
-    // either, so both render as the design's own no-op, never dropped.
-    expect(buttonsOf('in_review').actions.map((a) => [a.label, a.style])).toEqual([['Publish', BTN.primary], ['Reject', BTN.danger]]);
-    expect(buttonsOf('published').actions.map((a) => [a.label, a.style])).toEqual([['Unpublish', BTN.plain], ['Edit', BTN.plain]]);
-    expect(buttonsOf('paused').actions.map((a) => [a.label, a.style])).toEqual([['Contact seller', BTN.plain]]);
+  it('a status this table does not know renders muted rather than blank — the `??` that is left', () => {
+    // No `listing.status` value reaches this any more (the case below pins that all six are
+    // named), and it is not inert: `STATUSES` mirrors the column's own CHECK, so a seventh value
+    // added there and not here would otherwise render `undefined`. "flagged" is the design's own
+    // fifth fixture row, which is exactly such a status — pictured, backed by no column, and
+    // unreachable from real data (A-SL24 (4)).
+    const mute = cell(null, null, null, 'no-such-tone').pillStyle;
+    expect(pillOf('flagged')).toMatchObject({ pill: 'flagged', pillStyle: mute });
+    expect(buttonsOf('flagged')).toMatchObject({ hasActions: false, actions: [] });
   });
 
-  it('offers no button on a status the design never pictured at all (draft, withdrawn, declined)', () => {
-    for (const status of ['draft', 'withdrawn', 'declined']) {
+  it('has a pill for every status `listing.status` can hold, so no raw key can reach the table', () => {
+    // The `??` fallback in `toListingRows` still stands — a status added to the column and not to
+    // this table renders muted rather than blank — but no value the API can report reaches it now.
+    // `tests/test_docs.py::test_the_admin_listings_table_matches_the_api` pins the other direction.
+    expect(Object.keys(PILLS).sort()).toEqual(['declined', 'draft', 'in_review', 'paused', 'published', 'withdrawn']);
+  });
+
+  it('offers the decisions the API really allows, and Publish on the two rows a reversal is legal from', () => {
+    // Ruling 3 (D-C53): `DECISIONS['publish']` has always allowed `declined` and `paused`, and the
+    // tab's own footnote promises unpublishing is "immediate and reversible" — so the design's own
+    // primary Publish button appears there. Ruling 4: "Edit" and "Contact seller" are GONE
+    // (superseding A-SL33 (3)) — no route, no status transition, no audit row, so under D-C53 they
+    // are not buttons. Every style below is the DESIGN's own, read off `adminVals()`.
+    expect(buttonsOf('in_review').actions.map((a) => [a.label, a.style])).toEqual([['Publish', BTN.primary], ['Reject', BTN.danger]]);
+    expect(buttonsOf('published').actions.map((a) => [a.label, a.style])).toEqual([['Unpublish', BTN.plain]]);
+    expect(buttonsOf('paused').actions.map((a) => [a.label, a.style])).toEqual([['Publish', BTN.primary]]);
+    expect(buttonsOf('declined').actions.map((a) => [a.label, a.style])).toEqual([['Publish', BTN.primary]]);
+  });
+
+  it('offers nothing on the two statuses no decision can move (draft, withdrawn)', () => {
+    for (const status of ['draft', 'withdrawn']) {
       expect(buttonsOf(status)).toMatchObject({ hasActions: false, actions: [] });
     }
   });
 
-  // A-SL33 (3): the review's own point — a status-by-status literal like the two tests above can
-  // silently go stale if the design's own row ever changes. This pins the LIVE label set for every
-  // one of the three statuses `adminVals()` pictures directly against ITS OWN row, so a future
-  // edit that drops (or adds) a button fails here without anyone having to remember to update a
-  // hand-typed expectation.
-  it('the action label set for every status the design pictures matches adminVals()\'s own row, directly', () => {
-    const labelsOf = (row: Cell[]) => row[3].actions.map((a) => a.label);
-    expect(buttonsOf('in_review').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[0]));
-    expect(buttonsOf('published').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[2]));
-    expect(buttonsOf('paused').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[3]));
+  it('no button on the tab is a no-op: every one of them carries a decision (ruling 4, D-C53)', () => {
+    // A-SL33 (3) kept "Edit" and "Contact seller" as the design's own inert buttons; D-C53
+    // supersedes it — "a button that does nothing is removed by amendment". This is the pin that
+    // says so in terms nothing can quietly re-add: every label the live table offers, on every
+    // status, is one of the three the API decides.
+    const decided = new Set(['Publish', 'Reject', 'Unpublish']);
+    for (const status of ['draft', 'in_review', 'published', 'paused', 'withdrawn', 'declined']) {
+      for (const a of buttonsOf(status).actions) expect(decided, `${status}: ${a.label}`).toContain(a.label);
+    }
   });
 
-  it('covers exactly the three statuses the design pictures, and no fourth', () => {
-    expect(Object.keys(PILLS)).toEqual(['in_review', 'published', 'paused']);
-    expect(Object.keys(ACTIONS)).toEqual(['in_review', 'published']);
+  // A-SL33 (3)'s own point, kept and re-aimed: a hand-typed style string can silently go stale.
+  // The live table's every button and every pill is COMPOSED from the design's own elements
+  // (John's 2026-09-13 decision, the A8 precedent), so each style is compared against the one
+  // `adminVals()` itself computes — the Publish button paused and declined rows now carry is the
+  // design's own In-review Publish, byte for byte, and not a new control.
+  it('every live button and pill wears a style the design itself computes', () => {
+    const designStyles = new Set(DESIGN.flatMap((row) => row[3].actions.map((a) => a.style)));
+    const designPills = new Set(DESIGN.map((row) => row[2].pillStyle));
+    for (const status of ['draft', 'in_review', 'published', 'paused', 'withdrawn', 'declined']) {
+      for (const a of buttonsOf(status).actions) expect(designStyles, `${status}: ${a.label}`).toContain(a.style);
+      if (PILLS[status][1] !== 'mute') expect(designPills, status).toContain(pillOf(status).pillStyle);
+    }
+  });
+
+  it('covers the four statuses a decision is legal from, and no fifth', () => {
+    expect(Object.keys(ACTIONS)).toEqual(['in_review', 'published', 'paused', 'declined']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A39, ruling 5 (D-C53): the sub-lines. Until this task every row read "Submitted <date>" — the
+// only date the payload carried — so a listing published in March and a listing paused yesterday
+// both reported the day their seller pressed Submit, and the design's own "Published August 24",
+// "Paused by seller August 12" and "hidden from search" had no producer at all.
+// ---------------------------------------------------------------------------------------
+describe('the sub-line each status carries, from the dates the queue now serves', () => {
+  const subOf = (over: Partial<ListingItem>) => rowsFor([item(over)])[0][0];
+  const figuresOf = (over: Partial<ListingItem>) => rowsFor([item(over)])[0][1].sub;
+
+  it('dates a published row by `listed_at`, the day it reached the market', () => {
+    // NOT `submitted_at`, and not `updated_at`: `listed_at` is stamped at the FIRST publish and
+    // never again (`admin_listings.decide_listing`), which is the date a buyer has seen.
+    expect(subOf({ status: 'published' }).sub).toBe('Published August 24');
+  });
+
+  it('names the seller when the seller paused it, and the reviewer when a reviewer unpublished it', () => {
+    // Two doors reach `paused` — the seller's own `POST /api/seller/listings/{id}/status` and the
+    // reviewer's `unpublish` — and the audit row's `actor_role` is the only thing in the payload
+    // that tells them apart (ruling 5).
+    expect(subOf({ status: 'paused', status_changed_by: 'buyer,seller' }).sub).toBe('Paused by seller August 12');
+    expect(subOf({ status: 'paused', status_changed_by: 'seller' }).sub).toBe('Paused by seller August 12');
+    expect(subOf({ status: 'paused', status_changed_by: 'staff' }).sub).toBe('Unpublished by reviewer August 12');
+    expect(subOf({ status: 'paused', status_changed_by: 'admin,buyer' }).sub).toBe('Unpublished by reviewer August 12');
+    // `app/auth/audit.py` prefixes a CI token's roles with `token:` and writes `legacy:operator`
+    // for the operator secret, which holds no account at all; neither is the seller.
+    expect(subOf({ status: 'paused', status_changed_by: 'token:staff' }).sub).toBe('Unpublished by reviewer August 12');
+    expect(subOf({ status: 'paused', status_changed_by: 'legacy:operator' }).sub).toBe('Unpublished by reviewer August 12');
+    expect(subOf({ status: 'paused', status_changed_by: null }).sub).toBe('Unpublished by reviewer August 12');
+  });
+
+  it('reads an account holding BOTH roles as the reviewer — the one case the role list cannot settle', () => {
+    // Recorded rather than hidden: `actor_role` is a role LIST, and an account that is both a
+    // seller and a reviewer (John's own all-roles persona is) pausing its OWN listing is written
+    // exactly as a reviewer unpublishing somebody else's. The unambiguous discriminator is the
+    // audit ACTION, which names the route; ruling 5 names `actor_role`, so this is what it says.
+    expect(subOf({ status: 'paused', status_changed_by: 'admin,buyer,seller,staff' }).sub).toBe('Unpublished by reviewer August 12');
+  });
+
+  it('says nothing where there is no date to say it with, rather than a guess', () => {
+    expect(subOf({ status: 'published', listed_at: null })).toMatchObject({ hasSub: false, sub: '' });
+    expect(subOf({ status: 'paused', status_changed_at: null })).toMatchObject({ hasSub: false, sub: '' });
+  });
+
+  it('gives a declined row the reviewer\'s own reason, which is the one thing its seller needs', () => {
+    expect(subOf({ status: 'declined', decline_reason: 'The revenue figures do not match the returns.' }).sub)
+      .toBe('The revenue figures do not match the returns.');
+  });
+
+  it('...and falls back to the submission line where no reason was ever recorded', () => {
+    expect(subOf({ status: 'declined' }).sub).toBe('Submitted September 1');
+  });
+
+  it('leaves every other status on the submission line it already had', () => {
+    for (const status of ['draft', 'in_review', 'withdrawn']) expect(subOf({ status }).sub, status).toBe('Submitted September 1');
+  });
+
+  it('says "hidden from search" on every status a buyer cannot find, and on none they can', () => {
+    // The design's own words, from its own Paused row — and true of all five: `GET /api/listings`
+    // serves `status = 'published'` alone. The footnote above the table has always said it; the
+    // rows said it on one status out of five.
+    for (const status of ['draft', 'in_review', 'paused', 'withdrawn', 'declined']) {
+      expect(figuresOf({ status }).endsWith(' · hidden from search'), status).toBe(true);
+    }
+    expect(figuresOf({ status: 'published' })).not.toContain('hidden from search');
   });
 });
 
@@ -248,8 +372,8 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('lists one page, mapped through toListingRows, with the double-submit token on the decide alone', async () => {
-    const calls = stubFetch({ status: 200, body: { items: [BASE], next_cursor: null } });
-    const rows = await makeAdminListingsAdapter().list();
+    const calls = stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [BASE], next_cursor: null } });
+    const rows = await listRows();
     expect(rows).toHaveLength(1);
     expect(rows[0][0].main).toBe('Mixed practice — Bastrop');
     expect(calls).toHaveLength(1);
@@ -258,13 +382,39 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
   });
 
   it('follows next_cursor to the end, the way the seller dashboard\'s own list() does', async () => {
+    // The second page carries NO `counts`, which is the envelope `list_all` really answers a
+    // continuation request with (fix round 1, M-1): the badge is a fact about the table, an
+    // unindexed `count(*)` to compute, and the route stops paying for it once a `cursor` is given.
     const calls = stubFetch(
-      { status: 200, body: { items: [item({ id: 'l1' })], next_cursor: '2026-09-01T00:00:00Z|l1' } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ id: 'l1' })], next_cursor: '2026-09-01T00:00:00Z|l1' } },
       { status: 200, body: { items: [item({ id: 'l2' })], next_cursor: null } }
     );
-    const rows = await makeAdminListingsAdapter().list();
+    const { rows, counts } = await makeAdminListingsAdapter().list();
     expect(rows).toHaveLength(2);
     expect(calls[1].url).toContain('cursor=2026-09-01T00%3A00%3A00Z%7Cl1');
+    expect(counts, 'a continuation page without counts is not an error').toEqual({ in_review: 1 });
+  });
+
+  it('takes the badge off the FIRST page and lets no later page move it (fix round 2, Minor 1)', async () => {
+    // Both halves of M-1's client rule, which nothing held before this case. A regression in
+    // either direction is invisible at 100 % coverage: demanding `counts` on every page throws
+    // "the review queue answered no counts" on page 2, and A39.2's rejection arm then empties the
+    // table and blanks the badge for every reviewer; letting a later page WRITE the badge would
+    // show a number the route no longer sends and nobody measured.
+    stubFetch(
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ id: 'l1' })], next_cursor: '2026-09-01T00:00:00Z|l1' } },
+      { status: 200, body: { counts: { in_review: 99 }, items: [item({ id: 'l2' })], next_cursor: null } }
+    );
+    const { rows, counts } = await makeAdminListingsAdapter().list();
+    expect(rows).toHaveLength(2);
+    expect(counts, 'page 1 answered the badge; page 2 cannot move it').toEqual({ in_review: 1 });
+  });
+
+  it('...and a FIRST page with no counts is still refused', async () => {
+    // The rule is "the first page alone", not "whichever page happens to carry one": a queue that
+    // answers no badge at all is the case `items`' own guard exists for.
+    stubFetch({ status: 200, body: { items: [item({ id: 'l1' })], next_cursor: null } });
+    await expect(makeAdminListingsAdapter().list()).rejects.toThrow('no counts');
   });
 
   it('rejects when the queue cannot be read, or answers no items', async () => {
@@ -276,11 +426,11 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
 
   it('decides through the browser\'s own prompts, and posts the double-submit token', async () => {
     const calls = stubFetch(
-      { status: 200, body: { items: [item({ status: 'in_review', state: null })], next_cursor: null } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review', state: null })], next_cursor: null } },
       { status: 200, body: {} }
     );
     vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('TX').mockReturnValueOnce('Austin, TX'));
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Publish')!.go();
     expect(calls[1].url).toBe('/api/admin/listings/l1/decide');
     expect(calls[1].init.headers['X-CSRF-Token']).toBe('tok123');
@@ -289,12 +439,12 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
 
   it('alerts the reviewer, rather than failing silently, when the decide is refused', async () => {
     stubFetch(
-      { status: 200, body: { items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
       { status: 409, body: { error: { code: 'STATE', message: 'cannot unpublish a listing in state paused' } } }
     );
     const alertSpy = vi.fn();
     vi.stubGlobal('alert', alertSpy);
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
     expect(alertSpy).toHaveBeenCalledWith('cannot unpublish a listing in state paused');
   });
@@ -303,43 +453,172 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
     // The `??` fallback: a decide refusal whose body is not the A5 envelope shape at all (a proxy
     // error page, say) rather than one that names the field or the reason.
     stubFetch(
-      { status: 200, body: { items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
       { status: 502, body: {} }
     );
     const alertSpy = vi.fn();
     vi.stubGlobal('alert', alertSpy);
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
     expect(alertSpy).toHaveBeenCalledWith('That listing could not be unpublished.');
   });
 
   it('asks for a decline reason through the browser\'s own prompt, and sends it', async () => {
     const calls = stubFetch(
-      { status: 200, body: { items: [item({ status: 'in_review' })], next_cursor: null } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review' })], next_cursor: null } },
       { status: 200, body: {} }
     );
     const promptSpy = vi.fn().mockReturnValueOnce('affiliation could not be verified');
     vi.stubGlobal('prompt', promptSpy);
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
     expect(promptSpy).toHaveBeenCalledWith('Why is this listing being rejected?');
     expect(JSON.parse(calls[1].init.body!)).toMatchObject({ action: 'decline', reason: 'affiliation could not be verified' });
   });
 
   it('sends nothing when the reviewer cancels the state prompt on a first publish', async () => {
-    const calls = stubFetch({ status: 200, body: { items: [item({ status: 'in_review', state: null })], next_cursor: null } });
+    const calls = stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review', state: null })], next_cursor: null } });
     vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce(null));
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Publish')!.go();
     expect(calls).toHaveLength(1);   // the list GET alone — no decide POST followed the cancel
   });
 
   it('sends nothing when the reviewer answers the state prompt but cancels the market one', async () => {
-    const calls = stubFetch({ status: 200, body: { items: [item({ status: 'in_review', state: null })], next_cursor: null } });
+    const calls = stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review', state: null })], next_cursor: null } });
     vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('TX').mockReturnValueOnce(null));
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Publish')!.go();
     expect(calls).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A39, rulings 1 and 2: the badge is the API's, and the table refreshes when a decision lands.
+  // ---------------------------------------------------------------------------------------
+
+  it('hands the tab its badge from the envelope, never a literal (ruling 1)', async () => {
+    stubFetch({ status: 200, body: { counts: { in_review: 7, total: 41 }, items: [BASE], next_cursor: null } });
+    expect((await makeAdminListingsAdapter().list()).counts).toEqual({ in_review: 7 });
+  });
+
+  it('refuses a queue that answers no counts, exactly as it refuses one that answers no items', async () => {
+    // The badge would otherwise read "0" or vanish, and a reviewer cannot tell either from "no
+    // listings are waiting" — the same reason `items` is checked rather than defaulted.
+    stubFetch({ status: 200, body: { items: [], next_cursor: null } });
+    await expect(makeAdminListingsAdapter().list()).rejects.toThrow('no counts');
+    stubFetch({ status: 200, body: { counts: { in_review: 'three' }, items: [], next_cursor: null } });
+    await expect(makeAdminListingsAdapter().list()).rejects.toThrow('no counts');
+  });
+
+  it('tells the host to re-read the queue once a decision lands, so the row changes without a reload', async () => {
+    // Ruling 2. Before this the POST returned the updated draft and the adapter DISCARDED it: the
+    // pill, the buttons and the badge all stood until the reviewer reloaded the page, which is
+    // what made a reviewer press Publish twice. The adapter does not set state itself — it says a
+    // decision landed, and the ADMIN-GATE seam (`loadAdmin`, A40.3) re-lists through this very
+    // adapter, so the rows and the counts settle by the one path that ever writes them.
+    const calls = stubFetch(
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 200, body: {} }
+    );
+    const adapter = makeAdminListingsAdapter();
+    const reloads: number[] = [];
+    adapter.onDecision(() => { reloads.push(calls.length); });
+    const rows = (await adapter.list()).rows;
+    await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+    expect(reloads, 'the reload is asked for exactly once, after the POST').toEqual([2]);
+  });
+
+  it('RE-READS after a 409 STATE — the one refusal that means the row on screen is wrong (I-2)', async () => {
+    // Fix round 1, Important-2. `409 STATE` (`admin_listings.py`'s own code) is returned precisely
+    // when the listing is no longer in the state this row was drawn from — another reviewer moved
+    // it. The DECISION did not land, and that is what the earlier "nothing moved, so there is
+    // nothing to re-read" note was about; but the TABLE is stale, so the pill kept reading
+    // "In review" and the Publish button kept being offered, which is the pre-A39 condition
+    // reached by a second door. The alert still fires, and the row it contradicts is corrected.
+    stubFetch(
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 409, body: { error: { code: 'STATE', message: 'cannot unpublish a listing in state paused' } } }
+    );
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const adapter = makeAdminListingsAdapter();
+    let reloaded = 0;
+    adapter.onDecision(() => { reloaded += 1; });
+    const rows = (await adapter.list()).rows;
+    await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+    expect(alertSpy, 'the reviewer is still told why').toHaveBeenCalledWith('cannot unpublish a listing in state paused');
+    expect(reloaded, 'and the row the alert contradicts is re-read through the one loader').toBe(1);
+  });
+
+  it('does not ask for a reload for a refusal that moved nothing — a 422, or a body with no code', async () => {
+    // Keyed on the SERVER's own code, never on "any refusal": a `422 NOTE_REQUIRED` means the
+    // reviewer left the reason blank, the listing is exactly where the row says it is, and
+    // re-reading the whole queue would spend a request to learn nothing.
+    for (const answer of [
+      { status: 422, body: { error: { code: 'NOTE_REQUIRED', message: 'a reason is required.' } } },
+      { status: 502, body: {} }
+    ]) {
+      stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } }, answer);
+      vi.stubGlobal('alert', vi.fn());
+      const adapter = makeAdminListingsAdapter();
+      let reloaded = false;
+      adapter.onDecision(() => { reloaded = true; });
+      const rows = (await adapter.list()).rows;
+      await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+      expect(reloaded, `${answer.status}: nothing moved, so there is nothing to re-read`).toBe(false);
+    }
+  });
+
+  it('tells the reviewer when the decide never reached the server at all (fix round 2)', async () => {
+    // Recorded by the re-review as a PRE-EXISTING gap, older than A39 and unchanged by fix round
+    // 1: the button binding is `go: () => Promise<void>` and the design's own template does not
+    // await it, so a REJECTED promise — `fetch` throwing on an offline browser or a DNS failure,
+    // never an HTTP status — became an unhandled rejection and the reviewer saw NOTHING happen.
+    // A refusal the server SENT already alerts; a request that never arrived must say so through
+    // the same door, in the same words the `??` fallback uses for a bodyless refusal.
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } });
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const rows = await listRows();
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await expect(rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go()).resolves.toBeUndefined();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be unpublished.');
+  });
+
+  it('...and a rejected REJECT says "rejected", the same root verb the refusal wording uses', async () => {
+    // The other arm of the catch's own ternary, reached only when a DECLINE is the decide that
+    // never arrives — the `unpublish` case above cannot exercise it, and a wrong verb here would
+    // read "declineed" to the one reviewer who meets it.
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review' })], next_cursor: null } });
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('affiliation could not be verified'));
+    const rows = await listRows();
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be rejected.');
+  });
+
+  it('...and a rejected decide asks for no reload, because nothing moved', async () => {
+    stubFetch({ status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } });
+    vi.stubGlobal('alert', vi.fn());
+    const adapter = makeAdminListingsAdapter();
+    let reloaded = false;
+    adapter.onDecision(() => { reloaded = true; });
+    const rows = (await adapter.list()).rows;
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+    expect(reloaded).toBe(false);
+  });
+
+  it('decides perfectly well for a host that registered nothing — the reference and the unit tests', async () => {
+    const calls = stubFetch(
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 200, body: {} }
+    );
+    const rows = await listRows();
+    await expect(rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go()).resolves.toBeUndefined();
+    expect(calls, 'and spends no request re-reading a queue nobody is rendering').toHaveLength(2);
   });
 
   it('alerts with the decline-specific wording when a decline itself is refused', async () => {
@@ -347,13 +626,13 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
     // generic-wording test above exercises via 'unpublish' — reached only when the DECLINE decide
     // call itself is the one that fails, not merely requested.
     stubFetch(
-      { status: 200, body: { items: [item({ status: 'in_review' })], next_cursor: null } },
+      { status: 200, body: { counts: { in_review: 1 }, items: [item({ status: 'in_review' })], next_cursor: null } },
       { status: 502, body: {} }
     );
     vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('affiliation could not be verified'));
     const alertSpy = vi.fn();
     vi.stubGlobal('alert', alertSpy);
-    const rows = await makeAdminListingsAdapter().list();
+    const rows = await listRows();
     await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
     expect(alertSpy).toHaveBeenCalledWith('That listing could not be rejected.');
   });

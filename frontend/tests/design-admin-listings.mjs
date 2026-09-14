@@ -55,7 +55,28 @@ export function designAdminListingRows() {
   }));
 }
 
-/** Those five rows as one complete page of `GET /api/admin/listings`. */
+/** The number the design's own Listings tab badges, read off `adminVals()` and never typed here.
+ *
+ *  A39 (D-C53) makes that badge the API's count: `count: this.props.adminListings ? … : "3"`. With
+ *  no adapter — which is what `new Component({})` is, and what the REFERENCE renders as — the
+ *  design returns its own literal, so this reads the very number the reference paints and the
+ *  frozen `admin-listings` capture keeps its badge through the app's own success path.
+ *
+ *  Carried here for the reason the "Flagged" row is: it is the DESIGN's own figure, unreachable
+ *  from real data (its four rows happen to have three that are undecided), and this fixture's
+ *  whole job is reproducing the design's pixels regardless of what a real response would hold. */
+export function designAdminListingCount() {
+  const c = new Component({});
+  c.setState({ adminTab: 'listings' });
+  return Number(c.adminVals().tabs.find((t) => t.label === 'Listings').count);
+}
+
+/** Those five rows as one complete page of `GET /api/admin/listings` — `counts` beside `items`,
+ *  the envelope `app/api/admin_listings.py::list_all` really answers with. */
 export function designAdminListingsBody() {
-  return JSON.stringify({ items: designAdminListingRows(), next_cursor: null });
+  return JSON.stringify({
+    items: designAdminListingRows(),
+    next_cursor: null,
+    counts: { in_review: designAdminListingCount() }
+  });
 }

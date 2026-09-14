@@ -7414,17 +7414,26 @@ const A34_23: Amendment = {
 // over a dataset the database records as `blocked`. `app/api/admin_data_sources.py` had answered
 // the truth since Task A9 and NOTHING read it.
 //
-// APPLICATION ORDER IS A38.4, A38.5, A38.1, A38.2, A38.3a–c, and the ids are the brief's own.
+// APPLICATION ORDER IS A38.4, A38.5, A38.1, A38.2, A38.3c, and the ids are the brief's own.
 // The two REMOVALS run first on purpose: A38.1's `replace` re-introduces all five fixture rows,
 // so removing a button afterwards would be an entry eating text an earlier entry's `replace` put
 // there — AMEND-GUARD's LINE tier, and a `Consumes A38.1` token stating something that is not
 // what happened. Applied before it, each removal edits the PRISTINE bundle's own line and A38.1
 // simply wraps what is left.
+//
+// A38.3a AND A38.3b ARE RETIRED and their ids may NOT be reused (merge of `origin/main`,
+// 2026-09-15). They were the tab badge's shared `sc-if` and the `hasCount` flag it reads, and
+// their own docstring already said what to do about a second copy: "the mechanism for ALL FOUR
+// badges ... must REUSE these two rather than add a second `sc-if`". A39 reached main first with
+// the identical pair (A39.3b is A38.3a's edit, A39.3a is A38.3b's), and the two cannot coexist:
+// each one's `find` is the text the other's `replace` leaves, so whichever ran second would match
+// nothing and the engine's `count: 1` would fail. Main's shipped in 0.1.25, so those are the ones
+// that stand; the amended design is byte-identical either way, and A38.3c reads A39.3a's
+// `hasCount` exactly as it read A38.3b's.
 // ---------------------------------------------------------------------------------------
 const D_C53 = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53)';
 const A38 = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources tab reads the dataset registry` };
 const A38_BUTTON = { date: '2026-09-13', ruling: `${D_C53} — a button that does nothing is removed (controller ruling 18, 2026-09-13)` };
-const A38_BADGE = { date: '2026-09-13', ruling: `${D_C53} — the badge is not painted until a count arrives` };
 const A38_COUNT = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources badge counts rows the VIN Foundation has not cleared` };
 
 /** A38.4 — "Assign review" leaves the design (controller ruling 18, 2026-09-13). The button
@@ -7486,34 +7495,6 @@ const A38_2: Amendment = {
   count: 1
 };
 
-/** A38.3a — the tab badge is not painted until a count arrives. The design's four counts are
- *  literal strings, so the pill always had one; a wired tab has a moment before the registry
- *  answers, and a refusal has none at all. The design's OWN idiom for "this element has nothing
- *  to show" is a boolean beside the value and an `sc-if` around the element — `hasPill`,
- *  `hasMain`, `hasSub`, `hasActions` on this very table — so the badge takes it too, rather than
- *  an empty coloured pill or a fabricated zero.
- *
- *  SHARED INFRASTRUCTURE: this entry and A38.3b are the mechanism for ALL FOUR badges, not just
- *  this one. A36 (Users), A37 (Requests) and A39 (Listings) each need only their own tab's
- *  `count:` term (A38.3c's shape) and must REUSE these two rather than add a second `sc-if`. */
-const A38_3a: Amendment = {
-  id: 'A38.3a', ...A38_BADGE,
-  find: '<button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<span style="{{ t.countStyle }}">{{ t.count }}</span></button>',
-  replace: '<button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<sc-if value="{{ t.hasCount }}" hint-placeholder-val="{{ true }}"><span style="{{ t.countStyle }}">{{ t.count }}</span></sc-if></button>',
-  count: 1
-};
-
-/** A38.3b — the flag A38.3a reads, in the design's own `!!value` form (`hasMain: !!main`). A
- *  count of `"0"` is a non-empty string and therefore truthy, so a registry with nothing
- *  outstanding still paints its badge; only `null` (A38.2's rejection arm) and A38.3c's
- *  adapter-present-but-not-yet-loaded state unmount it. Shared with A36/A37/A39 (see A38.3a). */
-const A38_3b: Amendment = {
-  id: 'A38.3b', ...A38_BADGE,
-  find: '        label: t.label, count: t.count,\n',
-  replace: '        label: t.label, count: t.count, hasCount: !!t.count,\n',
-  count: 1
-};
-
 /** A38.3c — the Data Sources badge counts what it says it counts: rows the VIN Foundation has
  *  not cleared (`license_status <> 'cleared'`, the controller's ruling and the design's own
  *  arithmetic — its literal "2" is the two of five fixture rows that are not Cleared). A16.1's
@@ -7526,6 +7507,138 @@ const A38_3c: Amendment = {
   id: 'A38.3c', ...A38_COUNT,
   find: '        { key: "data", label: "Data Sources", count: "2" }\n',
   replace: '        { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }\n',
+  count: 1
+};
+
+// A39 — the Listings tab tells the truth about the queue it renders (Task A39; John's ruling
+// D-C53, 2026-09-13: "all the admin tabs must be factual and fully functional, zero-gaps,
+// zero-fake data, everything must be surfaced and wired to UX").
+//
+// A17.1/A17.2 made the ROWS real. What stayed false was everything around them: the tab's badge
+// was the string literal "3" (`logic.js`, the design's own four rows happen to have three that
+// are undecided — a number no database ever produced), a decision changed nothing on screen until
+// the reviewer reloaded the page, and the count the badge showed could not move because nothing
+// served one.
+//
+// FOUR literal edits here; the rest of the task is `frontend/src/admin/listings.ts` and
+// `app/api/admin_listings.py`, which need no amendment because the design already renders what
+// they answer. A39.2 and A39.4 are CHAINED on A40's own lines, so the family is appended after it.
+//
+// Every approved state keeps its pixels. With no `adminListings` adapter — the reference and the
+// Claude Design preview — A39.1 returns the design's own "3" byte for byte and A39.4 arms nothing;
+// on the APP the oracle answers `counts: { in_review: 3 }` (`frontend/tests/harness.ts`), which is
+// the same "3", and the fifth frozen `admin-listings` capture holds.
+// ---------------------------------------------------------------------------------------
+const RULING_A39 = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53) — the Listings badge is the number of listings awaiting review, served beside the rows, and the table refreshes when a decision lands';
+
+/** A39.1 — the Listings badge is the API's count, and the design's literal "3" is what a host with
+ *  no adapter still shows. A17.1's own ternary, one tab along and keyed the same way: on ADAPTER
+ *  PRESENCE, never on data, so a load that answered nothing shows no badge rather than a number
+ *  nobody measured. The empty string is what A39.3a/A39.3b unmount the pill for — a badge cannot
+ *  honestly read "0" before the first answer arrives, and "0" is a real answer this must not
+ *  imitate. The other three tabs' literals are untouched: A36 (Users) and A38 (Data Sources) each
+ *  carry their own, and this entry names one line. */
+const A39_1: Amendment = {
+  id: 'A39.1', date: '2026-09-13',
+  ruling: RULING_A39,
+  find: '        { key: "listings", label: "Listings", count: "3" },\n',
+  replace: '        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },\n',
+  count: 1
+};
+
+/** A39.2 — the ONE loader sets the badge beside the rows. CHAINED on A40.3, whose whole
+ *  `adminListings` line this rewrites: `list()` now answers a PAGE — the rows the table renders
+ *  and the count its tab badges — because both come from one request and neither must ever be
+ *  displayed beside the other's answer. The rejection arm clears BOTH (A16.17's discipline, A17.1's
+ *  rule for the render path): a refusal leaves the tab empty, and a badge left standing over an
+ *  empty table is the class of statement D-C53 exists to remove. `null` rather than `{}`, because
+ *  A39.1 reads the object's presence.
+ *
+ *  `adminListingCounts`, not `adminCounts` (fix round 1, review Important-1, controller ruling of
+ *  2026-09-14): EACH TAB OWNS ITS OWN KEY. `setState` merges TOP-LEVEL keys, so two `loads.push`
+ *  arms writing one shared object inside the same `Promise.all` would clobber each other — last
+ *  writer wins, one tab's badge blanks at random — and the siblings had already diverged
+ *  (`adminUserCounts.open` on the Users branch, a scalar `adminDataCount` on Data Sources). The
+ *  member is `in_review` for the same reason the Users tab's is `open`: the key says which tab,
+ *  so the member says what the number IS. */
+const A39_2: Amendment = {
+  id: 'A39.2', date: '2026-09-13',
+  ruling: RULING_A39,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }), () => this.setState({ adminListingRows: [], adminListingCounts: null })));\n',
+  count: 1
+};
+
+/** A39.3a — the tab row carries whether it HAS a badge, in the design's own `cell()` idiom
+ *  (`hasMain`, `hasSub`, `hasPill`, `hasActions` — each a `!!` of the thing it gates). Read by
+ *  A39.3b alone. */
+const A39_3a: Amendment = {
+  id: 'A39.3a', date: '2026-09-13',
+  ruling: RULING_A39,
+  find: '        label: t.label, count: t.count,\n',
+  replace: '        label: t.label, count: t.count, hasCount: !!t.count,\n',
+  count: 1
+};
+
+/** A39.3b — and the pill is not RENDERED until a count arrives. The design paints the badge
+ *  unconditionally, so before this an app whose queue had not answered yet drew an empty blue
+ *  lozenge beside the word "Listings" — a shape that says "a number is coming" and, on a refusal,
+ *  never stops saying it. An unmounted `sc-if` is the design's own treatment for a thing that is
+ *  not there. Every tab that HAS a count keeps its pixels: all four literals are non-empty, and
+ *  the oracle answers this one with the same "3". */
+const A39_3b: Amendment = {
+  id: 'A39.3b', date: '2026-09-13',
+  ruling: RULING_A39,
+  find: '{{ t.label }}<span style="{{ t.countStyle }}">{{ t.count }}</span>',
+  replace: '{{ t.label }}<sc-if value="{{ t.hasCount }}" hint-placeholder-val="{{ true }}"><span style="{{ t.countStyle }}">{{ t.count }}</span></sc-if>',
+  count: 1
+};
+
+/** A39.4 — a decision refreshes the table it was taken on (ruling 2). CHAINED on A40.4's own
+ *  `this.loadAdmin();`, which is carried forward unchanged, so nothing of A40 is consumed here.
+ *
+ *  The adapter does not write state and is never handed the component: it says a decision the API
+ *  ACCEPTED has landed, and this re-reads the queue through `loadAdmin` — the one place the admin
+ *  screen's data is read (A40.3) — so the rows, the pills, the buttons and the badge all settle by
+ *  the single path that ever writes them, with `loadAdmin`'s own permission guard still in front.
+ *  Before this the decide route returned the updated draft and `admin/listings.ts` discarded it,
+ *  so a reviewer who published a listing watched the In-review pill sit there and pressed Publish
+ *  again. Armed once, in `componentDidMount`, on the adapter the component itself owns (the prop
+ *  default factory runs per instance), so it needs no matching `componentWillUnmount` removal —
+ *  unlike A13.5's document listeners, nothing outside the component holds this reference. Guarded
+ *  on the METHOD's presence, so an adapter that predates it — or the reference, which passes none
+ *  — takes the design's own path unchanged. */
+const A39_4: Amendment = {
+  id: 'A39.4', date: '2026-09-13',
+  ruling: RULING_A39,
+  find: '    this.loadAdmin();\n',
+  replace: '    this.loadAdmin();\n'
+    + '    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());\n',
+  count: 1
+};
+
+/** A39.5 — the LAST question asked is the one answered (fix round 1, review Minor-3). CHAINED on
+ *  A39.2, whose whole `adminListings` line this rewrites — **consumes A39.2**.
+ *
+ *  A39.4 re-reads the queue on every decision, so a reviewer who presses Publish on two rows
+ *  inside one round trip has two `loadAdmin` calls outstanding at once; before this, whichever
+ *  ANSWER arrived last won, and the network does not promise that is the later question. The
+ *  older one could land on top of the newer and repaint the table as it was a moment ago — with
+ *  its badge — until something else reloaded it.
+ *
+ *  `A24.21`'s own idiom, which solved exactly this for the boundaries loader: read a token ONCE
+ *  when the load starts, re-check it on arrival, and let a superseded answer go. `_adminLoad` is
+ *  an instance field rather than state because it is not rendered and must not schedule a render;
+ *  the design's own `_offViewport` (A24.23) is the precedent for a plain underscore member. BOTH
+ *  arms are checked: a superseded REJECTION must not empty the table a later load just filled,
+ *  which is the same defect wearing A16.17's discipline as a disguise. The promise still settles
+ *  either way, so A40.5's "a caller can await a settled screen" is untouched. */
+const A39_5: Amendment = {
+  id: 'A39.5', date: '2026-09-14',
+  ruling: RULING_A39,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }), () => this.setState({ adminListingRows: [], adminListingCounts: null })));\n',
+  replace: '    const token = this._adminLoad = (this._adminLoad || 0) + 1;\n'
+    + '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n',
   count: 1
 };
 
@@ -7727,11 +7840,27 @@ export function amendments(): Amendment[] {
     // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
     // pristine bundle's own declaration.
     A34_23,
-    // A38 -- the Data Sources tab reads the dataset registry (Task A38, D-C53,
-    // 2026-09-13). Appended last, as every family is. The REMOVALS run first inside the
-    // family (A38.4/A38.5 before A38.1) so that A38.1's own `replace` re-introduces the
-    // post-removal rows rather than a later entry eating text it had just put there
-    // (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both, and A38.2 on A40.3's
-    // `loadAdmin` body, so this block must run after A40.
-    A38_4, A38_5, A38_1, A38_2, A38_3a, A38_3b, A38_3c];
+    // A38 -- the Data Sources tab reads the dataset registry (Task A38, D-C53, 2026-09-13).
+    // Appended after A40, whose `loadAdmin` body A38.2 is CHAINED on, and BEFORE A39: A38.2's
+    // `find` is A40.3's own `adminListings` line plus the `return Promise.all(loads);` beneath
+    // it, and A39.2/A39.5 rewrite that same line, so A38 has to insert its own arm between them
+    // while the line A38.2 anchors on is still A40.3's. The REMOVALS run first inside the family
+    // (A38.4/A38.5 before A38.1) so that A38.1's own `replace` re-introduces the post-removal rows
+    // rather than a later entry eating text it had just put there (AMEND-GUARD's LINE tier).
+    //
+    // A38.3a and A38.3b are RETIRED and their ids may NOT be reused (merge of `origin/main`,
+    // 2026-09-15). They were the badge's shared `sc-if` and its `hasCount` flag, and their own
+    // docstring said so: "the mechanism for ALL FOUR badges ... must REUSE these two rather than
+    // add a second `sc-if`". A39 merged to main first and carries the identical pair as A39.3b
+    // and A39.3a, and the two cannot coexist -- each one's `find` is the other's `replace`, so
+    // whichever ran second would match nothing. Main's are the ones that shipped (0.1.25), so
+    // A38.3c below reads A39.3a's `hasCount` and the amended design is byte-identical either way.
+    A38_4, A38_5, A38_1, A38_2, A38_3c,
+    // A39 -- the Listings tab's badge, dates and refresh (Task A39, D-C53, 2026-09-13). Applied
+    // AFTER A40 though it is numerically before it, for A24's own reason: two of its four entries
+    // are CHAINED on A40's output -- A39.2 rewrites A40.3's whole `adminListings` line and A39.4
+    // reads A40.4's `this.loadAdmin();` -- so the family has to run after the one it edits.
+    // A39.1 and A39.3a/A39.3b address pristine lines. Definition order in this file matches this
+    // list (m8).
+    A39_1, A39_2, A39_3a, A39_3b, A39_4, A39_5];
 }
