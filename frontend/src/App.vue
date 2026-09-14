@@ -1350,7 +1350,7 @@
             <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Access, listings, activity and the data the platform depends on.</p>
             <div style="display: flex; gap: 4px; margin-top: 26px;">
               <template v-for="(t, $index) in __arr(v.admin?.tabs)" :key="$index">
-                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></button>
+                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><template v-if="t?.hasCount"><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></template></button>
               </template>
             </div>
           </div>
