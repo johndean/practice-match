@@ -1452,7 +1452,7 @@ class Component extends DCLogic {
     const loads = [];
     const token = this._adminLoad = (this._adminLoad || 0) + 1;
     if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
-    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => this.setState({ adminDataRows: r.rows, adminDataCount: r.count }), () => this.setState({ adminDataRows: [], adminDataCount: null })));
+    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));
     return Promise.all(loads);
   }
 

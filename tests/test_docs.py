@@ -3405,3 +3405,26 @@ def test_claude_md_states_the_frozen_hashes_truthfully_in_both_copies():
         "twelve unmoved plus one re-pinned"
     )
     assert "detail" in manifest["screens"], "the manifest has no `detail` row for the sentence to name"
+
+
+def test_no_source_comment_names_a_test_file_that_does_not_exist():
+    """A38 fix round 3: `app/api/market.py` and `migrations/094_registry_blocked_reason.sql` both
+    named `tests/api/test_market_layers.py` as the gate that holds them apart, and no such file
+    has ever existed — the pins are `tests/census/test_market_api.py`'s. A comment that names the
+    gate is how the next reader finds out whether a rule is enforced, so one naming a file that is
+    not there is worse than no comment at all: it reads as "this is pinned" and nothing is.
+
+    Scoped to `tests/**.py` paths cited anywhere in `app/`, `scripts/` and `migrations/`, because
+    that is the class of citation this repository actually makes and the one that went wrong. A
+    path inside a string literal is caught too, deliberately: the question is whether the file
+    exists, not where the reference sits."""
+    cited = re.compile(r"\btests/[\w/]+\.py\b")
+    missing = []
+    for root in ("app", "scripts", "migrations"):
+        for path in sorted((ROOT / root).rglob("*")):
+            if path.suffix not in {".py", ".sql"} or not path.is_file():
+                continue
+            for name in sorted(set(cited.findall(path.read_text(encoding="utf-8")))):
+                if not (ROOT / name).exists():
+                    missing.append(f"{path.relative_to(ROOT)} names {name}, which does not exist")
+    assert missing == [], "\n".join(missing)

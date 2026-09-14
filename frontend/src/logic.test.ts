@@ -6306,6 +6306,50 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     expect(c2.state.adminListingRows, 'the rejection arm is token-checked too').toEqual([['second']]);
     expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
   });
+
+  // ---------------------------------------------------------------------------------------
+  // A38.2's arm of the SAME function, given the same token at the merge of `origin/main`
+  // (2026-09-15). A39.5 put a request token on the Listings arm; the Data Sources arm was
+  // written on `feat/admin-data-sources` before A39 existed and had none — so after the merge
+  // one function held two loaders, one of which let a superseded answer go and one of which
+  // painted it, with the token already declared one line above the arm that ignored it. Two
+  // `loadAdmin` calls in flight is the ordinary case here and not an exotic one:
+  // `componentDidMount` makes the first (A40.4) and the header nav's own door makes another
+  // (A40.6), with A39.4's `onDecision` on top of both.
+  // ---------------------------------------------------------------------------------------
+  const PAGE_DATA = { rows: [['a registry row']], count: 2 };
+  const adminDataSources = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE_DATA)) => ({ list: answer });
+
+  it("A38.2: the Data Sources arm discards a superseded ANSWER, on A39.5's own token", async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminDataRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], count: 1 });
+    await older;
+    expect(c2.state.adminDataRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
+  it('A38.2: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminDataRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
 });
 
 // -------------------------------------------------------------------------------------------

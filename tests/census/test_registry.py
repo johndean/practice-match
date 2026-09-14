@@ -204,7 +204,15 @@ def test_the_legal_rows_are_the_only_ones_allowed_past_the_source_cap(conn):
     assert "Google Maps Platform Terms" in note and "forbid storing or rendering" in note
     with conn.cursor() as cur:
         cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'google_places_aggregate'")
-        assert "SST §13.2" in cur.fetchone()[0]
+        google = cur.fetchone()[0]
+    # Every clause the block rests on, and all THREE of them (fix round 3, re-review Minor 8).
+    # Round 1 refuted the complaint that 093 had dropped §13.1 and the billing precondition, on the
+    # ground that the row composed to exactly the cap with no headroom; the legal allow-list took
+    # that reason away and fix round 3 restored them -- to a pin that asserted only §13.2, so the
+    # restoration had no gate at all and the next migration could have dropped them again in
+    # silence, which is the failure F2 was raised for.
+    for clause in ("SST §13.2", "SST §13.1", "Google Cloud billing account"):
+        assert clause in google, f"the google_places_aggregate note no longer names {clause}: {google!r}"
 
 
 def test_every_registry_row_fits_the_design_s_dataset_column(conn):
@@ -340,10 +348,27 @@ def test_a_live_vintage_is_named_once_and_a_placeholder_never(conn):
         vintages = cur.fetchall()
     placeholders = [k for k, v in vintages if v in reg.PLACEHOLDER_VINTAGES]
     assert placeholders, "no registry row carries a placeholder vintage, so this pin measures nothing"
+    # The ONE state where the declared vintage carries information: an activation that has not
+    # happened, or one held back deliberately. Materialised, because no migration writes an
+    # `active_vintage` row -- and because until fix round 3 this pin forbade the SUBSTRING
+    # "Declared vintage", which is the opening half of the very pair review Minor 6 introduced
+    # (`Declared vintage 2023 · Live vintage 2022`). It was inert only because nothing in a test
+    # database ever carried a differing live vintage, so the pin would have gone red on a correct
+    # render the first time one did.
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) "
+                    "VALUES ('cbp', '2021', now(), 'census_load', NULL)")
     for key, dataset_sub in ((k, d) for k, _s, d, _r, _n in _sublines(conn)):
-        assert "Declared vintage" not in dataset_sub, f"{key}: the retired fix-round-1 clause is back"
+        # The RETIRED clause is the declared vintage printed on its OWN -- the fix-round-1 line
+        # `Declared vintage ${item.vintage}`, which said the same thing twice where the two agree
+        # and named a placeholder where there is no vintage at all. The pair is not that clause.
+        assert "Declared vintage" not in dataset_sub or " · Live vintage " in dataset_sub, (
+            f"{key}: the retired fix-round-1 clause is back: {dataset_sub!r}"
+        )
         if key in placeholders:
             assert "vintage" not in dataset_sub.lower(), f"{key} names a placeholder as a vintage: {dataset_sub!r}"
+    pair = next(d for k, _s, d, _r, _n in _sublines(conn) if k == "cbp")
+    assert pair == "Annual (Apr) · Declared vintage 2022 · Live vintage 2021 · Terms verified never", pair
 
 
 def test_the_refresh_cadence_vocabulary_is_017s_own(conn):

@@ -7484,13 +7484,26 @@ const A38_1: Amendment = {
  *  empties BOTH the rows and the badge: a tab left on the design's five fixtures after a refusal
  *  is exactly what A17.1's rule forbids, and a badge left on a stale number would describe rows
  *  that are no longer on the screen. The count is `null`, not `"0"` — a refused load does not
- *  know that nothing is outstanding, and A38.3a unmounts the pill rather than printing a number
- *  nobody measured. CHAINED on A40.3, whose `loads` array and `return` this sits between. */
+ *  know that nothing is outstanding, and A39.3b unmounts the pill rather than printing a number
+ *  nobody measured. CHAINED on A40.3, whose `loads` array and `return` this sits between.
+ *
+ *  BOTH arms are token-checked, on A39.5's own `token` (merge of `origin/main`, 2026-09-15).
+ *  A39.5 gave the Listings arm A24.21's request token — read once when the load starts, re-checked
+ *  on arrival — and this arm was written before A39 existed, so the merge left one function
+ *  holding two loaders, one that let a superseded answer go and one that painted it, with the
+ *  token declared on the line above the arm that ignored it. Two `loadAdmin` calls in flight is
+ *  the ordinary case and not an exotic one: `componentDidMount` makes the first (A40.4) and the
+ *  header nav's own door makes another (A40.6), with A39.4's `onDecision` on top of both. The
+ *  REJECTION arm is checked for the same reason A39.5 gives: a superseded refusal emptying the
+ *  table a later load just filled is the same defect wearing A16.17's discipline as a disguise.
+ *  `token` and `this._adminLoad` are A39.5's declarations, which is why this family is applied
+ *  BEFORE A39 and still reads what A39 writes: the ORDER of the string edits decides what each
+ *  `find` matches, and the finished script is one function whose `const token` precedes both. */
 const A38_2: Amendment = {
   id: 'A38.2', ...A38,
   find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n    return Promise.all(loads);',
   replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
-    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => this.setState({ adminDataRows: r.rows, adminDataCount: r.count }), () => this.setState({ adminDataRows: [], adminDataCount: null })));\n'
+    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));\n'
     + '    return Promise.all(loads);',
   count: 1
 };

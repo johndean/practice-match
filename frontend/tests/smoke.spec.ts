@@ -2556,7 +2556,7 @@ test.describe('admin data sources', () => {
     await expect(statusPills(page), 'no row at all, rather than the design\'s five').toHaveCount(0);
     await expect(page.getByText('Prior VetVision work')).toHaveCount(0);
     await expect(page.getByText('Pet ownership estimates')).toHaveCount(0);
-    // No number at all, rather than a stale or fabricated one (A38.3a/A38.2).
+    // No number at all, rather than a stale or fabricated one (A39.3b/A38.2).
     await expect(page.getByRole('button', { name: /^Data Sources\s*\d/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Data Sources', exact: true })).toBeVisible();
     // The footnote — the sentence the whole gate rests on — is the design's own and still there.

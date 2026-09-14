@@ -25,8 +25,16 @@
 --                         ("Licence not cleared.") still stands in where a row has none, so the
 --                         column is nullable and a row that says nothing says the default.
 --
--- `tests/api/test_market_layers.py` and `tests/census/test_registry.py` pin the two readers against
--- their own columns in both directions, so neither can drift back into the other.
+-- `tests/census/test_market_api.py::test_the_member_s_blocked_reason_is_never_the_operator_s_note` and
+-- `tests/census/test_registry.py` pin the two readers against their own columns in both directions, so
+-- neither can drift back into the other.
+--
+-- THIS FILE IS STILL EDITABLE, on 093's own terms and for its own reason: `094` has been applied on NO
+-- deployed environment (`git ls-tree origin/main migrations/` ends at 091), and `scripts/migrate.py`'s
+-- `refuse_changed_files` refuses a changed checksum, so a LOCAL database that already carries it has to be
+-- recreated after an edit here. The one edit so far is this citation: it named a test file that has never
+-- existed, which reads as "this is pinned" while nothing is (`tests/test_docs.py`'s
+-- `test_no_source_comment_names_a_test_file_that_does_not_exist` is the gate that now refuses one).
 ALTER TABLE dataset_registry ADD COLUMN blocked_reason text;
 
 -- The four datasets `app.api.market.LAYERS` gates, in a member's words. Every one of them is

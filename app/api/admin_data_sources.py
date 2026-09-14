@@ -194,7 +194,7 @@ def decide_license(dataset_key: str, body: LicenseDecision, request: Request, pr
     invisible to it, and `notes = COALESCE(%s, notes)` admitted 4,000 characters into a column
     printed verbatim at 376 px. Two changes: the decision's rationale no longer touches that column
     at all (it is the audit trail's, and `license_audit_log` carries the decision row), and a
-    a decision whose COMPOSED Source sub-line — the name it would leave, the row's own note, and the
+    decision whose COMPOSED Source sub-line — the name it would leave, the row's own note, and the
     sweep's drift clause where the row will have a terms URL — would exceed `SOURCE_SUBLINE_CAP` is
     refused with a 422 naming the cap and the length it would have composed. The composition is read
     under the lock this handler already takes, so it is what the decision would actually leave
