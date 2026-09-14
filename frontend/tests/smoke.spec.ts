@@ -163,10 +163,19 @@ test.describe('smoke', () => {
     // `frontend/src/listings/seller.ts`'s own title rule: a bare draft has no city, so its row
     // reads "Untitled listing" — never the design's four Austin fixtures and never a blank
     // dashboard, either of which is what the pre-fix literal role check produced for this account.
-    // `.first()`, `listing-flows.spec.ts`'s own idiom: the API orders rows `updated_at DESC`, so
-    // the row this run just saved is always first, whatever else this persona owns from an
-    // earlier run — this account is not reseeded between runs, only its identity is.
-    const firstListingRow = page.locator('div[style*="var(--shadow-sm)"]').first();
+    // The SECTION is named, not counted (re-review Minor 4): the dashboard is two columns of
+    // `--shadow-sm` cards — "My Listings" and the "Buyer Interest" inbox, whose cards come from
+    // the design's own `requests` fixture and are therefore always present — so a bare
+    // `page.locator('div[style*="var(--shadow-sm)"]').first()` was choosing between two sections
+    // by document order, and was green only because My Listings happens to render first. `My
+    // Listings` is a real <h2>, so its own role and name anchor the search, and the column it
+    // heads is its parent element.
+    // `.first()` INSIDE that section stays, and is `listing-flows.spec.ts`'s own idiom: the API
+    // orders rows `updated_at DESC`, so the row this run just saved is always first, whatever else
+    // this persona owns from an earlier run — this account is not reseeded between runs, only its
+    // identity is.
+    const myListings = page.getByRole('heading', { name: 'My Listings', exact: true }).locator('..');
+    const firstListingRow = myListings.locator('div[style*="var(--shadow-sm)"]').first();
     await expect(firstListingRow, 'A16.23: the bootstrap loaded this account\'s own row, by permission').toContainText('Untitled listing');
   });
 
