@@ -42,6 +42,22 @@ The pill uses the design's three pill tones (dark = active/on, outline = off/not
 
 **Alternative rejected:** `window.prompt` — takes a password unmasked; refused by the A36 brief.
 
+**Its entry point already exists and has no caller.** `frontend/src/auth/api.ts`'s `reauth()` —
+`POST /api/auth/reauth` — was Task I7's half of this dialog; A36 deleted the `reauthThen`/`PERM_OF`
+pair that was going to call it, because a step-up with no element is unreachable code beside a
+100 %-branch gate. `reauth()` itself was KEPT, with its own unit test, and it is the function this
+family calls: named here so a dead-code sweep does not take it first (A36 fix round 1, review
+Minor 4).
+
+**A decision in flight disables its own button**, in the design's own treatment — which the bundle
+does not yet have: `Practice Match V3.dc.html` carries no `disabled`, no `aria-disabled` and no
+`cursor: not-allowed` anywhere (measured, 0 occurrences of each). So a double-click on Approve
+today sends two decisions and the second takes a 409 into the `alert` (A36 fix round 1, review
+Minor 3). The treatment is one ruling — a tone for a button that is working — and it belongs to
+this family rather than to A36, because every REAUTH action and every decision on every tab wants
+the same one. Until John rules it, nothing is invented: the second decision is refused by the API,
+which is the honest failure and not a silent one.
+
 ## 4. The licence decision on Data Sources
 
 The registry's only real write is `POST /data-sources/{key}/license` (REAUTH). V3's "Assign review" / "Open question" buttons have no backing and are removed by A38.
@@ -105,5 +121,7 @@ John approved the compositions on 2026-09-13 ("implement Admin screens … compo
 3. **Suspend: step-up like Revoke?** — **NO**. Suspension is reversible and the API does not require re-authentication for it; `REAUTH` keeps its six actions exactly as `app/auth/permissions.py` declares them.
 4. **The pets 0.57 factor: a registry row or a methodology note?** — **A METHODOLOGY NOTE** in the layer's own caveat. It is a modelled factor, not a dataset; a `dataset_registry` row would imply a licence and a vintage it does not have.
 5. **Satellite imagery while its registry row is unresolved: gate the toggle, or clear Esri's row?** — **NEITHER is decided here, and the tab is what decides it**: A42 gives the Data Sources tab its licence decision (Clear / Block, re-authenticated, with a mandatory note), and the VIN Foundation clears or blocks the two Esri rows there. Until they do, the Satellite toggle stays exactly as shipped and the board says so. This is the one decision the product must not make for the Foundation.
+
+6. **Should `suspend` or `revoke` CLOSE an open application row?** — Neither is in `APPLICATION_ACTIONS`, so `decide` leaves the row open (`app/api/applications.py` says so in its own words), and an account suspended or revoked while it had an application waiting keeps that row for ever: nothing on either side can close it (the member is already refused 409 on answer and re-apply, `tests/api/test_applications.py`). A36 fix round 2 made the TAB honest about it — an open row governs a row only from a state `decide` will act on, so a suspended account shows Reinstate and a revoked one shows nothing, and neither is in the badge — but that is a rendering rule, not a lifecycle. The question is whether the application should be declined (or a new `withdrawn` status written) when the account is suspended or revoked, which is a state-machine change and **John's to rule**; the recommendation is **decline on revoke** (terminal, and a revoked account can never return to the queue) and **leave open on suspend** (reversible — Reinstate should hand the reviewer back the application they still owe a decision on). Not changed here: A36 touched no lifecycle.
 
 **Order, from §9:** A41 (Settings tab + the re-auth dialog) first, after A36/A38/A39 merge; then A42 (licence decision), A43 (Requests: model, routes, four surfaces, admin tab), A44 (user detail + Access) and A46 (permissions matrix + tokens) in parallel; A45 (listing detail) after A44; A47 (seller application) after A43; A40.1/A40.2 (the hidden doors) last.

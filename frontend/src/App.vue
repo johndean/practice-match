@@ -1350,7 +1350,7 @@
             <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Access, listings, activity and the data the platform depends on.</p>
             <div style="display: flex; gap: 4px; margin-top: 26px;">
               <template v-for="(t, $index) in __arr(v.admin?.tabs)" :key="$index">
-                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></button>
+                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><template v-if="t?.hasCount"><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></template></button>
               </template>
             </div>
           </div>
@@ -1677,6 +1677,7 @@ import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminListingsAdapter } from './admin/listings';
+import { makeAdminUsersAdapter } from './admin/users';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
 import { makePermsAdapter } from './auth/perms';
@@ -1775,6 +1776,19 @@ const props = defineProps({
   // in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
   adminListings: { type: Object, default: () => makeAdminListingsAdapter() },
+  // A36: the real /api/admin/users client, as the prototype's `adminUsers` adapter — the seam
+  // `adminVals()`'s Users tab reads its rows and its badge through, and the seam every staff
+  // decision on that table reaches `POST /api/admin/users/{id}/decide` by (Task A36, D-C53:
+  // "all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data"). The
+  // reference and the Claude Design preview pass nothing and keep the design's fixture path,
+  // which is what keeps the two targets on the same pixels. Nothing in the template reads
+  // `adminUsers`; only `logic.js` does.
+  //
+  // `src/admin/users.ts`, not an object literal here, for the reason `adminListings` records:
+  // this file is copied verbatim into App.vue and sits outside the coverage gate, so the logic
+  // lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminUsers: { type: Object, default: () => makeAdminUsersAdapter() },
   // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
   // design's own script branches on. With it present the Browse map draws the polygons the API
   // answered or NONE at all, whatever it answered; with no adapter — the reference server and

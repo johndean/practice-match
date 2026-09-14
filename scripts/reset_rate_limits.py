@@ -3,9 +3,9 @@
 independent (controller amendment A-S5.1; John's ruling, 2026-09-08).
 
 The limits themselves do not move. `app/auth/limits.py` still says `SIGNIN_IP = (30, 900)`,
-`FORGOT_IP = (10, 3600)`, `SIGNUP_IP = (5, 3600)`; `app/ratelimit.py` still counts in fixed
-windows; `tests/api/test_auth.py` still proves each refusal. They are security controls and are
-not loosened for a test suite. What this removes is the CONSEQUENCE the Playwright harness had
+`FORGOT_IP = (10, 3600)`, `SIGNUP_IP = (5, 3600)`; `app/ratelimit.py` counts every one of them
+in a sliding window; `tests/api/test_auth.py` still proves each refusal. They are security
+controls and are not loosened for a test suite. What this removes is the CONSEQUENCE the Playwright harness had
 inherited from them — that a developer could run the local suite about three times an hour before
 `FORGOT_IP` started answering 429 in the middle of a screenshot — by clearing the counters the
 LOCAL environment accumulated, before the API starts serving.
@@ -28,11 +28,11 @@ is where it happens to be invoked from is one edit away from running somewhere e
 
 QA and production fail both, and either one alone is enough to refuse — as does a URL that cannot
 be parsed at all, which is not a host this can show to be local. The refusal is a non-zero exit and
-ONE line on stderr; nothing but the deleted count is ever printed, because a bucket key carries its
+ONE line on stderr; nothing but the deleted count is ever printed, because a counter key carries its
 subject as a truncated SHA-256 pseudonym — which `app/ratelimit.py` is careful to say is not an
 anonymisation — and a URL may carry a credential.
 
-SCAN + DEL over `rl:*` — `app.ratelimit.bucket_key`'s own prefix — and never `FLUSHDB`: the 60 s
+SCAN + DEL over `rl:*` — `app.ratelimit.subject_key`'s own prefix — and never `FLUSHDB`: the 60 s
 session cache and the outbox's idempotency locks live in the same database, and dropping a live
 session mid-run would fail tests a long way from the cause.
 
@@ -54,7 +54,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-#: The prefix `app.ratelimit.bucket_key` builds every counter key under. Nothing else is touched.
+#: The prefix `app.ratelimit.subject_key` builds every counter key under. Nothing else is touched.
 RATE_LIMIT_PREFIX = "rl:"
 #: The only environment this may run in, compared exactly.
 ALLOWED_ENVIRONMENT = "test"
@@ -113,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # The count and nothing else (review round 1, M6): the environment is pinned to the constant
     # `test` by the guard above, so printing it said nothing the docstring had not already promised
     # would never be printed.
-    print(f"[reset_rate_limits] cleared {deleted} rate-limit bucket(s)")
+    print(f"[reset_rate_limits] cleared {deleted} rate-limit counter(s)")
     return 0
 
 
