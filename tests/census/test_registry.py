@@ -134,14 +134,27 @@ def _sublines(conn):
 
         dataset = [cadence]
         declared, live = real(vintage), real(live_vintage)
-        note = f" ({live_note})" if live_note else ""
         if live is not None:
-            dataset.append((f"Declared {declared} · live {live}" if declared is not None and declared != live else f"Live vintage {live}") + note)
-        elif live_note:
-            dataset.append(live_note)
+            dataset.append(f"Declared vintage {declared} · Live vintage {live}" if declared is not None and declared != live else f"Live vintage {live}")
         dataset.append("Terms verified never")
-        out.append((key, " · ".join(source) + drift, " · ".join(dataset), run))
+        # The activation NOTE is left out of the composed line the cap holds, and put back by
+        # `render_note` for the one case that measures it — the same treatment, and the same
+        # reason, as the load clause: it is an operator's sentence of its own, bounded at the door
+        # that writes it (`scripts/census_load.py`), and no cap on this LINE can hold a clause that
+        # is free text. `_sublines` is otherwise the renderer's composition exactly.
+        out.append((key, " · ".join(source) + drift, " · ".join(dataset), run, live_note))
     return out
+
+
+def render_note(dataset_subline: str, live_note: str | None) -> str:
+    """`_sublines`' Dataset line with the activation note put back where the tab renders it — in
+    the design's own parenthesis, on the live-vintage clause it explains."""
+    if not live_note:
+        return dataset_subline
+    if "Live vintage " in dataset_subline:
+        head, _, tail = dataset_subline.partition(" · Terms verified")
+        return f"{head} ({live_note}) · Terms verified{tail}"
+    return dataset_subline.replace(" · Terms verified", f" · {live_note} · Terms verified", 1)
 
 
 def test_every_registry_note_fits_the_design_s_source_column(conn):
@@ -158,7 +171,7 @@ def test_every_registry_note_fits_the_design_s_source_column(conn):
     assert rows, "no registry row was read, so this pin measures nothing"
     over = [
         f"{key}: {len(sub)} characters, {len(sub) - reg.SOURCE_SUBLINE_CAP} over"
-        for key, sub, _dataset, _run in rows
+        for key, sub, _dataset, _run, _note in rows
         if len(sub) > reg.SOURCE_SUBLINE_CAP and key not in reg.LEGAL_NOTE_ROWS
     ]
     assert not over, (
@@ -178,7 +191,7 @@ def test_the_legal_rows_are_the_only_ones_allowed_past_the_source_cap(conn):
     §13.2 condition its block rests on) may wrap to a third line. This asserts they are the ONLY
     two, that both really are over the cap -- an allow-list entry for a row that fits is a licence
     nobody needs -- and that each still says the thing it is exempt for."""
-    subs = {key: sub for key, sub, _d, _r in _sublines(conn)}
+    subs = {key: sub for key, sub, _d, _r, _n in _sublines(conn)}
     assert set(reg.LEGAL_NOTE_ROWS) <= set(subs), "the allow-list names a dataset the registry does not hold"
     for key, reason in reg.LEGAL_NOTE_ROWS.items():
         assert len(subs[key]) > reg.SOURCE_SUBLINE_CAP, f"{key} fits the cap; it does not need an exception ({reason})"
@@ -206,6 +219,16 @@ def test_every_registry_row_fits_the_design_s_dataset_column(conn):
     activation note. The ruling names the live vintage only, the declared one only where it
     differs, and never a placeholder.
 
+    WHAT ITS GREEN IS AND IS NOT (review Minor 5): measured over all 19 rows the composed Dataset
+    sub-line is 26-35 characters against a cap of 78, so on registry data alone this pin has ~43
+    characters of slack and cannot go red. That is not slack anybody may spend: the two inputs that
+    reach 78 are the load clause (excluded here and measured in the loaded-row case below) and the
+    live vintage with its activation note (materialised by the two cases below, since no migration
+    creates an `active_vintage` row). `refresh_cadence`, the one remaining registry-owned input, is
+    vocabulary-pinned to nine short values, so a migration that could redden this would redden
+    `test_the_refresh_cadence_vocabulary_is_017s_own` first. Read its green as "no migration has put
+    a long value in the columns it reads", not as a measurement of the rendered line.
+
     WHAT THIS PIN CANNOT HOLD, recorded rather than implied: a COMPLETED LOAD adds about 35
     characters (`Loaded September 2026 (85,381 rows)`), and 73 of the cap's 78 are spent by that
     clause and `Terms verified …` alone -- so a loaded row that also names a live vintage is 98
@@ -216,7 +239,7 @@ def test_every_registry_row_fits_the_design_s_dataset_column(conn):
     rows = _sublines(conn)
     over = [
         f"{key}: {len(sub)} characters, {len(sub) - reg.DATASET_SUBLINE_CAP} over"
-        for key, _source, sub, _run in rows
+        for key, _source, sub, _run, _note in rows
         if len(sub) > reg.DATASET_SUBLINE_CAP
     ]
     assert not over, (
@@ -251,7 +274,7 @@ def test_a_loaded_row_is_the_one_measured_exception_on_the_dataset_column(conn):
             "VALUES ('acs5', '2019\u20132023', 'succeeded', now(), timestamptz '2026-09-20 00:00+00', 85381)"
         )
         cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) VALUES ('acs5', '2019\u20132023', now(), 'census_load', NULL)")
-    key, _source, dataset, run = next(r for r in _sublines(conn) if r[0] == "acs5")
+    key, _source, dataset, run, _note = next(r for r in _sublines(conn) if r[0] == "acs5")
     assert key == "acs5" and run is not None and run["status"] == "succeeded"
     # The tab composes the load clause between the cadence and the vintage
     # (`frontend/src/admin/data_sources.ts`); `_sublines` leaves it out so the cap above holds what
@@ -268,6 +291,44 @@ def test_a_loaded_row_is_the_one_measured_exception_on_the_dataset_column(conn):
     )
 
 
+def test_an_activation_note_is_rendered_and_is_held_to_the_dataset_cap(conn):
+    """The arm no test database could execute (review Minor 4), materialised.
+
+    `active_vintage.note` is the operator's "why" for a forced activation, printed VERBATIM in the
+    design's own parenthesis beside the vintage it explains — and no migration creates an
+    `active_vintage` row, so `_sublines`' `live is not None` and `elif live_note` arms never ran
+    here. `scripts/census_load.py` bounds the note at this same cap at the door that writes it;
+    this is the rendering half, on both sides of the bound."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT refresh_cadence FROM dataset_registry WHERE dataset_key = 'cbp'")
+        cadence = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by, note) "
+            "VALUES ('cbp', '2022', now(), 'census_load', %s)",
+            ("forced past the row-count guard",),
+        )
+    line, note = next((d, n) for k, _s, d, _r, n in _sublines(conn) if k == "cbp")
+    assert render_note(line, note) == f"{cadence} · Live vintage 2022 (forced past the row-count guard) · Terms verified never"
+    # The vintage clause itself is inside the cap; the NOTE is the clause that is not, and cannot
+    # be — it is free text. MEASURED and recorded rather than implied: `Annual (Apr) · Live vintage
+    # 2022 · Terms verified never` is 55 characters, so this line has 23 of the cap's 78 left for a
+    # note and its brackets, and a note the CLI accepts at its own bound takes the line to 136. The
+    # door bounds the note (the controller's ruling); the line's own residue is this.
+    assert len(line) <= reg.DATASET_SUBLINE_CAP
+    assert len(render_note(line, note)) == 89
+    with conn.cursor() as cur:
+        cur.execute("UPDATE active_vintage SET note = %s WHERE dataset_key = 'cbp'", ("x" * reg.DATASET_SUBLINE_CAP,))
+    longest = next(render_note(d, n) for k, _s, d, _r, n in _sublines(conn) if k == "cbp")
+    assert len(longest) == 136
+
+    # And the note-only arm: a note with no live vintage of its own still reaches the tab rather
+    # than vanishing with its host.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE active_vintage SET vintage = 'n/a', note = 'why' WHERE dataset_key = 'cbp'")
+    line, note = next((d, n) for k, _s, d, _r, n in _sublines(conn) if k == "cbp")
+    assert render_note(line, note) == f"{cadence} · why · Terms verified never"
+
+
 def test_a_live_vintage_is_named_once_and_a_placeholder_never(conn):
     """The ruling's own three clauses, driven against the real registry rather than a fixture.
 
@@ -279,7 +340,7 @@ def test_a_live_vintage_is_named_once_and_a_placeholder_never(conn):
         vintages = cur.fetchall()
     placeholders = [k for k, v in vintages if v in reg.PLACEHOLDER_VINTAGES]
     assert placeholders, "no registry row carries a placeholder vintage, so this pin measures nothing"
-    for key, dataset_sub in ((k, d) for k, _s, d, _r in _sublines(conn)):
+    for key, dataset_sub in ((k, d) for k, _s, d, _r, _n in _sublines(conn)):
         assert "Declared vintage" not in dataset_sub, f"{key}: the retired fix-round-1 clause is back"
         if key in placeholders:
             assert "vintage" not in dataset_sub.lower(), f"{key} names a placeholder as a vintage: {dataset_sub!r}"

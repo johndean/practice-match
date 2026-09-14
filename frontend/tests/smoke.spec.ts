@@ -4,6 +4,9 @@ import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
 // render in a real browser; this one proves the same for a token-bearing URL — the gate frame
@@ -2520,8 +2523,25 @@ test.describe('A38 — the measured sub-line caps', () => {
   const LONGEST_LICENCE = 'CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)';
   const TWO_SUBLINES_PX = 61;
 
-  const words = (w: number, n: number) =>
-    Array.from({ length: Math.ceil(n / (w + 1)) }, () => 'abcdefghijklmnopqrstuvwxyz'.slice(0, w)).join(' ').slice(0, n).trim();
+  /** The caps DERIVED from `app/census/registry.py`, never retyped (review Minor 7). That module
+   *  is the one place both numbers live — the pytest pin, the licence-decision route and the CLI
+   *  all import them from there — and a probe that declared its own copy could go on asserting a
+   *  number nothing else uses. Read out of the source, the way `tests/test_docs.py` reads this
+   *  repository's TypeScript literals from the other direction. */
+  function capFromPython(name: string): number {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app', 'census', 'registry.py'), 'utf8');
+    const m = new RegExp(`^${name} = (\\d+)$`, 'm').exec(src);
+    expect(m, `app/census/registry.py declares no ${name}`).not.toBeNull();
+    return Number(m![1]);
+  }
+
+  // `.slice` then `.trim()` could take a character back off the end, so two of the Dataset probe's
+  // seven rows used to compose 77 and never tested the cap itself (review Minor 7). Padding is
+  // added to the LAST word instead, so every row is exactly `n` characters.
+  const words = (w: number, n: number) => {
+    const out = Array.from({ length: Math.ceil(n / (w + 1)) }, () => 'abcdefghijklmnopqrstuvwxyz'.slice(0, w)).join(' ').slice(0, n);
+    return out.length === n && !out.endsWith(' ') ? out : out.slice(0, n - 1) + 'z';
+  };
 
   const registryRow = (over: Record<string, unknown>) => ({
     dataset_key: 'probe', display_name: 'D', api_dataset_id: null, vintage: null,
@@ -2542,31 +2562,42 @@ test.describe('A38 — the measured sub-line caps', () => {
       .map((e) => Math.round(e.children[which].getBoundingClientRect().height)), cell);
   }
 
-  test('the Source column still holds 115 characters of sub-line on two lines', async ({ page }) => {
+  test('the Source column still holds SOURCE_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
     // The sub-line is `license_name · notes`, so the note carries the cap minus the licence name
     // and the separator. Word lengths 5 to 22: the note text that packs worst is what the cap has
     // to survive, not the average.
-    const CAP = 115;
-    const lengths = [CAP, CAP + 10];
-    const rows = [5, 8, 12, 16, 22].flatMap((w) =>
-      lengths.map((n) => registryRow({ license_name: LONGEST_LICENCE, notes: words(w, n - LONGEST_LICENCE.length - 3) })));
+    const CAP = capFromPython('SOURCE_SUBLINE_CAP');
+    const MIXES = [5, 8, 12, 16, 22];
+    const rows = MIXES.flatMap((w) =>
+      [CAP, CAP + 10].map((n) => registryRow({ license_name: LONGEST_LICENCE, notes: words(w, n - LONGEST_LICENCE.length - 3) })));
     const got = await heights(page, rows, 1);
-    const atCap = rows.map((_r, i) => got[i]).filter((_h, i) => i % lengths.length === 0);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
     expect(Math.max(...atCap), `SOURCE_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
-    console.log(`[A38-CAPS] SOURCE_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} twoLinePx=${TWO_SUBLINES_PX}`);
+    // Both sides of the number (review Minor 7): a cap that has become needlessly TIGHT is a
+    // measurement gone stale too, and until this the probe generated the over-cap rows and read
+    // none of them. The cap is the largest count that fits for EVERY word mix, so ten past it must
+    // fail for at least ONE of them — `max`, not `min`: a generous mix fitting more is what makes
+    // the floor a floor.
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] SOURCE_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
   });
 
-  test('the Dataset column still holds 78 characters of sub-line on two lines', async ({ page }) => {
+  test('the Dataset column still holds DATASET_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
     // `refresh_cadence` is printed verbatim as the first clause, which is the cheapest way to
     // drive a sub-line of an exact length; ` · Terms verified never` (23) is always appended.
     // Word lengths 4 to 16 — the range this sub-line's own vocabulary spans, its longest token
     // being `Current_Current` at 15.
-    const CAP = 78;
+    const CAP = capFromPython('DATASET_SUBLINE_CAP');
     const TAIL = ' · Terms verified never'.length;
-    const rows = [4, 5, 6, 8, 10, 12, 16].map((w) => registryRow({ refresh_cadence: words(w, CAP - TAIL) }));
+    const MIXES = [4, 5, 6, 8, 10, 12, 16];
+    const rows = MIXES.flatMap((w) => [CAP, CAP + 10].map((n) => registryRow({ refresh_cadence: words(w, n - TAIL) })));
     const got = await heights(page, rows, 0);
-    expect(Math.max(...got), `DATASET_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
-    console.log(`[A38-CAPS] DATASET_SUBLINE_CAP=${CAP} maxPx=${Math.max(...got)} twoLinePx=${TWO_SUBLINES_PX}`);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
+    expect(Math.max(...atCap), `DATASET_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] DATASET_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
   });
 
   test('the design\'s own tallest fixture row is still the 94 px budget both caps are cut to', async ({ page }) => {

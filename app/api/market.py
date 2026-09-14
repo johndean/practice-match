@@ -386,7 +386,14 @@ def _layer_state(reg: dict[str, dict[str, Any]], dataset_key: str | None) -> tup
     state = _STATE_FOR[row["license_status"]]
     if state != "blocked":
         return state, None
-    return state, row["notes"] or DEFAULT_BLOCKED_REASON
+    # `blocked_reason`, NOT `notes` (A38 fix round 3, re-review Important 2, migration 094). They
+    # are two sentences with two audiences: `notes` is the OPERATOR's column, printed verbatim on
+    # the admin Data Sources tab and bounded by that tab's measured layout cap, while this is the
+    # MEMBER's — the reason a layer is missing, served from here to `GET /api/layers`, the panel
+    # payload and the boundaries payload. They shared one column until 094, and three of the four
+    # datasets `LAYERS` gates carry a seeded GEOGRAPHY note that would have been served as the
+    # reason for a licence block. `tests/api/test_market_layers.py` pins the two apart.
+    return state, row["blocked_reason"] or DEFAULT_BLOCKED_REASON
 
 
 def _cleared(reg: dict[str, dict[str, Any]], dataset_key: str) -> bool:

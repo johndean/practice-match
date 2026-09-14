@@ -41,14 +41,24 @@
 -- row's `license_status`, `license_url` or `attribution_text` is read or written here: this
 -- migration changes prose and nothing that decides whether a dataset may ship.
 --
+-- `imagery` is shortened FURTHER than its own two lines needed (fix round 3): the licence-decision
+-- route refuses a decision whose composed sub-line would not fit, and that composition counts the
+-- sweep's drift clause for a row that will have a terms URL -- so an 88-character note left this
+-- row unable to RECORD a terms URL at all, which is the one act the route exists for. 017's own
+-- "written licence names commercial web display" is kept verbatim (the condition a later reader
+-- will quote); the subject it lost is the row itself. `google_places_aggregate` goes the other way
+-- and regains SST §13.1 and the billing precondition: round 1 refuted that complaint because the
+-- row composed to exactly 115 with no headroom, and the legal allow-list has since removed that
+-- reason.
+--
 -- RED BEFORE THIS AND 092: ten rows over the cap (093's eight below and 092's two), and on the
 -- rendered table `zbp` at 226 px, `google_places_aggregate` 190, `practice_locations` 187,
 -- `overture_places` 173, `osm_tiles` 150 and five more over the design's tallest 94 px.
 UPDATE dataset_registry SET notes = 'D11 / A-C6: ZIP counts come from CBP''s zip geography; ZIPs treated as ZCTAs.' WHERE dataset_key = 'zbp';
 UPDATE dataset_registry SET notes = 'Spec §12 / D15: blocked, incl. Report_Hospital_Competitor_All_US_ZipCode_FULL.csv; Google Maps Platform Terms §3.2.3 and SST §14 forbid storing or rendering its content.' WHERE dataset_key = 'practice_locations';
-UPDATE dataset_registry SET notes = 'D17: the POI count is held in memory only (SST §13.2, 30-day ceiling); clear only after VIN Foundation counsel accepts SST §13.' WHERE dataset_key = 'google_places_aggregate';
+UPDATE dataset_registry SET notes = 'D17: the POI count is held in memory only (SST §13.2, 30-day ceiling) and persisted values diverge from level_live (SST §13.1 Customer Values); clear only after VIN Foundation counsel accepts SST §13 and a Google Cloud billing account exists.' WHERE dataset_key = 'google_places_aggregate';
 UPDATE dataset_registry SET notes = 'D16 rank 1; clear after Task C2.' WHERE dataset_key = 'overture_places';
 UPDATE dataset_registry SET notes = 'D16 rank 2; redundant with overture_places unless Overture drops Foursquare.' WHERE dataset_key = 'fsq_os_places';
 UPDATE dataset_registry SET notes = 'A-C1: CARTO is the Census analytical basemap; Esri stays where the design says.' WHERE dataset_key = 'osm_tiles';
-UPDATE dataset_registry SET notes = 'Satellite toggle stays flagged off until a written licence names commercial web display.' WHERE dataset_key = 'imagery';
+UPDATE dataset_registry SET notes = 'Off until a written licence names commercial web display.' WHERE dataset_key = 'imagery';
 UPDATE dataset_registry SET notes = 'Confirm identifier and geography before any revenue-benchmark layer is promised (§15).' WHERE dataset_key = 'aies';

@@ -73,7 +73,7 @@ async def _registry(conn: AsyncConnection) -> dict[str, dict[str, Any]]:
     """The dataset registry rows, one per dataset key. Moved from market.py."""
     from sqlalchemy import text
 
-    rows = (await conn.execute(text("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry"))).mappings().all()
+    rows = (await conn.execute(text("SELECT dataset_key, attribution_text, vintage, license_status, notes, blocked_reason FROM dataset_registry"))).mappings().all()
     return {r["dataset_key"]: dict(r) for r in rows}
 
 

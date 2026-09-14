@@ -66,7 +66,7 @@ from app.auth import sessions as S
 from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
-from app.census.registry import SOURCE_SUBLINE_CAP
+from app.census.registry import DRIFT_CLAUSE, LEGAL_NOTE_ROWS, SOURCE_SUBLINE_CAP
 from app.db import sync_conn
 
 log = logging.getLogger(__name__)
@@ -95,6 +95,21 @@ SELECT r.dataset_key, r.display_name, r.api_dataset_id, r.vintage, r.refresh_cad
   FROM dataset_registry r LEFT JOIN active_vintage a USING (dataset_key)
  ORDER BY r.dataset_key
 """
+
+
+def _composed_subline(*, name: str | None, notes: str | None, url: str | None) -> str:
+    """The Source sub-line the admin Data Sources tab would render for this row.
+
+    `frontend/src/admin/data_sources.ts`'s composition, restated at the one door that can change
+    its inputs (fix round 3, re-review Important 1) — the same cross-language duplication the cap's
+    pytest pin already carries, and for the same reason: there is no way to call a TypeScript
+    module from a route. `" · Terms drift flagged"` is counted whenever the row will have a
+    `license_url`, because that is every row the quarterly sweep can flag, and a name that fits
+    only until the terms page moves does not fit."""
+    parts = [name or "Licence not recorded"]
+    if notes:
+        parts.append(notes)
+    return " · ".join(parts) + (DRIFT_CLAUSE if url is not None else "")
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
@@ -142,11 +157,13 @@ class LicenseDecision(BaseModel):
     is already recorded, so blocking a source does not mean retyping its licence name and URL.
 
     `notes` is the operator's RATIONALE and is NOT one of those fields any more (A38 fix round 2,
-    controller re-ruling of brief item I7, 2026-09-14). It reaches `audit_log.reason` and the
-    licence ledger and stops there; it is no longer COALESCEd into `dataset_registry.notes`, which
-    the Data Sources tab renders verbatim into a row of the approved design. That is why its 4,000
-    characters can stay 4,000: a rationale nobody renders is not bounded by a layout. `name` IS
-    rendered, so the route bounds it by the measured cap below."""
+    controller re-ruling of brief item I7, 2026-09-14). It reaches `audit_log.reason` and stops
+    there — `license_audit_log` (migration 020) has columns for the URL, the hash, the status and
+    `changed`, and NO column for a note, so the decision's own ledger row records which terms page
+    was read and the fact of the decision, never the words. It is no longer COALESCEd into
+    `dataset_registry.notes`, which the admin Data Sources tab renders verbatim into a row of the
+    approved design. That is why its 4,000 characters can stay 4,000: a rationale nobody renders is
+    not bounded by a layout. `name` IS rendered, so the route bounds the line it composes, below."""
 
     status: Literal["cleared", "unresolved", "blocked"]
     name: str | None = Field(default=None, max_length=MAX_NAME)
@@ -177,16 +194,17 @@ def decide_license(dataset_key: str, body: LicenseDecision, request: Request, pr
     invisible to it, and `notes = COALESCE(%s, notes)` admitted 4,000 characters into a column
     printed verbatim at 376 px. Two changes: the decision's rationale no longer touches that column
     at all (it is the audit trail's, and `license_audit_log` carries the decision row), and a
-    `name` longer than `SOURCE_SUBLINE_CAP` is refused with a 422 that names the cap rather than
-    written and rendered. `MAX_NAME` (200) stays as the field's own bound; the cap is the stricter
-    of the two and is the one a licence name meets first."""
-    if body.name is not None and len(body.name) > SOURCE_SUBLINE_CAP:
-        # Review F3. The tab prints `license_name` verbatim as the Source sub-line's first clause
-        # and the design gives that line two rows at 376 px; the cap is measured
-        # (`app.census.registry.SOURCE_SUBLINE_CAP`, re-derived by
-        # `scripts/measure_source_subline_cap.py`). Refused at the door rather than truncated at
-        # the renderer, which is the ruling 092 and 093 already follow for the seeded rows.
-        return _error("BAD_FIELD", f"A licence name must be at most {SOURCE_SUBLINE_CAP} characters: the admin Data Sources tab renders it in full.", 422)
+    a decision whose COMPOSED Source sub-line — the name it would leave, the row's own note, and the
+    sweep's drift clause where the row will have a terms URL — would exceed `SOURCE_SUBLINE_CAP` is
+    refused with a 422 naming the cap and the length it would have composed. The composition is read
+    under the lock this handler already takes, so it is what the decision would actually leave
+    behind. `LEGAL_NOTE_ROWS` is skipped, those two rows being over the cap by ruling. `MAX_NAME`
+    (200) stays as the field's own bound; the cap is the stricter of the two.
+
+    Fix round 3 (re-review Important 1) is the second half of that: fix round 2's guard measured
+    `license_name` ALONE against a cap defined on the composed line, so a 37-character name on a row
+    with an 88-character note still left the tab at 150 characters — and this branch shipped a test
+    that drove exactly that and asserted 200."""
     if body.url is not None and body.url.scheme != "https":
         # A-C9 (5). `app/census/license.py` re-fetches this URL quarterly and hashes what comes
         # back; over clear text anything on the path can rewrite the page the drift check compares.
@@ -197,13 +215,33 @@ def decide_license(dataset_key: str, body: LicenseDecision, request: Request, pr
         with conn.cursor() as cur:
             # Read-then-write under one row lock: the `before` the audit row records has to be the
             # state this decision actually replaced, not one a concurrent decision has since moved.
-            cur.execute("SELECT license_status, drift_flagged FROM dataset_registry WHERE dataset_key = %s FOR UPDATE", (dataset_key,))
+            cur.execute(
+                "SELECT license_status, drift_flagged, license_name, notes, license_url FROM dataset_registry "
+                "WHERE dataset_key = %s FOR UPDATE",
+                (dataset_key,),
+            )
             row = cur.fetchone()
             if row is None:
                 # Nothing written, nothing invalidated. The key is not echoed back: it is
                 # caller-supplied text, and the console already knows what it asked for.
                 return _error("NOT_FOUND", "No such data source.", 404)
             before = {"license_status": row[0], "drift_flagged": row[1]}
+            composed = _composed_subline(name=body.name or row[2], notes=row[3], url=url or row[4])
+            if len(composed) > SOURCE_SUBLINE_CAP and dataset_key not in LEGAL_NOTE_ROWS:
+                # Fix round 3, re-review Important 1. The cap is on the COMPOSED sub-line, and the
+                # first version of this guard measured `license_name` alone — so a 37-character name
+                # on a row with an 88-character note still went through and left the tab at 150
+                # characters, 35 over. The row is already locked, so the composition is read here,
+                # under the same lock the write takes, from what the decision WOULD leave behind.
+                # `LEGAL_NOTE_ROWS` is skipped: those two rows are over the cap by ruling (their
+                # notes carry legal citations that are never shortened to fit a layout), and a
+                # check that did not skip them would make them the only two rows nobody can decide.
+                return _error(
+                    "BAD_FIELD",
+                    f"This decision would put the Data Sources tab's source line at {len(composed)} characters; "
+                    f"the design holds {SOURCE_SUBLINE_CAP}. Shorten the licence name.",
+                    422,
+                )
             cur.execute(
                 """UPDATE dataset_registry
                       SET license_status = %s,

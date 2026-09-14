@@ -110,7 +110,7 @@ describe('toDataSourceRows renders the design\'s Data Sources table from the reg
     // The one state where the declared vintage carries information: an activation that has not
     // happened, or one held back deliberately. Anything else is the same fact printed twice.
     const [row] = rows([item({ vintage: '2023', active_vintage: '2022' })]);
-    expect(row[0].sub).toBe('Annual (Dec) · Declared 2023 · live 2022 · Terms verified never');
+    expect(row[0].sub).toBe('Annual (Dec) · Declared vintage 2023 · Live vintage 2022 · Terms verified never');
   });
 
   it('prints no vintage clause where the row has no live vintage at all', () => {

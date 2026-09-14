@@ -229,6 +229,11 @@ export function toDataSourceRows(items: (DataSourceItem | DesignDataSourceRow)[]
     // carries information (an activation that has not happened). Where they agree it is the same
     // fact printed twice, and where there is no live vintage there is nothing to name.
     //
+    // Both halves lead with the same capitalised noun phrase (review Minor 6): the pair is joined
+    // by the very ` · ` the clause list itself is joined with, so `Declared 2023 · live 2022` read
+    // as two unrelated clauses, one of them lower-case and naming no noun. The 78-character cap
+    // has the characters — this row composes to 47.
+    //
     // The operator's activation note (A-C7 (6)) rides in the design's OWN parenthesis, the one this
     // sub-line already uses for "Loaded June 2026 (4,200 rows)", beside the vintage it explains.
     // `app/api/admin_data_sources.py`'s own docstring says this tab is its only intended reader.
@@ -238,7 +243,7 @@ export function toDataSourceRows(items: (DataSourceItem | DesignDataSourceRow)[]
     const live = realVintage(item.active_vintage);
     const note = item.active_vintage_note ? ` (${item.active_vintage_note})` : '';
     if (live !== null) {
-      dataset.push((declared !== null && declared !== live ? `Declared ${declared} · live ${live}` : `Live vintage ${live}`) + note);
+      dataset.push((declared !== null && declared !== live ? `Declared vintage ${declared} · Live vintage ${live}` : `Live vintage ${live}`) + note);
     } else if (item.active_vintage_note) {
       dataset.push(item.active_vintage_note);
     }
