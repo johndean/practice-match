@@ -457,24 +457,31 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(sheetBox.height)).toBe(Math.round(mapBox.height));
 
     const scrolls = await sheet(page).locator('.rf-scroll').evaluate((el) => el.scrollHeight > el.clientHeight);
-    expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all five sections').toBe(true);
+    expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all four sections').toBe(true);
   });
 
-  test('every one of the five sections renders, in order', async ({ page }) => {
+  // C13 gave the sheet FIVE sections and A49 (controller ruling, 2026-09-15 — Task
+  // SATELLITE-GATE) took the last of them away: A49.3 removed the whole "Basemap" section,
+  // heading included, because the imagery licence is unresolved (Census & Market Data Source
+  // Specification §15, "Until answered, the Satellite toggle ships disabled"). Four remain, in
+  // the same order, and the ORDER is what this case has always been about — the count is how it
+  // states it. `BASEMAP`'s absence is asserted positively in the A49 case above rather than left
+  // to this list quietly getting shorter.
+  test('every one of the four sections renders, in order', async ({ page }) => {
     await mobileMap(page);
     await openSheet(page);
     const text = await sheet(page).innerText();
     // innerText is the RENDERED text, and rendered is what "renders" has to mean here: a
     // display:none section would drop out of it entirely. V3 sets `text-transform:
-    // uppercase` on all four of the sheet's micro-labels and on the footer button (Global
+    // uppercase` on the sheet's micro-labels and on the footer button (Global
     // Constraint (f): V3 preserves and EXTENDS micro-label uppercase while dropping it from
     // display headings), so the strings that reach the screen are SHADING, COMPARE AGAINST,
-    // DATASETS, BASEMAP and SHOW MAP, while the "What this means" display heading is not
+    // DATASETS and SHOW MAP, while the "What this means" display heading is not
     // transformed. They are matched here exactly as they render, which pins that styling as
     // well as the section order. Confirmed character-for-character identical on the V3
     // reference (`PW_APP_URL=http://localhost:5174`): reference and app return the same
     // innerText for this sheet, so the case is the design's, not the port's.
-    const order = ['SHADING', 'COMPARE AGAINST', 'DATASETS', 'What this means', 'BASEMAP'];
+    const order = ['SHADING', 'COMPARE AGAINST', 'DATASETS', 'What this means'];
     let at = -1;
     for (const section of order) {
       const next = text.indexOf(section);
