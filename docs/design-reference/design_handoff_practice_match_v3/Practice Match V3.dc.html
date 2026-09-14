@@ -1425,7 +1425,7 @@
             <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Access, listings, activity and the data the platform depends on.</p>
             <div style="display: flex; gap: 4px; margin-top: 26px;">
               <sc-for list="{{ admin.tabs }}" as="t" hint-placeholder-count="4">
-                <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<span style="{{ t.countStyle }}">{{ t.count }}</span></button>
+                <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<sc-if value="{{ t.hasCount }}" hint-placeholder-val="{{ true }}"><span style="{{ t.countStyle }}">{{ t.count }}</span></sc-if></button>
               </sc-for>
             </div>
           </div>
@@ -2156,6 +2156,7 @@ class Component extends DCLogic {
     if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     this.loadAdmin();
+    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());
     this.loadAreas(this.state.market);
     this.loadSummary(this.state.market);
     if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));
@@ -3199,7 +3200,8 @@ class Component extends DCLogic {
     // -- A40.5's `signIn` among them -- can await a settled screen whoever is signed in.
     if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
-    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));
+    const token = this._adminLoad = (this._adminLoad || 0) + 1;
+    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
     return Promise.all(loads);
   }
 
@@ -3364,11 +3366,11 @@ class Component extends DCLogic {
     return {
       tabs: [
         { key: "users", label: "Users", count: "3" },
-        { key: "listings", label: "Listings", count: "3" },
+        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },
         { key: "activity", label: "Requests", count: "2" },
         { key: "data", label: "Data Sources", count: "2" }
       ].map((t) => ({
-        label: t.label, count: t.count,
+        label: t.label, count: t.count, hasCount: !!t.count,
         go: () => this.setState({ adminTab: t.key }),
         style: "font-family: var(--rf-display); display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; letter-spacing: .02em; padding: 12px 18px; border: 0; border-radius: 8px 8px 0 0; cursor: pointer; color: " +
           (tab === t.key ? "var(--color-navy)" : "#494949") + "; background: " + (tab === t.key ? "var(--color-white)" : "transparent") + ";",

@@ -63,8 +63,8 @@ PERF_PW = "orbit-lantern-quiet-42"
 
 
 def _fresh_ip() -> str:
-    """A client address nothing else has used, so a fixed-window rate limit can never make a
-    latency sample into a 429 — the same trick test_interest.py uses, for the same reason."""
+    """A client address nothing else has used, so the rate limiter can never make a latency sample
+    into a 429 — the same trick test_interest.py uses, for the same reason."""
     n = uuid.uuid4().int
     return "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
 

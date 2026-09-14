@@ -422,6 +422,14 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
+    // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
+    // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
+    // `adminListings` line and A39.4 reads A40.4's, which is A24's own precedent for a family
+    // whose id is lower than the one it chains on.
+    'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
+    // Fix round 1 (review Minor-3, 2026-09-14): A39.5 is CHAINED on A39.2 and consumes it.
+    'A39.5',
     // A48 — COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14): the stakeholder asked what area
     // the veterinary-competition number describes and the product named it nowhere. D-C57 — every
     // surface showing the figure or its area names it, in D-C51's vocabulary. Appended last, as
@@ -624,7 +632,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(354);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(360);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -6063,10 +6063,15 @@ describe('A33.2 — the margin caveat counts the bands', () => {
 describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
   const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
   const ROWS = [['a listing row'], ['another']];
+  // A39 (D-C53): `list()` answers a PAGE — the rows the table renders and the number its tab
+  // badges — because both come from one request and neither may ever be shown beside the other's
+  // answer. `onDecision` is the seam a decision re-reads the queue through (A39.4).
+  const PAGE = { rows: ROWS, counts: { in_review: 2 } };
   const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
-  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE)) => {
     const calls: string[] = [];
-    return { calls, list: () => { calls.push('list()'); return answer(); } };
+    const adapter: any = { calls, list: () => { calls.push('list()'); return answer(); }, onDecision: (fn: () => unknown) => { adapter.decided = fn; } };
+    return adapter;
   };
   const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
 
@@ -6169,6 +6174,137 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
       expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
       await expect(answer).resolves.toBeInstanceOf(Array);
     }
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A39 (Task A39, D-C53, 2026-09-13): the badge is the database's, and a decision refreshes the
+  // table it was taken on. Before this the tab read "Listings 3" on every database in the world —
+  // `logic.js`'s own string literal, which is the number the design's four fixture rows happen to
+  // have — and a Publish left the In-review pill on screen until the reviewer reloaded the page.
+  // ---------------------------------------------------------------------------------------
+  const tabCount = (c2: any) => c2.adminVals().tabs.find((t: any) => t.label === 'Listings');
+
+  it('A39.1/A39.2: the Listings badge is the count the queue served, not the design\'s literal', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 2 });
+    expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
+  });
+
+  it('A39.3a/A39.3b: no count, no pill — an empty blue lozenge is not a number', () => {
+    // Between arrival and the first answer there is no count, and the design paints the badge
+    // unconditionally; `hasCount` is what unmounts it (`sc-if`), in `cell()`'s own `!!` idiom.
+    const c2: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.2: a refusal clears the badge with the rows — a count over an empty table is a lie', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(() => Promise.reject(new Error('403'))), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.state.adminListingCounts).toBeNull();
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.1: with no adapter the design\'s own literal stands — the reference and the preview', () => {
+    const c2: any = new Component({});
+    expect(tabCount(c2)).toMatchObject({ count: '3', hasCount: true });
+    // ...and the other three tabs are untouched by this family, on every host.
+    expect(c2.adminVals().tabs.map((t: any) => [t.label, t.count]))
+      .toEqual([['Users', '3'], ['Listings', '3'], ['Requests', '2'], ['Data Sources', '2']]);
+  });
+
+  it('A39.4: a decision the API accepted re-reads the queue through loadAdmin, with no reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(adapter.calls).toEqual(['list()']);
+
+    // What `admin/listings.ts` calls after a 2xx — the adapter never writes state itself.
+    await adapter.decided();
+    expect(adapter.calls, 'the decision re-lists through the ONE loader').toEqual(['list()', 'list()']);
+  });
+
+  it('A39.4 arms nothing for an adapter that predates it, and the guard is the METHOD', () => {
+    const old: any = { list: () => Promise.resolve(PAGE) };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: old, perms: perms(['page.admin']) });
+    expect(() => c2.componentDidMount()).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 (controller ruling, 2026-09-14): EACH TAB OWNS ITS OWN STATE KEY.
+  // A39 first wrote `adminCounts`, described as "one object the other three tabs put their own
+  // badge in beside this one" — a convention `setState` cannot honour (it merges TOP-LEVEL keys,
+  // so two `loads.push` arms writing one object in the same `Promise.all` clobber each other, last
+  // writer wins, and a badge blanks at random) and one no sibling follows: `feat/admin-users`
+  // already writes `adminUserCounts.open` and `feat/admin-data-sources` a scalar `adminDataCount`.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.1/A39.2: the Listings count lives under its OWN key, so a sibling tab cannot clobber it', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminListingCounts, 'the key names the tab it belongs to').toEqual({ in_review: 2 });
+    expect(c2.state.adminCounts, 'and the shared object the comment described is gone').toBeUndefined();
+
+    // FIX ROUND 2, Minor 2: this used to write `adminUserCounts` and assert the listings count
+    // survived — which NO `setState` implementation could break, so it held under the retracted
+    // shared-object design too and pinned nothing. The write below is the HAZARD itself: a sibling
+    // loader putting its own badge in the one shared `adminCounts` object the first draft
+    // described, in the same `Promise.all`, with `setState`'s top-level merge replacing it whole.
+    // With each tab on its own key the Listings badge cannot see it; with one shared object it
+    // read `String(undefined)`.
+    c2.setState({ adminCounts: { open: 4, total: 9 } });
+    expect(c2.state.adminListingCounts, 'the sibling wrote the shared key and this one survived').toEqual({ in_review: 2 });
+    expect(tabCount(c2), 'and the badge still reads the count its own tab loaded').toMatchObject({ count: '2', hasCount: true });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Minor-3: two reloads in flight, and the LATER one is the one that counts.
+  // A39.4 re-reads on every decision, so a reviewer who presses Publish on two rows inside one
+  // round trip has two `loadAdmin` calls outstanding; whichever ANSWER arrives last used to win,
+  // and the network does not promise that is the later question. A24.21's own idiom: read a token
+  // once when the load starts, re-check it on arrival, and let a superseded answer go.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.5: a superseded load is discarded — the last question asked is the one answered', async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminListingRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], counts: { in_review: 1 } });
+    await older;
+    expect(c2.state.adminListingRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
+  });
+
+  it('A39.5: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminListingRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
   });
 });
 
