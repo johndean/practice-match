@@ -133,6 +133,47 @@ def slug_for(name: str, listing_id: Any) -> str:
     return f"{base[:MAX_SLUG_BASE]}-{str(listing_id)[:8]}"
 
 
+# Task A39, ruling 5 (D-C53). WHO last moved this listing into the status it is in NOW, and WHEN.
+# `audit_log` is where a decision already lives (D4), so this rides along with the row, reading the
+# same predicate `_COLUMNS`'s own `decline_reason` subquery reads on the same index
+# (`audit_log_target_idx` is `(target_type, target_id, at DESC)`).
+#
+# `actor_role` rather than a name: it is the role list `app/auth/audit.py` records, and it is what
+# separates the seller's own pause from the reviewer's unpublish — two doors that reach the SAME
+# `paused` status and are otherwise indistinguishable in the row. Served VERBATIM; the tab is what
+# turns it into a word.
+#
+# ONE LATERAL rather than two correlated subqueries (fix round 1, review Minor-2). Written first as
+# a faithful copy of the `decline_reason` precedent, it asked the same question TWICE per row — once
+# for `at`, once for `actor_role` — which is twice the index probes a page needs; and each SORTED,
+# because it ordered by `a.id DESC` and the index's trailing column is `at DESC`. Both facts come
+# from one row, so one `LEFT JOIN LATERAL … LIMIT 1` fetches them together, and `ORDER BY a.at DESC`
+# is the order the index itself supplies. `a.id DESC` stays as the TIE-BREAK — `at` is `now()`, which
+# is transaction-stable, so two decisions in one transaction share it and `id` (a `bigserial`) is
+# what says which was written last. `LEFT` because a listing no decision has ever named (a draft)
+# must keep its row with both columns null: absent beats faked.
+_STATUS_CHANGE = """
+              LEFT JOIN LATERAL (
+                SELECT a.at, a.actor_role FROM audit_log a
+                 WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
+                   AND a.after ->> 'status' = listing.status
+                 ORDER BY a.at DESC, a.id DESC LIMIT 1) sc ON TRUE"""
+# Ruling 1: the tab's badge is SERVED, never `logic.js`'s literal "3" — a number the design's own
+# four rows happen to have and no database ever produced. ONE grouped scan, `admin_signups`'s own
+# `COUNTS_SQL` pattern, so the badge and the total can never disagree; and it counts the whole
+# TABLE, never the page, because what is waiting for a reviewer is not what fits on one screen.
+COUNTS_SQL = "SELECT status, count(*) FROM listing GROUP BY 1"
+
+
+def queue_counts(conn: Any) -> dict[str, int]:
+    """What the Listings tab badges, and the whole that number is part of."""
+    with conn.cursor() as cur:
+        cur.execute(COUNTS_SQL)
+        rows = cast("list[tuple[str, int]]", cur.fetchall())
+    return {"in_review": sum(n for status, n in rows if status == "in_review"),
+            "total": sum(n for _status, n in rows)}
+
+
 def sellers_for(conn: Any, seller_ids: list[Any]) -> dict[Any, str | None]:
     """Each owner's display name, in ONE round trip — `assets_for`'s own shape and its own reason.
 
@@ -180,21 +221,42 @@ async def list_all(request: Request) -> Response:
     where = ["TRUE"] + (["status = %s"] if status else []) + (["(updated_at, id) < (%s::timestamptz, %s::uuid)"] if keyset else [])
     params: list[Any] = [*([status] if status else []), *(keyset or ())]
     with closing(sync_conn()) as conn, conn:
-        rows = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE {' AND '.join(where)}"
+        rows = _rows(conn, f"SELECT {_COLUMNS}, listed_at,"
+                           " sc.at AS status_changed_at, sc.actor_role AS status_changed_by"
+                           f" FROM listing{_STATUS_CHANGE}"
+                           f" WHERE {' AND '.join(where)}"
                            " ORDER BY updated_at DESC, id DESC LIMIT %s", (*params, limit + 1))
         page = rows[:limit]
         assets = assets_for(conn, [row["id"] for row in page])
         names = sellers_for(conn, [row["seller_id"] for row in page if row["seller_id"] is not None])
         items = [{**serialise_draft(row, assets[row["id"]]),
                   "seller_id": str(row["seller_id"]) if row["seller_id"] is not None else None,
-                  "seller_name": names.get(row["seller_id"])}
+                  "seller_name": names.get(row["seller_id"]),
+                  # Ruling 5's three: the date a listing reached the market (016's own column,
+                  # re-stamped at the FIRST publish alone), and the date and the actor of the
+                  # latest move into the status it is in now.
+                  "listed_at": row["listed_at"].isoformat(),
+                  "status_changed_at": row["status_changed_at"].isoformat() if row["status_changed_at"] else None,
+                  "status_changed_by": row["status_changed_by"]}
                  for row in page]
+        # ONE full-table scan per TRAVERSAL, not per page (fix round 1, review Minor-1):
+        # `COUNTS_SQL` is unindexed and `admin/listings.ts` walks up to `MAX_PAGES` pages per read,
+        # so a decision's re-read used to pay for one scan per page of a queue it was already
+        # walking. The badge is a fact about the table, it does not change between pages of one
+        # traversal, and the client takes it off the FIRST page — so a continuation request (one
+        # carrying a `cursor`) does not compute it and does not answer it.
+        counts = None if keyset else queue_counts(conn)
     # `page` is never empty when `more` is true (one extra row was asked for and arrived), so the
     # cursor is read off `page[-1]` without a second emptiness test.
     last = page[-1] if len(rows) > limit else None
     return JSONResponse({
         "items": items,
         "next_cursor": f"{last['updated_at'].astimezone(UTC).isoformat().replace('+00:00', 'Z')}|{last['id']}" if last else None,
+        # Beside `items`, never inside them (`admin_signups.list_signups`'s own envelope): the badge
+        # is a fact about the TABLE, and a page of it cannot carry one. Omitted outright on a
+        # continuation page rather than sent as null, so a reader cannot mistake "not asked for
+        # again" for "the table holds none".
+        **({} if counts is None else {"counts": counts}),
     })
 
 

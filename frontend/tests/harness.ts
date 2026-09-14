@@ -1118,7 +1118,9 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * A REMOTE run (`PW_APP_URL`) differs on both halves of that, and Task S7 (John, 2026-09-08) is
  * where the difference is handled. Nothing clears QA's counters — its rate limits are the real
  * ones, deliberately (A-S5.1), so two runs of this suite against QA are fifteen minutes apart, one
- * fixed `SIGNIN_IP` window. The FIXTURES, though, are reseeded either way: a local run's `api` web
+ * sliding `SIGNIN_IP` window measured from the first run's LAST sign-in (Task RATE-LIMIT-WINDOW —
+ * there is no quarter-hour boundary to wait for, and the window holds every sign-in for a full
+ * 900 s after it, so counting from the FIRST one is a lower bound rather than a guarantee). The FIXTURES, though, are reseeded either way: a local run's `api` web
  * server runs `seed_persona` before it serves (A-I7), and a remote run runs the same script against
  * the target from `frontend/tests/global-setup.ts` before its first test — so every run of this
  * suite, local or live, starts from the same known baseline, and the eight live account flows

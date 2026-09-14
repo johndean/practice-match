@@ -406,6 +406,7 @@ class Component extends DCLogic {
     if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     this.loadAdmin();
+    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());
     this.loadAreas(this.state.market);
     this.loadSummary(this.state.market);
     if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));
@@ -1449,7 +1450,8 @@ class Component extends DCLogic {
     // -- A40.5's `signIn` among them -- can await a settled screen whoever is signed in.
     if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
-    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));
+    const token = this._adminLoad = (this._adminLoad || 0) + 1;
+    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
     if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));
     return Promise.all(loads);
   }
@@ -1615,7 +1617,7 @@ class Component extends DCLogic {
     return {
       tabs: [
         { key: "users", label: "Users", count: s.adminUserCounts ? String(s.adminUserCounts.open) : (this.props.adminUsers ? "" : "3") },
-        { key: "listings", label: "Listings", count: "3" },
+        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },
         { key: "activity", label: "Requests", count: "2" },
         { key: "data", label: "Data Sources", count: "2" }
       ].map((t) => ({
