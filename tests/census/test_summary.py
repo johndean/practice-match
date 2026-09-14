@@ -507,3 +507,16 @@ def test_the_metro_basis_phrases_are_drawn_from_the_designs_own_closed_word_list
         assert phrase.endswith(" for the metro"), phrase
         assert phrase[: -len(" for the metro")] in ("Census published", "derived estimate"), phrase
         assert kind in phrase or kind == "published", phrase
+
+
+async def test_a_row_the_census_published_no_estimate_for_is_skipped(client, published, conn, H) -> None:  # noqa: F811
+    """`acs_measure.estimate` is NULLABLE and `app/census/acs.py`'s `_num` writes NULL for a value
+    the Census published as a non-number, so an absent figure has to be SKIPPED rather than
+    coerced: `float(None)` here would take the whole route down for one metro."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE acs_measure SET estimate = NULL WHERE variable = 'B01003_001E'")
+    sync_redis().flushdb()
+    r, body = await _body(client, H)
+    assert r.status_code == 200
+    assert _layer(body, "growth")["metro"] is None, "a rate was built from a figure the Census did not publish"
+    assert _layer(body, "income")["metro"] is not None, "one absent variable emptied the others"

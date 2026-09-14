@@ -478,11 +478,11 @@ def _metro_figure(layer: str, measures: dict[tuple[str, str], tuple[float, float
             return None
         value, moe = found
         if layer == "pets":
-            estimate = M.pet_households_est(value)
-            return None if estimate is None else {
-                "value": float(estimate), "moe": None,
-                "kind": "derived", "basis": METRO_BASIS["derived"],
-            }
+            # `pet_households_est` answers `None` only for a `None` household count, and the guard
+            # above has already returned for a missing or suppressed row — so the cast states what
+            # the types cannot, rather than a branch no fixture and no database can reach.
+            return {"value": float(cast("int", M.pet_households_est(value))), "moe": None,
+                    "kind": "derived", "basis": METRO_BASIS["derived"]}
         return {"value": value, "moe": moe, "kind": "published", "basis": METRO_BASIS["published"]}
     if layer == "growth" and acs is not None and prior is not None:
         now, before = measures.get((METRO_POPULATION, acs)), measures.get((METRO_POPULATION, prior))
@@ -861,17 +861,22 @@ async def summary(cbsa: str) -> Response:
             return _error("NOT_FOUND", "No such metro.", 404)
         # Task SNAP-METRO: every published metro figure in the body, in ONE indexed read, before
         # the per-layer loop — four rows at most, and the same two ACS vintages the loop's own
-        # figures are stamped with, so a cache key that already spans them spans these too.
+        # figures are stamped with, so a cache key that already spans them spans these too. A
+        # database with NO activated ACS vintage at all sends an empty array here and matches
+        # nothing, which is the same answer a guard would have given at the cost of a branch
+        # nothing can reach; `_metro_figure` returns `None` on that path anyway.
         vintages = [v for v in (act.get("acs5"), act.get("acs5_prior")) if v is not None]
         published: dict[tuple[str, str], tuple[float, float | None]] = {}
-        if vintages:
-            for m in (await conn.execute(text(_METRO_ACS_SQL), {
-                "cbsa": cbsa, "variables": [*METRO_VARIABLE.values(), METRO_POPULATION],
-                "vintages": vintages,
-            })).mappings().all():
-                if m["estimate"] is not None:
-                    published[(m["variable"], m["vintage"])] = (
-                        float(m["estimate"]), None if m["moe"] is None else float(m["moe"]))
+        for m in (await conn.execute(text(_METRO_ACS_SQL), {
+            "cbsa": cbsa, "variables": [*METRO_VARIABLE.values(), METRO_POPULATION],
+            "vintages": vintages,
+        })).mappings().all():
+            # `acs_measure.estimate` is nullable and `acs._num` writes NULL for a value the Census
+            # published as a non-number, so an absent figure is skipped rather than coerced: a
+            # `float(None)` here would take the whole route down for one metro.
+            if m["estimate"] is not None:
+                published[(m["variable"], m["vintage"])] = (
+                    float(m["estimate"]), None if m["moe"] is None else float(m["moe"]))
         used: set[str] = set()
         layers: list[dict[str, Any]] = []
         for layer, shading in SHADING.items():
