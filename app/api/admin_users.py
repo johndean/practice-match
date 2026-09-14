@@ -106,6 +106,14 @@ ACCOUNT_STATES = ("unverified", "verified", "pending", "needs_review", "declined
 APPLICATION_KINDS = ("buyer", "seller")
 OPEN_STATUSES = ("pending", "needs_review")
 APPLICATION_ACTIONS = ("approve", "decline", "request_info")
+# The account states `decide` will act on an APPLICATION from: `TRANSITIONS`' union over
+# `APPLICATION_ACTIONS` plus `active`, the state a SELLER application is decided from and to
+# (`_seller_decision` below). Read by `COUNTS_SQL` and mirrored in `frontend/src/admin/users.ts`,
+# pinned by equality in `tests/test_docs.py` (fix round 2, re-review Important 2 and Minor 2): a
+# suspended or revoked account keeps a STALE open application for ever — neither `suspend` nor
+# `revoke` is an application action, so `decide` never closes the row — and outside this set that
+# row is not something a reviewer can decide, so it is neither rendered as one nor counted as one.
+DECIDABLE_STATES = ("active", "pending", "needs_review")
 NOTE_REQUIRED = ("decline", "request_info", "suspend", "revoke")
 # The decision table (spec §4). `revoke` is reachable from every state but `revoked` itself.
 EVERY_STATE = ("unverified", "verified", "pending", "needs_review", "declined", "active", "suspended")
@@ -410,14 +418,52 @@ def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | Non
     return value
 
 
+# The badge the Admin Users tab shows is the OPEN QUEUE — every account awaiting a decision, over
+# the whole table, never the filtered page (Task A36, the controller's ruling on the audit's first
+# Users item). One scan, `admin_signups.COUNTS_SQL`'s own pattern: the two numbers the response
+# carries are read from the same rows, so they cannot disagree with each other.
+#
+# "Awaiting a decision" is the row the TAB renders as open, and fix round 1's ruling on review
+# Important 1 is what makes those two the same sentence: a row takes the applicant's pill and
+# buttons from its OPEN APPLICATION where it has one and from its own `account.state` where it has
+# none, so the count is that same union. Each half is load-bearing on its own:
+#
+#   * the application half, because a SELLER applies from an account that is already `active`
+#     (`api/applications.py`: "moving it to `pending` would strip every role on the next request"),
+#     so a row with three live decision buttons was not in the number that tells a reviewer to look;
+#   * the state half, because `scripts/seed_persona.py` seeds `pending@practice-match.test` in state
+#     `pending` with NO `application` row at all, and that account is live on QA.
+#
+# The application half is read through `LIST_SQL`'s OWN lateral -- the same `ORDER BY submitted_at
+# DESC, id DESC LIMIT 1` -- rather than an `EXISTS` over every row (fix round 2, re-review Minor 3).
+# An `EXISTS` and a LATEST agree only while at most one application per account is open, and that
+# invariant is `api/applications.py`'s alone: the schema allows a seed script or direct SQL to break
+# it, and then the badge counted a row the table renders as CLOSED. Reading one lateral makes the
+# two structurally incapable of disagreeing about which application a row is about, with no new
+# index and nothing to be true of the rows QA and production have already applied.
+#
+# `DECIDABLE_STATES` is the second term: an open row on a suspended or revoked account is stale and
+# undecidable, so it is not counted (Important 2).
+COUNTS_SQL = """
+SELECT count(*) FILTER (WHERE a.state = ANY(%(open)s)
+                           OR (a.state = ANY(%(decidable)s) AND ap.status = ANY(%(open)s))) AS open,
+       count(*) AS total
+  FROM account a
+  LEFT JOIN LATERAL (SELECT status FROM application WHERE account_id = a.id
+                      ORDER BY submitted_at DESC, id DESC LIMIT 1) ap ON true
+"""
+
 LIST_SQL = """
 SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at, a.last_sign_in_at,
-       ap.id, ap.kind, ap.fields, ap.flags, ap.status, ap.submitted_at,
-       COALESCE((SELECT jsonb_agg(jsonb_build_object('role', g.role, 'granted_by', g.granted_by, 'granted_at', g.granted_at)
+       ap.id, ap.kind, ap.fields, ap.flags, ap.status, ap.submitted_at, ap.decided_at, d.display_name,
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('role', g.role, 'granted_by', g.granted_by,
+                                                     'granted_by_name', gb.display_name, 'granted_at', g.granted_at)
                                   ORDER BY g.role)
-                   FROM role_grant g WHERE g.account_id = a.id AND g.revoked_at IS NULL), '[]'::jsonb)
+                   FROM role_grant g LEFT JOIN account gb ON gb.id = g.granted_by
+                  WHERE g.account_id = a.id AND g.revoked_at IS NULL), '[]'::jsonb)
   FROM account a
   LEFT JOIN LATERAL (SELECT * FROM application WHERE account_id = a.id ORDER BY submitted_at DESC, id DESC LIMIT 1) ap ON true
+  LEFT JOIN account d ON d.id = ap.decided_by
  WHERE (%(state)s::text IS NULL OR a.state = %(state)s)
    AND (%(kind)s::text IS NULL OR ap.kind = %(kind)s)
    AND (%(role)s::text IS NULL OR EXISTS (SELECT 1 FROM role_grant g
@@ -444,7 +490,23 @@ async def list_users(
     dropping a row (fix round 1, F3).
 
     Guarded by `users.review` and NOT audited (fix round 1, C2): spec §4 audits viewing an
-    application DETAIL, which is `users.view_detail` on the route below."""
+    application DETAIL, which is `users.view_detail` on the route below.
+
+    Task A36 added the three facts the Admin Users tab prints and this route did not serve.
+    `decided_at` and `decided_by_name` are the application's own decision provenance — the design's
+    approved row reads "Approved August 12 by staff reviewer K. Alvarez.", a date and a NAME, and
+    `application.decided_by` is an account id nobody can read; each grant gains `granted_by_name`
+    for the same reason, which is what lets the tab show an admin how another admin came to hold
+    the role (`_grants`'s own docstring). `counts` is the tab's badge: `open` is every account
+    awaiting a decision — by its own state, or by its latest application where the account is in a
+    state that application can be DECIDED from, the union `COUNTS_SQL` explains — and `total` every
+    account, over the WHOLE table and never the filtered page: a reviewer who narrows to one
+    applicant must not be told the queue is one deep.
+
+    The count is served with the FIRST page only (fix round 1, review Minor 1). It is a full scan
+    of `account` and the badge describes the whole table, so a client paging the queue already
+    holds the answer; a cursored page carries `counts: null`, which is the client's own "no counts
+    on this page", and runs no scan at all."""
     keyset_at, keyset_id = _keyset(cursor)
     filters = {"state": _filter("state", state, ACCOUNT_STATES),
                "kind": _filter("kind", kind, APPLICATION_KINDS),
@@ -454,17 +516,24 @@ async def list_users(
         with conn.cursor() as cur:
             cur.execute(LIST_SQL, {**filters, "cursor_at": keyset_at, "cursor_id": keyset_id, "limit": capped + 1})
             rows = cur.fetchall()
+            counts: dict[str, int] | None = None
+            if cursor is None:
+                cur.execute(COUNTS_SQL, {"open": list(OPEN_STATUSES), "decidable": list(DECIDABLE_STATES)})
+                open_now, total = cast("tuple[int, int]", cur.fetchone())
+                counts = {"open": open_now, "total": total}
         items = [
             {"account_id": str(r[0]), "email": r[1], "state": r[2], "name": r[3], "affiliation_label": r[4],
              "created_at": r[5].isoformat(), "last_sign_in_at": _iso(r[6]),
              "application_id": str(r[7]) if r[7] is not None else None, "kind": r[8], "fields": r[9],
              "flags": r[10] or [], "application_status": r[11], "submitted_at": _iso(r[12]),
-             "roles": [g["role"] for g in r[13]], "grants": r[13]}
+             "decided_at": _iso(r[13]), "decided_by_name": r[14],
+             "roles": [g["role"] for g in r[15]], "grants": r[15]}
             for r in rows[:capped]
         ]
     last = items[-1] if len(rows) > capped else None
     return {"items": items,
-            "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None}
+            "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None,
+            "counts": counts}
 
 
 @router.get("/users/{account_id}")

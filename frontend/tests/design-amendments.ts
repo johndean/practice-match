@@ -7535,6 +7535,91 @@ const A39_5: Amendment = {
   count: 1
 };
 
+// ---------------------------------------------------------------------------------------
+// A36 -- THE ADMIN USERS TAB READS ACCOUNTS AND APPLICATIONS, AND EVERY DECISION REACHES THE
+// API (Task A36, John's ruling D-C53, 2026-09-13).
+//
+// `frontend/src/admin/users.ts` has mapped `GET /api/admin/users` to this table's own cells since
+// Task I7 and was imported by NOTHING: no adapter, no prop, no ternary, no loader -- so every
+// reviewer who opened the tab saw Priya Raghavan, Marcus Bell, Alan Cho and Rachel Mendes, four
+// people who do not exist, under four buttons that did nothing (`A()`'s own `go: () => {}`).
+// A17's shape, applied to the tab beside it, plus the two things the Listings tab did not need:
+// a BADGE fed by a real count, and a RELOAD after a decision.
+//
+// The controller's rulings on the audit's Users items (2026-09-13) are carried in the entries
+// below and in `admin/users.ts`: the badge is the OPEN queue (`pending` + `needs_review`); the
+// buttons are `ACTIONS` as written, the API's state machine unwidened; and REVOKE IS NOT
+// RENDERED at all, because it is the one decision in `permissions.REAUTH` and V3 draws no
+// step-up element -- a button that cannot complete its action is fake (D-C53), so it returns the
+// day John approves the dialog. The design's own fourth row still shows it: that row reaches the
+// table through `DesignUserRow`, which carries the design's own labels verbatim and never
+// `ACTIONS`, which is how the frozen `admin-users` capture keeps its pixels (the split
+// `admin/listings.ts` records for its "Flagged"/Investigate row).
+// ---------------------------------------------------------------------------------------
+/** The design's own four Users rows, byte for byte -- the text A36.1 wraps and carries forward
+ *  unchanged, held once here so the `find` and the `replace` cannot differ by a character. */
+const A36_USERS_ROWS = '          [cell("Dr. Priya Raghavan", "Texas A&M, 2016 · TX license"), cell("Associate, two-doctor practice", "\\u201CLooking to buy within 18 months in Central Texas.\\u201D"), cell(null, null, "Pending", "warn"), cell(null, null, null, null, [A("Approve", "primary"), A("Decline", "danger")])],\n'
+  + '          [cell("Dr. Marcus Bell", "Colorado State, 2009 · TX, NM licenses"), cell("Owner, one practice", "\\u201CSelling in 2027; want to see what listings look like.\\u201D"), cell(null, null, "Pending", "warn"), cell(null, null, null, null, [A("Approve", "primary"), A("Decline", "danger")])],\n'
+  + '          [cell("Dr. Alan Cho", "Ohio State, 2004 · TX license"), cell("Regional medical director, 14-hospital group", "Affiliation flagged: employer appears to be a consolidator."), cell(null, null, "Needs review", "bad"), cell(null, null, null, null, [A("Request info"), A("Decline", "danger")])],\n'
+  + '          [cell("Dr. Rachel Mendes", "Texas A&M, 2014 · TX license"), cell("Relief veterinarian · StartUp Club", "Approved August 12 by staff reviewer K. Alvarez."), cell(null, null, "Approved", "ok"), cell(null, null, null, null, [A("Suspend"), A("Revoke", "danger")])]\n';
+
+const RULING_ADMIN_USERS = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53)';
+
+/** A36.1 -- the Users tab's rows come from the account queue, and from nowhere else once an
+ *  adapter is present. A17.1's own ternary, for A16.1's own reason: a LOADED empty queue is a
+ *  real answer and must empty the table, and where the array is not there at all, who is asking
+ *  decides -- the app renders zero rows whatever the API answered (a load failure never shows a
+ *  reviewer four applicants who do not exist, with live Approve/Decline buttons on them), and the
+ *  reference and the Claude Design preview keep the design's own fixture. `s.adminUserRows` is
+ *  written by A36.2's loader alone. */
+const A36_1: Amendment = {
+  id: 'A36.1', date: '2026-09-13',
+  ruling: RULING_ADMIN_USERS,
+  find: '        rows: [\n' + A36_USERS_ROWS + '        ]\n      },',
+  replace: '        rows: s.adminUserRows !== undefined ? s.adminUserRows : (this.props.adminUsers ? [] : [\n' + A36_USERS_ROWS + '        ])\n      },',
+  count: 1
+};
+
+/** A36.2 -- the Users load, in `loadAdmin`'s own seam (A40.3: "A36 (Users), A37 (Requests) and
+ *  A38 (Data Sources) each add ONE line"). CHAINED on A39.5: this entry was first written against
+ *  A40.3's own `adminListings` line, which A39.2 and then A39.5 rewrote (the token guard that lets
+ *  a superseded answer go), so the `find` is re-derived from A39.5's OUTPUT and carries it forward
+ *  byte for byte with the Users load after it. Nothing of A39 or A40 is consumed.
+ *
+ *  It carries its own rejection arm, which is what leaves the tab EMPTY on a refusal rather than
+ *  back on the design's fixture rows -- `adminUserCounts: null` beside it, because a badge is a
+ *  claim about a queue this load could not read.
+ *
+ *  `list(() => this.loadAdmin())` is the RELOAD seam: the rows' own decision buttons re-enter the
+ *  one loader after a decision, so a reviewer sees the queue they have just changed rather than
+ *  the one they clicked on. `admin/listings.ts`'s module note records the absence of exactly this
+ *  for the Listings tab; the adapter is handed the callback rather than reaching for the
+ *  component, so nothing about the design's own structure moves. */
+const A36_2: Amendment = {
+  id: 'A36.2', date: '2026-09-13',
+  ruling: RULING_ADMIN_USERS,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n'
+    + '    if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));\n',
+  count: 1
+};
+
+/** A36.3 -- the badge is the open queue the API counted, and the design's literal "3" only where
+ *  nobody is asking. The design's own number is exactly its own open rows (two Pending and one
+ *  Needs review), so the literal is kept as the no-adapter answer rather than replaced: it is
+ *  what the reference and the Claude Design preview render, and it is what the oracle's own
+ *  `counts.open` reproduces, which is how the frozen capture keeps its pixels.
+ *
+ *  With an adapter and no count the badge is "" -- A36.4/A36.5 then unmount the pill entirely,
+ *  because "0" is a claim about a queue and silence is not. */
+const A36_3: Amendment = {
+  id: 'A36.3', date: '2026-09-13',
+  ruling: RULING_ADMIN_USERS,
+  find: '        { key: "users", label: "Users", count: "3" },\n',
+  replace: '        { key: "users", label: "Users", count: s.adminUserCounts ? String(s.adminUserCounts.open) : (this.props.adminUsers ? "" : "3") },\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -7739,5 +7824,21 @@ export function amendments(): Amendment[] {
     // reads A40.4's `this.loadAdmin();` -- so the family has to run after the one it edits.
     // A39.1 and A39.3a/A39.3b address pristine lines. Definition order in this file matches this
     // list (m8).
-    A39_1, A39_2, A39_3a, A39_3b, A39_4, A39_5];
+    A39_1, A39_2, A39_3a, A39_3b, A39_4, A39_5,
+    // A36 -- the Admin Users tab (Task A36, D-C53, 2026-09-13). Appended last, as every
+    // family is. A36.2 is CHAINED on A39.5's own `adminListings` line, which A39.2 and then
+    // A39.5 rewrote after A36.2 was first written against A40.3's: it carries that line
+    // forward unchanged and adds the Users load after it, so nothing of A39 is consumed.
+    //
+    // A36.4 and A36.5 are RETIRED and their ids may not be reused (the A40.1/A40.2
+    // precedent). They were `hasCount: !!t.count` on the shared tab strip and the `sc-if`
+    // on the shared count pill -- the SAME two edits A39.3a and A39.3b make, because the
+    // strip is one template serving all four tabs and two families needed it at once.
+    // A39's shipped first (0.1.25) and are kept; applying both is not possible, and not a
+    // judgement call: A36.4's `find` does not occur once A39.3a has run (count 0, the
+    // engine refuses), and A36.5's still does, so it would wrap the pill in a SECOND
+    // `sc-if`. The Users badge keeps every pixel of the behaviour either way -- A39.3a/b
+    // unmount the pill for whichever tab has no count, and A36.3 is what empties the
+    // Users one.
+    A36_1, A36_2, A36_3];
 }
