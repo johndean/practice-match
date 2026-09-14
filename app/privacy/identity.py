@@ -19,7 +19,27 @@ scene-text confusions on both sides, so "animal" becomes "anlmal" and "hospital"
 a generic set of un-normalised words would therefore match none of the tokens it is meant to filter,
 `_informative` and the distinctive pool would both let them through, and the matcher would black out
 a region on every photograph carrying the words "animal hospital". `normalise` is defined first for
-that reason and `_GENERIC_N` is folded at import."""
+that reason and `_GENERIC_N` is folded at import.
+
+**Known misses — shapes this module deliberately does not reach.** Each is a row of
+`ADDRESS_ROWS`/`WRAPPED_ADDRESS` in `tests/privacy/test_identity.py` marked `MISS`, so it is a
+recorded answer rather than an accident, and none of them is closed by widening a regex here:
+
+* A street address whose house number is NOT at the start of the line and whose street type is an
+  ordinary English word — "Located at 1204 Cypress Creek Dr Cedar Park". The mid-line arm's guard
+  refuses it (or "the right way" would be an address) and the anchored arm cannot see it.
+* A wrapped address BELOW a header line — `["Hill Country Animal Hospital", "1204 Cypress",
+  "Creek Dr Cedar Park TX"]`. The anchor holds at the JOINED string's start and the joined text
+  carries no line marker; the `Rd` twin, needing no anchor, is caught. **P7's line aggregation is
+  where a wrapped address is rejoined**, and it is where both of these belong.
+* An OCR-confused leading digit — "I204 Cypress Creek Rd". `\\b\\d+` cannot begin inside a token, and
+  the substitution fold that rescues the listing's OWN address runs on normalised text, which the
+  regex classes never see (they run on the RAW line, or `78613` would be `7b6l3`).
+* An OCR-mangled domain or handle — `hillcountryvet.corn`, `hillcountryvet .com`,
+  `info@hillcountryvet,com`, `@ hillcountryvet`. The practice's own is rescued by `email_domain`
+  whenever the account's address shares it; a third party's is not.
+* A seven-digit local telephone number with no area code. Outside the NANP shape the class is
+  written to, and the listing's own is caught by `phone/substring`."""
 from __future__ import annotations
 
 import re
@@ -51,8 +71,17 @@ def normalise(text: str) -> str:
 #: Words that identify no practice, as written. Used nowhere directly -- every comparison is against
 #: `_GENERIC_N` below -- but kept in this spelling because it is the human-readable list, and a
 #: reader adding a word to it should not have to know what the substitution map will do to it.
+#:
+#: The SERVICE vocabulary is here by ruling (re-review M-H): every distinctive token of the seller's
+#: `services` text masked interior signage naming that service -- a door labelled SURGERY, a poster
+#: reading "Wellness Exams" -- and a word that names what every practice does identifies none of
+#: them. Prose and token matching never fire on these alone; only DISTINCTIVE tokens redact.
 GENERIC = frozenset({"animal", "hospital", "veterinary", "vet", "clinic", "pet", "care", "center",
-                     "centre", "of", "the", "and", "for", "dvm"})
+                     "centre", "of", "the", "and", "for", "dvm",
+                     "service", "services", "surgery", "surgical", "dentistry", "dental",
+                     "boarding", "grooming", "wellness", "exam", "exams", "vaccination",
+                     "vaccinations", "radiology", "pharmacy", "medicine", "emergency", "urgent",
+                     "diagnostics", "laboratory", "imaging"})
 
 #: The same words in the space every comparison actually happens in: "animal" -> "anlmal",
 #: "hospital" -> "hospltal", "veterinary" -> "veterlnary", "clinic" -> "cllnlc". Folded once, at
@@ -66,37 +95,86 @@ _GENERIC_N = frozenset(normalise(word) for word in GENERIC)
 #: and a practice's bare domain on one of them was no region at all (review Minor 7). `example` is
 #: deliberately NOT here: it is RFC 2606's documentation TLD, belongs to no practice, and a
 #: production class that recognised it would be a class tuned to this repository's own fixtures.
-URL_TLDS: tuple[str, ...] = ("com", "net", "org", "co", "us", "io", "info", "pet", "vet",
-                             "clinic", "care", "health")
+URL_TLDS: tuple[str, ...] = ("com", "net", "org", "co", "us", "io", "info", "biz", "online",
+                             "pet", "vet", "clinic", "care", "health")
 
-#: Interpolated longest-first, so a shorter entry cannot be tried where a longer one that starts
-#: with the same letters is meant (`co` before `com`).
-_TLDS = "|".join(sorted(URL_TLDS, key=len, reverse=True))
+#: Interpolated in declaration order. The ORDER is not load-bearing and a comment here used to say
+#: it was (review M-D): `\b` follows the group, so `co` tried against `hillcountryvet.com` fails the
+#: boundary and the engine backtracks to `com`. Measured: shortest-first and unsorted both fire
+#: every entry.
+_TLDS = "|".join(URL_TLDS)
+
+#: Street-type tokens, full and abbreviated -- `URL_TLDS`' seam idiom applied to the address class.
+#: The fourteen this list held were the plan's inline pattern, and they omitted six of the USPS's
+#: top-15 suffixes: SEVEN of the repository's own 29 seed streets fired no class at all when read
+#: as another premises' sign, which is 24 % of John's real-address demo hospitals (re-review I-B).
+#: `tests/privacy/test_identity.py` walks every entry AND restates the tuple, because a walk over
+#: the table cannot notice an entry leaving it.
+STREET_SUFFIXES: tuple[str, ...] = (
+    "street", "st", "avenue", "ave", "road", "rd", "boulevard", "blvd", "drive", "dr",
+    "lane", "ln", "parkway", "pkwy", "highway", "hwy", "freeway", "fwy",
+    "expressway", "expy", "circle", "cir", "court", "ct", "place", "pl",
+    "trail", "trl", "terrace", "ter", "plaza", "plz", "way", "loop", "row",
+)
+
+#: The subset of them that is also an ordinary English word. Each carries `dr`'s own trailing guard
+#: in the mid-line arm -- a street type ENDS its address, while "the right way" and "Dr Jones" are
+#: followed by more words -- so a sentence is not an address. A line that BEGINS with its house
+#: number reaches the anchored arm below instead and needs no guard at all, which is what lets
+#: "400 Oak Way Round Rock TX" fire while "24 hour care the right way today" does not.
+WORD_SUFFIXES: tuple[str, ...] = ("dr", "ct", "court", "circle", "place", "way", "loop", "row")
+
+_PLAIN_SUFFIX = "|".join(s for s in STREET_SUFFIXES if s not in WORD_SUFFIXES)
+_WORD_SUFFIX = "|".join(WORD_SUFFIXES)
+#: The street NAME between the house number and the type. `\.?` after each word so an initial
+#: survives -- one of the repository's own seed streets is "3435 Marvin D. Love Fwy".
+_NAME_RUN = r"[\w'-]+\.?(?:\s+[\w'-]+\.?)*"
+#: The same, BOUNDED, for the anchored arm: with an unbounded run the joined text
+#: "1204 Cypress Creek Dr Dr Jones" reaches the second `Dr` and attributes the address to that line
+#: too (re-review I-A, the tests lens's correction to the other two).
+_NAME_RUN_SHORT = r"[\w'-]+\.?(?:\s+[\w'-]+\.?){0,3}"
+#: A house number, with the unit letter a plate carries as often as not: 1204B, 1204-B (M-G).
+_HOUSE = r"\d+[a-z]?(?:-[a-z0-9]{1,3})?"
 
 #: Each hit is an identifying region REGARDLESS of matching (spec C.5 step 2).
 REGEX_CLASSES: dict[str, re.Pattern[str]] = {
-    "phone": re.compile(r"(?<!\d)(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"),
+    #: The two INNER separators take up to three characters, not one (re-review M-B): a number
+    #: wrapped at its own hyphen joins as "555- 0100", an internal double space survives the strip,
+    #: and van lettering reads "512 - 555 - 0100". The leading `(?<!\d)` and trailing `(?!\d)` are
+    #: what keep a price, a date and an eleven-digit part number out, and they are pinned.
+    "phone": re.compile(r"(?<!\d)(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]{0,3}\d{3}[\s.-]{0,3}\d{4}(?!\d)"),
     "url": re.compile(rf"\b(https?://\S+|www\.\S+|[\w-]+\.({_TLDS})\b)", re.IGNORECASE),
     "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
-    #: Two arms, and the second is not decoration: a suite number can stand with no street number
-    #: in front of it. The specification's inline pattern (C.5 step 2) stated only the first and so
-    #: would have missed "Suite 210"; A-IDP-7 corrects it there and folds both arms in here, so
-    #: this module defines each class exactly once.
+    #: FOUR arms, and none of them is decoration.
     #:
-    #: `dr` is split out of the street-type list and carries its own `(?!\s+[\w'-])` (review
-    #: Minor 8): "Dr" is the title as often as it is Drive, any digit on the line can stand in as
-    #: the house number, and so "Open 7 days with Dr Jones" and "24/7 Emergency Dr Smith" were both
-    #: `regex:address` -- a mask over every interior sign that names a veterinarian beside a number,
-    #: which is how a seller learns to remove masks. A street suffix ENDS its address ("... Creek
-    #: Dr", "... Creek Dr, Cedar Park"); a title is followed by a name. The cost is measured and
-    #: recorded rather than hidden: "1204 Cypress Creek Dr Cedar Park TX", with no comma, is no
-    #: longer an address region -- for the listing's own address the `street` term still matches the
-    #: line, and `drive`, `rd` and the other eleven suffixes are untouched.
+    #: (1) The MID-LINE arm: a house number, a street name and a street type anywhere on the line.
+    #: An ambiguous type -- one that is also an English word -- carries a trailing guard, because a
+    #: street type ENDS its address while "the right way" and "Dr Jones" are followed by more
+    #: words. The period sits INSIDE that guard (`dr\b(?!\.?\s+[\w'-])\.?`), or `\.?`
+    #: backtracks to empty and the title's commonest written form -- "Dr." -- fires anyway, which
+    #: is the half of the Minor-8 ruling fix round 1 left open (re-review M-A).
+    #:
+    #: (2) The ANCHORED arm: a line that BEGINS with its house number is an address whatever
+    #: follows the type, so it needs no guard at all. Fix round 1's guard alone refused
+    #: "400 Oak Dr Round Rock TX" -- house number, street name, type, city, no comma -- which is a
+    #: spec-required shape (C.5 step 2) and a regression (re-review I-A): an address begins with
+    #: its house number and a title does not, so this restores every lost shape while every written
+    #: form of the title stays refused. The street-name run is BOUNDED at four words, or the joined
+    #: text "1204 Cypress Creek Dr Dr Jones" reaches the second `Dr`.
+    #:
+    #: (3) The Texas farm-to-market and ranch-road arm: `4140 FM 1431`. The designator PRECEDES its
+    #: number, so it can never be a suffix in arms 1 or 2.
+    #:
+    #: (4) The bare-suite arm: a directory board reads "Suite 210" with no street number in front
+    #: of it. The specification's inline pattern (C.5 step 2) stated only arm 1 and so would have
+    #: missed it; A-IDP-7 corrects it there. The unit must be a number or a single letter, or the
+    #: English word "suite" makes "Full suite of dental services" an address (re-review M-F).
     "address": re.compile(
-        r"(\b\d+\s+[\w'-]+(\s+[\w'-]+)*\s+(?:"
-        r"(?:st|street|ave|avenue|rd|road|blvd|drive|ln|lane|pkwy|parkway|hwy|highway)\b\.?"
-        r"|dr\b\.?(?!\s+[\w'-]))"
-        r"|\b(suite|ste)\s*\.?\s*\w+\b)", re.IGNORECASE),
+        rf"(\b{_HOUSE}\s+{_NAME_RUN}\s+(?:(?:{_PLAIN_SUFFIX})\b\.?"
+        rf"|(?:{_WORD_SUFFIX})\b(?!\.?\s+[\w'-])\.?)"
+        rf"|\A\s*{_HOUSE}\s+{_NAME_RUN_SHORT}\s+(?:{_PLAIN_SUFFIX}|{_WORD_SUFFIX})\b\.?"
+        r"|\b\d+\s+(?:fm|rr|cr|sh)[\s.-]*\d+\b"
+        r"|\b(suite|ste)\.?\s*#?\s*(?:\w*\d\w*|[a-z])\b)", re.IGNORECASE),
     #: A number worn as signage, alone on its own line: "4140" above a door. John's ruling of
     #: 2026-09-10 (A-IDP-7) -- an invented street number is part of the invented identity, so it
     #: is redacted under NOT_SHOW like the name. WHOLE LINE, two to six digits: "EST. 2017",
@@ -238,7 +316,9 @@ def match_lines(lines: Sequence[str], terms: Mapping[str, list[str]]) -> list[Ma
                 if token in words:
                     found.append(Match(as_field, index, "distinctive", 0.8))
                     break
-        upper = raw.strip()
+        # Periods stripped before the shape test (re-review M-I): a logo or a letterhead writes the
+        # initials "H.C.A.H.", and `isalpha()` refuses the dots.
+        upper = raw.strip().replace(".", "")
         # One `if` and not two: the repository's ruff set carries SIM102, and `and` is the same
         # short-circuit the nested form was -- the cheap shape test still runs before `normalise`.
         if (2 <= len(upper) <= 6 and upper.isalpha() and upper.isupper()
