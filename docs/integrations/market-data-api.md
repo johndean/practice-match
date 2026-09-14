@@ -77,7 +77,7 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
     "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
     "state": "enabled", "is_derived": false,
-    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography." },
+    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total." },
   { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
   { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }

@@ -21,7 +21,7 @@ have no geometry to serve whatever the design says.
 import re
 from pathlib import Path
 
-from app.api.market import BOUNDARY_METRIC, SHADING, THRESHOLD_RULE
+from app.api.market import BOUNDARY_METRIC, EMPLOYER_UNIVERSE, LAYERS, SHADING, THRESHOLD_RULE
 from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL, income_note_for
 from app.census.tiger import BOUNDARY_FILES
 
@@ -72,6 +72,28 @@ def test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_
     assert THRESHOLD_RULE in design, "the design's tooltip no longer states the Census rule the API states"
     assert design.count(THRESHOLD_RULE) == 1, "the rule is stated once in the design, not twice"
     assert "source_threshold" in design, "nothing in the design branches on the reason the API sends"
+
+
+def test_the_paid_employee_universe_is_one_sentence_the_catalogue_serves() -> None:
+    """D-C57 (John, 2026-09-14), spec §7: ZIP Code Business Patterns counts business locations
+    WITH PAID EMPLOYEES, so a practice run by its owner alone is not in the figure at all. That
+    was stated nowhere in the product. It is a property of the DATASET and constant for every
+    listing in the country, so it is appended to the layer catalogue's existing `caveat` rather
+    than served as a per-listing field -- which means an integrator reading `/api/layers` and a
+    buyer reading the "What this means" card get ONE wording.
+
+    Pinned here in `THRESHOLD_RULE`'s own shape. The DESIGN half of this pin -- the sentence
+    occurs in the amended design exactly once -- lands with amendment A48.1, which is what puts
+    it there; this case owns the server side alone."""
+    competition = next(layer for layer in LAYERS if layer["key"] == "competition")
+    caveat = competition["caveat"]
+    assert EMPLOYER_UNIVERSE in caveat, (
+        "the competition caveat no longer states the universe the Census actually counts"
+    )
+    assert caveat.count(EMPLOYER_UNIVERSE) == 1, "the universe is stated once in the caveat, not twice"
+    # …and the rule it sits beside is untouched: two facts, two sentences, one caveat.
+    assert THRESHOLD_RULE in caveat, "appending the universe dropped the Census threshold rule"
+    assert EMPLOYER_UNIVERSE.endswith("."), "a caveat is composed by joining sentences with a space"
 
 
 # ---------------------------------------------------------------------------------------------

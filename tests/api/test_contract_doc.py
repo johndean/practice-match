@@ -370,3 +370,23 @@ def test_contract_doc_states_that_a_non_rooftop_point_is_served_its_place_band()
     # band to be served, and the document has to say which of the two a reader is looking at.
     assert "where the ZIP centroid lies in one" in flat
     assert "the county carries growth and payroll and the area figures are unavailable" in flat
+
+
+def test_contract_doc_serves_the_competition_caveat_the_router_actually_sends() -> None:
+    """Spec §7: `docs/integrations/market-data-api.md` gains the widened caveat.
+
+    MEASURED before it was written (2026-09-14): the doc's `/api/layers` sample already carried a
+    TRUNCATED competition caveat -- it stopped before `THRESHOLD_RULE`, which the router has
+    appended since the ZIP-threshold work -- and nothing pinned it, so the document told an
+    integrator one thing and the route sent another. The pin is therefore on the WHOLE string
+    rather than on the new sentence alone: the sample is what the router serves, byte for byte,
+    and a caveat that grows on one side fails here instead of drifting on the other."""
+    from app.api.market import LAYERS
+
+    doc = DOC.read_text(encoding="utf-8")
+    caveat = next(layer for layer in LAYERS if layer["key"] == "competition")["caveat"]
+    assert caveat is not None
+    assert f'"caveat": "{caveat}"' in doc, (
+        "the contract document's competition caveat is not the string the router sends:\n"
+        f"  router: {caveat!r}"
+    )
