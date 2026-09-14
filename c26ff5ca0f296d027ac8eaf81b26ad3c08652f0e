@@ -1,0 +1,9 @@
+CORRECTION (controller, 2026-09-15). This commit's body claims the market snapshot's headline is the Census's own published metro figure where one exists (SNAP-METRO, A31.14). THAT IS NOT IN 0.1.25.
+
+Verified on the release tree 8871e04: the A31 family's entries run A31.1 through A31.13 and there is no A31.14 — its single occurrence is the forward-looking comment 'WHEN SNAP-METRO (A31.14) LANDS…' — and the string 'Census published for the metro' occurs zero times in the shipped design bundle. feat/snap-metro is written and unmerged.
+
+What 0.1.25 actually serves: the AREA headline is the median of the metro's own Census areas, captioned as such.
+
+A36 Users and A38 Data Sources are likewise NOT in this release. On QA the Users, Requests and Data Sources tab badges are the design's own literals; only Listings is wired to the database.
+
+Everything else in the body stands, and was checked on QA: nine of nine persona checks passed at 8871e04.
