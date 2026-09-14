@@ -180,7 +180,7 @@ CHECK (status <> 'published'
 
 **D16 — cache invalidation is mandatory.** `app/api/listings.py:266–271` already writes the requirement down: "Wave 2b's seller edits are the point at which this needs a real invalidation (drop the `listings:v1:*` keys on write) … because a disclosure flag turned OFF must stop reaching buyers at once". Every write here that can change a published payload — PATCH, submit, status, decide, photo upload/reorder/delete — drops every `listings:v1:*` key by `scan_iter` after the transaction commits, never before it (the ordering `admin_users.py` learned in I5c fix round 1). The key shape is unchanged, so the D6 comment stays true.
 
-**D17 — rate limits, in `app/auth/limits.py`'s existing shape** (`hit()` over `bucket_key`, so the subject enters Redis only as a truncated SHA-256): `LISTING_PATCH = (240, 3600)`, `LISTING_UPLOAD = (40, 3600)`, `LISTING_SUBMIT = (20, 3600)`, all keyed on the account id. Generous enough that a seller working through eight steps never meets them, tight enough that a script cannot fill a bucket.
+**D17 — rate limits, in `app/auth/limits.py`'s existing shape** (`hit()` over `subject_key` — one sorted set of attempt timestamps per scope and subject, a sliding window, one atomic check-and-reserve per attempt; amendments A-RL1 and A-RL2, 2026-09-14 — so the subject enters Redis only as a truncated SHA-256): `LISTING_PATCH = (240, 3600)`, `LISTING_UPLOAD = (40, 3600)`, `LISTING_SUBMIT = (20, 3600)`, all keyed on the account id. Generous enough that a seller working through eight steps never meets them, tight enough that a script cannot fill one.
 
 ---
 

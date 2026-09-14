@@ -430,15 +430,21 @@ async def signin(body: Creds, request: Request, response: Response) -> dict[str,
     ip = client_ip(request)
     ua = request.headers.get("user-agent")
     key = _lookup_key(body.email)
-    # CHECKED, not counted: spec §3's lockout is ten FAILURES per address per 15 minutes, so this
-    # attempt is counted only if the credential turns out to be wrong (fix round 1, Important 1).
+    # RESERVED, not checked: spec §3's lockout is ten failures per address per 15 minutes, and the
+    # slot for this attempt is taken here, atomically, before the credential is looked at (A-RL2).
+    # It used to be a read here and a write after the Argon2id hop — the handler's only yield — so
+    # twenty simultaneous attempts on an address with nine failures all read nine and all were
+    # evaluated. One script now does both, so exactly one of them can be the tenth.
+    #
+    # `fails` is what that script returns: how many attempts are inside the window, this one
+    # included. A SUCCESSFUL sign-in clears the set below, so on the failure path it is the run of
+    # consecutive failures and `FAILURE_BURST` still means what it always did.
     #
     # `NO_MATCH` is exempt (fix round 2, NEW-3): every malformed address normalises to the same
     # empty key, so counting them together locked ONE shared counter for every caller in the window,
     # from any source IP. The per-IP limiter below still bounds the caller, and skipping the
     # per-address one discloses nothing — an address's malformedness is knowable client-side.
-    if key:
-        limits.check(r, "signin:email", key, LOCKOUT_LIMIT, LOCKOUT_WINDOW_S)
+    fails = limits.hit(r, "signin:email", key, LOCKOUT_LIMIT, LOCKOUT_WINDOW_S) if key else 0
     limits.hit(r, "signin:ip", rate_limit_subject(request), *limits.SIGNIN_IP)
     with closing(sync_conn()) as lookup, lookup, lookup.cursor() as cur:
         cur.execute("""SELECT a.id, a.password_hash, a.state,
@@ -457,9 +463,9 @@ async def signin(body: Creds, request: Request, response: Response) -> dict[str,
 
     if row is None or not ok or row[2] in REFUSED_STATES:
         with closing(sync_conn()) as conn, conn:
-            # 0 for `NO_MATCH`, so a burst of malformed addresses neither fills a shared counter nor
-            # writes an audit row identifying nothing but the pseudonym of the empty string (NEW-3).
-            fails = limits.count_failure(r, "signin:email", key, LOCKOUT_LIMIT, LOCKOUT_WINDOW_S) if key else 0
+            # `fails` was reserved above; it is 0 for `NO_MATCH`, so a burst of malformed addresses
+            # neither fills a shared counter nor writes an audit row identifying nothing but the
+            # pseudonym of the empty string (NEW-3).
             if fails == FAILURE_BURST:
                 audit.write(conn, actor=None, action="signin.failure_burst", target_type="account",
                             target_id=row[0] if row else _pseudonym(key), request=request)

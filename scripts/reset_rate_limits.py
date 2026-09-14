@@ -113,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # The count and nothing else (review round 1, M6): the environment is pinned to the constant
     # `test` by the guard above, so printing it said nothing the docstring had not already promised
     # would never be printed.
-    print(f"[reset_rate_limits] cleared {deleted} rate-limit bucket(s)")
+    print(f"[reset_rate_limits] cleared {deleted} rate-limit counter(s)")
     return 0
 
 

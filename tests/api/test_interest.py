@@ -8,6 +8,8 @@ import psycopg2
 import pytest
 
 from app.api.interest import CONSENT_VERSION, LIMITS
+from app.auth.deps import RateLimited
+from app.cache import sync_redis
 from app.config import settings
 from app.db import get_redis
 from app.ratelimit import hit, subject_key
@@ -44,19 +46,6 @@ def _ip() -> str:
     """A fresh client address per call (16M values) so per-IP windows never collide across tests or reruns."""
     n = uuid.uuid4().int
     return "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
-
-
-async def _within_one_minute(run):
-    """Written for FIXED windows, where a minute rolling over inside the six requests reset the
-    counter (O2). Task RATE-LIMIT-WINDOW made the window sliding, so the first run now always
-    reaches the limit; the retry is kept because it costs nothing and each `run()` takes a fresh
-    client address, so a second pass is a clean six requests rather than a continuation."""
-    for _ in range(2):
-        start = int(time.time()) // 60
-        result = await run()
-        if int(time.time()) // 60 == start:
-            return result
-    return result
 
 
 async def test_new_address_is_stored_normalised_with_consent_and_source(client, db_ready, addr):
@@ -134,7 +123,7 @@ async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready
             assert r.status_code == 202, i
         return await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
 
-    r = await _within_one_minute(run)
+    r = await run()
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
@@ -148,7 +137,7 @@ async def test_edge_first_hop_keys_the_ip_limit(client, db_ready):
             assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
         return await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
 
-    r = await _within_one_minute(run)
+    r = await run()
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
@@ -167,7 +156,7 @@ async def test_without_a_forwarded_header_the_peer_address_is_used(dist, db_read
                 assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
             return await c.post("/api/interest", json={"email": _probe_email()})
 
-    r = await _within_one_minute(run)
+    r = await run()
     assert r.status_code == 429
     async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as other:
         assert (await other.post("/api/interest", json={"email": _probe_email()})).status_code == 202  # a different peer is a different bucket
@@ -368,6 +357,36 @@ async def test_hit_sets_a_ttl_no_longer_than_the_window():
     assert await hit(redis_, "unit", subject, 2, 60, now=now) is True
     ttl = await redis_.ttl(subject_key("unit", subject))
     assert 0 < ttl <= 60  # F6: the key cannot outlive its window
+
+
+def test_the_sync_reserve_behaves_the_same_on_a_real_redis_as_on_the_double():
+    """Fix round 1, Minor 10. Every SYNC limiter path in the suite runs on fakeredis, so a
+    divergence in how the two parse the Lua script's negative rank stop, its `ZRANGE … WITHSCORES`
+    or a float score would pass the whole pytest gate and surface only in the Playwright smoke.
+    The two agree today; this is the case that would say so when they stop.
+
+    `now=` rather than the clock fixture: a real Redis's `TIME` is not ours to move, and the
+    explicit door is the same one the async cases above drive."""
+    from app.auth import limits
+    from app.ratelimit import reserve
+
+    redis_ = sync_redis()
+    subject, limit, window = uuid.uuid4().hex, 3, 60
+    edge = 1_800_000_000.0
+    try:
+        for i in range(limit):
+            assert reserve(redis_, "unit_sync", subject, limit, window, now=edge) == (True, i + 1, 0), i
+        # Full: refused, not recorded, and told the exact wait the oldest attempt leaves.
+        assert reserve(redis_, "unit_sync", subject, limit, window, now=edge + 20) == (False, limit, 40)
+        assert redis_.zcard(subject_key("unit_sync", subject)) == limit
+        assert 0 < redis_.ttl(subject_key("unit_sync", subject)) <= window
+        # One window on, every one of them has left it.
+        assert reserve(redis_, "unit_sync", subject, limit, window, now=edge + window) == (True, 1, 0)
+        with pytest.raises(RateLimited):
+            for _ in range(limit + 1):
+                limits.hit(redis_, "unit_sync", subject, limit, window)
+    finally:
+        redis_.delete(subject_key("unit_sync", subject))
 
 
 def test_subject_key_is_one_key_per_subject_and_hides_the_subject():

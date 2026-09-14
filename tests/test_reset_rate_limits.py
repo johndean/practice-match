@@ -28,7 +28,7 @@ def _limits(r) -> None:
     r.zadd(subject_key("signup:ip", "203.0.113.7"), {"a": 1})
 
 
-def test_it_deletes_every_rate_limit_bucket_and_prints_how_many(redis, monkeypatch, capsys):
+def test_it_deletes_every_rate_limit_counter_and_prints_how_many(redis, monkeypatch, capsys):
     monkeypatch.setattr(cache.settings, "environment", "test")
     monkeypatch.setattr(cache.settings, "redis_url", "redis://localhost:6380/0")
     _limits(redis)
@@ -45,7 +45,7 @@ def test_it_deletes_every_rate_limit_bucket_and_prints_how_many(redis, monkeypat
     assert "203.0.113.7" not in out
     assert "someone@example.org" not in out
     assert "test" not in out, "the docstring promises nothing but the count"
-    assert out.strip() == "[reset_rate_limits] cleared 3 rate-limit bucket(s)"
+    assert out.strip() == "[reset_rate_limits] cleared 3 rate-limit counter(s)"
 
 
 def test_it_leaves_every_other_key_in_the_database_alone(redis, monkeypatch):

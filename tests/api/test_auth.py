@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import statistics
@@ -18,8 +19,26 @@ from app.cache import sync_redis as redis_of
 from app.config import settings
 from app.mail.outbox import enqueue
 from app.main import create_app
+from app.ratelimit import subject_key
 from tests.api.conftest import ORIGIN, PW, auth_headers
 from tests.conftest import WINDOW_EDGE
+
+
+def assert_retry_after(response, window_s: int) -> None:
+    """`Retry-After` on a 429 from a limit whose counter this test has just filled.
+
+    It is the EXACT wait the oldest attempt in the window leaves (amendment A-RL2, fix round 1's
+    Minor 4), not the whole window — so a test that spent N seconds filling the counter is told
+    `window - N`, and asserting the constant made two of these cases red and left the other five
+    as latent flakes that pass only while the requests finish inside one second. What is pinned
+    here is the SEMANTIC: never past the window (it cannot understate), never below one second,
+    and within a minute of the window for a counter these tests filled moments ago."""
+    retry = int(response.headers["retry-after"])
+    assert 0 < retry <= window_s, (retry, window_s)
+    assert retry >= window_s - 60, (
+        f"Retry-After {retry} is more than a minute short of the {window_s}s window; the oldest "
+        "attempt in it was made by this test, seconds ago"
+    )
 
 
 async def _outbox(conn):
@@ -158,6 +177,102 @@ async def test_a_failure_that_has_aged_out_of_the_window_no_longer_counts(client
     rate_limit_clock.move_to(WINDOW_EDGE + window)
     assert (await client.post("/api/auth/signin", json={"email": "ageout@example.org", "password": "bad-bad-bad-bad"})).status_code == 401
     assert (await client.post("/api/auth/signin", json={"email": "ageout@example.org", "password": PW})).status_code == 200
+
+
+async def test_concurrent_wrong_passwords_admit_exactly_one_more_to_the_credential_check(client, member, redis, monkeypatch, rate_limit_clock):
+    """Task RATE-LIMIT-WINDOW fix round 1, ruling A-RL2 — the Critical the review found at
+    `app/api/auth.py:441`, pre-existing on `bf730ef` and closed here.
+
+    The lockout was CHECK-then-ACT across the Argon2id hop: the read at `:441` and the write at
+    `:462` are ~100 ms apart and nothing tied the decision to the write, so every request that
+    arrived while the count was still below ten read the same pre-write number and was admitted to
+    a credential check. With nine failures recorded, twenty simultaneous wrong passwords were ALL
+    evaluated — thirty per IP from cold, and 30k per address with k source IPs against spec §3's
+    contract of ten.
+
+    So the limiter is now ONE atomic script per attempt and the slot is RESERVED before the
+    password is looked at: exactly one of the twenty can be the tenth, and the other nineteen are
+    refused without ever reaching the verifier. The verifier is the oracle — a spy, not a status
+    code — because "was this attempt evaluated" is precisely what a status code cannot tell you
+    once the refusal and the wrong password both answer from the same handler."""
+    member(("buyer",), email="race@example.org")
+    limit, window = limits.SIGNIN_EMAIL
+
+    # Nine failures already recorded, through the app's own primitive on the app's own Redis.
+    for _ in range(limit - 1):
+        limits.hit(redis, "signin:email", A._lookup_key("race@example.org"), limit, window)
+
+    evaluated = []
+
+    async def spy(password, hashed):
+        """Counts an attempt that reached the credential check and answers "wrong password".
+
+        It never calls the real Argon2id: twenty verifies at 64 MiB would cost two seconds and buy
+        nothing, and the `await` is what matters — it is the handler's only yield, and so the exact
+        window the check-then-act race lived in."""
+        evaluated.append(password)
+        await asyncio.sleep(0)
+        return False
+
+    monkeypatch.setattr(P, "verify_async", spy)
+
+    answers = await asyncio.gather(*[
+        client.post("/api/auth/signin", json={"email": "race@example.org", "password": f"wrong-{i}-wrong"})
+        for i in range(20)
+    ])
+    codes = sorted(r.status_code for r in answers)
+
+    assert len(evaluated) == 1, (
+        f"{len(evaluated)} of 20 simultaneous attempts reached the credential check with nine "
+        f"failures already recorded; the contract admits exactly one"
+    )
+    assert codes == [401] + [429] * 19, codes
+    assert redis.zcard(subject_key("signin:email", A._lookup_key("race@example.org"))) == limit, (
+        "a refused attempt must not be recorded — the window would then be extendable by knocking"
+    )
+
+
+async def test_a_refused_attempt_does_not_extend_the_lockout(client, member, rate_limit_clock):
+    """A-RL2's other half, and the reason the fix is a check-and-RESERVE rather than a count-first.
+
+    Counting every attempt would also have closed the race, and the review measured what it costs:
+    a member whose correct password arrives sixteen minutes after their oldest failure is refused,
+    because the attacker's knocking in between kept re-recording. `docs/RUNBOOK-identity.md` §9
+    promises the opposite — "expires 15 minutes after the OLDEST of the ten failures" — so a
+    refused attempt is never added to the set."""
+    member(("buyer",), email="knock@example.org")
+    limit, window = limits.SIGNIN_EMAIL
+
+    rate_limit_clock.move_to(WINDOW_EDGE)
+    for i in range(limit):
+        assert (await client.post("/api/auth/signin", json={"email": "knock@example.org", "password": "bad-bad-bad-bad"})).status_code == 401, i
+
+    # Locked. Knock for the rest of the window; not one of these may extend it.
+    for offset in range(60, window, 60):
+        rate_limit_clock.move_to(WINDOW_EDGE + offset)
+        assert (await client.post("/api/auth/signin", json={"email": "knock@example.org", "password": "bad-bad-bad-bad"})).status_code == 429, offset
+
+    # One window after the OLDEST failure, the address is its owner's again.
+    rate_limit_clock.move_to(WINDOW_EDGE + window)
+    assert (await client.post("/api/auth/signin", json={"email": "knock@example.org", "password": PW})).status_code == 200
+
+
+async def test_retry_after_is_the_wait_the_oldest_attempt_leaves(client, member, rate_limit_clock):
+    """Minor 4. `Retry-After` was the WHOLE window on every refusal — true as an upper bound and
+    wrong by up to a whole window: a member locked at T and knocking at T+800 was told to wait 900
+    seconds when the answer was 100. The sorted set has always known the exact figure, and the
+    script that reads it now returns it."""
+    member(("buyer",), email="retry@example.org")
+    limit = limits.SIGNIN_EMAIL[0]
+
+    rate_limit_clock.move_to(WINDOW_EDGE)
+    for _ in range(limit):
+        await client.post("/api/auth/signin", json={"email": "retry@example.org", "password": "bad-bad-bad-bad"})
+
+    rate_limit_clock.move_to(WINDOW_EDGE + 800)
+    r = await client.post("/api/auth/signin", json={"email": "retry@example.org", "password": PW})
+    assert r.status_code == 429
+    assert r.headers["retry-after"] == "100", r.headers["retry-after"]
 
 
 async def test_signout_all_revokes_on_next_request(client, member):
@@ -448,7 +563,7 @@ def test_enqueue_is_idempotent_on_its_key(conn):
 
 
 def _ip() -> str:
-    """A client address nothing else has used, so a fixed-window limiter never turns a sample into
+    """A client address nothing else has used, so the limiter never turns a sample into
     a 429 (the trick tests/api/test_interest.py uses)."""
     n = uuid.uuid4().int
     return "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
@@ -777,7 +892,8 @@ async def test_signup_is_limited_per_ip(client):
         r = await client.post("/api/auth/signup", json={"email": f"ip-{i}@example.org", "password": "password12345"}, headers={"x-forwarded-for": ip})
         assert r.status_code == 422, i
     r = await client.post("/api/auth/signup", json={"email": "ip-5@example.org", "password": "password12345"}, headers={"x-forwarded-for": ip})
-    assert r.status_code == 429 and r.headers["retry-after"] == "3600"
+    assert r.status_code == 429
+    assert_retry_after(r, 3600)
 
 
 async def test_signup_is_limited_per_email(client):
@@ -785,7 +901,8 @@ async def test_signup_is_limited_per_email(client):
         r = await client.post("/api/auth/signup", json={"email": "same@example.org", "password": "password12345"}, headers={"x-forwarded-for": _ip()})
         assert r.status_code == 422, i
     r = await client.post("/api/auth/signup", json={"email": "same@example.org", "password": "password12345"}, headers={"x-forwarded-for": _ip()})
-    assert r.status_code == 429 and r.headers["retry-after"] == "86400"
+    assert r.status_code == 429
+    assert_retry_after(r, 86400)
 
 
 async def test_forgot_is_limited_per_email_and_per_ip(client, conn):
@@ -795,13 +912,15 @@ async def test_forgot_is_limited_per_email_and_per_ip(client, conn):
     for i in range(3):
         assert (await client.post("/api/auth/password/forgot", json={"email": "f-lim@example.org"}, headers={"x-forwarded-for": _ip()})).status_code == 202, i
     r = await client.post("/api/auth/password/forgot", json={"email": "f-lim@example.org"}, headers={"x-forwarded-for": _ip()})
-    assert r.status_code == 429 and r.headers["retry-after"] == "3600"
+    assert r.status_code == 429
+    assert_retry_after(r, 3600)
 
     ip = _ip()
     for i in range(10):
         assert (await client.post("/api/auth/password/forgot", json={"email": f"f-ip-{i}@example.org"}, headers={"x-forwarded-for": ip})).status_code == 202, i
     r = await client.post("/api/auth/password/forgot", json={"email": "f-ip-last@example.org"}, headers={"x-forwarded-for": ip})
-    assert r.status_code == 429 and r.headers["retry-after"] == "3600"
+    assert r.status_code == 429
+    assert_retry_after(r, 3600)
 
 
 @pytest.mark.parametrize("path", ["/api/auth/verify", "/api/auth/password/reset"])
@@ -813,7 +932,8 @@ async def test_token_endpoints_are_limited_per_ip(client, conn, path):
     for i in range(30):
         assert (await client.post(path, json=body, headers={"x-forwarded-for": ip})).status_code == 400, i
     r = await client.post(path, json=body, headers={"x-forwarded-for": ip})
-    assert r.status_code == 429 and r.headers["retry-after"] == "3600"
+    assert r.status_code == 429
+    assert_retry_after(r, 3600)
 
 
 async def test_signin_is_limited_per_ip(client, conn):
@@ -824,7 +944,8 @@ async def test_signin_is_limited_per_ip(client, conn):
         r = await client.post("/api/auth/signin", json={"email": f"ip-{i}@example.org", "password": PW}, headers={"x-forwarded-for": ip})
         assert r.status_code == 401, i
     r = await client.post("/api/auth/signin", json={"email": "ip-last@example.org", "password": PW}, headers={"x-forwarded-for": ip})
-    assert r.status_code == 429 and r.headers["retry-after"] == "900"
+    assert r.status_code == 429
+    assert_retry_after(r, 900)
 
 
 async def test_the_csrf_cookie_carries_128_bits(client, member):
@@ -1167,7 +1288,8 @@ async def test_resend_verification_shares_signup_s_per_address_ceiling(client, c
     for i in range(3):
         assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202, i
     r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
-    assert r.status_code == 429 and r.headers["retry-after"] == "86400"
+    assert r.status_code == 429
+    assert_retry_after(r, 86400)
     # ...and the ceiling is SHARED with signup, keyed by the address rather than by the endpoint.
     shared = await client.post("/api/auth/signup", json={"email": "resend-lim@example.org", "password": PW},
                                headers={"x-forwarded-for": _ip()})

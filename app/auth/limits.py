@@ -1,12 +1,17 @@
-"""Sliding-window rate-limit helpers for the synchronous auth endpoints (signin/signup/
-forgot-password, Task I4).
+"""Sliding-window rate limits for the synchronous auth endpoints (signin/signup/forgot-password,
+Task I4) and the seller-listing lifecycle (D17).
 
-Every one of them is `app.ratelimit` for a SYNCHRONOUS Redis client: the same key from the same
-`subject_key()` (so subjects — client IPs, normalised email addresses — enter Redis only as a
-truncated SHA-256 pseudonym), the same sorted set of attempt times, the same one MULTI so a key
-always carries a TTL even if the process dies mid-sequence. The only differences are the client and
-that going over a limit raises `deps.RateLimited` (decision A5's 429 body plus `Retry-After`)
+`hit()` is `app.ratelimit.reserve` for a SYNCHRONOUS Redis client: the same key from the same
+`subject_key()` (so subjects — client IPs, normalised email addresses, account ids — enter Redis
+only as a truncated SHA-256 pseudonym), the same one atomic script. The only differences are the
+client and that a refusal raises `deps.RateLimited` (decision A5's 429 body plus `Retry-After`)
 instead of returning a bool.
+
+ONE function per attempt since amendment A-RL2: `check`/`count_failure` are gone. They were a
+lockout composed of a read and a later write, and everything that arrived between them read the
+same pre-write count — see `app/ratelimit.py`. Their two jobs are now one call: `hit` RESERVES the
+slot and RETURNS how many are inside the window, so the sign-in endpoint refuses and writes its
+audit row from one number that no other request can have seen.
 
 Fix round 1, Important 5: this module used to carry its OWN counter — a plain key handed in by the
 caller, INCR-then-EXPIRE-only-on-1 — so the interest endpoint and the auth endpoints would have
@@ -37,37 +42,24 @@ LISTING_PATCH, LISTING_UPLOAD, LISTING_SUBMIT = (240, 3600), (40, 3600), (20, 36
 LISTING_CREATE, LISTING_REORDER, LISTING_DELETE = (60, 3600), (240, 3600), (40, 3600)
 
 
-def check(r: Any, scope: str, subject: str, limit: int, window_s: int) -> None:
-    """Refuses when `subject` is ALREADY at `limit` inside the last `window_s` seconds, WITHOUT
-    counting this call.
-
-    Paired with `count_failure` and `clear`, this is spec §3's "N failures per window" lockout.
-    `hit` counts every call, which is right for a request-rate ceiling and wrong for a lockout: the
-    sign-in endpoint used it, so ten SUCCESSFUL sign-ins in fifteen minutes locked a member out of
-    their own account (fix round 1, Important 1)."""
-    if ratelimit.count_in_window(r, scope, subject, window_s) >= limit:
-        raise RateLimited(window_s)
-
-
-def count_failure(r: Any, scope: str, subject: str, limit: int, window_s: int) -> int:
-    """Counts one failure and returns how many are inside the window, so the caller can act on a
-    threshold (the sign-in endpoint writes an audit row at the fifth). Same key, same one MULTI as
-    `hit` — only the decision to count belongs to the caller. `limit` is not a ceiling here: it is
-    what `app.ratelimit._record` bounds the stored set by, so the number saturates at `limit + 1`
-    and every threshold below that is reached exactly when it was."""
-    return ratelimit.record(r, scope, subject, limit, window_s)
-
-
 def clear(r: Any, scope: str, subject: str) -> None:
-    """Forgets `subject`'s failures — what a successful credential check earns. One key holds them
-    all now, so this no longer needs to be told which window they were counted in."""
+    """Forgets `subject`'s attempts — what a successful credential check earns, and what makes the
+    sign-in set hold failures rather than attempts. One key holds them all, so this needs no window."""
     r.delete(ratelimit.subject_key(scope, subject))
 
 
-def hit(r: Any, scope: str, subject: str, limit: int, window_s: int) -> None:
-    """Counts one hit for `subject` in the last `window_s` seconds; raises `RateLimited` once the
-    count is past `limit`. `Retry-After` is the whole window: the oldest attempt still inside it
-    ages out at most one window from now, so it is an upper bound that never tells a caller to come
-    back while it would still be refused."""
-    if ratelimit.record(r, scope, subject, limit, window_s) > limit:
-        raise RateLimited(window_s)
+def hit(r: Any, scope: str, subject: str, limit: int, window_s: int) -> int:
+    """Reserves one slot for `subject` in the last `window_s` seconds and answers how many are
+    inside it, this one included; raises `RateLimited` when there is no room.
+
+    The reservation is taken BEFORE the caller does the work it gates — for sign-in, before the
+    Argon2id verify — which is the whole point: the decision and the record are one server-side
+    step, so two simultaneous callers cannot both be the last one admitted (A-RL2).
+
+    `Retry-After` is the exact wait the oldest attempt in the window leaves, computed by the same
+    script from the same set, never more than the window itself. A refused attempt is not recorded,
+    so knocking cannot push that answer further away."""
+    reservation = ratelimit.reserve(r, scope, subject, limit, window_s)
+    if not reservation.admitted:
+        raise RateLimited(reservation.retry_after)
+    return reservation.in_window

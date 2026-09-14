@@ -1694,9 +1694,9 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
 def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
     """Task RATE-LIMIT-WINDOW. §9's table is the page an operator reads when somebody cannot sign
     in, and until this pin NOTHING watched it: the limits were transcribed by hand from
-    `app/auth/limits.py`, and the WINDOW semantics were stated in prose three sections apart — §7
-    said "a fixed 24 h bucket", §9 said the counter "rolls over", §12 said to wait for the
-    quarter-hour boundary — all three of them descriptions of a mechanism, and all three wrong the
+    `app/auth/limits.py`, and the WINDOW semantics were stated in prose three sections apart — §8
+    said "a fixed 24 h bucket" (§8, not §7: the `verify_email` row lives under "I never got the
+    email"), §9 said the counter "rolls over", §12 said to wait for the quarter-hour boundary — all three of them descriptions of a mechanism, and all three wrong the
     moment the mechanism changed.
 
     So two things are pinned. The numbers, against the module the server actually runs, which is
@@ -1713,28 +1713,38 @@ def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
     )
     assert "| Counter | Limit | Sliding window |" in section, "§9's limiter table lost its header"
 
-    rows = re.findall(r"^\| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|$", section, re.MULTILINE)
-    assert len(rows) >= 6, f"§9's limiter table has {len(rows)} rows"
+    # EXACTLY, and positionally (fix round 1, Minor 1). This compared `str(limit) in cell`, so a
+    # row could overstate a limit TENFOLD and pass — `"10" in "100"` — and a constant could shrink
+    # under it, `"3" in "5 / 3"`. `TOKEN_IP` tightened 30 -> 3 passed EVERY test in the suite,
+    # because `"3" in "30"` and nothing else named it. Each row now names its own constants and
+    # each cell is split on ` / ` and compared with `==` against the module, position by position.
+    rows = [r for r in re.findall(r"^\| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|$", section, re.MULTILINE)
+            if "`" in r[0]]  # the header and the `|---|` rule name no constant
+    assert len(rows) == 5, f"§9's limiter table has {len(rows)} data rows"
     windows = {900: "15 min", 3600: "1 h", 86_400: "24 h"}
+    named = {name for label, _, _ in rows for name in re.findall(r"`([A-Z_]+)`", label)}
+    expected = {"SIGNIN_EMAIL", "SIGNIN_IP", "SIGNUP_IP", "SIGNUP_EMAIL",
+                "FORGOT_EMAIL", "FORGOT_IP", "TOKEN_IP"}
+    assert named == expected, f"§9's table names {sorted(named)}; the sign-in limits are {sorted(expected)}"
 
-    for constant, label in (("SIGNIN_EMAIL", "failures per address"),
-                            ("SIGNIN_IP", "requests per client IP"),
-                            ("SIGNUP_IP", "sign-ups per IP"),
-                            ("SIGNUP_EMAIL", "sign-ups per IP"),
-                            ("FORGOT_EMAIL", "password-reset requests"),
-                            ("FORGOT_IP", "password-reset requests"),
-                            ("TOKEN_IP", "verify + reset token attempts")):
-        row = next((r for r in rows if r[0].startswith(label)), None)
-        assert row is not None, f"docs/RUNBOOK-identity.md §9 has no row for {constant} ({label})"
-        limit, window_s = getattr(L, constant)
-        assert str(limit) in row[1], (
-            f"§9's {label!r} row states a limit of {row[1].strip()!r}; app/auth/limits.py says "
-            f"{constant} == {limit}"
+    for label, limit_cell, window_cell in rows:
+        constants = re.findall(r"`([A-Z_]+)`", label)
+        limit_parts = [c.strip() for c in limit_cell.split("/")]
+        window_parts = [c.strip() for c in window_cell.split("/")]
+        assert len(limit_parts) == len(window_parts) == len(constants), (
+            f"§9's {label!r} row names {len(constants)} constants but {len(limit_parts)} limits "
+            f"and {len(window_parts)} windows — every cell must carry one value per constant"
         )
-        assert windows[window_s] in row[2], (
-            f"§9's {label!r} row states a window of {row[2].strip()!r}; app/auth/limits.py says "
-            f"{constant}'s window is {window_s} s"
-        )
+        for i, constant in enumerate(constants):
+            limit, window_s = getattr(L, constant)
+            assert limit_parts[i] == str(limit), (
+                f"§9's {label!r} row states {constant} as {limit_parts[i]!r}; "
+                f"app/auth/limits.py says {limit}"
+            )
+            assert window_parts[i] == windows[window_s], (
+                f"§9's {label!r} row states {constant}'s window as {window_parts[i]!r}; "
+                f"app/auth/limits.py says {window_s} s ({windows[window_s]})"
+            )
 
     # And the three sentences elsewhere in the page that described the OLD mechanism.
     for gone in ("fixed 24 h bucket", "the bucket\n  rolls over sooner", "per FIXED"):
