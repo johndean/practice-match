@@ -6165,6 +6165,93 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
   // was true only for an account that may open the screen: the refusal arm returned `undefined`, so
   // `await` on the sign-in of a buyer resolved to it and any `.then` on the loader itself threw.
   // Both arms settle now.
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Important 3. A36 wired the Users tab and gained NONE of the equivalents
+  // this block already has for `adminListings` — nothing at the logic level pinned A36.1's rows
+  // ternary, A36.3's badge ternary, or the reload callback A36.2 hands the adapter. `src/logic.js`
+  // is excluded from the coverage gate (`vite.config.ts`), so the 100 % run could not force them.
+  // One case per seam, in the suite that owns the file.
+  // -----------------------------------------------------------------------------------------
+  const USER_ROWS = [['an account row'], ['another']];
+  const adminUsers = (answer: () => Promise<unknown> = () => Promise.resolve({ rows: USER_ROWS, counts: { open: 7, total: 40 } })) => {
+    const calls: string[] = [];
+    const reloads: (() => void)[] = [];
+    return { calls, reloads, list: (reload: () => void) => { calls.push('list()'); reloads.push(reload); return answer(); } };
+  };
+  const usersTab = (c2: any) => {
+    c2.setState({ adminTab: 'users' });
+    const vals = c2.adminVals();
+    return { rows: vals.rows.map((r: any) => r.cells), tab: vals.tabs[0] };
+  };
+
+  it('A36.1: with an adapter that answered, the Users tab renders THOSE accounts and not the design\'s four', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(adapter.calls).toEqual(['list()']);
+    expect(c2.state.adminUserRows).toEqual(USER_ROWS);
+    expect(usersTab(c2).rows, 'the design\'s own Priya/Marcus/Cho/Mendes must not reach a reviewer').toEqual(USER_ROWS);
+  });
+
+  it('A36.1: a refusal leaves the Users tab EMPTY rather than back on the design\'s fixture rows', async () => {
+    const adapter = adminUsers(() => Promise.reject(new Error('403')));
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(c2.state.adminUserRows).toEqual([]);
+    expect(c2.state.adminUserCounts, 'and the badge claims nothing either').toBeNull();
+    const { rows, tab } = usersTab(c2);
+    expect(rows).toEqual([]);
+    // A36.4/A36.5: no count, no pill — an empty count painted an empty blue lozenge.
+    expect(tab).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A36.1/A36.3: with NO adapter the design\'s own four rows and its literal badge stand', () => {
+    const c2: any = new Component({ me: { ...STAFF }, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    const { rows, tab } = usersTab(c2);
+    expect(c2.state.adminUserRows).toBeUndefined();
+    expect(rows).toHaveLength(4);
+    // The design's literal "3" IS its own open queue — two Pending plus one Needs review.
+    expect(tab).toMatchObject({ count: '3', hasCount: true });
+  });
+
+  it('A36.3: the badge is the SERVED open count, whatever the design\'s literal says', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+    expect(usersTab(c2).tab).toMatchObject({ count: '7', hasCount: true });
+
+    // And a server that answered no count at all unmounts the pill rather than printing a zero:
+    // "nobody said" and "none are waiting" are different sentences (A36.4).
+    const quiet: any = new Component({ me: { ...STAFF }, adminUsers: adminUsers(() => Promise.resolve({ rows: [], counts: null })), perms: perms(['page.admin']) });
+    await quiet.loadAdmin();
+    expect(usersTab(quiet).tab).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A36.2: the adapter is handed a reload that re-enters loadAdmin, which is the seam a decision uses', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+    expect(adapter.reloads).toHaveLength(1);
+
+    // What a decision does when it is done: call it. The queue is read again.
+    adapter.reloads[0]();
+    await Promise.resolve();
+    expect(adapter.calls, 'a decision must leave the reviewer looking at the queue they changed').toEqual(['list()', 'list()']);
+  });
+
+  it('A36.2: the Users load carries its own rejection arm, so one tab failing does not empty the other', async () => {
+    const listings = adminListings();
+    const users = adminUsers(() => Promise.reject(new Error('500')));
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: listings, adminUsers: users, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(c2.state.adminUserRows).toEqual([]);
+    expect(c2.state.adminListingRows, 'the Listings tab answered, and keeps its rows').toEqual(ROWS);
+  });
+
   it('A40.3 always answers a settled promise, for every account and every host', async () => {
     const allowed: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
     const refused: any = new Component({ adminListings: adminListings(), perms: perms(['page.browse']) });

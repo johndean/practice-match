@@ -440,6 +440,15 @@ describe('local design amendments (spec D15)', () => {
     'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
     // Fix round 1 (review Minor-3, 2026-09-14): A39.5 is CHAINED on A39.2 and consumes it.
     'A39.5',
+    // A36 -- the Admin Users tab (Task A36, D-C53). Appended last, as every family is.
+    // A36.2 is CHAINED on A39.5's own `adminListings` line (A39.2 and then A39.5 rewrote
+    // the line it was first written against); the other two edit pristine lines.
+    //
+    // A36.4 and A36.5 are RETIRED and their ids may not be reused (the A40.1/A40.2
+    // precedent): they were the SAME two edits as A39.3a and A39.3b -- `hasCount` on the
+    // shared tab strip and the `sc-if` on the shared count pill, which serve all four tabs
+    // -- written by two families at once. A39's shipped first (0.1.25) and are kept.
+    'A36.1', 'A36.2', 'A36.3',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -636,7 +645,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(362);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(365);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

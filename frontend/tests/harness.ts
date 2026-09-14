@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminUsersBody } from './design-admin-users.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody } from './design-summary.mjs';
 
@@ -335,12 +336,14 @@ export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string 
   return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
-/** The three collection endpoints the oracle answers itself, or `[]` on a remote target
- *  (A-SL2, A-SL23 (2); Task A38 added the registry). Pinned in harness.test.ts (review I4): an
- *  untested `if` is all that stands between a stub and a QA parity run. */
+/** The four collection endpoints the oracle answers itself, or `[]` on a remote target
+ *  (A-SL2, A-SL23 (2); Task A36 added the accounts queue and Task A38 the registry). Pinned in
+ *  harness.test.ts (review I4): an untested `if` is all that stands between a stub and a QA
+ *  parity run. */
 export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
-  return ['/api/seller/listings', '/api/admin/listings', '/api/admin/data-sources'].map((path) => new URL(path, appOrigin(env)).href);
+  return ['/api/seller/listings', '/api/admin/listings', '/api/admin/users', '/api/admin/data-sources']
+    .map((path) => new URL(path, appOrigin(env)).href);
 }
 
 /** What each of them answers: the design's own four seller rows; for the admin listings collection
@@ -351,7 +354,12 @@ export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string
  *  exactly what A-SL23 (2) took out of this harness. */
 export function collectionStubBody(href: string): string {
   if (href.endsWith('/api/seller/listings')) return designSellerPageBody();
-  return href.endsWith('/api/admin/data-sources') ? designAdminDataSourcesBody() : designAdminListingsBody();
+  if (href.endsWith('/api/admin/data-sources')) return designAdminDataSourcesBody();
+  // Task A36: the Users tab now reads this endpoint too, so the oracle answers it with the
+  // design's own four rows AND the design's own badge (`counts.open`, read off the tab literal
+  // by `design-admin-users.mjs`) — the frozen `admin-users` capture keeps its pixels through the
+  // SUCCESS path, exactly as `admin-listings` does.
+  return href.endsWith('/api/admin/users') ? designAdminUsersBody() : designAdminListingsBody();
 }
 
 /** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid
