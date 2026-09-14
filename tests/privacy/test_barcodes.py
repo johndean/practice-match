@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.util
 import sys
 import types
 from typing import Any
@@ -136,8 +137,16 @@ def test_an_absent_distribution_leaves_the_module_importable_and_the_reason_code
         raise importlib.metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr("importlib.metadata.version", raiser)
-    monkeypatch.delitem(sys.modules, "app.privacy.barcodes")
-    fresh = importlib.import_module("app.privacy.barcodes")
+    # Executed a second time WITHOUT registering it (review M-1). `import_module` after a
+    # `delitem` makes Python's own loader `setattr` the fresh module onto the `app.privacy`
+    # PACKAGE, which monkeypatch does not undo — after which every later string-path patch in
+    # this file (`"app.privacy.barcodes._LOADED"`, the autouse `_stub`) resolved to the fresh module while
+    # the module-level `barcodes` binding ran the original. The suite was green by position
+    # alone: reversed, it was 14 failed of 20 here and 5 of 15 in the twin.
+    spec = importlib.util.find_spec("app.privacy.barcodes")
+    assert spec is not None and spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
 
     assert fresh.ENGINE == "zxing-cpp/unavailable"
     monkeypatch.setattr(fresh.settings, "privacy_engine_module", None)

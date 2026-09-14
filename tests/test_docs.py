@@ -38,11 +38,14 @@ REQUIRED_CI_COMMANDS = (
     # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
     # report predicted it would have to — the plan's own file list for this task names neither
     # file, which is why the note above is here rather than in the plan.
+    # Task P4 fix round 3 (2026-09-14): scripts/prove_offline_engines.py joins it too — it is
+    # constraint (i)'s proof made runnable (re-review M-8), and `scripts/*.py` is derived from
+    # the directory by test_ci_strict_mypy_covers_every_python_script above.
     # Image-identifiability Task P4 (2026-09-13): tests/e2e/stub_engines.py joins the same
     # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
     # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
     # a new module there means editing the workflow AND this string, always both.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/prove_offline_engines.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by

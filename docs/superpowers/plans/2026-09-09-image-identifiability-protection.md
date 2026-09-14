@@ -2631,19 +2631,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 - [ ] `docker build -t pm-after . && docker images --format '{{.Repository}} {{.Size}}' pm-after` — **record both figures.** The spec's estimate is +120–150 MB on a 634 MB image; the measurement is what goes in `DEPLOY.md` and the commit body, whatever it says. A delta far outside that range is `NEEDS_CONTEXT`, not a fait accompli.
 - [ ] `DEPLOY.md` — a line under the Migrations section's neighbours recording the measured image size before and after, the three packages, their licences, and the two apt packages, in the voice of the existing sizing notes.
-- [ ] Prove the offline claim:
+- [ ] Prove the offline claim, with `scripts/prove_offline_engines.py` (Task P4 fix round 3,
+re-review M-8 — the snippet this replaces could not run: `socket.socket = None` before the import
+breaks `ssl`, which `pydantic_settings` reaches through `asyncio`, so the process died before an
+engine was ever built):
 
 ```bash
-poetry run python - <<'PY'
-import socket
-socket.socket = None            # any attempt to open one is an AttributeError, not a hang
-from PIL import Image
-from app.privacy import ocr
-print(len(ocr.read_text(Image.new("RGB", (1200, 900), (255, 255, 255)))), "lines, no socket")
-PY
+DATABASE_URL=postgresql://x/y REDIS_URL=redis://localhost:6379/0 API_SECRET_KEY=x \
+ENVIRONMENT=test poetry run python scripts/prove_offline_engines.py
 ```
 
-with `PRIVACY_ENGINE_MODULE` **unset** and `ENVIRONMENT=test`, so the real engine loads. Record the output in the commit body.
+with `PRIVACY_ENGINE_MODULE` **unset**, so the real engines load; the script imports the adapters
+FIRST and then removes all five doors onto a socket, which works because the adapters build their
+engines lazily. Run it under a throwaway `HOME` for the strongest form. Record the output in the
+commit body.
 
 - [ ] **Step 7: the task's gates**
 

@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.util
 import itertools
 import math
+import random
 import sys
 import types
 from typing import Any
@@ -134,9 +136,17 @@ def test_one_sign_read_twice_with_different_spellings_is_one_line_because_the_qu
     text rule left two regions for one sign. The quads agree to within a pixel, which is what the
     threshold reads."""
     first = ocr.Line("HILL COUNTRYVET", 0.99, _quad(10.0, 10.0, 200.0, 22.0))
+    second = ocr.Line("HILLCOUNTRYVET", 0.99, _quad(11.0, 10.0, 199.0, 23.0))   # the 2x pass, halved
     engine = _TwoPass([first], [ocr.Line("HILLCOUNTRYVET", 0.99, _quad(22.0, 20.0, 398.0, 46.0))])
     monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
-    assert ocr.read_text(_image()) == [first]
+
+    lines = ocr.read_text(_image())
+    assert len(lines) == 1
+    # The two readings tie at 0.99, so `_rank` falls to the larger quad — the 2x reading's, by
+    # 2444 px against 2280 (review M-6: a tie may not be decided by which one arrived first).
+    assert (lines[0].text, lines[0].confidence) == ("HILLCOUNTRYVET", 0.99)
+    # …and the quad is the CLUSTER's footprint, which covers both readings (review I-1).
+    assert _covers(lines[0].quad, first.quad) and _covers(lines[0].quad, second.quad)
 
 
 def test_a_second_pass_that_dies_while_it_is_being_read_is_an_error_not_a_traceback(
@@ -191,7 +201,7 @@ def _rotated(x0: float, y0: float, x1: float, y1: float, degrees: float) -> list
 def test_two_stacked_lines_on_an_angled_sign_are_both_kept(monkeypatch: pytest.MonkeyPatch) -> None:
     """Review N2. A practice name and the line beneath it, on a sign photographed at 45 degrees:
     their polygons do not touch — the true intersection is exactly zero — but their AXIS-ALIGNED
-    bounding boxes overlap by 0.636, so a bbox rule merged them and the second line produced no
+    bounding boxes overlap by 0.5436, so a bbox rule merged them and the second line produced no
     redaction region. The same miss as I1 (a), reached by rotation instead of by identical text.
 
     De-duplication is therefore on the QUADS themselves; the bounding boxes survive only as a cheap
@@ -248,6 +258,178 @@ def test_a_chain_of_overlapping_detections_answers_the_same_whatever_order_it_ar
         monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
         answers.add(tuple(sorted(line.text for line in ocr.read_text(_image()))))
     assert answers == {("B",)}, answers
+
+
+def _area(polygon: list[tuple[float, float]]) -> float:
+    """The shoelace area, computed here so a test never measures with the code under test."""
+    return abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1)
+                   in zip(polygon, polygon[1:] + polygon[:1], strict=True))) / 2.0
+
+
+def _covers(outer: list[tuple[float, float]], inner: list[tuple[float, float]]) -> bool:
+    """Whether every vertex of `inner` lies inside (or on) the convex polygon `outer`.
+
+    Computed here rather than borrowed from the module under test, and winding-agnostic — a point
+    is inside a convex polygon when it is on the SAME side of every edge, whichever way round the
+    vertices were given."""
+    edges = list(zip(outer, outer[1:] + outer[:1], strict=True))
+    for px, py in inner:
+        sides = [(bx - ax) * (py - ay) - (by - ay) * (px - ax) for (ax, ay), (bx, by) in edges]
+        if not (all(s >= -1e-9 for s in sides) or all(s <= 1e-9 for s in sides)):
+            return False
+    return True
+
+
+def test_a_merged_line_covers_the_whole_cluster_not_just_the_winners_quad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review I-1, and the one place this task has lost coverage rather than gained it.
+
+    The first pass reads the whole line `HILL COUNTRY VET` at 18 px (x 100..420, conf 0.62 — 18 px
+    is what triggers the 2x pass); the 2x pass segments it differently, answers `HILL COUNTRY` over
+    x 100..340 alone at conf 0.95, and answers the tail NOWHERE, because the wheel drops any
+    recognition under its own `text_score` of 0.5. Keeping the winner's own QUAD returned the
+    partial: the 80 px carrying `VET` — text the engine FOUND at display size — produced no region,
+    and under NOT_SHOW nothing filled it. P5 pads by 12 px, which leaves 68 of those 80 bare.
+
+    So the representative decides the TEXT and the CONFIDENCE (ruling A-IDP-11, review N4) and the
+    CLUSTER decides the QUAD: the footprint of every member, which can only ever grow."""
+    full = _quad(100.0, 10.0, 420.0, 28.0)
+    partial = _quad(100.0, 10.0, 340.0, 28.0)
+    engine = _TwoPass([ocr.Line("HILL COUNTRY VET", 0.62, full)],
+                      [ocr.Line("HILL COUNTRY", 0.95, [(x * 2, y * 2) for x, y in partial])])
+    monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
+
+    lines = ocr.read_text(_image())
+    assert [line.text for line in lines] == ["HILL COUNTRY"], "the representative is the confident one"
+    assert lines[0].confidence == 0.95
+    assert len(lines[0].quad) == 4, "`Line`'s four-point contract survives the merge"
+    assert _covers(lines[0].quad, full), "the footprint must still span the whole first-pass line"
+    assert _covers(lines[0].quad, partial)
+
+
+def test_a_chain_of_shifted_detections_is_covered_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same loss, amplified: seven detections of one region each offset 9 px keep a 30 px quad
+    for an 84 px footprint. The cluster's own extent is what a caller is handed."""
+    members = [ocr.Line(f"L{i}", 0.5 + i / 100, _quad(10.0, 10.0 + 9 * i, 210.0, 40.0 + 9 * i))
+               for i in range(7)]
+    monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass([], [
+        ocr.Line(m.text, m.confidence, [(x * 2, y * 2) for x, y in m.quad]) for m in members]))
+
+    lines = ocr.read_text(_image())
+    assert len(lines) == 1
+    assert all(_covers(lines[0].quad, member.quad) for member in members)
+    assert min(y for _, y in lines[0].quad) == pytest.approx(10.0)
+    assert max(y for _, y in lines[0].quad) == pytest.approx(94.0)
+
+
+def test_two_overlapping_readings_in_ONE_pass_collapse_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M-2, a characterisation: the ruling clusters the SET, so the first pass is
+    de-duplicated against itself and not only against its 2x twins. A caller can therefore receive
+    FEWER lines than the engine returned, which the report's caller-facing sentence used to describe
+    in one direction only. `engine.seen` proves no second pass ran — both detections are the first
+    pass's own."""
+    class OnePass:
+        def __init__(self) -> None:
+            self.seen: list[tuple[int, int]] = []
+
+        def run(self, image: Image.Image) -> list[ocr.Line]:
+            self.seen.append(image.size)
+            return [ocr.Line("HILL COUNTRY", 0.90, _quad(10.0, 10.0, 210.0, 53.0)),
+                    ocr.Line("HILL COUNTRY VET", 0.85, _quad(10.0, 10.0, 310.0, 53.0))]
+
+    engine = OnePass()
+    monkeypatch.setattr("app.privacy.ocr._LOADED", engine)
+    lines = ocr.read_text(_image())
+    assert engine.seen == [(800, 600)], "no second pass: both lines are 43 px tall"
+    assert [line.text for line in lines] == ["HILL COUNTRY"], "the more confident reading represents"
+    # …and I-1's footprint is what stops the collapse losing the tail it did not read.
+    assert _covers(lines[0].quad, _quad(10.0, 10.0, 310.0, 53.0))
+
+
+def test_a_quad_wound_the_other_way_measures_the_same(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M-3 and M-7. `_iou` hulls both arguments, which is the module's single normaliser:
+    it fixes the winding an engine may answer either way round, and it fixes the ORDER — a
+    rectangle whose corners arrive crosswise is a bow-tie whose shoelace area is zero, and it used
+    to score 0.0 against the same rectangle written properly, so every 2x twin would have survived
+    as a duplicate. Neither was gated: every quad the suite built was wound the same way."""
+    upright = _quad(10.0, 10.0, 210.0, 40.0)
+    assert ocr._iou(upright, upright[::-1]) == pytest.approx(1.0)
+    assert ocr._iou(upright, [(10.0, 10.0), (210.0, 40.0), (210.0, 10.0), (10.0, 40.0)]) == pytest.approx(1.0)
+
+    reversed_twin = ocr.Line("B", 0.8, _quad(11.0, 10.0, 209.0, 41.0)[::-1])
+    monkeypatch.setattr("app.privacy.ocr._LOADED",
+                        _TwoPass([], [ocr.Line("A", 0.9, [(x * 2, y * 2) for x, y in upright]),
+                                      ocr.Line(reversed_twin.text, 0.8,
+                                               [(x * 2, y * 2) for x, y in reversed_twin.quad])]))
+    assert [line.text for line in ocr.read_text(_image())] == ["A"]
+
+
+def test_a_confidence_tie_is_broken_by_area_whichever_way_the_quad_is_wound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M-6 and M-3's second half. A tie goes to the LARGER quad — the fuller reading, the
+    safer one to carry — and never to whichever arrived first. `_area` is unsigned for exactly this
+    reason: the larger member here is wound clockwise, so a signed area would rank it as the
+    smallest thing in the cluster and hand the region to the shorter reading."""
+    small = ocr.Line("SMALL", 0.9, _quad(10.0, 10.0, 200.0, 22.0))
+    large = ocr.Line("LARGE", 0.9, _quad(11.0, 10.0, 199.0, 23.0)[::-1])   # clockwise, and bigger
+    for order in ((small, large), (large, small)):
+        monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass(
+            [], [ocr.Line(m.text, m.confidence, [(x * 2, y * 2) for x, y in m.quad]) for m in order]))
+        assert [line.text for line in ocr.read_text(_image())] == ["LARGE"], order
+
+
+def test_a_merged_cluster_of_angled_readings_takes_an_angled_footprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The footprint is the smallest rectangle at ANY angle, not the axis-aligned box: two readings
+    of one sign photographed at 45 degrees are covered by a tilted rectangle a fraction of the size
+    of their upright bounding box, so a merge on angled signage does not black out the frame."""
+    one = _rotated(10.0, 10.0, 210.0, 40.0, 45.0)
+    two = _rotated(14.0, 12.0, 214.0, 42.0, 45.0)
+    monkeypatch.setattr("app.privacy.ocr._LOADED", _TwoPass(
+        [], [ocr.Line("A", 0.9, [(x * 2, y * 2) for x, y in one]),
+             ocr.Line("B", 0.8, [(x * 2, y * 2) for x, y in two])]))
+
+    lines = ocr.read_text(_image())
+    assert len(lines) == 1 and _covers(lines[0].quad, one) and _covers(lines[0].quad, two)
+    x0, y0, x1, y1 = ocr._bbox(lines[0].quad)
+    assert _area(lines[0].quad) < 0.5 * (x1 - x0) * (y1 - y0), "an upright box would be twice the size"
+
+
+def test_the_threshold_is_bounded_by_its_two_boundary_cases_and_by_nothing_narrower() -> None:
+    """Review M-9, stated rather than hidden: the suite BOUNDS `DUPLICATE_IOU` and does not pin it.
+    The grazing pair must not merge and the chain's links must, which leaves every value in
+    (0.3043, 0.5385] passing — 0.35 ships green today. A-IDP-11 ruled the RULE and not the number,
+    so a retune is legal; this is what makes it move the band and both boundary cases together
+    instead of drifting through one of them."""
+    graze = ocr._iou(_quad(10.0, 10.0, 210.0, 40.0), _quad(10.0, 26.0, 210.0, 56.0))
+    chain = ocr._iou(_quad(10.0, 10.0, 210.0, 40.0), _quad(10.0, 19.0, 210.0, 49.0))
+    assert (graze, chain) == (pytest.approx(0.3043, abs=1e-4), pytest.approx(0.5385, abs=1e-4))
+    assert graze < ocr.DUPLICATE_IOU <= chain
+
+
+def test_a_merged_footprint_can_only_ever_grow_what_is_covered() -> None:
+    """The PROPERTY behind review I-1, over random clusters rather than one fixture.
+
+    Whatever `_merge` hands back for a cluster must contain every member of it. That is the whole
+    direction this sub-project runs in: a de-duplication rule may decide which TEXT is carried, and
+    it may never shrink the area a redaction would fill. Checked here against quads at arbitrary
+    angles, offsets and sizes, and against the area too — the footprint is never smaller than the
+    largest member it replaced."""
+    rng = random.Random(20260914)
+    for _ in range(300):
+        cluster = [ocr.Line(f"L{i}", rng.random(),
+                            _rotated(x := rng.uniform(0, 400), y := rng.uniform(0, 400),
+                                     x + rng.uniform(20, 300), y + rng.uniform(8, 60),
+                                     rng.uniform(0, 360)))
+                   for i in range(rng.randint(2, 6))]
+        footprint = ocr._min_area_rect([point for line in cluster for point in line.quad])
+        assert len(footprint) == 4
+        for member in cluster:
+            assert _covers(footprint, member.quad), (footprint, member.quad)
+            assert _area(footprint) >= _area(member.quad) - 1e-9
 
 
 def test_the_engine_is_built_once_per_process() -> None:
@@ -338,8 +520,16 @@ def test_an_absent_distribution_leaves_the_module_importable_and_the_reason_code
         raise importlib.metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr("importlib.metadata.version", raiser)
-    monkeypatch.delitem(sys.modules, "app.privacy.ocr")
-    fresh = importlib.import_module("app.privacy.ocr")
+    # Executed a second time WITHOUT registering it (review M-1). `import_module` after a
+    # `delitem` makes Python's own loader `setattr` the fresh module onto the `app.privacy`
+    # PACKAGE, which monkeypatch does not undo — after which every later string-path patch in
+    # this file (`"app.privacy.ocr._LOADED"`, the autouse `_stub`) resolved to the fresh module while
+    # the module-level `ocr` binding ran the original. The suite was green by position
+    # alone: reversed, it was 14 failed of 20 here and 5 of 15 in the twin.
+    spec = importlib.util.find_spec("app.privacy.ocr")
+    assert spec is not None and spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
 
     assert fresh.ENGINE == "rapidocr-onnxruntime/unavailable"
     monkeypatch.setattr(fresh.settings, "privacy_engine_module", None)

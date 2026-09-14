@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import math
 from typing import Any, NamedTuple, Protocol, cast
 
 from PIL import Image
@@ -53,7 +54,9 @@ UPSCALE_BELOW_PX = 24
 #: union of the polygons themselves, never of their bounding boxes -- review N2). The second pass
 #: re-reads the same photograph at 2x, so one sign's two readings halve back onto each other within
 #: a pixel or two, measured at 0.914 on the pair this rule was written for; two stacked lines of one
-#: sign that merely graze each other measure 0.304. 0.5 sits between those -- high enough that a
+#: sign that merely graze each other measure 0.304. It governs any two detections of one
+#: photograph, a pair within ONE pass included (review M-2), not only a reading against its own
+#: 2x twin. 0.5 sits between those measurements -- high enough that a
 #: neighbouring line of the same sign stays its own region, low enough that a box which grew or
 #: shrank by a third in the sharper read is still recognised as the line it is (amendment A-IDP-11).
 DUPLICATE_IOU = 0.5
@@ -149,12 +152,63 @@ def _area(polygon: list[tuple[float, float]]) -> float:
     return abs(total) / 2.0
 
 
-def _counter_clockwise(polygon: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """`polygon` wound counter-clockwise, which is what tells `_clip` which side of an edge is in.
-    An engine's quad arrives wound either way, so this is normalisation and not a correction."""
-    signed = sum(x0 * y1 - x1 * y0
-                 for (x0, y0), (x1, y1) in zip(polygon, polygon[1:] + polygon[:1], strict=True))
-    return polygon if signed >= 0 else polygon[::-1]
+def _turn(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    """The cross product of o->a and o->b: positive when o, a, b turn left."""
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The convex hull, wound counter-clockwise -- Andrew's monotone chain, stdlib only.
+
+    The SINGLE normaliser this module has, and it does three jobs at once (review M-3, M-7). It
+    fixes the WINDING, which is what tells `_clip` which side of an edge is inside and which an
+    engine may answer either way round. It fixes the ORDER: a rectangle whose corners arrive
+    crosswise is a bow-tie with a shoelace area of zero, which scored IoU 0.0 against the same
+    rectangle written properly -- silently, so every 2x twin would have survived as a duplicate.
+    And it is what `_min_area_rect` measures a merged cluster's footprint over.
+
+    Its one precondition is at least three points that are not all the same, which every caller
+    meets: `_iou` is reached only through `_boxes_overlap`, which needs a quad of positive extent
+    in both axes, and `_min_area_rect` is called only for a cluster of two or more such quads."""
+    ordered = sorted(set(points))
+
+    def half(source: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        chain: list[tuple[float, float]] = []
+        for point in source:
+            while len(chain) >= 2 and _turn(chain[-2], chain[-1], point) <= 0:
+                chain.pop()
+            chain.append(point)
+        return chain
+
+    lower = half(ordered)
+    upper = half(ordered[::-1])
+    return lower[:-1] + upper[:-1]
+
+
+def _min_area_rect(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The smallest-area rectangle, at ANY angle, containing every point -- four corners, so a
+    merged `Line` keeps the four-point quad `c57f23d` declared.
+
+    Rotating calipers: the minimum-area enclosing rectangle always has a side flush with one of the
+    hull's edges (Freeman & Shapira, 1975), so trying each edge's own frame is exhaustive. Seeded
+    with the axis-aligned box, which is itself one of the candidates. Whatever it returns CONTAINS
+    the hull, and therefore every member quad -- a merged line's footprint can only ever grow."""
+    x0, y0, x1, y1 = _bbox(points)
+    best = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    best_area = (x1 - x0) * (y1 - y0)
+    hull = _convex_hull(points)
+    for (ax, ay), (bx, by) in zip(hull, hull[1:] + hull[:1], strict=True):
+        length = math.hypot(bx - ax, by - ay)
+        ux, uy = (bx - ax) / length, (by - ay) / length
+        along = [px * ux + py * uy for px, py in points]
+        across = [py * ux - px * uy for px, py in points]
+        low_a, high_a, low_c, high_c = min(along), max(along), min(across), max(across)
+        area = (high_a - low_a) * (high_c - low_c)
+        if area < best_area:
+            best_area = area
+            best = [(a * ux - c * uy, a * uy + c * ux)
+                    for a, c in ((low_a, low_c), (high_a, low_c), (high_a, high_c), (low_a, high_c))]
+    return best
 
 
 def _crossing(a: tuple[float, float], b: tuple[float, float], a_side: float, b_side: float) -> tuple[float, float]:
@@ -167,11 +221,11 @@ def _crossing(a: tuple[float, float], b: tuple[float, float], a_side: float, b_s
 def _clip(subject: list[tuple[float, float]],
           clipper: list[tuple[float, float]]) -> list[tuple[float, float]]:
     """`subject` clipped to the convex polygon `clipper` -- Sutherland-Hodgman, stdlib only and no
-    new dependency. An OCR quad is four points and convex, which is this algorithm's one
-    precondition; each of the clipper's edges keeps the part of the subject on its inner side, so
-    what survives all four edges is exactly the intersection."""
+    new dependency. Each of the clipper's edges keeps the part of the subject on its inner side, so
+    what survives them all is exactly the intersection. `clipper` must be convex and wound
+    counter-clockwise, which `_iou` guarantees by hulling both arguments first."""
     output = list(subject)
-    edges = _counter_clockwise(clipper)
+    edges = clipper
     for (ax, ay), (bx, by) in zip(edges, edges[1:] + edges[:1], strict=True):
         if not output:
             return []
@@ -201,22 +255,46 @@ def _iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
     docstring says the quad is four points rather than a rectangle for precisely that reason."""
     if not _boxes_overlap(a, b):
         return 0.0
-    intersection = _area(_clip(a, b))
+    left, right = _convex_hull(a), _convex_hull(b)
+    intersection = _area(_clip(left, right))
     if intersection <= 0:
         return 0.0
     # Each quad is at least as large as the part they share, so the union is positive here.
-    return intersection / (_area(a) + _area(b) - intersection)
+    return intersection / (_area(left) + _area(right) - intersection)
+
+
+def _rank(line: Line) -> tuple[float, float, str]:
+    """The order a cluster's representative is chosen in, smallest first: most confident, then the
+    LARGER quad, then the text that sorts first.
+
+    Every term is a property of the line itself, so the representative is a function of the SET of
+    detections and never of the order they arrived in (review M-6). Confidence is the ruling's own
+    rule (A-IDP-11, review N4); area breaks a tie towards the fuller reading, which is the safer one
+    to carry; the text is the last resort and exists only so that two readings agreeing on both
+    numbers still answer deterministically."""
+    return (-line.confidence, -_area(line.quad), line.text)
 
 
 def _merge(lines: list[Line]) -> list[Line]:
-    """One line per CLUSTER of overlapping quads, the most confident member of each.
+    """One line per CLUSTER of overlapping quads: the representative's text and confidence, over
+    the whole cluster's FOOTPRINT.
 
     Order-independent by construction (review N4). The greedy first-wins loop this replaces compared
     each new line against the lines it had ALREADY kept, so three chained detections of one region
     kept two lines when they arrived A,B,C and one when they arrived B,A,C -- from the same input.
-    Clusters are built by TRANSITIVE overlap, so the answer is a function of the set of detections
-    and of nothing else; ties in confidence go to the earlier line, which keeps a first-pass reading
-    ahead of its own 2x twin."""
+    Clusters are built by TRANSITIVE overlap and the representative is `_rank`'s own, so neither the
+    clusters nor their winners depend on arrival order.
+
+    The QUAD is the cluster's, not the winner's (review I-1). Keeping the winner's own box meant a
+    more confident PARTIAL reading replaced a full one and the part it did not cover produced no
+    region at all: a 2x pass that answers `HILL COUNTRY` where the first pass read `HILL COUNTRY
+    VET` lost the 80 px carrying `VET` under NOT_SHOW. `_min_area_rect` contains every member, so
+    the merge can only ever grow what is covered -- which is the direction this sub-project's whole
+    promise runs in. A single-member cluster keeps its own quad untouched.
+
+    This de-duplicates the first pass against ITSELF as well as against its 2x twins (review M-2):
+    the ruling clusters the set, and two overlapping detections of one painted line in a single pass
+    are the same duplicate by the same measure."""
     parent = list(range(len(lines)))
 
     def root(index: int) -> int:
@@ -231,19 +309,31 @@ def _merge(lines: list[Line]) -> list[Line]:
                 parent[root(j)] = root(i)
 
     best: dict[int, int] = {}
+    members: dict[int, list[int]] = {}
     for index, line in enumerate(lines):
         cluster = root(index)
+        members.setdefault(cluster, []).append(index)
         chosen = best.get(cluster)
-        if chosen is None or line.confidence > lines[chosen].confidence:
+        if chosen is None or _rank(line) < _rank(lines[chosen]):
             best[cluster] = index
-    return [lines[index] for index in sorted(best.values())]
+
+    merged: list[Line] = []
+    for index in sorted(best.values()):
+        winner = lines[index]
+        group = members[root(index)]
+        if len(group) == 1:
+            merged.append(winner)
+        else:
+            footprint = _min_area_rect([point for i in group for point in lines[i].quad])
+            merged.append(Line(winner.text, winner.confidence, footprint))
+    return merged
 
 
 def read_text(image: Image.Image) -> list[Line]:
     """Every line the engine finds, plus a second pass on a 2x upscale whenever the first pass saw
     a short line or nothing at all. The second pass's coordinates are halved back into display
-    space, and lines whose quads overlap by `DUPLICATE_IOU` or more collapse to the most confident
-    of them.
+    space, and lines whose quads overlap by `DUPLICATE_IOU` or more collapse to ONE line: the most
+    confident one's text, over the whole cluster's footprint.
 
     De-duplication is by GEOMETRY and never by text (amendment A-IDP-11). Two readings of one sign
     routinely disagree about its words -- the same painted line came back "HILL COUNTRYVET" at
