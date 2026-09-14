@@ -7,7 +7,7 @@ that must never go active), not an ordinary outage.
 Task CENSUS-204, defect 3: Alaska and Michigan publish no QWI at any quarter, so a correct QWI
 run is one that writes 49 states and records the two it could not. The list has existed since
 Task A5 with nothing reading it; `finish` now writes it to `ingest_run.notes`
-(`migrations/092_ingest_run_notes.sql`), one note per line, on BOTH arms -- a run that failed
+(`migrations/095_ingest_run_notes.sql`), one note per line, on BOTH arms -- a run that failed
 after skipping two states must still say which two. `error_detail` is for what ENDED a run and
 is never overloaded with what it survived."""
 from __future__ import annotations
