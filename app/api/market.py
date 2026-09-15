@@ -322,6 +322,17 @@ PETS_CAVEAT = (
     f"pet-ownership rate. Licence: {PR.LICENCE_STATUS}."
 )
 
+# The UNIVERSE ZIP Code Business Patterns counts, stated once and read in two places: this
+# catalogue's `competition` caveat, which an integrator reads, and -- word for word -- the design's
+# "What this means" card, which a buyer reads (amendment A48.1, D-C57). ZBP counts business
+# LOCATIONS WITH PAID EMPLOYEES, so a practice run by its owner alone is not in the figure at all;
+# that was stated nowhere in the product until 2026-09-14. It is constant for every listing in the
+# country, which is why it is a caveat sentence and not a served field (spec §7).
+EMPLOYER_UNIVERSE = (
+    "The Census counts business locations with paid employees, so a practice with "
+    "no paid staff is not in this figure."
+)
+
 # The nine approved layers (Census spec §2 table + the layer-rendering contract). Labels are the
 # design's; sources/vintages/state come from the registry at request time, never hard-coded.
 LAYERS: list[dict[str, Any]] = [
@@ -334,7 +345,7 @@ LAYERS: list[dict[str, Any]] = [
     {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
-     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + THRESHOLD_RULE},
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + EMPLOYER_UNIVERSE + " " + THRESHOLD_RULE},
     {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
     {"key": "drive_10", "label": "5\u201310 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
     {"key": "drive_20", "label": "10\u201320 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},

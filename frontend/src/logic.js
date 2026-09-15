@@ -206,7 +206,7 @@ const LAYER_META = {
     sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
     dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
-    means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
+    means: "Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. They say nothing about size, quality or overlap in services.",
     why: "Competitive density helps you judge whether a market is underserved or already crowded."
   },
   growth: {
