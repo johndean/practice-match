@@ -37,6 +37,8 @@ from httpx import ASGITransport
 from app.api import market
 from app.cache import sync_redis
 from app.census import gate, materialize
+from app.census import metrics as M
+from app.census import pet_rate as PR
 from app.config import settings
 from app.main import create_app
 from app.tasks.celery_app import celery_app
@@ -103,7 +105,17 @@ async def test_layers_come_from_the_registry_with_three_valued_state_and_caveats
     assert layers["income"]["source_label"].startswith("Source: U.S. Census Bureau, American Community Survey")
     assert layers["income"]["state"] == "enabled"
     assert layers["competition"]["dataset_key"] == "zbp" and "proxy" in layers["competition"]["caveat"] and layers["competition"]["geo_level"] == "zcta"
-    assert layers["pets"]["is_derived"] is True and "0.57" in layers["pets"]["caveat"]
+    # Task PET-RATE-PROVENANCE: the pets caveat is composed from `app.census.pet_rate`, so it is
+    # asserted against that module rather than against a rate re-typed here, and the layer now
+    # carries the whole provenance record beside it. The two fields `pet_rate` must NOT state
+    # are checked against what THIS database actually serves.
+    assert layers["pets"]["is_derived"] is True and layers["pets"]["caveat"] == market.PETS_CAVEAT
+    prov = layers["pets"]["provenance"]
+    assert prov["incidence_rate"] == PR.INCIDENCE_RATE and prov["source_edition"] == PR.SOURCE_EDITION
+    assert prov["household_vintage"] == layers["pets"]["vintage"] and prov["methodology_version"] == M.FORMULA_VERSION
+    assert prov["status"] == "ESTIMATED"
+    # Only the one layer whose rate comes from outside the Census says where it comes from.
+    assert [k for k, l in layers.items() if "provenance" in l] == ["pets"]
     assert layers["growth"]["vintage"] == "2014\u20132018 \u2192 2019\u20132023" and layers["growth"]["geo_level"] == "place"
     assert "approximation" in layers["drive_10"]["caveat"]
     # Never a bare boolean anywhere in the payload -- three-valued or nothing.

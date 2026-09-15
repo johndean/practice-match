@@ -27,10 +27,12 @@ failure it names is not a ledger.
 | 094 | `094_registry_blocked_reason.sql` | `feat/admin-data-sources` | the member-facing "why is this blocked" column |
 | 095 | `095_ingest_run_notes.sql` | `fix/census-204` | per-run notes (which states were skipped, and why) |
 | 096 | `096_request.sql` | *(reserved — A43, the Requests build)* | `request` + `request_event` |
+| 099 | `099_avma_pet_rate_registry.sql` | `feat/pet-rate-provenance` | the AVMA cited-statistic registry row, and the blocked per-geography feed's note stops standing in for it |
 
-**Next free: 099.** `097` is held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
+**Next free: 100.** `097` is held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
 were told "097" in briefs written minutes apart by the same author who wrote this file, and were
 deconflicted by message before either wrote a file. Neither number is claimed below yet, because a row
 here means a file exists; if either task turns out to need no migration, its number returns to free.
+`099` IS claimed — the row above, and the file beside it in the same commit.
 
 The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `043`–`049` are still free inside it.

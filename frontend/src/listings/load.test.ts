@@ -302,6 +302,22 @@ describe('applyListings', () => {
     expect(toPractice(row({ income_vs_us_pct: 0 })).incomeVsUs).toBe(0);
   });
 
+  // Task PET-RATE-PROVENANCE (John, 2026-09-15): the rate the listing's own estimated-pet-household
+  // row was computed with, so the design stops keeping a second copy of the constant. The same
+  // absence rule as every field above it — the design's fixtures carry no key, so the design's own
+  // demoted fixture constant answers on the reference path and every approved state keeps its
+  // pixels.
+  it("carries pet_rate under the design's own name, and omits it when the API sent none", () => {
+    expect(toPractice(row({ pet_rate: 0.586 })).petRate).toBe(0.586);
+    // The rate a row was MATERIALISED with, not today's — a listing written before a re-citation
+    // reports what its own figure was computed from.
+    expect(toPractice(row({ pet_rate: 0.57 })).petRate).toBe(0.57);
+    expect('petRate' in toPractice(row({ pet_rate: null }))).toBe(false);
+    // `!= null`, never truthiness: a rate of 0 is a real (if absurd) answer and must not read as
+    // absent, which is the difference between "no household keeps a pet here" and "nobody said".
+    expect(toPractice(row({ pet_rate: 0 })).petRate).toBe(0);
+  });
+
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the
   // design's own — which is exactly what the D6 stub sends — had its figures installed and then
   // deleted, and the panel had no establishment count for any design fixture.

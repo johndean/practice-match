@@ -1892,7 +1892,13 @@ const NO_DATA_LABEL = "No data";
 // classes what the community cards carry (a city's households); these class what the map
 // paints (a tract's). Measured over every US tract and every US ZIP area, not over Austin:
 // households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times
-// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The
+// the AVMA national pet-ownership rate — 618 / 847 / 1,112 at 0.586, where 0.57 gave
+// 601 / 824 / 1,081, both rounding to the same legend-readable breaks below. The pets
+// layer is round(households x rate) over exactly the tracts households serves, so it is a
+// monotone transform and its quantiles are the households quantiles through the rate:
+// the table is RE-DERIVED from that one measurement rather than re-measured, and
+// `tests/census/test_pet_rate.py` pins the identity with the measuring script's own
+// quantile. Competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The
 // design's own breaks put 100.0 % of tracts and 73.1 % of ZIP areas into ONE class.
 // Income, growth and payroll are scale-invariant and are deliberately absent.
 const AREA_LAYERS = {
@@ -1941,8 +1947,8 @@ const LAYER_META = {
     title: "Pet ownership (estimated)",
     sub: "Estimated pet households by Census tract · derived from ACS households",
     updated: "Updated: derived Jan 2025 from ACS 2023",
-    dataset: "Derived estimate from ACS household counts (2023)",
-    means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
+    dataset: "ACS household counts (2023) × the AVMA 2025 national pet-ownership rate",
+    means: "Census household counts for the area multiplied by the American Veterinary Medical Association's national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",
     why: "Pet-household concentration is a rough proxy for the size of the potential client base near a practice."
   },
   competition: {
@@ -2397,7 +2403,7 @@ class Component extends DCLogic {
             : layer === "competition"
               ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
               : layer === "pets"
-                ? "Modelled estimate: households × 0.57. Not an observed count."
+                ? "Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count."
                 : "");
     return '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
       '<div style="font-size:12.5px;font-weight:800;color:#003a70">' + p.name + "</div>" +
@@ -2410,13 +2416,24 @@ class Component extends DCLogic {
 
   communities() {
     const market = this.state.market || "Austin, TX";
+    // THE DESIGN'S OWN FIXTURE ARITHMETIC, and not a production rate. A pet-household figure
+    // is `households x a national pet-ownership incidence rate`; that rate belongs to the
+    // API — `app/census/pet_rate.py` is the one place it is written down, with its whole
+    // provenance, and `GET /api/listings` serves the rate each listing's own figure was
+    // actually computed with. This constant exists so the REFERENCE, which has no API and no
+    // served rate, can still draw the design's own fixtures, and it is read nowhere else.
+    const petRateFixture = 0.586;
     return P.filter((p) => p.market === market && p.status === "published").map((p) => {
       const hh = p.hh != null ? num(p.hh) : undefined;
+      // A16.1's rule in A33.1c's shape: gated on ADAPTER PRESENCE, never on data. With the
+      // Browse adapter the rate is the SERVED one or the figure is absent — a pet-household
+      // count computed from a rate nobody recorded is what this seam exists to remove.
+      const petRate = this.props.market ? p.petRate : petRateFixture;
       return {
         id: p.id, name: p.area, lat: p.lat, lng: p.lng,
         pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
         growth: p.growth != null ? num(p.growth) : undefined,
-        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
+        pets: (hh !== undefined && petRate != null) ? Math.round(hh * petRate) : undefined,
         econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
         vets: VETS[p.id]
       };

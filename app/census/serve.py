@@ -46,6 +46,17 @@ class CommunityRow(TypedDict):
         panel sniffing the word off the end of someone else's copy — the coupling `metaSource`
         was introduced to remove (A24 fix round 2).
 
+    Task PET-RATE-PROVENANCE (John, 2026-09-15) adds the one member that is not a figure at all:
+
+      * `pet_rate` is the pet-ownership incidence rate the listing's OWN estimated-pet-household
+        row was computed with — `market_metric.inputs.pet_incidence_rate`, the stamp
+        `materialize.py` writes — so the design can stop keeping a second copy of the constant and
+        derive its figure from the one the pipeline actually used. It is read off the ROW and never
+        from `app.census.pet_rate`: a listing materialised before a re-citation must report the
+        rate behind ITS figure, which is what makes the stamp provenance rather than decoration.
+        `None` where the listing has no pet row to read it from, and the design then shows no
+        estimated-pet-household figure at all (A16.1's rule: the served one or nothing).
+
     `econ_k` is county everywhere and always (`materialize.py` writes `ctx.cbp` into all three
     bands), and the card does not render it — it feeds the Browse Payroll layer."""
     pop: str | None
@@ -59,6 +70,7 @@ class CommunityRow(TypedDict):
     income_note: str | None
     income_vs_us_pct: float | None
     income_approximate: bool | None
+    pet_rate: float | None
 
 
 async def _active(conn: AsyncConnection) -> dict[str, str]:
@@ -500,6 +512,24 @@ def community_rows(
         growth = drive["growth"] if drive["growth"] is not None else place["growth"]
         econ_k = drive["econ_k"] if drive["econ_k"] is not None else place["econ_k"]
 
+        # Task PET-RATE-PROVENANCE, ruling (2). The rate the AREA GROUP's own pet row was computed
+        # with, in the band the households beside it came from — a rate from the other band would
+        # describe a figure this payload does not carry. Read off the stamp, never from the module:
+        # see `CommunityRow.pet_rate`. Gated on the row's own source dataset being cleared, the
+        # same term `_servable` applies to every figure, because a rate is worth serving only where
+        # the households it multiplies may be shown at all; NOT on `_servable` in full, because the
+        # rate is provenance rather than a value and a SUPPRESSED estimate was still computed with
+        # it.
+        pet_row = area_metrics.get("pet_households_est")
+        pet_rate = None
+        if pet_row is not None and _cleared(reg, pet_row["source_dataset"]):
+            stamped = (pet_row["inputs"] or {}).get("pet_incidence_rate")
+            # `inputs` is jsonb, so anything at all can arrive on that key. A non-number names no
+            # rate, which is the same answer as no stamp: the design shows nothing rather than
+            # multiplying by a string.
+            if isinstance(stamped, (int, float)) and not isinstance(stamped, bool):
+                pet_rate = float(stamped)
+
         growth_scope = None
         if growth is not None:
             source = drive_metrics if drive["growth"] is not None else place_metrics
@@ -538,6 +568,7 @@ def community_rows(
             "income_note": income_note,
             "income_vs_us_pct": income_vs_us_pct,
             "income_approximate": income_approximate,
+            "pet_rate": pet_rate,
         }
 
     return result

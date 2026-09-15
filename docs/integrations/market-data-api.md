@@ -61,7 +61,13 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
     "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5",
     "shading": { "summary_level": "140", "label": "Census tract" }, "state": "enabled",
-    "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
+    "is_derived": true, "caveat": "Derived estimate, not an observed count: local Census households × national AVMA pet-household incidence rate. The rate is 58.6% of United States households (American Veterinary Medical Association, 2025 Pet Ownership and Demographics Sourcebook, reference period 2025); it is a national incidence and does not establish this area's own pet-ownership rate. Licence: SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED.",
+    "provenance": { "source": "American Veterinary Medical Association", "source_dataset": "Pet Ownership and Demographics Sourcebook",
+      "source_edition": "2025", "reference_period": "2025", "incidence_rate": 0.586, "incidence_rate_display": "58.6%",
+      "rate_geography": "United States", "household_source": "U.S. Census Bureau, American Community Survey 5-Year Estimates",
+      "household_vintage": "2019–2023", "derivation": "local Census households × national AVMA pet-household incidence rate",
+      "status": "ESTIMATED", "methodology_version": "v1", "methodology_note": "…",
+      "licence_status": "SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED" } },
   { "key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior",
     "vintage": "2014–2018 → 2019–2023", "geo_level": "place",
     "shading": { "summary_level": "160", "label": "Place (city/town)" },
@@ -135,9 +141,16 @@ not done anywhere on this route.
 
 **`households` and `pets` shade at the tract, and `pets` is modelled.** `households` is
 `B11001_001E`, a published ACS estimate with a published margin, served where the ACS publishes
-it. `pets` is `households × 0.57`, a national placeholder incidence rate: its `/api/layers` entry
-carries `"is_derived": true` and a caveat naming the rate, its `geo_metric` rows carry
-`is_derived` and `formula_version`, and it is never presented as an observed count (spec §9).
+it. `pets` is `households × 0.586`, the AVMA 2025 *Pet Ownership and Demographics Sourcebook*'s
+national share of U.S. households owning at least one pet (`app/census/pet_rate.py`, which holds
+the whole provenance record and is the ONE place the rate is written down). Its `/api/layers`
+entry carries `"is_derived": true`, the caveat above and a `provenance` object; its `geo_metric`
+rows carry `is_derived`, `formula_version` and `inputs.pet_incidence_rate`; and it is never
+presented as an observed count (spec §9). **The rate is national.** Applying it to a local
+household count says what that area would hold if it behaved like the country; it does not
+establish that area's own pet-ownership rate, and the AVMA supplies this product with no tract,
+ZIP, county or metro pet-household count at all — that feed is `dataset_registry.pet_ownership`
+and it is `blocked`.
 
 One GeoJSON `FeatureCollection` with foreign members (RFC 7946 permits them; `L.geoJSON` ignores
 what it does not know):
@@ -356,7 +369,7 @@ requests. A client that needs a particular one of the two must select on `cbsa_g
   "communities": [
     { "listing_id": "…", "name": "Cedar Park city", "geo_precision": "rooftop",
       "location": "place_centroid", "lat": 30.55, "lng": -97.80,
-      "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 15732, "econ": 685000, "vets": 7,
+      "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 16174, "econ": 685000, "vets": 7,
       "competition": { "count": 7, "geo_level": "zcta", "zctas": 2, "per_10k_households": 2.54, "level": "High" },
       "suppressed": [] }
   ]
@@ -395,7 +408,7 @@ measurement, not a measurement itself (A-C15 (7)).
     "households":                { "…": "…" },
     "median_hh_income":          { "…": "…", "unit": "usd", "is_derived": true, "approximate": true },
     "population_growth_pct":     { "…": "…", "unit": "pct", "is_derived": true, "geo_level": "place", "inputs": {"acs5": "2019–2023", "acs5_prior": "2014–2018", "geo_level": "place"} },
-    "pet_households_est":        { "…": "…", "is_derived": true, "assumed_rate": 0.57 },
+    "pet_households_est":        { "…": "…", "is_derived": true, "assumed_rate": 0.586 },
     "establishments":            { "value": 7, "unit": "count", "source_dataset": "zbp", "vintage": "2022", "geo_level": "zcta" },
     "vets_per_10k_households":   { "…": "…", "unit": "ratio", "inputs": {"zbp": "2022", "geo_level": "zcta", "zctas": 2, "acs5": "2019–2023"} },
     "revenue_per_establishment": { "…": "…", "unit": "usd", "is_derived": true, "label": "Avg. payroll per practice", "source_dataset": "cbp", "geo_level": "county" },
@@ -551,7 +564,7 @@ only a new source for the same seven:
 | `hh` | `communities[].hh` | ACS households. |
 | `income` | `communities[].income` | ACS median household income. |
 | `growth` | `communities[].growth` | Derived: two ACS vintages compared. Vintage statement: `ACS 2014–2018 → 2019–2023`. Gated on `acs5_prior` (see the licence-gates table above), not merely on the `acs5` stamp the row carries. |
-| `pets` | `communities[].pets` | Derived: households × 0.57, a national placeholder rate — not a licensed pet-ownership figure (that dataset is `blocked`; see `CLAUDE.md`). |
+| `pets` | `communities[].pets` | Derived: households × 0.586, the AVMA 2025 Sourcebook's national incidence rate (`app/census/pet_rate.py`). Not an observed count and not a licensed per-geography pet-ownership figure — that feed is `pet_ownership` and stays `blocked`; see `CLAUDE.md`. |
 | `econ` | `communities[].econ` | Payroll per establishment in thousands of dollars (`CBP payroll ÷ establishments`), **county** level. The database column is historically named `revenue_per_establishment`, but the name is wrong; the figure is payroll, not revenue. |
 | `vets` | `communities[].vets` | The `establishments` figure: ZBP ZIP-code count aggregated to the community, or the labelled county-CBP fallback when ZBP has nothing usable. |
 
@@ -598,6 +611,7 @@ the data does not support.
 | `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or the bare basis word `"approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare basis word `"approximate"` — ONE spelling on both arms, from `app.census.serve.APPROXIMATE_BASIS` (A34 fix round 1, D-C51), and the client puts its OWN fallback in front of it so the caption still names an area: `<fallback> · approximate`, the shape `<label> · approximate` has. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
 | `income_vs_us_pct` | e.g. `19.4`, `-13.7` | How far the served median sits above or below the US median household income, as a percentage, to one decimal. It is the pipeline's own `income_index_vs_us` (`(local − us) / us × 100`, spec §8), read from the SAME band the `income` figure came from and measured against `acs_measure` summary level 010's own `B19013_001E` at the listing's own ACS vintage — not a client-side ratio against a constant. `null` when the index is absent or suppressed, and `null` whenever `income` itself is `null`: the index qualifies the figure above it, and a bare percentage under no median is a ratio of a number the buyer cannot see. |
 | `income_approximate` | `true`, `false`, `null` | Whether the served median is an approximation rather than a published Census figure — the SAME `is_derived` guard `income_note` is composed from, served as the fact rather than only as the sentence, because the two surfaces that state it compose different copy: the detail card takes `income_note` whole (one sub-line, with the area named), the docked panel joins the word to `income_vs_us_pct` in its own. `null` — not `false` — where there is no median at all, because `false` asserts that a figure nobody has was published. |
+| `pet_rate` | e.g. `0.586`, `null` | The pet-ownership incidence rate this listing's own estimated-pet-household row was computed with — `market_metric.inputs.pet_incidence_rate`, the stamp the pipeline writes, read from the SAME band the `hh` figure came from. It is the ONE production rate (`app/census/pet_rate.py` holds its whole provenance: AVMA, 2025 *Pet Ownership and Demographics Sourcebook*, 58.6 % of United States households, reference period 2025) and it is served so that a client never has to keep a constant of its own. Read off the ROW and not off the module: a listing materialised before a re-citation reports the rate behind ITS figure. `null` where the listing has no pet row or the dataset behind it is not licence-cleared — and a client with no rate must show no estimated-pet-household figure, never one computed from a rate nobody recorded. |
 
 **When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
 is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is
