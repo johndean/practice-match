@@ -290,12 +290,48 @@ class CensusClient:
         expected: list[str],
         in_: str | None = None,
         extra: dict[str, str] | None = None,
-    ) -> list[dict[str, str | None]]:
+    ) -> list[dict[str, str | None]] | None:
         """Fetches, parses and validates one Census table; archives the raw body only after
         both the shape and `expected` variables check out (M2) -- the archive is append-only, so
-        a body that failed validation must never occupy a key forever."""
+        a body that failed validation must never occupy a key forever.
+
+        Returns `None` -- NOT `[]`, and never an exception -- when the Census answers "there is
+        no data for this request" (Task CENSUS-204, defect 1). Measured on the live API on
+        2026-09-14 (`.superpowers/sdd/2026-09-11-neighbourhood-shading/task-qwi-bds-runs-report.md`
+        §3): an unpublished QWI quarter, and BDS 2024, answer **HTTP 204 with a zero-byte body**.
+        204 is a 2xx, so this used to hand `""` to `json.loads` and raise `JSONDecodeError` from
+        inside the client -- a decode error standing in for an absence, which is why
+        `qwi.latest_available`'s own 404/400 arm could never be reached and the loader died on
+        its first probe. The test is the EMPTY BODY rather than the status code, because the
+        report measured the same "no JSON body" answer for BDS; a body that is present but not
+        JSON is still a malformed response and still raises.
+
+        `None` rather than `[]` deliberately, and the argument is the TYPE, not a distinction
+        this function draws between two kinds of emptiness: because the return type is
+        `... | None`, mypy --strict makes every caller say out loud what it does about it, which
+        is what named all six call sites the moment the type changed (a silent `for row in []`
+        would have hidden Alaska's absence exactly as the decode error hid the quarter's).
+
+        A header-only table is NOT a second, quieter "no data" outcome, and this docstring used
+        to imply it was (Task CENSUS-204 fix round 1, Minor-5): it parses, reaches
+        `validate_variables([], expected)` with `present` empty, and raises `VariableMissing` --
+        so `ingest.run` records the run `aborted` as schema drift, exactly as it did before this
+        change. One outcome is skippable here; the other is not, and neither is new.
+
+        ONE residual risk, recorded rather than closed (Minor-7): a 2xx that closes cleanly with
+        zero bytes and no `Content-Length` is indistinguishable at this layer from the Census's
+        own 204, and is now skipped where it previously raised a decode error. Nothing in the
+        response tells the two apart, so no threshold fixes it; what bounds it is that a body
+        truncated against a DECLARED length still raises (httpx's `RemoteProtocolError`) and a
+        body that is present but not JSON still raises (its own test)."""
         url = self._build_url(get, for_, in_, extra)
         body = self._get(url)
+        if not body.strip():
+            # Nothing to parse, nothing to validate and therefore nothing to archive: M2's rule
+            # (archive only after BOTH checks pass) already says an unparseable body must never
+            # occupy an archive key. `request_count` has already counted the request, so the
+            # `ingest_run` row still reports it.
+            return None
         table = json.loads(body)
         if not table or not isinstance(table[0], list):
             raise ValueError(f"unexpected Census response shape from {redact(url)}")

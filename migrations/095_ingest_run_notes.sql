@@ -1,0 +1,12 @@
+-- Task CENSUS-204, defect 3: a run that SKIPPED part of its work needs somewhere to say so.
+--
+-- Measured on the live Census API on 2026-09-14
+-- (.superpowers/sdd/2026-09-11-neighbourhood-shading/task-qwi-bds-runs-report.md §3): Alaska (02)
+-- and Michigan (26) are absent from the QWI programme entirely — 204 with a zero-byte body for
+-- every quarter probed — so a QWI run that completes correctly is one that wrote 49 states and
+-- skipped two. `error_detail` records the thing that ENDED a run; it must not be overloaded to
+-- carry what a succeeded run survived. `app.census.ingest.Run` has carried a `notes` list since
+-- Task A5 with nothing to write it to; this is that column.
+--
+-- Nullable and untouched by existing rows: NULL means "nothing was skipped".
+ALTER TABLE ingest_run ADD COLUMN notes text;

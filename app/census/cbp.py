@@ -60,6 +60,11 @@ def load(conn: psycopg2.extensions.connection, client_factory: Callable[[Dataset
             requested = NAICS_ALIASES.get((param, code), code)
             for st in states:
                 rows = client.fetch_table(["NAME", *VARS], "county:*", EXPECTED, f"state:{st}", {param: requested})
+                if rows is None:
+                    # Task CENSUS-204, defect 1: "no data for this request" (HTTP 204, zero-byte
+                    # body), recorded on the run and skipped rather than failing the whole load.
+                    run.notes.append(f"cbp: no data for state {st}, NAICS {code}; skipped")
+                    continue
                 payload = []
                 for r in rows:
                     flags = _flags(r)

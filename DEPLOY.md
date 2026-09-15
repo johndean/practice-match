@@ -463,13 +463,48 @@ env PYTHONPATH=/app python scripts/census_load.py qwi      # resolves the latest
 env PYTHONPATH=/app python scripts/census_load.py bds --year 2022
 ```
 
+**A QWI run that reports `succeeded` with fewer than 51 states is expected, not a fault** (Task
+CENSUS-204). When the Census publishes nothing for a state it answers `204 No Content` with an
+empty body, and the loader records that state on the run and carries on with the rest. **Measured
+once, on 2026-09-14:** Alaska (`02`) and Michigan (`26`) answered `204` at every quarter probed
+back to 2022Q4, with no industry filter — an absence from the programme on that day's evidence
+rather than a late publication, and not a standing fact this file can promise for future years.
+Read `ingest_run.notes` for that run to see exactly which states were skipped and why;
+`error_detail` stays for what ENDED a run. **Nothing in the code names a state** — the rule is "no
+data for this state in this period", measured per run — so a state that starts or stops publishing
+needs no change here and no change to this paragraph. To re-run one state on its own:
+
+```bash
+env PYTHONPATH=/app python scripts/census_load.py qwi --states 26
+env PYTHONPATH=/app python scripts/census_load.py cbp --states 26         # the same door for the other two
+env PYTHONPATH=/app python scripts/census_load.py bds --year 2023 --states 26
+```
+
 Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
 e.g. a licence gate or a missing prerequisite · `3` database unreachable or failed · `4` a
-download/fetch failed · `5` validation failed) and stop on the first non-zero — nothing later
-depends on a partial load, and every table is an idempotent upsert.
+download/fetch failed, **including a `qwi` probe that walked its whole twelve-quarter window and
+found no published quarter** — the shape `--states 02` produces before Alaska starts publishing,
+and one that writes its own `failed` `ingest_run` row before it exits · `5` validation failed) and
+stop on the first non-zero — nothing later depends on a partial load, and every table is an
+idempotent upsert.
 
 Then activate, one dataset at a time, each with its own reviewed note — `--force` needs both
-`--note` and John's word, never one without the other:
+`--note` and John's word, never one without the other.
+
+> **`activate` refuses a vintage whose run skipped anything** (Task CENSUS-204 fix round 1, exit
+> 5, `ActivationRefused`). The refusal names the geographies and says the vintage is PARTIAL, so
+> it reads differently from the row-count-ratio refusal beside it. There is no override and
+> `--force` does not lift it — `--force` covers the ratio alone. The route is to **re-run the
+> missing geographies** (`--states`, or `acs --levels`) and activate the run that skipped nothing:
+> `activate` reads the LATEST `ingest_run` for that vintage. This exists because a loader that
+> meets a `204` now completes instead of failing, so `succeeded` is no longer on its own a claim
+> that the vintage is whole, and the ratio guard cannot stand in for it: on a dataset's first-ever
+> activation there is no prior vintage to divide by and the ratio check does not run at all.
+> **QWI is untouched by this**: it is not in `vintage.TABLE_FOR`, so it has no QA diff, no
+> `active_vintage` row and no activation path at all — which is exactly why one absent state can
+> be skipped there without ever blocking anything. BDS *is* in that table, though it has no
+> `activate` step in this sequence (see the QWI/BDS note further down); a BDS run that skipped a
+> state is refused the same way, and `bds --year <y> --states <fips>` is its re-run door.
 
 ```bash
 env PYTHONPATH=/app python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"

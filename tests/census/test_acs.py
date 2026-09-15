@@ -280,3 +280,29 @@ def test_load_with_a_levels_filter_that_matches_nothing_fetches_nothing(conn):
         assert cur.fetchone()[0] == 0
         cur.execute("SELECT status, rows_written FROM ingest_run WHERE dataset_key='acs5' ORDER BY id DESC LIMIT 1")
         assert cur.fetchone() == ("succeeded", 0)
+
+
+def test_load_skips_a_geography_the_census_has_no_data_for_and_records_it(conn):
+    """Task CENSUS-204, defect 1: `fetch_table` answers `None` for the Census's own "no data for
+    this request" shape (HTTP 204, zero-byte body -- measured on the live API 2026-09-14). ACS is
+    not the loader that met it, but it is a caller, and a caller that let `None` reach
+    `to_measures` would be the decode error again one module over. The geography is skipped, the
+    rest of the load completes, and the `ingest_run` row names what was missed."""
+    base = _full_state_handler()
+
+    def handler(r):
+        if "for=place" in str(r.url):
+            return httpx.Response(204)
+        return base(r)
+
+    def factory(ds):
+        return CensusClient("K", ds, None, transport=httpx.MockTransport(handler), contact=CONTACT)
+
+    written = acs.load(conn, factory, "acs5", ["48"])
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM acs_measure WHERE summary_level='160'")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT status, rows_written, notes FROM ingest_run WHERE dataset_key='acs5' ORDER BY id DESC LIMIT 1")
+        status, rows, notes = cur.fetchone()
+    assert status == "succeeded" and rows == written > 16
+    assert notes == "acs5: no data for summary level 160 (place:*, in state:48); skipped"
