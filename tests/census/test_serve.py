@@ -276,6 +276,10 @@ def test_community_rows_missing_listing_is_six_nulls_and_no_label(conn):
         "growth_scope": None, "income_note": None,
         # A33.1: …and says nothing about a median it does not have.
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
@@ -677,6 +681,10 @@ def test_a_listing_with_neither_band_is_six_nulls_and_no_label(conn):
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
@@ -936,6 +944,10 @@ def test_a_listing_with_neither_band_carries_no_scope_and_no_income_note(conn):
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
