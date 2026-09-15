@@ -56,7 +56,13 @@ The V3 file is the approved design **plus the local amendments listed in `docs/d
 ## Common operations
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing" && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100   # backend gate, exactly as CI runs it — timing-budget tests (tests/test_timing_marker.py) run serially, last, coverage appended (Task CI-TIMING)
+docker compose -f docker-compose.dev.yml up -d && poetry run python scripts/migrate.py   # the backend gate, exactly as CI's `backend` job runs it, in its order. Every line below is copied verbatim from .github/workflows/quality.yml and pinned by tests/test_docs.py::test_claude_md_local_backend_gate_is_the_one_ci_runs — a local loop weaker than CI is how 0.1.21 shipped red
+poetry run ruff check app tests scripts
+poetry run mypy app --strict
+poetry run mypy scripts/migrate.py scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict
+poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"
+poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100   # timing-budget tests (tests/test_timing_marker.py) run serially, last, coverage appended (Task CI-TIMING)
+for s in start_sh verify_image_sh deploy_guard deploy_archive verify_deploy bootstrap_admin; do bash tests/scripts/test_$s.sh; done   # the six shell suites CI runs after pytest
 cd frontend && npm run typecheck && npm run build && npm test                  # frontend gates — BUILD FIRST: vue-only and bundle-budget read dist/_app; npm test runs coverage at 100 % all four, exactly as CI
 docker compose -f docker-compose.dev.yml up -d && cd frontend && npm run test:visual:baselines && npm run test:e2e   # oracles from V3, then visual + DOM + smoke (the app project starts the API against the compose Postgres/Redis)
 cd frontend && npm run gen:design && npm run gen:app && npm run gen:logic   # the design bundle, in the order it flows: pristine + ruled amendments -> V3.dc.html, then its template -> App.vue/pseudo.css and its script -> logic.js (generated, never hand-typed)

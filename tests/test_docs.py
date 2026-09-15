@@ -755,6 +755,28 @@ def test_claude_md_local_backend_gate_is_the_one_ci_runs():
         assert "--cov-fail-under=100" in text, doc
         assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
 
+    # The docstring above promises "the one CI runs verbatim", and until 2026-09-16 this test
+    # checked only the pytest substring -- so `ruff check app tests scripts` and both `mypy`
+    # steps ran in CI and appeared nowhere in the loop John types. An implementer paid a red
+    # run for it. Every `poetry run` step of the backend job must now be in Common operations.
+    backend = re.search(r"\n  backend:.*?(?=\n  [a-z-]+:|\Z)", workflow, re.DOTALL)
+    assert backend, "quality.yml has no backend job"
+    # A step CI runs only on a pull request is not part of the loop a developer types, so the
+    # filter is the step's own `if:` and never a name this test hard-codes.
+    blocks = [b for b in re.split(r"\n(?=      - )", backend.group(0)) if "run:" in b and "if:" not in b]
+    steps = [
+        m.group(1).strip()
+        for b in blocks
+        for m in re.finditer(r"^\s*-?\s*run: (poetry run .+)$", b, re.MULTILINE)
+    ]
+    assert len(steps) >= 5, f"the backend job should run several poetry steps, found {len(steps)}"
+    ops = claude.split("## Common operations", 1)[1]
+    missing = [s for s in steps if s not in ops]
+    assert not missing, (
+        "CLAUDE.md's Common operations is weaker than CI's backend job; these steps run in CI "
+        "and are not in the loop John types:\n  " + "\n  ".join(missing)
+    )
+
 
 def test_quality_policy_records_the_timing_split_as_a_dated_note():
     """Task CI-TIMING fix round 1 (John's ruling): the policy's "Backend tests" row is a RULED
