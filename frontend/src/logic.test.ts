@@ -6787,3 +6787,54 @@ describe('logic.js — an admin-only account reaches its own listings on boot (A
     expect(c2.state.myListings).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A48 — TASK COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14). The stakeholder asked what
+// area the veterinary-competition number describes, and the product answered nowhere: the
+// "What this means" card said "nearby", the map drew an unlabelled ring, and the selected
+// practice's figure carried the ring caption with no word about how it is derived. D-C57: every
+// surface that shows the figure or its area names it, in D-C51's vocabulary.
+// ---------------------------------------------------------------------------------------
+describe('A48 — the competition figure names its area, its universe and its floor (D-C57)', () => {
+  const AUSTIN = 'Austin, TX';
+  const ZIP = 'ZIP Code Tabulation Area';
+  const UNIVERSE = 'The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure.';
+
+  const browse = (layer: string, sel: string | null) =>
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: sel, mdValue: layer });
+
+  it('A48.1 — the "What this means" card names the area it shades and the universe it counts', () => {
+    browse('competition', null);
+    expect(c.marketVals(P).active.means).toBe(
+      'Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. '
+      + UNIVERSE
+      + ' They say nothing about size, quality or overlap in services.'
+    );
+  });
+
+  it('…and it names ITS OWN geography and no other layer\'s (the copy-paste catch)', () => {
+    browse('competition', null);
+    const means: string = c.marketVals(P).active.means;
+    expect(means, 'the competition card no longer names the ZIP area it shades').toContain(ZIP);
+    for (const other of ['Census tract', 'Place (city/town)', 'County']) {
+      expect(means, `the competition card names ${other}, which is not the geography it shades`).not.toContain(other);
+    }
+  });
+
+  it('…and the other five layers\' prose is byte-identical to what it was', () => {
+    // The ruling reached ONE layer's `means`. Pinned as literals, because the whole point of a
+    // characterisation case is that a later edit to the shared `LAYER_META` object cannot move a
+    // neighbour in silence.
+    const UNCHANGED: Record<string, string> = {
+      income: 'Higher-income areas may support stronger demand, but income alone does not indicate practice performance.',
+      pets: 'This is a modelled estimate of how many households in an area keep pets, not a measured figure.',
+      growth: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
+      households: 'The count of occupied housing units in each community — the denominator behind most other figures here.',
+      econ: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures."
+    };
+    for (const [layer, text] of Object.entries(UNCHANGED)) {
+      browse(layer, null);
+      expect(c.marketVals(P).active.means, `${layer}'s prose moved and this ruling did not touch it`).toBe(text);
+    }
+  });
+});

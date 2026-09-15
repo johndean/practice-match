@@ -7620,6 +7620,102 @@ const A36_3: Amendment = {
   count: 1
 };
 
+/** ------------------------------------------------------------------------------------------
+ *  A48 — TASK COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14). The stakeholder's question,
+ *  verbatim: "Under the demographic metrics, one of the options is veterinary competition, and it
+ *  looks like it's the number of practices in a given area, but the area is not defined."
+ *
+ *  D-C56 confirms D-C44 — no ring toggle and no 5/10-mile chooser — and D-C57 rules that every
+ *  surface showing the figure or its area NAMES it, in D-C51's vocabulary, and that the map names
+ *  its ~5-mile ring for the first time. No edit to `MarketMapV3.jsx`: the ring's own declarations
+ *  do not change, only the card that now names it.
+ *  ------------------------------------------------------------------------------------------ */
+const COMP = { date: '2026-09-14', ruling: 'D-C57 (John, 2026-09-14): the map itself names the ~5-mile ring, with ONE legend row in the Market data card while a practice is selected — plus approach A’s label fixes: the "What this means" card names the ZIP area; the selected practice’s competition figure is captioned as an area-apportioned estimate in the D-C51 vocabulary; the paid-employee universe and the withheld-ZIP floor are stated once.' } as const;
+
+/** The two sentences A48.5 and A48.6 append, declared ONCE here and interpolated into both
+ *  entries — rule 3 of the spec (§2), enforced at the source rather than by two typists agreeing:
+ *  "the same three kinds of figure appear on both surfaces and two wordings of one fact is how
+ *  they come to disagree" (A34.7/A34.8's own words). Curly apostrophes, U+2019, as the design's
+ *  prose uses throughout. */
+const A48_COMPETITION_FOOTNOTE =
+  'A practice’s competition figure apportions each ZIP area’s published count to the part of that ZIP within about 5 miles of the practice. '
+  + 'A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.';
+
+/** A48.1 — the "What this means" card. It named NO area at all ("operate nearby") on a layer whose
+ *  legend two lines above says "ZIP Code Tabulation Area", and it said nothing about the universe
+ *  the Census counts. One string carries both corrections, because this card is the layer's prose
+ *  and is where a property of the DATASET belongs (spec §6.1). The universe sentence is
+ *  `app.api.market.EMPLOYER_UNIVERSE` verbatim, pinned across the wire by
+ *  `tests/census/test_design_shading_labels.py`, so the integrator's caveat and the buyer's card
+ *  read one sentence. The geography phrase is pinned against `SHADING["competition"]["label"]`,
+ *  which is the A33.3 mechanism.
+ *
+ *  UNCHAINED: the line is pristine (`Practice Match V3.rev2.dc.html`), so nothing is consumed.
+ *  The card renders the ACTIVE layer's prose and no approved state selects competition, so this
+ *  entry moves no existing baseline — the state that photographs it is appended with A48.2. */
+const A48_1: Amendment = {
+  id: 'A48.1', ...COMP,
+  find: '    means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",\n',
+  replace: '    means: "Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. They say nothing about size, quality or overlap in services.",\n',
+  count: 1
+};
+
+/** A48.5 — the docked panel's footnote. TWO sentences APPENDED and nothing rewritten: the
+ *  practice's competition figure apportions each ZIP area's published count to the part of that
+ *  ZIP inside the ring, and a ZIP the Census withheld adds nothing, so the figure is a FLOOR.
+ *  These are properties of the PRACTICE'S FIGURE, which appears on two surfaces, and the "What
+ *  this means" card is guaranteed on neither — it is dismissible, it needs competition active,
+ *  and it needs a map at least 810 px wide — so the facts go where the figure is (spec §6.2).
+ *
+ *  CHAINED on A34.7; consumes A34.7, whose whole introduced `<p>` line this rewrites. Every
+ *  existing sentence is carried forward byte for byte, A27.4's straight-line sentence and A34.7's
+ *  own three-kinds paragraph included.
+ *
+ *  RE-BASES NO APPROVED STATE, MEASURED rather than predicted (the A33/A34 method: baselines
+ *  regenerated with this family removed and again with it, and the PNG hashes diffed). The two
+ *  states that render this panel — `browse-market-panel` and `browse-panel-lightbox` — capture a
+ *  1440 x 940 viewport with the panel's own `.rf-scroll` at the top, and this footnote sits far
+ *  below that fold, so the sentences reach the DOM and paint no pixel. Their DOM oracles DO move
+ *  (`tests/dom-snapshots/browse-market-panel.json` and `browse-panel-lightbox.json`), which is
+ *  what gates this entry; it has no pixel oracle and that is recorded rather than implied.
+ *
+ *  THE `find` IS `A34_7.replace` ITSELF, not the tail sentence of it, and that is load-bearing
+ *  rather than tidy. `amend-guard.ts`'s `outputOf` follows a supersession chain only where a later
+ *  entry's `find` swallows the earlier `replace` WHOLE, and A34.7's row cites the line this entry
+ *  now rewrites — so with a tail-only `find` that citation resolves against nothing and
+ *  `npm run remap:citations` says so in as many words ("UNRESOLVED A34.7: nothing this amendment
+ *  wrote is still distinctive in the design"). Taking the whole line is what the family's own
+ *  ledger row already claimed ("whose whole introduced `<p>` line this rewrites"), and the bytes
+ *  the design ends up with are identical either way. A48.6 does NOT need the same treatment and
+ *  does not get it: A34.8's `replace` ends at "…not the tract." with no `</p>`, so it survives as
+ *  a prefix of the longer paragraph and its own citation still resolves. */
+const A48_5: Amendment = {
+  id: 'A48.5', ...COMP,
+  find: A34_7.replace,
+  replace: A34_7.replace.replace('</p>', ' ' + A48_COMPETITION_FOOTNOTE + '</p>'),
+  count: 1
+};
+
+/** A48.6 — the snapshot strip's footnote, A48.5's twin and the SAME two sentences byte for byte.
+ *  They also correct, for competition, the generalisation this paragraph makes: "A practice’s
+ *  figure is derived from the tracts within about 5 miles of it" is true of four layers and not of
+ *  this one, whose units are ZIP areas.
+ *
+ *  CHAINED on A34.8; consumes A34.8, whose whole introduced `<p>` line this rewrites. A24.20's
+ *  growth caveat and the derived-estimates sentence stay byte for byte.
+ *
+ *  RE-BASES EXACTLY ONE approved state, `browse-market-strip`, MEASURED. Its twin
+ *  `browse-market-strip-location` does NOT move, and the reason is in `screens.ts`: the AREA
+ *  state scrolls this very footnote into frame and asserts `toBeInViewport({ ratio: 1 })` on it,
+ *  while the LOCATION state scrolls to the `LOCATION \u00b7` mode line instead and leaves the
+ *  footnote below the 940 px fold. Its DOM oracle moves all the same. */
+const A48_6: Amendment = {
+  id: 'A48.6', ...COMP,
+  find: 'Population growth is measured for the surrounding city or county, not the tract.</p>',
+  replace: 'Population growth is measured for the surrounding city or county, not the tract. '
+    + A48_COMPETITION_FOOTNOTE + '</p>',
+  count: 1
+};
 
 /**
  * A49 — the Satellite basemap control ships DISABLED until the imagery licence is signed
@@ -7952,6 +8048,11 @@ export function amendments(): Amendment[] {
     // unmount the pill for whichever tab has no count, and A36.3 is what empties the
     // Users one.
     A36_1, A36_2, A36_3,
+    // A48 — COMP-LABELS (D-C55–D-C58, 2026-09-14). Appended last, as every family is, and it has
+    // to be: two of the three are CHAINED on an earlier family's output — A48.5 on A34.7 and
+    // A48.6 on A34.8 — so each runs after the entry whose text its `find` takes. A48.1 alone
+    // takes a pristine line. Definition order in this file matches this list (m8).
+    A48_1, A48_5, A48_6,
     // A49 -- the Satellite basemap control ships DISABLED until the imagery licence is signed
     // (Task SATELLITE-GATE, controller ruling 2026-09-15). Appended last, as every family is.
     // None of the four is chained: every `find` occurs exactly once in the pristine twin, and no

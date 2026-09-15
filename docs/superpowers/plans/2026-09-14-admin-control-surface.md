@@ -22,7 +22,7 @@
 | 10.2 | **The seller-application screen lands AFTER A43** (Requests). |
 | 10.3 | **Suspend does NOT get a step-up.** `REAUTH` keeps its six actions exactly as `app/auth/permissions.py` declares them. |
 | 10.4 | **The pets 0.57 factor is a methodology note**, not a `dataset_registry` row. *(Not this plan's work; recorded so nobody adds a row here.)* |
-| 10.5 | **Neither Esri row is decided by the product.** A42 gives the Data Sources tab its Clear / Block, re-authenticated, with a mandatory note; the VIN Foundation decides. Until they do the Satellite toggle stays exactly as shipped. |
+| 10.5 | **Neither Esri row is decided by the product.** A42 gives the Data Sources tab its Clear / Block, re-authenticated, with a mandatory note; the VIN Foundation decides. ~~Until they do the Satellite toggle stays exactly as shipped.~~ **Superseded 2026-09-15 by ruling A49** — the toggle is REMOVED from the design until the licence is settled, because leaving a control that offers unlicensed imagery is itself a decision; the goal is unchanged, and **A42's Clear button is the trigger that reverts it**. See the spec's §ruling 5 for the measured detail. |
 
 Above the spec sit John's standing rulings: **D-C53** (2026-09-13, the ask), **D-C54** (the `admin` role holds every permission — `MATRIX = {perm: holders | _ADMIN …}`), and the two design rules CLAUDE.md carries verbatim: *reference open first, port verbatim, absent beats faked* and *real data or NO rows*.
 

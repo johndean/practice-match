@@ -21,7 +21,7 @@ have no geometry to serve whatever the design says.
 import re
 from pathlib import Path
 
-from app.api.market import BOUNDARY_METRIC, SHADING, THRESHOLD_RULE
+from app.api.market import BOUNDARY_METRIC, EMPLOYER_UNIVERSE, LAYERS, SHADING, THRESHOLD_RULE
 from app.census.serve import APPROXIMATE_BASIS, BAND_LABEL, income_note_for
 from app.census.tiger import BOUNDARY_FILES
 
@@ -72,6 +72,63 @@ def test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_
     assert THRESHOLD_RULE in design, "the design's tooltip no longer states the Census rule the API states"
     assert design.count(THRESHOLD_RULE) == 1, "the rule is stated once in the design, not twice"
     assert "source_threshold" in design, "nothing in the design branches on the reason the API sends"
+
+
+def test_the_paid_employee_universe_is_one_sentence_the_catalogue_serves() -> None:
+    """D-C57 (John, 2026-09-14), spec §7: ZIP Code Business Patterns counts business locations
+    WITH PAID EMPLOYEES, so a practice run by its owner alone is not in the figure at all. That
+    was stated nowhere in the product. It is a property of the DATASET and constant for every
+    listing in the country, so it is appended to the layer catalogue's existing `caveat` rather
+    than served as a per-listing field -- which means an integrator reading `/api/layers` and a
+    buyer reading the "What this means" card get ONE wording.
+
+    Pinned here in `THRESHOLD_RULE`'s own shape. The DESIGN half of this pin -- the sentence
+    occurs in the amended design exactly once -- lands with amendment A48.1, which is what puts
+    it there; this case owns the server side alone."""
+    competition = next(layer for layer in LAYERS if layer["key"] == "competition")
+    caveat = competition["caveat"]
+    assert EMPLOYER_UNIVERSE in caveat, (
+        "the competition caveat no longer states the universe the Census actually counts"
+    )
+    assert caveat.count(EMPLOYER_UNIVERSE) == 1, "the universe is stated once in the caveat, not twice"
+    # …and the rule it sits beside is untouched: two facts, two sentences, one caveat.
+    assert THRESHOLD_RULE in caveat, "appending the universe dropped the Census threshold rule"
+    assert EMPLOYER_UNIVERSE.endswith("."), "a caveat is composed by joining sentences with a space"
+
+
+def test_the_paid_employee_universe_is_the_same_sentence_in_the_design() -> None:
+    """The DESIGN half of the pin Task 1 opened. Amendment A48.1 puts the sentence on the "What
+    this means" card, which is the one surface whose whole purpose is that layer's prose, and it
+    is a SUBSTRING of that card's string -- so the design states the fact once and both sides read
+    one wording. Same shape as `test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_design`."""
+    design = DESIGN.read_text(encoding="utf-8")
+    assert EMPLOYER_UNIVERSE in design, "the design's card no longer states the universe the API states"
+    assert design.count(EMPLOYER_UNIVERSE) == 1, "the universe is stated once in the design, not twice"
+
+
+def test_the_competition_prose_names_the_geography_that_layer_shades() -> None:
+    """D-C57's other label fix, pinned the way `test_every_layer_row_names_the_geography_that_layer_shades`
+    pins the drawer rows: the card's prose names `SHADING["competition"]["label"]` and no other
+    layer's geography, so a layer that moves geography again fails on both sides at once.
+
+    SCOPED TO COMPETITION DELIBERATELY. D-C57 reached one layer's `means`; the other five are
+    unruled prose about what a figure is FOR (`households` says "in each community", `econ` says
+    "market-level") and sweeping them here would assert a ruling nobody has made."""
+    design = DESIGN.read_text(encoding="utf-8")
+    start = design.index("const LAYER_META = {")
+    block = design[start:design.index("\n};", start)]
+    comp = block[block.index("  competition: {"):]
+    m = re.search(r'    means: "([^"]*)",', comp)
+    assert m, "the design no longer declares LAYER_META.competition.means"
+    means = m.group(1)
+    own = RULED_LABEL["competition"]
+    assert own in means, f"the competition card does not name its own geography {own!r}: {means!r}"
+    for label in RULED_LABEL.values():
+        if label == own:
+            continue
+        assert label.lower() not in means.lower(), (
+            f"the competition card names {label!r}, which is not the geography it shades"
+        )
 
 
 # ---------------------------------------------------------------------------------------------
