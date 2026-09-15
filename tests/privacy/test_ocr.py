@@ -491,9 +491,17 @@ def test_a_pair_exactly_on_the_threshold_decides_the_same_way_in_either_order(
     # A 100x26 reading and its own left half, both turned 7 degrees about their shared corner. The
     # rotation is what puts the arithmetic where the two orders disagree: measured before the fix,
     # 0.5000000000000002 one way (MERGE, one line back) against 0.4999999999999999 the other (do
-    # not, two lines back) -- and 380 of 4,000 randomly placed and rotated pairs of this exact shape
-    # flipped their verdict, against the 89 of 2,000 the review measured on its own unrotated ones.
-    # The rate belongs to the generator; the dependence on arrival order belonged to `_iou`.
+    # not, two lines back).
+    #
+    # A POPULATION RATE FOR THAT FLIP NEEDS ITS GENERATOR, and the two this comment used to quote
+    # (380 of 4,000 here, 89 of 2,000 in the review) had none -- the same 4,000 pairs give anything
+    # from 3.1 % to 17.9 % depending only on how large the coordinates are, because that is what
+    # sets the ULP (fan-in m-A). The generator, and the rate that belongs to it, are written out in
+    # full at `_iou`'s own `sorted(...)` line: in short, this exact shape placed uniformly in a
+    # 1000x800 frame at a uniform angle flips 172-182 of 4,000 over five seeds without the fix and
+    # 0 of 4,000 with it. The dependence on arrival order is what belonged to `_iou`, and this case
+    # pins it on one pair rather than on a population -- which is why the assertions below are an
+    # exact equality and not a rate.
     outer = _rotated_about(_quad(60.0, 50.0, 160.0, 76.0), 7.0, 60.0, 50.0)
     inner = _rotated_about(_quad(60.0, 50.0, 110.0, 76.0), 7.0, 60.0, 50.0)
     assert _area(inner) * 2 == pytest.approx(_area(outer)), "3000 inside 6000 — the exact knife-edge"

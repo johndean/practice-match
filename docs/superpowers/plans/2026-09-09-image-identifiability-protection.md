@@ -2631,10 +2631,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 - [ ] `docker build -t pm-after . && docker images --format '{{.Repository}} {{.Size}}' pm-after` — **record both figures.** The spec's estimate is +120–150 MB on a 634 MB image; the measurement is what goes in `DEPLOY.md` and the commit body, whatever it says. A delta far outside that range is `NEEDS_CONTEXT`, not a fait accompli.
 - [ ] `DEPLOY.md` — a line under the Migrations section's neighbours recording the measured image size before and after, the three packages, their licences, and the two apt packages, in the voice of the existing sizing notes.
-- [ ] Prove the offline claim, with `scripts/prove_offline_engines.py` (Task P4 fix round 3,
+- [ ] CHECK the offline claim, with `scripts/prove_offline_engines.py` (Task P4 fix round 3,
 re-review M-8 — the snippet this replaces could not run: `socket.socket = None` before the import
 breaks `ssl`, which `pydantic_settings` reaches through `asyncio`, so the process died before an
-engine was ever built):
+engine was ever built). **Check, not prove** — that is the script's own word since round 3's m-3,
+and this item was the last copy of the word it stopped using (fan-in m-C): clearing five names on
+the `socket` module catches a Python-level model fetch, which is M-8's actual scenario, and
+establishes nothing about a compiled extension calling the OS directly — for that the image's own
+egress rules are the control:
 
 ```bash
 DATABASE_URL=postgresql://x/y REDIS_URL=redis://localhost:6379/0 API_SECRET_KEY=x \

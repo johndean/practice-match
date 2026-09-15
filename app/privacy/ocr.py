@@ -169,9 +169,14 @@ def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]
 
     It answers fewer than three points for input that carries fewer than three DISTINCT ones, or
     that is collinear, and `[]` for input that is all one point -- so a caller must not divide by
-    its area. `_iou` does not: it refuses an unmeasurable quad outright and returns 0.0 for a
-    zero intersection before any division. `_min_area_rect` does not either: it is seeded with the
-    axis-aligned box, which is an answer whatever the hull turns out to be."""
+    its area. `_iou` does not, and NOT because it refuses anything -- it has no refusal (fan-in
+    m-B). What happens is structural: an empty hull sorts FIRST, so it becomes the
+    Sutherland-Hodgman subject, `_clip` returns `[]` at its first edge, and `_iou`'s zero-
+    intersection guard answers 0.0 before any division. A quad carrying only SOME unmeasurable
+    coordinates is a different case and is not covered by that: its NaN vertex survives the hull
+    and `_iou` answers NaN, which `_iou`'s own docstring records. `_min_area_rect` does not divide
+    by the hull either: it is seeded with the axis-aligned box, which is an answer whatever the
+    hull turns out to be."""
     ordered = sorted(set(points))
 
     def half(source: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -249,22 +254,62 @@ def _clip(subject: list[tuple[float, float]],
 
 
 def _iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
-    """Intersection over union of the two QUADS, 0.0 when they do not overlap.
+    """Intersection over union of the two QUADS, 0.0 when they do not overlap, `NaN` when one of
+    them is partly unmeasurable.
 
     On the polygons themselves, because bounding boxes lie about a rotated sign (review N2): two
     stacked lines of one sign photographed at 45 degrees have a true intersection of exactly zero
     and a bounding-box IoU of 0.54, so a box rule merged them and lost a region -- and `Line`'s own
-    docstring says the quad is four points rather than a rectangle for precisely that reason."""
+    docstring says the quad is four points rather than a rectangle for precisely that reason.
+
+    IT CAN ANSWER `NaN`, AND EVERY CALLER'S COMPARISON MUST BE WRITTEN SO THAT A NaN MEANS DO NOT
+    MERGE (fan-in m-B, on P4 re-review 4 §4). A quad carrying SOME NaN coordinates rather than all
+    of them keeps its NaN vertex right through the geometry: `_convex_hull` can never pop a point
+    whose `_turn` is NaN, because every comparison against NaN is False, so the vertex survives
+    into the hull, the shoelace area is NaN, the union is NaN and the quotient is NaN. That is a
+    STRUCTURAL statement and not a sample -- no NaN-bearing quad can reach `DUPLICATE_IOU` by any
+    route -- and the sweep is only its corroboration: 60,000 overlapping near-twins (a 200x30 quad
+    at `rng.uniform(0, 1000)` by `rng.uniform(0, 800)` and the same quad offset by
+    `rng.uniform(-40, 40)` by `rng.uniform(-8, 8)`, one ordinate of one of the two then set to NaN,
+    `random.Random(20260915)`, both argument orders) answered NaN for 23,402 of them -- 39.0 %; the
+    rest clip to an empty intersection and take the 0.0 below -- with 0 merges, 0 verdict
+    disagreements between the two orders and 0 exceptions.
+
+    The safety of that is POLARITY, not luck. `_merge` asks `>= DUPLICATE_IOU`, which NaN fails, so
+    such a pair stays apart. `nan < DUPLICATE_IOU` is ALSO False, so a second reader spelled the
+    other way round (`if _iou(...) < DUPLICATE_IOU: keep_apart`) falls into the MERGE branch
+    instead. P7 is the next reader of this function and its brief carries the same warning. Whether
+    the real `rapidocr-onnxruntime` wheel can emit a NaN coordinate at all is unmeasured; what is
+    measured is only what this geometry does downstream of one.
+
+    An ALL-NaN quad is the other case and answers 0.0 rather than NaN -- it hulls to nothing, and
+    why that is harmless is at the `sorted(...)` line below."""
     if not _boxes_overlap(a, b):
         return 0.0
     # SORTED, so the pair is canonical: `_merge` asks `_iou(lines[i], lines[j])` for `i < j`, and
     # without this which quad was the Sutherland-Hodgman subject and which the clipper followed
     # arrival order. The two answers differ in the last bit, invisible everywhere except exactly at
-    # `DUPLICATE_IOU`, where `>=` flipped: review round 3's m-1 measured 89 of 2,000 CONSTRUCTED
-    # exactly-half-contained pairs, and this round re-measured 380 of 4,000 ROTATED ones. The rate
-    # is a property of whoever generates the pairs; the DEPENDENCE on arrival order is not, and it
-    # is what is closed here. A canonical order rather than a tolerance: a tolerance moves the
-    # threshold instead of removing the dependence, and leaves the same flip one epsilon further out.
+    # `DUPLICATE_IOU`, where `>=` flipped.
+    #
+    # A FLIP RATE IS MEANINGLESS WITHOUT ITS GENERATOR, and this line carried two in a row that had
+    # none (89 of 2,000 in review round 3, then 380 of 4,000 in fix round 4; fan-in m-A). The
+    # figure is governed by the COORDINATE MAGNITUDE, because that is what sets the ULP and so how
+    # often the knife-edge is straddled: on identical geometry, changing nothing but the box the
+    # pairs are placed in takes the same 4,000 from 17.9 % (0..100) through 9.8 % (0..250) and
+    # 8.6 % (0..300) to 3.1 % (0..2000). So the generator is written down here with the rate, and
+    # it is this. Four thousand pairs; the shape is a 100x26 quad and its own left half, both
+    # turned about their shared top-left corner, so the intersection is exactly half the union;
+    # that corner is placed at `rng.uniform(0, 1000)` by `rng.uniform(0, 800)`, a 1000x800 image
+    # frame, and the angle is `rng.uniform(0, 90)` degrees, drawn in that order from
+    # `random.Random(seed)`; a pair counts as flipped when `_iou(a, b) >= DUPLICATE_IOU` differs
+    # from `_iou(b, a) >= DUPLICATE_IOU`. Against `_iou` WITHOUT this `sorted`, over seeds
+    # 20260915 and 1..4: 172, 181, 175, 172, 182 of 4,000 -- 4.3 to 4.5 % -- with the two orders
+    # up to 3.4e-14 apart. WITH it, the same five seeds: 0, and the two orders bit-identical.
+    #
+    # The rate belongs to the generator; the DEPENDENCE on arrival order belonged to this function,
+    # and it is what is closed here. A canonical order rather than a tolerance: a tolerance moves
+    # the threshold instead of removing the dependence, and leaves the same flip one epsilon
+    # further out.
     #
     # It is also what makes an UNMEASURABLE quad harmless. A NaN coordinate reaches the geometry
     # intact -- every comparison against it is False, so `_boxes_overlap`'s `min`/`max` answer the
