@@ -45,6 +45,7 @@ dependencies = [
   "onnxruntime (>=1.29,<2.0.0)",              # MIT -- the runtime rapidocr drives
   # 2D symbols (spec C.5 step 2b, D-IDP-7). Apache-2.0, a pure wheel of about 1 MB.
   "zxing-cpp (>=3.1.1,<4.0.0)",
+  "anthropic (>=1.0,<2.0)",
 ]
 
 [tool.poetry]

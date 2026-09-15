@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     # refuses a real send with 409 LAUNCH_MAIL_NOT_CONFIGURED while it is empty, rather than ever
     # sending a footer with a blank address line.
     vin_foundation_postal_address: str | None = None
+    # The vision step of the image identifiability pipeline (spec 2026-09-09 C.5 step 4, D-IDP-1).
+    # WORKER only; the api never reads it. Optional at boot for the same reason the Census and
+    # Resend keys are -- it is refused at the moment it is USED, and its absence is a legitimate
+    # state: with no key every photograph completes with `vision: unavailable` and the seller's
+    # review carries the rest. Read from SETTINGS and never from `os.environ`, so an unset Railway
+    # variable can never be satisfied by an ambient ANTHROPIC_AUTH_TOKEN, a profile or a workload
+    # identity, and `monkeypatch.setattr(settings, ...)` is the test seam.
+    anthropic_api_key: str | None = None
     # Sub-project 3 -- market-data layer (controller amendment A-C2). All optional so the api
     # and the worker both boot without them; the ingest worker enforces CENSUS_API_KEY and
     # CENSUS_CONTACT_EMAIL (the VIN Foundation's designated technical contact, never a

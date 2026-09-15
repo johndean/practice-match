@@ -26,6 +26,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `VIN_FOUNDATION_POSTAL_ADDRESS` | ✓ | ✓ | The VIN Foundation's official postal address, printed in the launch email's CAN-SPAM footer (`VIN Foundation · {address}`). John sets it; never invented and never a placeholder (controller amendment A-I5d.4, 2026-09-08 — "Do not invent the address"). Optional at boot: `POST /api/admin/signups/launch-mail` refuses a real send with `409 LAUNCH_MAIL_NOT_CONFIGURED` while it is unset, rather than sending a footer with a blank address line |
 | `RESEND_API_KEY` | | ✓ | **worker only** — the Resend API key. John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set RESEND_API_KEY=… --service worker --environment <env>`. A worker without it raises on every `mail.send` beat rather than leaving mail silently queued (Identity plan Task I6) |
 | `RESEND_WEBHOOK_SECRET` | ✓ | | **api only** — the `whsec_…` signing secret Resend shows when the endpoint `https://<host>/api/webhooks/resend` is created. Same handling rule. Unset, the route answers `401` to every call rather than trusting one (Identity plan Task I6) |
+| `ANTHROPIC_API_KEY` | | ✓ | **worker only** — the vision step of the image identifiability pipeline (spec 2026-09-09 C.5 step 4). John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set ANTHROPIC_API_KEY=… --service worker --environment <env>`. Optional at boot and its absence is a legitimate state: with it unset the worker makes no request and every photograph completes with `vision: unavailable`, which is not a failure — the seller's review carries the OCR, regex and symbol regions instead |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
 | `CENSUS_CONTACT_EMAIL` | | ✓ | Sub-project 3 — the VIN Foundation's designated technical contact address, carried in the Census `User-Agent` (A-C1 ruling 4); never a developer's own. Required before the ingest worker's first live load — the load refuses to run without it |
 | `S3_ENDPOINT_URL` | ✓ | ✓ | Sub-project 3 (A-C2) — the S3-compatible endpoint for Railway bucket `practice-match-data`, from `railway bucket credentials`. `api` reserves it for future tile reads; only the worker uses it today |
@@ -40,6 +41,18 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 > `railway ssh` afterwards still sees nothing. Either omit `--skip-deploys`, or run
 > `railway redeploy --service <svc> --environment <env> --yes` and re-check from inside the container
 > before relying on it (2026-09-10: the first Census load failed this way, silently, on all four `S3_*`).
+
+### Outbound destinations
+
+Where each deployed service reaches the public internet, so a new egress is a deliberate line here
+rather than a surprise in a firewall log. **api**: `api.pwnedpasswords.com` (the k-anonymity
+password screen, `HIBP_ENABLED`) and the Railway bucket's `S3_ENDPOINT_URL`. **worker**:
+`api.resend.com` (transactional email), `api.census.gov`, `www2.census.gov` and
+`geocoding.geo.census.gov` (the market-data ingest), the same `S3_ENDPOINT_URL`, and — only while
+`ANTHROPIC_API_KEY` is set — `api.anthropic.com`. That last one is the only destination a seller's
+photograph is ever sent to: the vision step of the image identifiability pipeline sends the display
+derivative and the practice's name, city and state, and nothing else; with the key unset no request
+is made at all. **The api reaches nothing new for that pipeline.**
 
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
