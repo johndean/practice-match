@@ -161,7 +161,10 @@ const SYMBOL_KEYS = ["pets", "households", "competition"];
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
 // by its caller - the map's own geography for the legend and the tip, the map's community
-// notes, and the snapshot strip's AREA mode, which measures those same polygons.
+// notes, and the snapshot strip's AREA mode wherever the card's own headline IS those
+// polygons. A31.14f: where the route served the METRO's own figure the card's note carries
+// its geography, so the strip hands this line nothing and it prints the dataset alone,
+// exactly as LOCATION mode does.
 //
 // A34 (D-C51): all six layers declare a `dataset:` now, so the `source` arm below is the
 // guard for a key `LAYER_META` does not hold and nothing else - "" beats "undefined · X".
@@ -760,7 +763,7 @@ class Component extends DCLogic {
       // is the selected practice's own community. Both words are never shown at once.
       stripMode: sel ? "LOCATION · " + this.practiceName(sel) : "AREA · " + market + " metro",
       hasStripModeSub: sel ? !!sel.communityLabel : true,
-      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",
+      stripModeSub: sel ? (sel.communityLabel || "") : "The metro’s own figures, with the Census areas the map shades beneath them",
       toggleStrip: () => this.setState({ mdStrip: !s.mdStrip }),
       stripToggleLabel: s.mdStrip ? "Collapse" : "Expand all six layers",
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
@@ -1076,7 +1079,15 @@ class Component extends DCLogic {
           const sum = summary[k];
           // The selected practice's own figure, through the design's own two field aliases.
           const own = (sel && selComm) ? (k === "households" ? selComm.hh : k === "competition" ? selComm.vets : selComm[k]) : undefined;
-          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);
+          // A31.14 (SNAP-METRO): in AREA mode the headline is the METRO's own figure where
+          // the route serves one - the Census publishes a metro median household income and
+          // a metro household total at summary level 310, and this card printed the median
+          // of the metro's TRACTS instead (94,801 against a published 97,638 on CBSA 12420).
+          // The distribution below is untouched: the bars are the polygons the map shades,
+          // which is the SHAPE this figure sits in, and `median` answers wherever the Census
+          // publishes nothing for the metro at all.
+          const metro = (sum && sum.metro && sum.metro.value != null) ? sum.metro : null;
+          const shown = sel ? (own != null ? num(own) : undefined) : (metro ? num(metro.value) : ((sum && sum.median != null) ? num(sum.median) : undefined));
           // The metro's shape, as five bars, classed on the MAP's OWN breaks - `bucket`'s
           // third argument, which is what the choropleth asks for (A24.25). These are the
           // map's polygons, so they take the map's classes: the strip and the legend then
@@ -1119,11 +1130,24 @@ class Component extends DCLogic {
               // measured on CBSA 12420, 94,801 against the published 97,638. And a card
               // with no figure carries NO caption: absent beats faked, for a caption as
               // much as for a value.
+              // A31.14 (SNAP-METRO): where the route served the metro's own figure, the
+              // caption is the one IT composed - it is the side that knows whether the
+              // Census published this figure for this area or whether this pipeline derived
+              // it from one that was published. A word invented here would be a second copy
+              // of that judgement, which is how a geography the server never served reached
+              // the screen before (A34/D-C51). Both phrases it can send are in that
+              // ruling's own closed list.
+              : metro ? metro.basis
               : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis
             // printed ten times on one strip before this, four cards printing it twice.
-            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),
+            // A31.14f (review 1, Important-2): …and a card whose headline is the METRO's own
+            // figure has no geography left to give this line either - A31.14b's note carries
+            // it, and printing `· Census tract` under it would put a SECOND geography on the
+            // card, attached to the figure it does not describe. Same term, same reason, one
+            // fact per string; the derived path keeps the tract line, which is its own.
+            src: metaSource(k, (sel || metro) ? "" : (AREA_LABEL[k] || "")),
             bars: dist.map((b) => ({
               style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +
                 "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +

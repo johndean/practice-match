@@ -291,6 +291,8 @@ screen is a different number every time the member pans.
       "state": "enabled",
       "count": 577, "with_value": 561, "suppressed": 12, "no_data": 4,
       "median": 92150.0, "quantiles": [48200.0, 67400.0, 92150.0, 121300.0, 158900.0],
+      "metro": { "value": 97638.0, "moe": 1163.0, "kind": "published",
+                 "basis": "Census published for the metro" },
       "value_vintage": "2019–2023", "source_dataset": "acs5" }
   ]
 }
@@ -305,6 +307,32 @@ five of its members — and **`median` is that array's own middle element**, rea
 measured a second time, so a card's value can never disagree with the bars drawn beside it. Both
 are `null` when `with_value` is `0`. The extremes are deliberately p10/p90 and not min/max: one
 outlying tract is not a class a summary should draw.
+
+**`metro` is the METRO'S OWN figure, beside the distribution rather than instead of it** (Task
+SNAP-METRO, 2026-09-14). `median` and `quantiles` describe the polygons the map shades and are
+untouched by it; `metro` is `{ "value", "moe", "kind", "basis" }` or `null`, and its vintage is
+the row's own `value_vintage`. Until it existed a client printed `median` — `percentile_cont(0.5)`
+over the metro's valued tracts, 94,801 on CBSA 12420 — where a member reads "the metro's figure",
+while the Census publishes 97,638 ± 1,163 for that same CBSA at the same release. Three arms:
+
+* `kind: "published"` — the Census's own estimate for the metro itself, `acs_measure` at summary
+  level `310` (`income` = `B19013_001E`, `households` = `B11001_001E`), with the margin the
+  Census published beside it. A row with **no** published margin, or one wide enough to fail the
+  same `high_moe` test the polygons are suppressed by, is served as `null`: a present estimate
+  with no margin is unmeasured, not certain.
+* `kind: "derived"` — computed here from a figure the Census did publish for the metro, and
+  carrying **no** `moe`, because neither derivation has one to publish: `pets` is the published
+  metro household count at the documented incidence rate, `growth` the difference of the two
+  published metro populations (`acs5` against `acs5_prior`, the formula `materialize.py` uses for
+  a place). Either is `null` when an input is missing.
+* `null` — `econ` and `competition` are Business Patterns, which publishes nothing at summary
+  level `310`. A **sum** over the metro's counties or ZIP areas is deliberately not substituted:
+  this route's population is the metro's *envelope*, which is the right population for a
+  distribution and the wrong one for a total, and ZIP Code Business Patterns withholds every
+  category under three establishments, so a ZCTA sum would be a floor of unknown depth.
+
+`basis` is a caption phrase and the Browse strip prints it verbatim, so it is drawn from the
+product's own closed caption vocabulary (D-C51) and never composed by a client.
 
 **The three counts partition the polygons**, and `count == with_value + suppressed + no_data`
 always: `count` is every polygon of that layer's `summary_level` whose geometry intersects the
