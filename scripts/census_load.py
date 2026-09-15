@@ -73,6 +73,8 @@ import httpx
 import psycopg2
 import psycopg2.extensions
 
+from app.census.registry import DATASET_SUBLINE_CAP
+
 
 def normalize_dsn(dsn: str) -> str:
     """The same normalisation as `scripts/migrate.normalize_dsn` (duplicated rather than
@@ -822,6 +824,14 @@ def main(argv: list[str] | None = None) -> int:
         # so it is argparse's own refusal (exit 2, "refused before anything is opened") like
         # every other bad-arguments case in this file.
         v.error("--note is required when --force is given")
+    if args.cmd == "activate" and args.note is not None and len(args.note) > DATASET_SUBLINE_CAP:
+        # A38 fix round 3 (re-review Minor 4). `active_vintage.note` is `text` with no bound, and
+        # the admin Data Sources tab prints it VERBATIM in the design's own parenthesis beside the
+        # live vintage it explains -- inside a Dataset sub-line the design gives two lines of at
+        # 258 px (`app.census.registry.DATASET_SUBLINE_CAP`, measured). It was the one remaining
+        # unbounded input to that line, and this is the door that writes it. Argparse's own refusal,
+        # for the reason the `--force` check above gives.
+        v.error(f"--note must be at most {DATASET_SUBLINE_CAP} characters: the admin Data Sources tab renders it in full")
     result: int = args.fn(args)
     return result
 

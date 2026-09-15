@@ -57,30 +57,44 @@ class AuditResult:
     status: int | None
 
 
+def _read(http: httpx.Client, url: str, key: str) -> tuple[int | None, str | None]:
+    """One terms page, fetched and hashed, or `(None, None)` where it could not be read."""
+    try:
+        with http.stream(
+            "GET", url, timeout=httpx.Timeout(connect=15.0, read=45.0, write=15.0, pool=15.0), follow_redirects=True
+        ) as resp:
+            digest = hashlib.sha256(_bounded_body(resp, url)).hexdigest() if resp.status_code < 400 else None
+            return resp.status_code, digest
+    except (httpx.HTTPError, httpx.InvalidURL, UnicodeError, ValueError) as exc:
+        # m2: `httpx.InvalidURL` (a malformed license_url, raised while building the request)
+        # and `UnicodeError` (an unencodable host) do NOT derive from `httpx.HTTPError`, so a
+        # bare `except httpx.HTTPError` let either one escape the loop and abort the whole
+        # sweep; `ValueError` is m4's over-bound body (`_bounded_body` above). Named, not
+        # blind (ruff BLE001) -- these four are every hazard this fetch can raise. One bad row
+        # becomes an unresolved check for THAT dataset only; the sweep continues past it. Only
+        # the exception's TYPE is logged, never its text, which could carry the url.
+        log.error("[census] license audit fetch failed for %s: %s", key, type(exc).__name__)
+        return None, None
+
+
 def audit(conn: psycopg2.extensions.connection, http: httpx.Client) -> list[AuditResult]:
     out: list[AuditResult] = []
     with conn.cursor() as cur:
         cur.execute("SELECT dataset_key, license_url FROM dataset_registry WHERE license_url IS NOT NULL ORDER BY dataset_key")
         targets = cur.fetchall()
+    # A38 fix round 1 (review M8): ONE fetch per distinct URL, not per row. `esri_tiles` and
+    # `esri_imagery` are two registered datasets behind one terms page (Esri's master agreement,
+    # migration 092), and the sweep used to ask that host for the same document twice a quarter --
+    # N times the day a vendor's N products are registered. The verdict is still per ROW: every
+    # dataset that carries the URL gets its own `license_audit_log` entry, its own comparison
+    # against its own previous hash, and its own drift flag, so a page that changes flags all of
+    # them and a page that has not verifies all of them. A failed fetch logs once, named for the
+    # first row that asked for it, because one request is what actually happened.
+    fetched: dict[str, tuple[int | None, str | None]] = {}
     for key, url in targets:
-        status: int | None
-        digest: str | None
-        try:
-            with http.stream(
-                "GET", url, timeout=httpx.Timeout(connect=15.0, read=45.0, write=15.0, pool=15.0), follow_redirects=True
-            ) as resp:
-                digest = hashlib.sha256(_bounded_body(resp, url)).hexdigest() if resp.status_code < 400 else None
-                status = resp.status_code
-        except (httpx.HTTPError, httpx.InvalidURL, UnicodeError, ValueError) as exc:
-            # m2: `httpx.InvalidURL` (a malformed license_url, raised while building the request)
-            # and `UnicodeError` (an unencodable host) do NOT derive from `httpx.HTTPError`, so a
-            # bare `except httpx.HTTPError` let either one escape the loop and abort the whole
-            # sweep; `ValueError` is m4's over-bound body (`_bounded_body` above). Named, not
-            # blind (ruff BLE001) -- these four are every hazard this fetch can raise. One bad row
-            # becomes an unresolved check for THAT dataset only; the sweep continues past it. Only
-            # the exception's TYPE is logged, never its text, which could carry the url.
-            log.error("[census] license audit fetch failed for %s: %s", key, type(exc).__name__)
-            status, digest = None, None
+        if url not in fetched:
+            fetched[url] = _read(http, url, key)
+        status, digest = fetched[url]
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT content_sha256 FROM license_audit_log WHERE dataset_key = %s AND content_sha256 IS NOT NULL "

@@ -233,7 +233,7 @@ async def test_a_layer_whose_licence_is_not_cleared_carries_its_state_and_no_fig
     draw the state at all."""
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'zbp'")
-        cur.execute("UPDATE dataset_registry SET license_status = 'blocked', notes = 'Licence refused by the vendor.' WHERE dataset_key = 'cbp'")
+        cur.execute("UPDATE dataset_registry SET license_status = 'blocked', blocked_reason = 'Licence refused by the vendor.' WHERE dataset_key = 'cbp'")
     gate.invalidate(sync_redis(), "zbp")
     gate.invalidate(sync_redis(), "cbp")
     sync_redis().flushdb()

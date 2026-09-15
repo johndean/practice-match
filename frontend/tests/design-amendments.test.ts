@@ -422,6 +422,16 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A38 (Task A38, D-C53) — the Data Sources tab reads the dataset registry. The two
+    // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
+    // fixture rows, so taking a button out afterwards would be an entry eating text an
+    // earlier entry had just put there (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both
+    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40 —
+    // and BEFORE A39, whose A39.2/A39.5 rewrite the same `adminListings` line A38.2 anchors on.
+    // A38.3a and A38.3b are RETIRED, not missing: A39.3b and A39.3a are the same two edits and
+    // reached main first, and the two pairs cannot coexist (see `design-amendments.ts`). Their
+    // ids may not be reused.
+    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3c',
     // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
     // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
     // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
@@ -646,7 +656,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(367);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(372);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1369,6 +1379,26 @@ describe('local design amendments (spec D15)', () => {
   // A6/A7 block appended after everything. The set case below could not see it, and the file is
   // read by people. The order that matters is the order the edits are APPLIED, which is also the
   // order the ids are pinned in above.
+  // A38 fix round 1 (review M1): the seven A38 rows were appended after a BLANK line, which ends a
+  // GitHub-flavoured Markdown table — so they rendered as literal `| A38.4 | … |` text in the one
+  // file CLAUDE.md calls the per-amendment record, and nothing could see it: every other ledger
+  // case here matches rows by their `| A<id> |` prefix, which a broken table satisfies exactly as
+  // well as a live one. The table is ONE table from its delimiter row to the last amendment, and
+  // the file ends with a newline like every other text file in the repository.
+  it('LOCAL_AMENDMENTS.md is one unbroken table, so every row renders as a row', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const lines = md.split('\n');
+    const delimiter = lines.findIndex((l) => /^\|-{3}\|/.test(l));
+    expect(delimiter, 'the ledger has no `|---|---|---|---|` delimiter row').toBeGreaterThan(0);
+    const last = lines.map((l) => /^\|\s*A[\w.]+\s*\|/.test(l)).lastIndexOf(true);
+    const broken = lines.slice(delimiter + 1, last + 1)
+      .map((l, i) => [delimiter + 2 + i, l] as const)
+      .filter(([, l]) => !/^\|/.test(l));
+    expect(broken, 'a line inside the table does not start a table row, which ends the table there')
+      .toEqual([]);
+    expect(md.endsWith('\n'), 'LOCAL_AMENDMENTS.md does not end with a newline').toBe(true);
+  });
+
   it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);

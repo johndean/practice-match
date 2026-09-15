@@ -516,11 +516,25 @@ POST /api/admin/data-sources/{dataset_key}/license
 → { "dataset_key": "…", "license_status": "…" }
 ```
 
-Only `status` is required — every other field `COALESCE`s onto what is already recorded, so
-blocking a source does not mean retyping its licence name and URL. `url`, if given, must be
-`https://` (`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what
-comes back, and clear text lets anything on the path rewrite the page that comparison relies on).
+Only `status` is required — `name` and `url` `COALESCE` onto what is already recorded, so blocking
+a source does not mean retyping its licence name and URL. `url`, if given, must be `https://`
+(`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what comes back,
+and clear text lets anything on the path rewrite the page that comparison relies on).
 Unknown `dataset_key` is `404 NOT_FOUND`.
+
+`notes` is the operator's RATIONALE and is **not** written to `dataset_registry.notes` (A38 fix
+round 2, 2026-09-14): it reaches `audit_log.reason` and stops there — the licence ledger row this
+decision also writes records the URL and the fact of the decision, never the words (migration 020
+gives `license_audit_log` no note column), so `audit_log.reason` is the only place the rationale is.
+That column is rendered verbatim by the admin Data Sources tab inside the approved design's own
+row, and its contents are owned by migrations, which are held to a measured character cap
+(`app.census.registry.SOURCE_SUBLINE_CAP`). **`notes` is the OPERATOR's column and the admin
+tab's alone**: the member-facing `blocked_reason` above is a different column of the same table
+(migration 094), written for a member and never for an operator. They shared one column until then,
+which meant a geography note could be served as the reason a layer is blocked. For the same reason `name`, which IS rendered, is
+refused with `422 BAD_FIELD` above that cap — the message names the number — while its own field
+bound (`MAX_NAME`, 200) still applies; `notes` keeps its 4,000, because a rationale nobody renders
+is not bounded by a layout.
 
 **Two ledgers, and they record different things.** `audit_log` (`app.auth.audit`) records WHO
 changed the gate, from what to what, for the standing "who did this" trail every admin action

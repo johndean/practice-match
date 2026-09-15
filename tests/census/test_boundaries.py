@@ -265,7 +265,7 @@ async def test_a_layer_whose_licence_is_withdrawn_answers_200_with_no_features(c
     assert r.status_code == 200 and body["state"] == "disabled" and body["features"] == []
     assert "92150" not in r.content.decode("utf-8"), "a figure from an uncleared dataset reached the wire"
     with conn.cursor() as cur:
-        cur.execute("UPDATE dataset_registry SET license_status='blocked', notes='Counsel declined the terms.' WHERE dataset_key='acs5'")
+        cur.execute("UPDATE dataset_registry SET license_status='blocked', blocked_reason='Counsel declined the terms.' WHERE dataset_key='acs5'")
     gate.invalidate(sync_redis(), "acs5")
     r2, blocked = await _body(client, H)
     assert blocked["state"] == "blocked" and blocked["blocked_reason"] == "Counsel declined the terms."
@@ -461,7 +461,7 @@ async def test_the_contract_docs_example_payload_carries_every_member_the_route_
 
 def _registry_sync(conn):
     with conn.cursor() as cur:
-        cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry")
+        cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes, blocked_reason FROM dataset_registry")
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 

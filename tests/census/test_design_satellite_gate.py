@@ -9,9 +9,18 @@ Specification says it twice, and both sentences are the ruling this file enforce
     §15 "Which satellite imagery vendor, and is the license budgeted?
          Until answered, the Satellite toggle ships disabled."
 
-`dataset_registry`'s `imagery` row is `unresolved` (migration 017), and its own note has said
-since that migration that the toggle "stays behind a feature flag until a written licence names
-commercial web display" -- a flag that existed nowhere in the running code until this amendment.
+`dataset_registry`'s `imagery` row is `unresolved` (migration 017), and its own note has recorded
+since that migration the condition the gate waits on -- "a written licence names commercial web
+display" -- for a flag that existed nowhere in the running code until this amendment.
+
+017 wrote that condition as "Satellite toggle stays behind a feature flag until a written licence
+names commercial web display". Migration 093 (A38, merged 2026-09-15) shortened it: the admin Data
+Sources tab prints `notes` verbatim into the approved design, `SOURCE_SUBLINE_CAP` is 115 measured
+characters, and 017's sentence composes to 120 -- it does not render. 093 kept the CONDITION
+verbatim ("the condition a later reader will quote", its own words) and dropped the subject, which
+was the row itself, so that the licence-decision route still has room to record a terms URL. The
+condition is therefore what the precondition case below asserts; the FLAG is pinned where it now
+exists -- in the source and render-value cases above -- rather than in prose.
 
 WHY THIS IS NOT A ROLE GATE, which is the finding that produced the ruling. `layer.satellite` is
 declared in `app.auth.permissions.MATRIX` and holds `{buyer, seller, staff, admin}` -- the SAME
@@ -130,7 +139,8 @@ def test_the_imagery_row_is_still_unresolved_which_is_why_the_gate_is_on(conn) -
         "strength of this row being unresolved; revisit this file, the A49 amendment entries and "
         "`layer.satellite`'s second conjunct together rather than deleting any one of them"
     )
-    assert "feature flag" in (notes or ""), (
-        "the imagery row's own note no longer says a flag protects it -- that note is what A49 "
-        "finally made true"
+    assert "written licence names commercial web display" in (notes or ""), (
+        "the imagery row's own note no longer records the condition the gate waits on -- that "
+        "condition is what A49 finally made true. 093 kept it verbatim when it shortened the note "
+        "to the tab's measured cap; a note that drops it needs this file re-read, not re-pointed"
     )

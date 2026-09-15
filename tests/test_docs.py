@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 import yaml
 
+from app.census import registry as PM_REGISTRY
 from app.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,7 +39,7 @@ REQUIRED_CI_COMMANDS = (
     # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
     # report predicted it would have to — the plan's own file list for this task names neither
     # file, which is why the note above is here rather than in the plan.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1246,6 +1247,178 @@ def test_the_admin_listings_table_matches_the_api():
             assert status in DECISIONS[action][0], f"the Admin Listings table offers {action!r} from {status!r}, which the API refuses"
 
 
+def _data_sources_ts_literal(name: str) -> object:
+    """`frontend/src/admin/data_sources.ts`'s one exported JSON literal — the same
+    single-line-double-quoted-JSON convention `_users_ts_literal` and `_listings_ts_literal` read,
+    applied to Task A38's own table."""
+    source = (ROOT / "frontend" / "src" / "admin" / "data_sources.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/data_sources.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. It is written as double-quoted JSON on ONE line for "
+        f"exactly that reason; the file says so beside it."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/data_sources.ts: {name} is no longer DOUBLE-QUOTED JSON on a single "
+        f"line, so this cross-language pin cannot read it ({reason}). Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_data_sources_table_matches_the_registry():
+    """Task A38. Unlike the Users and Listings tabs, whose tables picture a legal SUBSET of the
+    API's states, `dataset_registry.license_status` has exactly THREE values — its own CHECK
+    constraint says so — and the approved design draws exactly three pills. So this pin is an
+    EQUALITY in both directions: a fourth licence state added to the column with no pill would
+    render its raw key on the tab that carries the platform's legal gate, and a pill the column
+    cannot produce would be a status nothing can ever reach.
+
+    The constraint is read out of `migrations/017_census_registry.sql` rather than restated here —
+    an applied migration is immutable, so it is the durable statement of what the column allows."""
+    sql = (ROOT / "migrations" / "017_census_registry.sql").read_text()
+    match = re.search(r"license_status text NOT NULL CHECK \(license_status IN \(([^)]*)\)\)", sql)
+    assert match, "migrations/017_census_registry.sql no longer states license_status's CHECK constraint"
+    allowed = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert allowed == {"cleared", "unresolved", "blocked"}, allowed
+    assert set(cast("dict[str, object]", _data_sources_ts_literal("PILLS"))) == allowed
+
+
+def test_the_placeholder_vintages_are_one_table_on_both_sides():
+    """A38 fix round 2, review F10. `dataset_registry.vintage` is NOT NULL, so the column holds
+    `n/a` for a blocked dataset, `live` for a tile service and `Current_Current` — the Census
+    Geocoder's own benchmark identifier — for the geocoder. None of them is a vintage anyone
+    declared, and fix round 1 printed every one of them under the label "Declared vintage".
+
+    The renderer decides what to suppress and the pytest pin decides what to measure, so the two
+    read ONE table: a value added on one side and not the other would put a placeholder back on
+    the tab with the pin still green. Same convention as `PILLS`: single-line double-quoted JSON
+    in the TypeScript, parsed here."""
+    ts = cast("list[str]", _data_sources_ts_literal("PLACEHOLDER_VINTAGES"))
+    assert sorted(ts) == sorted(PM_REGISTRY.PLACEHOLDER_VINTAGES), (
+        "frontend/src/admin/data_sources.ts and app/census/registry.py disagree about which "
+        f"vintage values are placeholders: {sorted(set(ts) ^ set(PM_REGISTRY.PLACEHOLDER_VINTAGES))}"
+    )
+
+
+ESRI_REGISTRY_MIGRATION = "092_esri_basemap_registry.sql"
+# The two layers the Browse map actually loads, by the `BASEMAPS` key that configures each and the
+# `dataset_registry.dataset_key` that records it (controller ruling 17, 2026-09-13).
+ESRI_LAYERS = {"map": "esri_tiles", "satellite": "esri_imagery"}
+
+
+def _sql_literals(tuple_text: str) -> list[str | None]:
+    """One `VALUES (...)` tuple split into its literals, quote-aware.
+
+    A38 fix round 1 (review M2): the pin below used to ask whether the credit appeared ANYWHERE in
+    the row's text, which a row carrying it in `license_name` and something else entirely in
+    `attribution_text` satisfies — reproduced, and it passed. Attribution is legally load-bearing,
+    so the pin has to read the COLUMN. `notes` carries commas, parentheses and doubled quotes, so
+    splitting on `,` is not enough: this walks the tuple, tracks whether it is inside a quoted
+    literal, and treats `''` as an escaped quote rather than as a close."""
+    out: list[str | None] = []
+    buf: list[str] = []
+    quoted = False
+    in_quote = False
+    i = 0
+    while i < len(tuple_text):
+        c = tuple_text[i]
+        if in_quote:
+            if c == "'" and tuple_text[i + 1 : i + 2] == "'":
+                buf.append("'")
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+                i += 1
+                continue
+            buf.append(c)
+        elif c == "'":
+            in_quote, quoted = True, True
+        elif c == ",":
+            out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+            buf, quoted = [], False
+        else:
+            buf.append(c)
+        i += 1
+    out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+    return out
+
+
+def _insert_row(sql: str, key: str) -> dict[str, str | None]:
+    """The named `dataset_registry` INSERT row of a migration, as {column: value}.
+
+    The column list is read out of the migration itself rather than restated, so a column added
+    between two others cannot silently shift what this pin compares."""
+    columns = re.search(r"INSERT INTO dataset_registry\s*\n?\s*\(([^)]*)\)\s*VALUES", sql)
+    assert columns, "the migration does not name its dataset_registry columns"
+    names = [c.strip() for c in columns.group(1).split(",")]
+    start = sql.index(f"('{key}',")
+    depth, i, in_quote = 0, start, False
+    while i < len(sql):
+        c = sql[i]
+        if in_quote:
+            if c == "'" and sql[i + 1 : i + 2] == "'":
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+        elif c == "'":
+            in_quote = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    values = _sql_literals(sql[start + 1 : i])
+    assert len(values) == len(names), f"{key}: {len(values)} values for {len(names)} columns"
+    return dict(zip(names, values, strict=True))
+
+
+def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
+    """Task A38 / controller ruling 17. Attribution is LEGALLY load-bearing (Census spec §12;
+    CLAUDE.md "Attribution stays visible on every map"), and it is now stated in two places: the
+    string `frontend/src/lib/leaflet.js` hands Leaflet, which is what a member sees in the map's
+    own footer, and `dataset_registry.attribution_text`, which is what the admin Data Sources tab
+    prints verbatim. Two copies of a legal string drift, and the drift is silent: A35.7 corrected
+    the satellite credit from "Imagery © Esri, Maxar, Earthstar Geographics" to the service's own
+    current `copyrightText` on 2026-09-13, and nothing outside that one file would have noticed if
+    the registry had been seeded with the stale one.
+
+    So the two are pinned against each other BY VALUE, on the COLUMN: the migration's tuple is split
+    positionally against the column list it declares, and `attribution_text` must equal the string
+    its own layer draws, character for character. Fix round 1 (review M2): the first version asked
+    whether the credit appeared anywhere in the row's text, which a row carrying the right credit in
+    `license_name` and `'© OpenStreetMap contributors'` in `attribution_text` passed — the reviewer
+    reproduced exactly that. Read out of the migration's text rather than the database, so it holds
+    on a checkout with no Postgres — the schema drift tests' own rule."""
+    migration = (ROOT / "migrations" / ESRI_REGISTRY_MIGRATION).read_text()
+    leaflet = (ROOT / "frontend" / "src" / "lib" / "leaflet.js").read_text()
+    for basemap, dataset_key in ESRI_LAYERS.items():
+        # The first `attribution:` after the layer's own key. NOT "everything up to the next `}`":
+        # each layer's `url` carries Leaflet's own `{z}/{y}/{x}` template, so the first brace in the
+        # block belongs to the URL (this test's first draft read exactly that and found nothing).
+        drawn = re.search(rf"{basemap}: \{{.*?attribution: \"(.*?)\"", leaflet, re.DOTALL)
+        assert drawn, f"frontend/src/lib/leaflet.js declares no attribution for BASEMAPS.{basemap}"
+        # leaflet.js escapes the © as \u00a9; the SQL carries the character itself.
+        text = drawn.group(1).replace("\\u00a9", "\u00a9")
+        assert f"('{dataset_key}'," in migration, f"{ESRI_REGISTRY_MIGRATION} registers no {dataset_key} row"
+        row = _insert_row(migration, dataset_key)
+        assert row["attribution_text"] == text, (
+            f"{dataset_key}'s attribution_text is {row['attribution_text']!r}, not the string "
+            f"BASEMAPS.{basemap} actually draws ({text!r}). One of the two has moved; a credit must "
+            "never change in one place only."
+        )
+        assert row["license_status"] == "unresolved", (
+            f"{dataset_key} is no longer registered as unresolved. Clearing a basemap licence is "
+            "the VIN Foundation's decision under the Census plan's one basemap decision record."
+        )
+
+
 # --- Task I9a: the identity wave's operator documentation -----------------------------------------
 # Four tests: two are PINS on what I4-I6 and I8a already made true (the variables, the launch
 # removal), two watch documentation this task wrote (the runbook's endpoints, the Resend DNS table).
@@ -1850,7 +2023,7 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
@@ -3290,3 +3463,26 @@ def test_claude_md_states_the_frozen_hashes_truthfully_in_both_copies():
         "twelve unmoved plus one re-pinned"
     )
     assert "detail" in manifest["screens"], "the manifest has no `detail` row for the sentence to name"
+
+
+def test_no_source_comment_names_a_test_file_that_does_not_exist():
+    """A38 fix round 3: `app/api/market.py` and `migrations/094_registry_blocked_reason.sql` both
+    named `tests/api/test_market_layers.py` as the gate that holds them apart, and no such file
+    has ever existed — the pins are `tests/census/test_market_api.py`'s. A comment that names the
+    gate is how the next reader finds out whether a rule is enforced, so one naming a file that is
+    not there is worse than no comment at all: it reads as "this is pinned" and nothing is.
+
+    Scoped to `tests/**.py` paths cited anywhere in `app/`, `scripts/` and `migrations/`, because
+    that is the class of citation this repository actually makes and the one that went wrong. A
+    path inside a string literal is caught too, deliberately: the question is whether the file
+    exists, not where the reference sits."""
+    cited = re.compile(r"\btests/[\w/]+\.py\b")
+    missing = []
+    for root in ("app", "scripts", "migrations"):
+        for path in sorted((ROOT / root).rglob("*")):
+            if path.suffix not in {".py", ".sql"} or not path.is_file():
+                continue
+            for name in sorted(set(cited.findall(path.read_text(encoding="utf-8")))):
+                if not (ROOT / name).exists():
+                    missing.append(f"{path.relative_to(ROOT)} names {name}, which does not exist")
+    assert missing == [], "\n".join(missing)

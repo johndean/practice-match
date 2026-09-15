@@ -119,10 +119,39 @@ async def test_layers_come_from_the_registry_with_three_valued_state_and_caveats
     assert layers["competition"]["state"] == "disabled" and "blocked_reason" not in layers["competition"]
 
     with conn.cursor() as cur:
-        cur.execute("UPDATE dataset_registry SET license_status='blocked', notes='Counsel declined the terms.' WHERE dataset_key='zbp'")
+        cur.execute("UPDATE dataset_registry SET license_status='blocked', blocked_reason='Counsel declined the terms.' WHERE dataset_key='zbp'")
     gate.invalidate(sync_redis(), "zbp")
     layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
     assert layers["competition"]["state"] == "blocked" and layers["competition"]["blocked_reason"] == "Counsel declined the terms."
+
+
+async def test_the_member_s_blocked_reason_is_never_the_operator_s_note(client, conn, materialized, H):
+    """A38 fix round 3, re-review Important 2 (migration 094). `dataset_registry.notes` had two
+    readers and only one of them was written down: the admin Data Sources tab prints it verbatim
+    into the design's Source sub-line (bounded by a measured layout cap, owned by migrations), and
+    `_layer_state` served the SAME string to members as the reason a layer is blocked.
+
+    Three of the four datasets `LAYERS` gates carry a seeded GEOGRAPHY note -- `zbp`'s is "D11 /
+    A-C6: ZIP counts come from CBP's zip geography; ZIPs treated as ZCTAs" -- which is not a reason
+    for a licence block in anybody's words. This drives exactly that: an operator's note on a
+    blocked row, and a member who is told the member's sentence instead."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes, blocked_reason FROM dataset_registry WHERE dataset_key='zbp'")
+        note, reason = cur.fetchone()
+    assert note and reason and note != reason, "094 did not give zbp a member's sentence of its own"
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert layers["competition"]["blocked_reason"] == reason
+    assert layers["competition"]["blocked_reason"] != note
+
+    # And a row with no member's sentence says the default rather than the operator's note.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET blocked_reason=NULL WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert layers["competition"]["blocked_reason"] == market.DEFAULT_BLOCKED_REASON
 
 
 async def test_markets_lists_cbsas_with_published_listings(client, materialized, H):
