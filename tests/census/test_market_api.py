@@ -275,7 +275,10 @@ async def test_communities_default_to_place_band_with_fixture_fields_and_competi
     assert body["band"] == "place" and body["vintage"] == "2019\u20132023"
     c = body["communities"][0]
     assert c["name"] == "Cedar Park city" and c["pop"] == 81900 and c["hh"] == 27600 and c["income"] == 118400
-    assert c["growth"] == pytest.approx(14.2, abs=0.01) and c["pets"] == 15732 and c["econ"] == pytest.approx(143850 * 1000 / 210)
+    # Task PET-RATE-PROVENANCE: the pets figure is COMPUTED from the one rate rather than pinned
+    # as a literal -- 27,600 households at the AVMA 2025 Sourcebook's 0.586 -- so this case moves
+    # with a re-citation instead of pinning a product nobody can trace back to a source.
+    assert c["growth"] == pytest.approx(14.2, abs=0.01) and c["pets"] == M.pet_households_est(27600) and c["econ"] == pytest.approx(143850 * 1000 / 210)
     # `vets`/`competition.count` come from PostGIS's own ellipsoidal-geography area, which is not
     # exact integration: the two seeded ZCTAs each overlap the place at ~0.999808, not precisely
     # 1.0, even though the boundaries share the identical coordinate on that edge — a real database's

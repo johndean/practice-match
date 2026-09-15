@@ -1,7 +1,13 @@
 from app.census.registry import attribution, is_cleared, load
 
 SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership", "practice_locations",
-             "google_places_aggregate", "overture_places", "fsq_os_places"}  # last three: D16/D17 candidates, never ingested until cleared
+             "google_places_aggregate", "overture_places", "fsq_os_places",  # the three before this: D16/D17 candidates, never ingested until cleared
+             # Task PET-RATE-PROVENANCE (John, 2026-09-15; controller ruling 4): the single cited
+             # NATIONAL statistic behind every estimated-pet-household figure, which is USED and
+             # whose redistribution right is NOT established -- a different status from the
+             # per-geography licensed FEED it used to share `pet_ownership`'s row with, and the
+             # reason it has a row of its own (`migrations/099`).
+             "avma_pet_rate"}
 
 
 def test_seed_matches_the_spec_dataset_register(conn):
@@ -13,6 +19,11 @@ def test_seed_matches_the_spec_dataset_register(conn):
     assert reg["qwi"].api_dataset_id == "timeseries/qwi/sa"
     assert reg["imagery"].license_status == "unresolved"
     assert reg["pet_ownership"].license_status == "blocked"
+    # The statistic is cited and attributed; only its REDISTRIBUTION right is open, which is what
+    # `unresolved` means in this table. It is deliberately not `blocked`: `blocked` is this
+    # schema's word for "must not ship", and the rate does ship (`app/census/pet_rate.py`).
+    assert reg["avma_pet_rate"].license_status == "unresolved"
+    assert reg["avma_pet_rate"].attribution_text.startswith("Pet-ownership incidence: American Veterinary Medical Association")
     assert reg["aies"].license_status == "unresolved"  # "Verify ID" in the spec → not cleared until confirmed
     assert reg["zbp"].api_dataset_id == "2022/cbp" and reg["zbp"].naics_param == "NAICS2017" and reg["zbp"].license_status == "cleared"
     assert reg["practice_locations"].license_status == "blocked"  # spec §12: third-party practice-location data is out of scope for V1
