@@ -97,6 +97,13 @@ DRIFT_CLAUSE = " · Terms drift flagged"
 LEGAL_NOTE_ROWS = {
     "practice_locations": "legal citation, may wrap: names the blocked 2017 Google Places export (plan D15) and the Google Maps Platform terms that forbid storing or rendering it",
     "google_places_aggregate": "legal citation, may wrap: names the Service Specific Terms §13 condition the row is blocked on",
+    # Added when `feat/pet-rate-provenance` merged into main (2026-09-15) — the coordination
+    # `migrations/099`'s own closing comment asks for by name, and not a defect in either branch.
+    # The note is the AVMA citation, the copyright condition the `unresolved` status rests on, and
+    # the separation from the blocked per-geography feed; F2's rule is that legally material text
+    # is never shortened to fit a layout. `pet_ownership`'s own new note stays UNDER the cap, so
+    # nothing else on the A38 side moves.
+    "avma_pet_rate": "legal citation, may wrap: carries the AVMA Sourcebook citation and the copyright condition its unresolved redistribution right rests on",
 }
 
 # Values `dataset_registry.vintage` and `active_vintage.vintage` hold where the dataset HAS no
@@ -109,4 +116,11 @@ PLACEHOLDER_VINTAGES = ("n/a", "live", "TBD", "Current_Current", "latest", "late
 # 017's own `refresh_cadence` vocabulary (review F7 / M9): the column is free text and the tab
 # prints it verbatim as the sub-line's first clause, so a second spelling of one cadence ("Live
 # tiles" beside "live") reads as two different things.
-REFRESH_CADENCES = ("Annual", "Annual (Apr)", "Annual (Dec)", "Monthly", "On write", "Quarterly", "Static", "live", "n/a")
+REFRESH_CADENCES = ("Annual", "Annual (Apr)", "Annual (Dec)", "Monthly", "On write", "Quarterly", "Static", "live", "n/a",
+                    # Added when `feat/pet-rate-provenance` merged in (2026-09-15): `avma_pet_rate`
+                    # refreshes when the AVMA publishes a new Sourcebook edition, which none of the
+                    # nine above says. This gate exists to stop a SECOND SPELLING of one cadence
+                    # ("Live tiles" beside "live"), not to forbid a cadence the registry did not
+                    # have — so a genuinely new one joins the list rather than being renamed into
+                    # an existing one that would be false.
+                    "On publication (AVMA Sourcebook edition)")

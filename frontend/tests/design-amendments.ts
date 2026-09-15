@@ -8152,6 +8152,144 @@ const A31_14g: Amendment = {
   count: 1
 };
 
+/** A50 (John's requirement of 2026-09-15 — Task PET-RATE-PROVENANCE). THE PET-HOUSEHOLD ESTIMATE
+ *  SAYS WHOSE RATE IT USES, AND STOPS KEEPING ITS OWN.
+ *
+ *  His objective, in his own numbering: the incidence rate behind every "estimated pet households"
+ *  figure must be (1) explicitly sourced to the AVMA, (2) tied to a Sourcebook edition and
+ *  reference year, (3) updated from the historical 57 % planning placeholder to the current
+ *  approved figure, (4) stored as provenance rather than as an unexplained magic constant, (5)
+ *  rendered as a DERIVED/ESTIMATED local value and (6) never represented as Census-observed pet
+ *  households. And: "The UI must never calculate `households * 0.586` directly inside a rendering
+ *  component if the application architecture supports a centralized metric/data layer."
+ *
+ *  WHAT WAS THERE. `0.57` appeared TWICE in this bundle as an active number — once as the
+ *  multiplier in `communities()` and once inside the map tooltip's own sentence — with nothing
+ *  anywhere saying where it came from. It traces to the AVMA's 2017-2018 Sourcebook, which
+ *  reported 56.8 % at year-end 2016; the code carried the rounding, not the figure, and carried
+ *  neither the source nor the year. The backend kept a third copy (`metrics.PET_RATE`), so the
+ *  design and the pipeline could disagree about the same figure with nothing to notice.
+ *
+ *  THE RATE IS NOW 0.586 — the AVMA's 2025 Pet Ownership and Demographics Sourcebook, 58.6 % of
+ *  United States households owning at least one pet. `app/census/pet_rate.py` is the ONE place it
+ *  is written down and it carries the whole provenance record beside it (source, dataset, edition,
+ *  reference period, rate geography, the household source and ITS active vintage, the derivation,
+ *  the ESTIMATED status, the methodology version, the Sourcebook's own methodology sentence, and
+ *  the licence status — SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED).
+ *
+ *  HOW THE DESIGN STOPS KEEPING ITS OWN, without breaking the pixel gate (controller ruling 2, and
+ *  it is A33.1's idiom exactly, for the identical problem one figure over). The API serves the rate
+ *  each listing's own estimate was computed with — `market_metric.inputs.pet_incidence_rate`, the
+ *  stamp the pipeline writes, through `GET /api/listings` as `pet_rate` — and A50.5 prefers it
+ *  GATED ON ADAPTER PRESENCE (`this.props.market`, the app-only Browse adapter the reference is
+ *  never handed), never on data. With the adapter the rate is the SERVED one or the figure is
+ *  absent; with no adapter the design's own constant answers. That constant is DEMOTED, not
+ *  deleted — deleting it would blank an approved element on a path that has no API and no ruling
+ *  to do that under, which is the measured reason A33.1a kept `incomeNat` — and its comment now
+ *  says what it is: the reference path's own fixture arithmetic, not a production rate.
+ *
+ *  IT IS THE SAME NUMBER. The demoted constant moves to 0.586 too, because John's §3 is explicit
+ *  that 56.8 %/57 % is retained as provenance and "must not remain the active production
+ *  multiplier merely because the code previously used 0.57" — and the reference path is a path the
+ *  product ships. So the fixture pets values move, and WHICH approved states move with them is
+ *  MEASURED rather than predicted: baselines were regenerated before and after and the 55 PNG
+ *  hashes diffed, and exactly THREE move — `browse-market-strip`, `browse-market-strip-location`
+ *  and `browse-panel-lightbox`. `browse-market-panel` does NOT, which is the proof the change
+ *  reaches the figure and nothing else: it selects Cedar Park, whose 27,600 households read
+ *  15,732 and now read 16,174, and the tile prints `fmtMetric`'s "16K" either way, while the
+ *  lightbox capture's Round Rock moves 25,137 -> 25,843 and "25K" -> "26K". None of
+ *  `baseline-manifest.json`'s thirteen frozen hashes moves, none being a Browse capture.
+ *
+ *  THE MAP'S CLASS BREAKS DO NOT MOVE, and A50.1 is why (controller ruling 3). `AREA_LAYERS.pets`
+ *  was cut as the tract households distribution "times 0.57", so the comment that records the
+ *  derivation is false the moment the rate moves. The pets layer is `round(households x rate)`
+ *  over exactly the tracts the households layer serves (`geo_metric._pets` walks the same cached
+ *  scan and inherits the same suppression), so it is a MONOTONE transform and its quantiles are
+ *  the households quantiles through the rate — pinned in
+ *  `tests/census/test_pet_rate.py::test_the_pets_class_breaks_are_the_households_breaks_through_the_rate`
+ *  using `scripts/measure_area_breaks.py`'s own `quantile`. The measurement of record (QA,
+ *  2026-09-12: 83,783 served tracts, p25 1,054, p50 1,446, p75 1,897) therefore gives 618 / 847 /
+ *  1,112 at 0.586 against 601 / 824 / 1,081 at 0.57, and both round to the same legend-readable
+ *  [600, 850, 1100] the table already carries. The STOPS are untouched; the sentence that says how
+ *  they were cut is corrected.
+ *
+ *  `VALUE_LAYERS.pets.stops` ([10000, 25000, 40000]) is NOT derived from the rate and is untouched:
+ *  it is the design's own community-scale choice, one round number per class, and `households`
+ *  beside it carries [10000, 25000, 45000] — which is not that table times any rate at all.
+ *
+ *  Six literal edits. A50.1 consumes A24.25's derivation line, A50.2 consumes A34.1's `dataset:`
+ *  line and A50.4 consumes A24.30b's tooltip sentence; A50.3, A50.5 and A50.6 take pristine text. */
+const PETRATE = { date: '2026-09-15', ruling: "the pet-household rate is the AVMA's, dated, current, centralised and shown as a derived estimate (John, 2026-09-15)" };
+
+const A50_1: Amendment = {
+  id: 'A50.1', ...PETRATE,
+  find: '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n',
+  replace: '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// the AVMA national pet-ownership rate — 618 / 847 / 1,112 at 0.586, where 0.57 gave\n'
+    + '// 601 / 824 / 1,081, both rounding to the same legend-readable breaks below. The pets\n'
+    + '// layer is round(households x rate) over exactly the tracts households serves, so it is a\n'
+    + '// monotone transform and its quantiles are the households quantiles through the rate:\n'
+    + '// the table is RE-DERIVED from that one measurement rather than re-measured, and\n'
+    + '// `tests/census/test_pet_rate.py` pins the identity with the measuring script\'s own\n'
+    + '// quantile. Competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n',
+  count: 1
+};
+
+const A50_2: Amendment = {
+  id: 'A50.2', ...PETRATE,
+  find: '    dataset: "Derived estimate from ACS household counts (2023)",\n',
+  replace: '    dataset: "ACS household counts (2023) × the AVMA 2025 national pet-ownership rate",\n',
+  count: 1
+};
+
+const A50_3: Amendment = {
+  id: 'A50.3', ...PETRATE,
+  find: '    means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",\n',
+  replace: '    means: "Census household counts for the area multiplied by the American Veterinary Medical Association\'s national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",\n',
+  count: 1
+};
+
+const A50_4: Amendment = {
+  id: 'A50.4', ...PETRATE,
+  find: '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: households × 0.57. Not an observed count."\n',
+  replace: '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count."\n',
+  count: 1
+};
+
+const A50_5: Amendment = {
+  id: 'A50.5', ...PETRATE,
+  find: '  communities() {\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + '    return P.filter((p) => p.market === market && p.status === "published").map((p) => {\n'
+    + '      const hh = p.hh != null ? num(p.hh) : undefined;\n',
+  replace: '  communities() {\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + "    // THE DESIGN'S OWN FIXTURE ARITHMETIC, and not a production rate. A pet-household figure\n"
+    + '    // is `households x a national pet-ownership incidence rate`; that rate belongs to the\n'
+    + '    // API — `app/census/pet_rate.py` is the one place it is written down, with its whole\n'
+    + "    // provenance, and `GET /api/listings` serves the rate each listing's own figure was\n"
+    + '    // actually computed with. This constant exists so the REFERENCE, which has no API and no\n'
+    + "    // served rate, can still draw the design's own fixtures, and it is read nowhere else.\n"
+    + '    const petRateFixture = 0.586;\n'
+    + '    return P.filter((p) => p.market === market && p.status === "published").map((p) => {\n'
+    + '      const hh = p.hh != null ? num(p.hh) : undefined;\n'
+    + "      // A16.1's rule in A33.1c's shape: gated on ADAPTER PRESENCE, never on data. With the\n"
+    + '      // Browse adapter the rate is the SERVED one or the figure is absent — a pet-household\n'
+    + '      // count computed from a rate nobody recorded is what this seam exists to remove.\n'
+    + '      const petRate = this.props.market ? p.petRate : petRateFixture;\n',
+  count: 1
+};
+
+const A50_6: Amendment = {
+  id: 'A50.6', ...PETRATE,
+  find: '        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,\n',
+  replace: '        pets: (hh !== undefined && petRate != null) ? Math.round(hh * petRate) : undefined,\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -8410,5 +8548,12 @@ export function amendments(): Amendment[] {
     // A31.14f/A31.14g -- fix round 1 (review 1's Important-2, 2026-09-14). A31.14f is CHAINED on
     // A31.12's own `src:` line and A31.14g on A34.3's own clause in `metaSource`'s head comment,
     // so both run after them, which appending the family last already guarantees.
-    A31_14f, A31_14g];
+    A31_14f, A31_14g,
+    // A50 -- the pet-household rate is the AVMA's, dated, current and centralised (Task
+    // PET-RATE-PROVENANCE, John 2026-09-15). Appended last, as every family is. THREE are
+    // CHAINED on an earlier family's output -- A50.1 on A24.25's derivation comment,
+    // A50.2 on A34.1's `dataset:` line and A50.4 on A24.30b's tooltip sentence -- so each
+    // runs after the entry it reads; A50.3, A50.5 and A50.6 take pristine text.
+    // Definition order in this file matches this list (m8).
+    A50_1, A50_2, A50_3, A50_4, A50_5, A50_6];
 }

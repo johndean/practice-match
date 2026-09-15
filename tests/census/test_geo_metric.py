@@ -335,8 +335,8 @@ def test_households_are_written_at_the_tract_with_their_own_published_margin(
 def test_pet_households_are_derived_from_the_same_tract_and_say_so(world: psycopg2.extensions.connection) -> None:
     """§9: a modelled estimate is identified as one. `is_derived` is true, `formula_version` is
     stamped, the assumed rate is in `inputs` where the layer catalogue's own caveat can be checked
-    against it, and the formula is `metrics.pet_households_est` -- the design's own households x
-    0.57, never a second implementation of it.
+    against it, and the formula is `metrics.pet_households_est` -- households x the ONE rate
+    (`app.census.pet_rate.INCIDENCE_RATE`), never a second implementation of it.
 
     It inherits the households row's suppression as `input_suppressed`, exactly as
     `materialize.py`'s own pets row does: an estimate built on a figure too imprecise to show is
@@ -399,7 +399,7 @@ def test_the_tract_household_scan_runs_once_for_both_layers_that_read_it(
     world: psycopg2.extensions.connection,
 ) -> None:
     """Review round 1, Minor 2. `households` and `pet_households_est` are the same ACS variable at
-    the same geography -- pets is `round(households x 0.57)` and has no source of its own -- and
+    the same geography -- pets is `round(households x PET_RATE)` and has no source of its own -- and
     each builder ran the whole `_HOUSEHOLDS_SQL` scan, so a nightly did two full passes over
     ~84,000 tract rows for a deterministic multiple of figures it had already read.
 

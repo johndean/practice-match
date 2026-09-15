@@ -8,7 +8,7 @@ import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
-import { P } from '../src/logic.js';
+import { Component, P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 import { readFileSync } from 'node:fs';
@@ -265,6 +265,23 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
     const body = JSON.parse(designListingsBody()) as { items: unknown[]; next_cursor: string | null };
     expect(body.items).toHaveLength((P as unknown as unknown[]).length);
     expect(body.next_cursor, 'the stub is one page — a cursor would send load.ts round again').toBeNull();
+  });
+
+  // A50 (Task PET-RATE-PROVENANCE, 2026-09-15) — the same rule A33.1c's `income_vs_us_pct` row
+  // states, for the same reason. With the Browse adapter present the design derives its
+  // pet-household figure from the SERVED rate or shows no figure at all, and the app under test
+  // always has that adapter while the reference never does. An oracle that answered `pet_rate:
+  // null` would make the app render no estimated-pet-household figure over a reference that
+  // renders one, and every Browse state that carries that card would diverge for a reason about
+  // the harness rather than about the design. So it answers with the DESIGN'S OWN rate — read out
+  // of `communities()`'s own declaration, not typed here, so a re-citation moves the oracle with
+  // the design instead of leaving the two quietly disagreeing.
+  it("answers with the design's own pet rate on every row, read from the design's own declaration", () => {
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, "communities() no longer declares `const petRateFixture = …;` on one line").toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThan(0);
+    expect(body.items.every((r) => r.pet_rate === Number(declared![1]))).toBe(true);
   });
 });
 

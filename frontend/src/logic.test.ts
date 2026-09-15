@@ -3533,8 +3533,18 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
       expect(typeof comm[k], `communities().${k} for a listing with figures`).toBe('number');
     }
-    // The design's own arithmetic, unchanged: pets is 57 % of households, econ is thousands.
-    expect(comm.pets).toBe(Math.round(comm.hh * 0.57));
+    // The design's own arithmetic: pets is `households x the rate`, econ is thousands. A50 (Task
+    // PET-RATE-PROVENANCE, 2026-09-15) moved the rate to the AVMA 2025 Sourcebook's 58.6 % and
+    // took the literal out of this case: the expected value is read from the design's OWN
+    // declaration — `communities()`'s demoted `petRateFixture`, which answers on the reference
+    // path where there is no adapter and no served rate — so a re-citation moves this case with
+    // the design rather than leaving a number nobody can trace, which is the defect A50 removes.
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, 'communities() no longer declares `const petRateFixture = …;` on one line').toBeTruthy();
+    expect(comm.pets).toBe(Math.round(comm.hh * Number(declared![1])));
+    // …and the demoted constant is NOT the retired 0.57: John's ruling of 2026-09-15 is that the
+    // historical rate is kept as provenance and never as an active multiplier, on any path.
+    expect(Number(declared![1])).toBe(0.586);
   });
 
   // ---- F-2/F-3/F-8, the panel's Insights tab -----------------------------------------------
@@ -5387,7 +5397,11 @@ describe('A24 — real boundary polygons', () => {
     expect(tip).toContain('authoritative geography');
     // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
     const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
-    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    // A50.4: the sentence names the figure's two sources rather than a bare rate — the Census
+    // supplies the households and the AVMA the incidence, and a caption naming only one of them
+    // is what John's §5 forbids. "Not an observed count." is carried forward byte for byte.
+    expect(pets).toContain('Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count.');
+    expect(pets, 'the retired rate is never printed again').not.toContain('0.57');
     expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
   });
 
@@ -6871,10 +6885,17 @@ describe('A48 — the competition figure names its area, its universe and its fl
   it('…and the other five layers\' prose is byte-identical to what it was', () => {
     // The ruling reached ONE layer's `means`. Pinned as literals, because the whole point of a
     // characterisation case is that a later edit to the shared `LAYER_META` object cannot move a
-    // neighbour in silence.
+    // neighbour in silence — which is exactly what it caught when A50 landed beside A48.
+    //
+    // `pets` MOVED, under its own ruling and not this one (A50.3, Task PET-RATE-PROVENANCE, John
+    // 2026-09-15). Its prose said the figure is "a modelled estimate … not a measured figure" and
+    // never said modelled FROM WHAT or BY WHOM; his §5 requires the product to say that the
+    // household count is Census ACS, the incidence is the AVMA's, and the national rate does not
+    // establish the local one. The literal is updated rather than the layer dropped from this
+    // table: dropping it would retire the guard on the one layer that has since proved it works.
     const UNCHANGED: Record<string, string> = {
       income: 'Higher-income areas may support stronger demand, but income alone does not indicate practice performance.',
-      pets: 'This is a modelled estimate of how many households in an area keep pets, not a measured figure.',
+      pets: "Census household counts for the area multiplied by the American Veterinary Medical Association's national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",
       growth: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
       households: 'The count of occupied housing units in each community — the denominator behind most other figures here.',
       econ: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures."

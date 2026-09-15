@@ -2023,7 +2023,7 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

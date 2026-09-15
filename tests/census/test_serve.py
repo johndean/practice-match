@@ -276,6 +276,10 @@ def test_community_rows_missing_listing_is_six_nulls_and_no_label(conn):
         "growth_scope": None, "income_note": None,
         # A33.1: …and says nothing about a median it does not have.
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
@@ -677,6 +681,10 @@ def test_a_listing_with_neither_band_is_six_nulls_and_no_label(conn):
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
@@ -936,6 +944,10 @@ def test_a_listing_with_neither_band_carries_no_scope_and_no_income_note(conn):
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
         "income_vs_us_pct": None, "income_approximate": None,
+        # Task PET-RATE-PROVENANCE: and no pet-ownership rate, because the rate is provenance
+        # for a figure this row does not have. The design then shows no estimated-pet-household
+        # figure at all rather than one computed from a rate nobody recorded for this listing.
+        "pet_rate": None,
     }
 
 
@@ -1653,3 +1665,110 @@ def test_a_rooftop_listing_keeps_its_catchment_and_its_label(conn):
 
     assert (row["pop"], row["hh"], row["income"]) == ("369,569", "181,745 households", "$109,548")
     assert row["label"] == BAND_LABEL
+
+
+def test_the_pet_rate_served_is_the_one_stamped_on_the_listings_own_row(conn):
+    """Task PET-RATE-PROVENANCE, controller ruling (2) — the API serves the RATE so the design
+    stops keeping its own.
+
+    It is read off `market_metric.inputs.pet_incidence_rate`, the stamp `materialize.py` writes on
+    the listing's own pet row, and NEVER from the module constant: the rate a figure was computed
+    with is a fact about that row, and a listing materialised before a re-citation must report the
+    rate it was actually computed with rather than the one in today's code. The row below is
+    stamped with a deliberately wrong-looking rate for exactly that reason — if this served
+    `pet_rate.INCIDENCE_RATE` the assertion would read 0.586 and the provenance would be a lie
+    about that listing.
+
+    It follows the AREA GROUP's own band (D-C38), because the pets estimate is derived from the
+    households figure in that group: a rate read from the other band would describe a figure this
+    payload does not carry."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'households', '2019-2023', 55000, 'count', false, NULL, false, 'acs5', NULL, now()), "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', %s, now())",
+            (listing_id, listing_id, '{"acs5": "2019-2023", "geo_level": "place", "pet_incidence_rate": 0.57}'),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+    assert row["pet_rate"] == 0.57
+
+
+def test_a_listing_with_no_pet_row_is_served_no_rate_at_all(conn):
+    """No stamp, no rate — never the module's constant as a stand-in. With the Browse adapter
+    present the design shows NO estimated-pet-household figure for such a listing, which is
+    A16.1's rule (`the served one or nothing`) applied to this fact: a figure computed from a rate
+    nobody recorded is exactly what this task exists to remove."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, computed_at) VALUES "
+            "(%s, 'place', 'households', '2019-2023', 55000, 'count', false, NULL, false, 'acs5', now())",
+            (listing_id,),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+    assert row["pet_rate"] is None
+
+
+def test_an_uncleared_dataset_serves_no_pet_rate_even_though_the_stamp_is_there(conn):
+    """The rate is provenance for a figure, and a figure whose dataset is not licence-cleared is
+    not shown at all — so neither is the rate behind it. Same term `_servable` applies to every
+    other figure on this row, applied here to the one member that is not a figure."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        # The row is written while the dataset IS cleared: `market_metric_license_gate` refuses a
+        # write from an uncleared dataset outright (`migrations/062`), so the state this test is
+        # about — a stamped row whose licence was withdrawn AFTERWARDS — is only reachable in that
+        # order. That is also the real sequence: the pipeline writes, counsel changes its mind.
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', %s, now())",
+            (listing_id, '{"acs5": "2019-2023", "geo_level": "place", "pet_incidence_rate": 0.586}'),
+        )
+        cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None
+
+
+def test_a_pet_row_with_no_inputs_at_all_serves_no_rate(conn):
+    """`market_metric.inputs` is NULLABLE, and a row written before the stamp existed carries no
+    `inputs` object to read a key out of. That is "nobody recorded a rate", which is exactly the
+    answer `None` means here — never the module's current constant standing in for a figure it
+    did not produce."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', NULL, now())",
+            (listing_id,),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None
+
+
+def test_a_stamp_that_is_not_a_number_names_no_rate(conn):
+    """`inputs` is jsonb, so ANY json value can arrive on that key. A boolean is the one that
+    would slip a plain `isinstance(x, (int, float))` — `isinstance(True, int)` is True in Python,
+    so a stamped `true` would become the rate 1.0 and the design would report every household in
+    the ring as a pet household. A non-number names no rate, and the design shows no figure."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', %s, now())",
+            (listing_id, '{"acs5": "2019-2023", "geo_level": "place", "pet_incidence_rate": true}'),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None

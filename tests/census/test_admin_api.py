@@ -93,7 +93,12 @@ async def test_staff_may_read_it_too_and_the_list_is_ordered_by_key(client, memb
     r = await client.get(PATH, headers=auth_headers(cookies, hdr))
     assert r.status_code == 200
     keys = [row["dataset_key"] for row in r.json()]
-    assert keys == sorted(keys) and len(keys) == 19  # A38: + esri_tiles, esri_imagery (controller ruling 17)
+    # 20 since two branches each added rows: A38 registered the two Esri basemaps the product
+    # actually loads (controller ruling 17), and Task PET-RATE-PROVENANCE (2026-09-15, ruling 4)
+    # gave the cited AVMA national statistic its own row -- it is USED and its redistribution
+    # right is unresolved, a different status from the blocked per-geography feed it used to
+    # share a row with. Derived at the merge: 17 + 2 + 1.
+    assert keys == sorted(keys) and len(keys) == 20
 
 
 async def test_every_row_carries_its_attribution_and_agrees_with_the_licence_gate(client, conn, redis, member):

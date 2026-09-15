@@ -80,6 +80,7 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census import pet_rate as PR
 from app.census.bands import HOUSEHOLDS_STOPS, INCOME_STOPS, band_ambiguous
 from app.census.geo_metric import GEO_VERSION_KEY
 from app.census.materialize import _suppression
@@ -351,6 +352,21 @@ THRESHOLD_RULE = (
     "establishments, though they are counted in its all-industry total."
 )
 
+# Task PET-RATE-PROVENANCE (John, 2026-09-15). The pets layer's caveat, COMPOSED from
+# `app.census.pet_rate` rather than typed, so the served sentence and the provenance record can
+# never disagree about the rate, the edition or the licence. It carries John's §5 disclosure in
+# full: the households are Census, the incidence is AVMA, the product of the two is an estimate
+# and not an observed count, and a national rate does not establish a local one. It no longer
+# says "placeholder" -- the rate is the approved AVMA figure now, and the word was the old
+# provenance defect written into the copy.
+PETS_CAVEAT = (
+    f"Derived estimate, not an observed count: {PR.DERIVATION}. "
+    f"The rate is {PR.INCIDENCE_RATE_DISPLAY} of {PR.RATE_GEOGRAPHY} households "
+    f"({PR.SOURCE}, {PR.SOURCE_EDITION} {PR.SOURCE_DATASET}, reference period "
+    f"{PR.REFERENCE_PERIOD}); it is a national incidence and does not establish this area's own "
+    f"pet-ownership rate. Licence: {PR.LICENCE_STATUS}."
+)
+
 # The UNIVERSE ZIP Code Business Patterns counts, stated once and read in two places: this
 # catalogue's `competition` caveat, which an integrator reads, and -- word for word -- the design's
 # "What this means" card, which a buyer reads (amendment A48.1, D-C57). ZBP counts business
@@ -367,7 +383,7 @@ EMPLOYER_UNIVERSE = (
 LAYERS: list[dict[str, Any]] = [
     {"key": "income", "label": "Median Household Income", "dataset_key": "acs5", "metric": "median_hh_income", "is_derived": False, "caveat": None},
     {"key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "metric": "pet_households_est", "is_derived": True,
-     "caveat": f"Derived estimate: households \u00d7 {M.PET_RATE} (national placeholder rate until a licensed regional rate is cleared)."},
+     "caveat": PETS_CAVEAT},
     {"key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior", "metric": "population_growth_pct", "is_derived": True, "geo_level": "place",
      "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP."},
     {"key": "households", "label": "Households", "dataset_key": "acs5", "metric": "households", "is_derived": False, "caveat": None},
@@ -543,6 +559,12 @@ async def layers() -> Response:
             "shading": SHADING.get(layer["key"]),
             "state": state, "is_derived": layer["is_derived"], "caveat": layer["caveat"],
         }
+        # Task PET-RATE-PROVENANCE: the pets layer is the one figure in this catalogue whose
+        # rate comes from OUTSIDE the Census, so it is the one that has to say where. The record
+        # is composed at request time because two of its fields are not `pet_rate`'s to state --
+        # the ACS release THIS database serves and the formula version the pipeline stamps.
+        if layer["key"] == "pets":
+            entry["provenance"] = PR.provenance(household_vintage=act.get("acs5"), methodology_version=M.FORMULA_VERSION)
         if blocked_reason is not None:
             entry["blocked_reason"] = blocked_reason
         out.append(entry)

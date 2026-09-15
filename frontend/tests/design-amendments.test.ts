@@ -469,6 +469,11 @@ describe('local design amendments (spec D15)', () => {
     // is the METRO's own figure names ONE geography, on its note, and its source line carries the
     // dataset alone — and `metaSource`'s own head comment says so.
     'A31.14f', 'A31.14g',
+    // A50 -- the pet-household rate is the AVMA's, dated, current and centralised (Task
+    // PET-RATE-PROVENANCE, John 2026-09-15). Appended last, as every family is. Three are
+    // CHAINED: A50.1 on A24.25's derivation comment, A50.2 on A34.1's `dataset:` line and
+    // A50.4 on A24.30b's tooltip sentence; A50.6 rewrites A21.1c's own `pets:` line.
+    'A50.1', 'A50.2', 'A50.3', 'A50.4', 'A50.5', 'A50.6',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -500,7 +505,10 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;');
     expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
     // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
-    expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
+    // A50.4 (Task PET-RATE-PROVENANCE, 2026-09-15) replaced the bare `0.57` with the two
+    // sources the figure actually has; "Not an observed count." is carried forward, and it is
+    // the half of the sentence §9 is about.
+    expect(amended).toContain('"Modelled estimate: Census households \u00d7 the AVMA national pet-ownership rate. Not an observed count."');
     // §15: a competition count never reaches the screen bare — it names what it counts and the
     // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
     expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
@@ -678,7 +686,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(379);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(385);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
