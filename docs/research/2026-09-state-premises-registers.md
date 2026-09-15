@@ -51,12 +51,13 @@ search result and never a third-party mirror.
 | **NY** | **NO** — state licenses individuals only | [op.nysed.gov Article 135](https://www.op.nysed.gov/title8/education-law/article-135) · [Subpart 62](https://www.op.nysed.gov/professions/veterinarian/laws-rules-regulations/subpart-62) | individual lookup yes | **PARTIAL** — request-gated bulk files exist | **NO** | **0 facilities**; **5,765** NY-addressed veterinarians (1 Jan 2026) | **conditional** (for the individual register that does exist) |
 | **CA** | **YES** — "Veterinary Premises", B&P §4853 | [dca.ca.gov/consumers/public_info](https://www.dca.ca.gov/consumers/public_info/index.shtml) | **YES** | **YES** — free monthly file, no account | **NO** — and it is a *mailing* address (16.7% out-of-state) | **3,905** active (4,744 disclosable) | **conditional** — DCA grants copying "for non-commercial use only" |
 | **FL** | **YES** — premises permits, §474.215 F.S. | [myfloridalicense.com veterinary public records](https://www2.myfloridalicense.com/veterinary-medicine/public-records/) | **YES** | **YES** — free weekly CSV | **NO** — addresses only, and *mailing* | **3,127** establishments | **reuse allowed** |
-| **CO** | **NO** — no agency registers a veterinary facility; PACFA **exempts** vet hospitals | [C.R.S. §35-80-103(2)(a)](https://leg.colorado.gov/) · [DORA licensee data](https://data.colorado.gov/Business/Professional-and-Occupational-Licenses-for-Colorad/7s5z-vewr) | **YES** (for the individual data) | **YES** — but of *people*, not premises | **NO** — city/state/mailing ZIP only | **0 facilities**; **6,259** active veterinarians | **reuse allowed** (public domain, one attribution string) |
+| **CO** | **NO** — no agency registers a veterinary facility; PACFA **exempts** vet hospitals, and 4 CCR 727-1 has no premises credential | [DORA licence types](https://data.colorado.gov/Regulations/Professional-and-Occupational-License-Types-in-Col/349y-twqi) · [board rules 4 CCR 727-1](https://www.sos.state.co.us/CCR/GenerateRulePdf.do?ruleVersionId=9416) | **YES** (for the individual data) | **YES** — but of *people*, not premises | **NO** — no street address at all; city/state/mailing ZIP only, 29% out-of-state | **0 facilities**; **6,259–6,293** active veterinarians | **conditional** — public domain, but a mandatory disclaimer string and a reserved revocation right |
 
 **Reading the verdict column.** A verdict is about *whatever register that state actually has*. For
 TX, NY and CO there is no premises register, so the verdict describes the individual-licensee data
-that does exist — and "reuse allowed" for Colorado emphatically does **not** mean a facility list may
-be reused, because no facility list exists. Only CA and FL have verdicts about premises data.
+that does exist — Colorado's "conditional" emphatically does **not** mean a facility list may be
+reused, because no facility list exists. **Only CA and FL have verdicts about premises data**, and
+both of those publish a mailing address rather than the clinic's.
 
 ---
 
@@ -522,17 +523,78 @@ Socrata APIs were read live. And **4 CCR 727-1**, the Board of Veterinary Medici
 not be read at all — `sos.state.co.us` was geo-blocked and no snapshot was found. The statute is
 unambiguous, but a rules-level premises requirement cannot be excluded from what was actually read.
 
-**On the second pass: it did not return.** An independent second Colorado pass was dispatched and had
-not reported when this document was finalised, so **Colorado is the one row here standing on a single
-pass.** Two things partly make up for it. First, the row does not rest on one source: it has three
-independent proofs (no business-entity licence type at DORA, the PACFA statutory exemption, and the
-duty-not-registration reading of §12-315-122), and they are of different kinds — an administrative
-fact, a statute and a statute. Second, **I re-tested the geo-block myself from this session** and
-reproduced it exactly — `ag.colorado.gov` and the OLLS C.R.S. PDF on `leg.colorado.gov` both return
-**HTTP 403**, and a Justia mirror of §35-80-103 returns 403 as well — which corroborates pass 1's
-account of *why* it had to read archived copies, without corroborating what it read in them.
-**Treat Colorado as well-evidenced but single-sourced, and re-verify from a US network before it is
-relied on.**
+### The second pass — it confirmed the answer, closed the gap, and corrected four things
+
+The core finding survived independently: ten veterinary licence types at DORA, **all flagged
+Individual**; zero veterinary rows carrying an entity name against 57,620 statewide that do; the
+PACFA exemption; and no facility programme in the Board's history (DPO's own timeline runs 1907
+Board created, 2022 technicians regulated, 2026 Veterinary Professional Associates).
+
+**It closed this row's one hole.** Pass 1 could not read **4 CCR 727-1**, the Board's own rules.
+Pass 2 retrieved all 23 pages and confirms the reading: the rules use "veterinary premises" only as a
+defined *location*, imposing duties — a written protocol "established by the licensed veterinarian
+**designated as responsible pursuant to section 12-315-122, C.R.S., for each 'veterinary premise'**",
+with discipline for "Failure to Designate a Licensed Veterinarian as Responsible" and "Failure to
+Keep Veterinary Premises Clean and Sanitary" — and **no registration, filing, notification or
+credential for the premises anywhere in them**. A duty enforced by discipline produces no list.
+
+**Four corrections, all taken into the row above:**
+
+1. **The verdict moves `reuse allowed` → `conditional`.** Pass 1 read the public-domain dedication
+   and stopped. Pass 2 read the Terms of Service as conditions: the disclaimer string is **mandatory**
+   ("Applications using data supplied by this site **must include** the following disclaimers on
+   their sites"), and the State "reserves the right … **to require the termination of any and all
+   displaying, distributing or otherwise using any or all of the data for any reason**". Permitted,
+   but on terms and revocably. A softener sits beside it — DORA's own dataset note says the data is
+   "**intended for research purposes only**" — which is descriptive metadata rather than licence
+   text, next to an explicit `PUBLIC_DOMAIN` licence, but it is the one sentence a cautious reviewer
+   would raise against commercial display.
+2. **§24-72-305.5 is not a CORA provision at all.** Pass 1 read it as CORA confined to
+   official-action records. Pass 2 places it in **Part 3, the Criminal Justice Records Act**
+   (§24-72-301 et seq.), not CORA Part 2 — so it is even further from a licensee list than pass 1
+   said. **But pass 2 adds an honest residual: it did not read CORA Part 2 in full and cannot rule
+   out a separate Part 2 solicitation provision. UNKNOWN.**
+3. **PACFA's cadence is published after all** — pass 1 found none; pass 2 quotes CDA: "The PACFA
+   Active Facilities List is **published weekly**". The sheet read 2026-09-11.
+4. **The counts differ slightly between passes**, on the same nightly-updated table a day apart:
+   **6,259** (pass 1) against **6,293** (pass 2) active Veterinarians, and 4,135 against 4,139
+   technicians. Both are recorded rather than reconciled; the difference is immaterial to the
+   conclusion and is what a daily-refreshed register looks like.
+
+**One nuance pass 2 added that must not be over-read.** The PACFA carve-out is for veterinary
+hospitals *boarding for veterinary medical care*. A veterinary practice that **also** runs commercial
+boarding, grooming or retail **does** need PACFA licensing **for that activity** — so a handful of
+PACFA rows may be veterinary businesses licensed as groomers or boarders, with nothing in the data
+identifying them as such. The list cannot be used to count veterinary facilities in either direction.
+
+**And Colorado carries the same address defect as Florida and California, worse.** DORA's field is
+literally named `mailzipcode`, and of 6,293 active veterinarian records only **4,462 (70.9%) carry a
+Colorado address** — **29% show an out-of-state address of record**. PACFA shows 57 of 3,077 rows
+out of state. Both are addresses of record for the holder, not verified locations — and neither
+carries a street address at all, so there is nothing to geocode even if it were the right address.
+
+**On "human action required": the prepared board request should be dropped or narrowed.** Everything
+obtainable is already obtainable without contacting anyone — the DORA bulk roster is free ("No Fee
+Required"), the Socrata API is open, the PACFA sheet is a public Google Sheet. There is no gated
+dataset behind the Board. The single question worth asking, if it is sent at all, is narrow: whether
+the **§12-315-122 responsible-veterinarian designation is ever *filed with* the Board** rather than
+merely made on-site — the one route by which a de facto premises list could exist. Pass 2's reading
+of 4 CCR 727-1 is that it is not filed. Addressed to the Colorado State Board of Veterinary Medicine
+at DORA/DPO under **CORA, C.R.S. §24-72-201 et seq.** (not the CCJRA). Any fee is **UNKNOWN** —
+DORA's published CORA fee schedule could not be read.
+
+**Both passes hit the same wall, and so did I.** Colorado's CMS estate sits behind a CloudFront
+distribution returning `403 — "The Amazon CloudFront distribution is configured to block access from
+your country"`. I re-tested it from this session and reproduced it exactly: `ag.colorado.gov` **403**,
+the OLLS C.R.S. PDF on `leg.colorado.gov` **403**, and a Justia mirror of §35-80-103 **403**. So the
+agency pages were read from Wayback captures of the agencies' own URLs, while the live *data* (the
+PACFA sheet, the DORA API, the Board's rules PDF) was read directly and is current. **Neither pass
+read the Colorado Revised Statutes themselves** — CDA's own page notes "The LexisNexis website is the
+only official source of the Colorado Revised Statutes" — so the statutory quotations here come from
+other Colorado government publications citing them: the General Assembly's Legislative Council Staff
+issue brief for the §35-80-103 exemption, and the Colorado Judicial Branch access guide for
+§24-72-305.5's placement. **From a US network this row should be re-verified against the statute
+itself.**
 
 ---
 
@@ -683,7 +745,7 @@ INSERT INTO dataset_registry
   ('state_premises_co','Colorado veterinary premises',NULL,'n/a','n/a',NULL,
    'n/a','blocked',NULL,NULL,
    'Not in use — Colorado registers no veterinary premises',
-   'NO SUCH REGISTER EXISTS. DORA licenses individuals only (no business-entity veterinary licence type); C.R.S. 35-80-103(2)(a) expressly exempts veterinary hospitals from PACFA, the one facility regime Colorado has; C.R.S. 12-315-122 imposes a responsible-veterinarian DUTY and 12-315-106(6) an inspection power, neither of which enumerates premises. DORA''s licensee data is explicitly public domain but carries no street address (city/state/mailing ZIP only). Residual UNKNOWN: 4 CCR 727-1 could not be read.');
+   'NO SUCH REGISTER EXISTS. DORA licenses individuals only — all ten veterinary licence types are flagged Individual, and zero veterinary rows carry an entity name against 57,620 statewide that do. C.R.S. 35-80-103 exempts veterinary hospitals boarding for veterinary medical care from PACFA, the one facility regime Colorado has (NUANCE: a practice ALSO running commercial boarding/grooming/retail needs PACFA for that activity, and nothing in the data marks it as veterinary). C.R.S. 12-315-122 imposes a responsible-veterinarian DUTY and 12-315-106(6) an inspection power; 4 CCR 727-1 was read in full and contains no registration, filing, notification or credential for a premises. DORA''s licensee data is explicitly PUBLIC_DOMAIN but reuse is CONDITIONAL: data.colorado.gov''s ToS makes the State''s disclaimer string mandatory and reserves a right to require termination of use, and DORA''s own note says the data is "intended for research purposes only". No street address at all (city/state/mailzipcode), and 29% of active veterinarian records carry an out-of-state address of record. Residual UNKNOWN: whether CORA Part 2 carries its own solicitation provision, and whether the 12-315-122 designation is ever filed with the Board.');
 ```
 
 ## Method, and where the two passes disagreed
@@ -697,23 +759,36 @@ what it caught, because three of the five rows would have shipped wrong:
 | **TX** | **Reversed the premise.** Pass 1 read the board's licence types and rulebook and concluded "no facility register, and none coming". Pass 2 read the *statute* and found SB 2155's Subchapter M, in force since 1 Sep 2026. Re-verified by a third party (me) against the enrolled bill and the board's announcement. |
 | **NY** | Answer held, three supporting claims fell: a **bulk route does exist** (request-gated Downloads tab, "Veterinarian" among its 80 professions); the count **8,314 is worldwide, 5,765 is New York** — a 44% overstatement; and **two other NY agencies do register veterinary premises** (10 NYCRR §16.54, NYC Health Code §175.51), unpublished. Verdict moved **prohibited → conditional**. Pass 1's "TLS failure" on the site-wide terms was a tooling artefact — pass 2 read the page live. |
 | **CA** | **Resolved what pass 1 called unresolvable.** The ca.gov/DCA conflict breaks in DCA's favour on ca.gov's own "unless otherwise indicated" plus its express deferral to departmental policies. Verdict **unclear → conditional**. Pass 2 also found the `robots.txt` bar on `/details/`, that **GC §7927.310 (named in the brief) does not exist**, and the **16.7% out-of-state** figure that makes California a data-fitness problem regardless of the licence. |
-| **FL** | Not re-run — the sweep was stopped. Single pass. |
-| **CO** | Second pass did not return in time. **Single-sourced**; see the note in that section. |
+| **FL** | Not re-run — the sweep was stopped. **Single pass**, and the one row here that had no second look. |
+| **CO** | Answer held, and the second pass **read 4 CCR 727-1**, which pass 1 could not — closing the row's one hole. Four corrections: verdict **reuse allowed → conditional** (the ToS disclaimer string is mandatory and the State reserves a revocation right); **§24-72-305.5 sits in the Criminal Justice Records Act, not CORA**; PACFA's cadence **is** published ("weekly"); and the two passes report **6,259 vs 6,293** active veterinarians on a nightly-refreshed table a day apart. |
 
 Where the passes disagreed, this document carries the second pass's finding and says so in the text
-rather than quietly picking a winner.
+rather than quietly picking a winner. Where they disagreed on a *number* and neither is wrong — the
+Colorado counts — both are shown.
+
+**The pattern in those corrections is worth naming.** In four of the five states the second pass
+changed something material, and in three cases the first pass's error was the same error: **it read
+what the agency's website says today and stopped, without reading the instrument underneath it** —
+the session law in Texas, the incorporated terms in California, the Downloads tab and the statistics
+footnote in New York. A website is a secondary source about its own legal regime. That is the
+transferable lesson for any future state added to this set.
 
 ## What I could not establish, and why
 
 A spike that reports five clean rows is less trustworthy than one that reports its gaps. These are
 the gaps.
 
-1. **Colorado got one pass, not two, and its board rules were never read.** The second pass did not
-   return in time, so Colorado is the one single-sourced row here. Separately, **4 CCR 727-1** (the
-   Board of Veterinary Medicine's own rules) could not be read at all — `sos.state.co.us` was
-   geo-blocked and no usable snapshot was found. The statute is unambiguous that no facility
-   registration exists, but a rules-level premises requirement cannot be excluded from what was
-   actually read. **UNKNOWN**, and it is the one hole in an otherwise clean Colorado row.
+1. **Neither Colorado pass read the Colorado Revised Statutes themselves.** The CloudFront geo-block
+   defeated both passes and me — CDA's own page notes "The LexisNexis website is the only official
+   source of the Colorado Revised Statutes". The statutory quotations come from other Colorado
+   government publications citing them (the Legislative Council Staff issue brief; the Judicial
+   Branch access guide). The board's rules **were** read in full. Two residuals stay open: whether
+   **CORA Part 2** carries its own solicitation provision, and whether the §12-315-122
+   responsible-veterinarian designation is ever **filed with** the Board — the one route by which a
+   de facto premises list could exist. Both **UNKNOWN**.
+1b. **Florida was never given a second pass.** The sweep was stopped before one was dispatched, so
+   Florida is the one row here resting on a single researcher — mitigated only by the fact that it
+   independently reproduced three fields of an existing dataset built by a different stack.
 2. **Several Colorado and California primary pages were read from Wayback snapshots, not live.**
    `dpo.colorado.gov`, `ag.colorado.gov` and `leg.colorado.gov` returned CloudFront 403
    ("configured to block access from your country"), and `www.dca.ca.gov` and `vmb.ca.gov` were
