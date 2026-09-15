@@ -3,6 +3,7 @@ import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
+import { makeAdminDataSourcesAdapter } from './admin/data_sources';
 import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAdminUsersAdapter } from './admin/users';
 import { makeAuthAdapter } from './auth/adapter';
@@ -116,6 +117,21 @@ const props = defineProps({
   // lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
   adminUsers: { type: Object, default: () => makeAdminUsersAdapter() },
+  // A38: the real /api/admin/data-sources client, as the prototype's `adminDataSources` adapter
+  // — the seam `adminVals()`'s Data Sources tab and its badge read through (Task A38, D-C53).
+  // The tab is the platform's LEGAL gate (CLAUDE.md: "Blocked datasets never ship … The admin
+  // Data Sources tab shows this gate; keep it"), and it had been showing five literal rows, two
+  // of them false about the running product. With this present the tab renders the registry the
+  // API answered or NO rows, and the badge is the count that came back with them; the reference
+  // and the Claude Design preview pass nothing and keep the design's fixture path, which is what
+  // keeps the two targets on the same pixels. Nothing in the template reads `adminDataSources`;
+  // only `logic.js` does.
+  //
+  // `src/admin/data_sources.ts`, not an object literal here, for the reason `adminListings`
+  // records: this file is copied verbatim into App.vue and sits outside the coverage gate, so the
+  // logic lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminDataSources: { type: Object, default: () => makeAdminDataSourcesAdapter() },
   // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
   // design's own script branches on. With it present the Browse map draws the polygons the API
   // answered or NONE at all, whatever it answered; with no adapter — the reference server and

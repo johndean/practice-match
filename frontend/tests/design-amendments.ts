@@ -7403,6 +7403,126 @@ const A34_23: Amendment = {
 };
 
 // ---------------------------------------------------------------------------------------
+// A38 — the Data Sources tab reads the dataset registry (Task A38; John's ruling D-C53,
+// 2026-09-13: "all the admin tabs must be factual and fully functional, zero-gaps, zero-fake
+// data, everything must be surfaced and wired to UX").
+//
+// The tab CLAUDE.md calls legally load-bearing — "Blocked datasets never ship … The admin Data
+// Sources tab shows this gate; keep it" — was 100 % fixture, and two of its five rows were FALSE
+// about the running product: the basemap row said OpenStreetMap / ODbL where the product loads
+// Esri tiles and `dataset_registry` records CARTO, and the pet-ownership row showed "Unresolved"
+// over a dataset the database records as `blocked`. `app/api/admin_data_sources.py` had answered
+// the truth since Task A9 and NOTHING read it.
+//
+// APPLICATION ORDER IS A38.4, A38.5, A38.1, A38.2, A38.3c, and the ids are the brief's own.
+// The two REMOVALS run first on purpose: A38.1's `replace` re-introduces all five fixture rows,
+// so removing a button afterwards would be an entry eating text an earlier entry's `replace` put
+// there — AMEND-GUARD's LINE tier, and a `Consumes A38.1` token stating something that is not
+// what happened. Applied before it, each removal edits the PRISTINE bundle's own line and A38.1
+// simply wraps what is left.
+//
+// A38.3a AND A38.3b ARE RETIRED and their ids may NOT be reused (merge of `origin/main`,
+// 2026-09-15). They were the tab badge's shared `sc-if` and the `hasCount` flag it reads, and
+// their own docstring already said what to do about a second copy: "the mechanism for ALL FOUR
+// badges ... must REUSE these two rather than add a second `sc-if`". A39 reached main first with
+// the identical pair (A39.3b is A38.3a's edit, A39.3a is A38.3b's), and the two cannot coexist:
+// each one's `find` is the text the other's `replace` leaves, so whichever ran second would match
+// nothing and the engine's `count: 1` would fail. Main's shipped in 0.1.25, so those are the ones
+// that stand; the amended design is byte-identical either way, and A38.3c reads A39.3a's
+// `hasCount` exactly as it read A38.3b's.
+// ---------------------------------------------------------------------------------------
+const D_C53 = 'all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data, everything must be surfaced and wired to UX (D-C53)';
+const A38 = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources tab reads the dataset registry` };
+const A38_BUTTON = { date: '2026-09-13', ruling: `${D_C53} — a button that does nothing is removed (controller ruling 18, 2026-09-13)` };
+const A38_COUNT = { date: '2026-09-13', ruling: `${D_C53} — the Data Sources badge counts rows the VIN Foundation has not cleared` };
+
+/** A38.4 — "Assign review" leaves the design (controller ruling 18, 2026-09-13). The button
+ *  called nothing: no route assigns a licence review, no table records one, and the design's own
+ *  `A()` gives every action on this tab a prototype `go: () => {}`. D-C53's rule is that a button
+ *  which does nothing is REMOVED by amendment rather than shipped as a no-op, so the cell becomes
+ *  the design's own empty `cell(null)` — the shape its Requests tab already uses for a cell with
+ *  nothing in it. The real licence decision (`POST /api/admin/data-sources/{key}/license`, Clear
+ *  or Block with a note, behind REAUTH) EXISTS on the server and has no element in V3; composing
+ *  one is the admin spec's to approve and is recorded as a composition item, never invented here.
+ *  `admin-data-sources` is one of the thirteen frozen screens and this moves its pixels, so its
+ *  `baseline-manifest.json` hash is re-pinned under this ruling — A6's and A14's own mechanism. */
+const A38_4: Amendment = {
+  id: 'A38.4', ...A38_BUTTON,
+  find: "          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null, null, null, null, [A(\"Assign review\", \"primary\")])],",
+  replace: "          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],",
+  count: 1
+};
+
+/** A38.5 — "Open question" leaves the design, for A38.4's reason and under the same ruling: no
+ *  route, no table, no transition. The two are separate entries because they are two separate
+ *  buttons on two separate rows, and a single `find` spanning both would make the ledger say one
+ *  thing where two were removed. */
+const A38_5: Amendment = {
+  id: 'A38.5', ...A38_BUTTON,
+  find: "          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null, null, null, null, [A(\"Open question\")])]",
+  replace: "          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]",
+  count: 1
+};
+
+/** A38.1 — the Data Sources rows come from `dataset_registry`, and from nowhere else once an
+ *  adapter is present. A17.1's own shape and A16.1's own reason for the `!== undefined` test: a
+ *  LOADED empty registry is a real answer and must empty the table, and where the array is not
+ *  there at all, who is asking decides — the app renders zero rows whatever the API answered (a
+ *  load failure never shows a reviewer five datasets that are not the ones the platform holds),
+ *  and the reference and the Claude Design preview keep the design's own fixture. CHAINED on
+ *  A38.4 and A38.5: the five rows it re-introduces are the post-removal ones.
+ *  `s.adminDataRows` is written by A38.2's loader alone. */
+const A38_1: Amendment = {
+  id: 'A38.1', ...A38,
+  find: "        rows: [\n          [cell(\"Population, households, median income\", \"Refreshed annually\"), cell(\"U.S. Census Bureau — ACS 5-year estimates\", \"Public domain. Attribution requested. Ingested via the Census API.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Base map and tiles\", \"Live tiles\"), cell(\"OpenStreetMap contributors\", \"Open Database License. Attribution required and displayed on the map.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Address to coordinates\", \"On listing creation\"), cell(\"Census Geocoder\", \"Public domain. No commercial restriction identified.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],\n          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]\n        ]\n      }",
+  replace: "        rows: s.adminDataRows !== undefined ? s.adminDataRows : (this.props.adminDataSources ? [] : [\n          [cell(\"Population, households, median income\", \"Refreshed annually\"), cell(\"U.S. Census Bureau — ACS 5-year estimates\", \"Public domain. Attribution requested. Ingested via the Census API.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Base map and tiles\", \"Live tiles\"), cell(\"OpenStreetMap contributors\", \"Open Database License. Attribution required and displayed on the map.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Address to coordinates\", \"On listing creation\"), cell(\"Census Geocoder\", \"Public domain. No commercial restriction identified.\"), cell(null, null, \"Cleared\", \"ok\"), cell(null, null, null, null, [A(\"View terms\")])],\n          [cell(\"Pet ownership estimates\", \"Last checked June 2026\"), cell(\"Industry survey (commercial)\", \"License unresolved — redistribution terms unclear. Excluded from listings pending review.\"), cell(null, null, \"Unresolved\", \"bad\"), cell(null)],\n          [cell(\"Veterinary practice locations\", \"Prior VetVision work\"), cell(\"Mixed provenance\", \"Collection method not documented. Not ingested; needs a documented source before any competition view is built.\"), cell(null, null, \"Blocked\", \"bad\"), cell(null)]\n        ])\n      }",
+  count: 1
+};
+
+/** A38.2 — one line in A40.3's `loadAdmin()`, the seam that entry was written to carry ("A36
+ *  (Users), A37 (Requests) and A38 (Data Sources) each add theirs below"). Its own rejection arm
+ *  empties BOTH the rows and the badge: a tab left on the design's five fixtures after a refusal
+ *  is exactly what A17.1's rule forbids, and a badge left on a stale number would describe rows
+ *  that are no longer on the screen. The count is `null`, not `"0"` — a refused load does not
+ *  know that nothing is outstanding, and A39.3b unmounts the pill rather than printing a number
+ *  nobody measured. CHAINED on A40.3, whose `loads` array and `return` this sits between.
+ *
+ *  BOTH arms are token-checked, on A39.5's own `token` (merge of `origin/main`, 2026-09-15).
+ *  A39.5 gave the Listings arm A24.21's request token — read once when the load starts, re-checked
+ *  on arrival — and this arm was written before A39 existed, so the merge left one function
+ *  holding two loaders, one that let a superseded answer go and one that painted it, with the
+ *  token declared on the line above the arm that ignored it. Two `loadAdmin` calls in flight is
+ *  the ordinary case and not an exotic one: `componentDidMount` makes the first (A40.4) and the
+ *  header nav's own door makes another (A40.6), with A39.4's `onDecision` on top of both. The
+ *  REJECTION arm is checked for the same reason A39.5 gives: a superseded refusal emptying the
+ *  table a later load just filled is the same defect wearing A16.17's discipline as a disguise.
+ *  `token` and `this._adminLoad` are A39.5's declarations, which is why this family is applied
+ *  BEFORE A39 and still reads what A39 writes: the ORDER of the string edits decides what each
+ *  `find` matches, and the finished script is one function whose `const token` precedes both. */
+const A38_2: Amendment = {
+  id: 'A38.2', ...A38,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n    return Promise.all(loads);',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));\n'
+    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));\n'
+    + '    return Promise.all(loads);',
+  count: 1
+};
+
+/** A38.3c — the Data Sources badge counts what it says it counts: rows the VIN Foundation has
+ *  not cleared (`license_status <> 'cleared'`, the controller's ruling and the design's own
+ *  arithmetic — its literal "2" is the two of five fixture rows that are not Cleared). A16.1's
+ *  ternary again, keyed on adapter PRESENCE: with one, the number is the one that came back with
+ *  the rows under it or NO number at all; with none — the reference, the Claude Design preview —
+ *  the design's own "2". The count and the rows are one answer to one request, so the badge and
+ *  the table can never disagree, which is the defect this closes ("Data Sources 2" over whatever
+ *  the tab happened to be showing). */
+const A38_3c: Amendment = {
+  id: 'A38.3c', ...A38_COUNT,
+  find: '        { key: "data", label: "Data Sources", count: "2" }\n',
+  replace: '        { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }\n',
+  count: 1
+};
+
 // A39 — the Listings tab tells the truth about the queue it renders (Task A39; John's ruling
 // D-C53, 2026-09-13: "all the admin tabs must be factual and fully functional, zero-gaps,
 // zero-fake data, everything must be surfaced and wired to UX").
@@ -7827,6 +7947,349 @@ const A49_4: Amendment = {
   count: 1
 };
 
+/** A31.14 — SNAP-METRO (2026-09-14): the AREA card's headline is the METRO's own figure where
+ *  the Census publishes one, and the tract distribution beneath it is the SHAPE rather than the
+ *  number. Ruling D-C50's own deferral, recorded in the ONE-VOCABULARY audit as collision C2.
+ *
+ *  MEASURED on QA: the income card read "$95K · median of 541 Census tracts" — `percentile_cont`
+ *  over the metro's valued tracts, 94,801 on CBSA 12420 — while the Census publishes a metro
+ *  median household income for that same CBSA at the same release, 97,638 ± 1,163 (`acs_measure`,
+ *  summary level 310, B19013_001E). A stakeholder who knows the published figure was given two
+ *  "metro" numbers for one metro, and the one they could check was the one the screen did not
+ *  show. A31.12's own caption comment named this defect and left it to this task by name.
+ *
+ *  The ROUTE decides what a metro figure is and what to call it (`app/api/market.py`'s
+ *  `_metro_figure` and `METRO_BASIS`): `income` and `households` are ACS variables and the
+ *  Census publishes each for the metro itself; `pets` and `growth` are derived from published
+ *  metro figures; `econ` and `competition` are Business Patterns, which publishes nothing at
+ *  that level, so those two cards keep the median of their own counties or ZIP areas. The
+ *  DESIGN prints what it is handed and invents no word of its own, which is what keeps the
+ *  caption inside D-C51's closed vocabulary (A34 §3.1) with no second copy of it on this side.
+ *
+ *  The design's own fixtures carry no `metro` key — `summarySet()` computes none and
+ *  `design-summary.mjs` sends none — so the reference, the Claude Design preview and every
+ *  approved state take A31.12's own "median of N Census tracts" caption unchanged, and
+ *  A31.14a/A31.14b paint nothing new. The three PROSE entries DO move approved states, because a
+ *  footnote and a mode sub-line render whatever the data says: see their own rows. */
+const SNAPMETRO = {
+  date: '2026-09-14',
+  ruling: 'SNAP-METRO (controller, 2026-09-14, ruling D-C50\u2019s own deferral): the Census\u2019s PUBLISHED metro figure (summary level 310) becomes the Browse snapshot strip\u2019s AREA headline where one exists, with the derived \u201cmedian of N Census tracts\u201d figure kept where it is absent \u2014 so a stakeholder no longer reads \u201c$95K\u201d beside a published \u201c$98K\u201d for the same metro.'
+};
+
+/** A31.14a — the AREA headline prefers the metro's own figure. CHAINED on A31.8.
+ *
+ *  The ternary's LOCATION arm is byte for byte A31.8's: a practice's own figure has never come
+ *  from this endpoint. Only the AREA arm gains a term, and it is ordered so that `median` is what
+ *  answers whenever `metro` is absent or carries no value — which is every fixture path and, on a
+ *  real database, `econ` and `competition` for ever. */
+const A31_14a: Amendment = {
+  id: 'A31.14a', ...SNAPMETRO,
+  find: "          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);\n",
+  replace: "          // A31.14 (SNAP-METRO): in AREA mode the headline is the METRO's own figure where\n"
+    + "          // the route serves one - the Census publishes a metro median household income and\n"
+    + "          // a metro household total at summary level 310, and this card printed the median\n"
+    + "          // of the metro's TRACTS instead (94,801 against a published 97,638 on CBSA 12420).\n"
+    + "          // The distribution below is untouched: the bars are the polygons the map shades,\n"
+    + "          // which is the SHAPE this figure sits in, and `median` answers wherever the Census\n"
+    + "          // publishes nothing for the metro at all.\n"
+    + "          const metro = (sum && sum.metro && sum.metro.value != null) ? sum.metro : null;\n"
+    + "          const shown = sel ? (own != null ? num(own) : undefined) : (metro ? num(metro.value) : ((sum && sum.median != null) ? num(sum.median) : undefined));\n",
+  count: 1
+};
+
+/** A31.14b — the AREA caption, which the route composes. CHAINED on A31.12.
+ *
+ *  `metro.basis` is a caption phrase and the server is where it is written, for the reason
+ *  `metaSource`'s own rule states: one string per fact. The route knows whether the figure is the
+ *  Census's own estimate for the metro or something this pipeline derived from one, and the design
+ *  cannot know it — a client-side word would be a SECOND copy of that judgement, which is how
+ *  "market level" and "community level" reached the screen in the first place (A34/D-C51). Both
+ *  phrases the route can send are drawn from that ruling's closed list and pinned there by
+ *  `tests/census/test_summary.py`.
+ *
+ *  A31.12's own two arms are kept byte for byte beneath it, including "a card with no figure
+ *  carries NO caption": a metro figure the route did not send falls straight through to them. */
+const A31_14b: Amendment = {
+  id: 'A31.14b', ...SNAPMETRO,
+  find: '              : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n',
+  replace: "              // A31.14 (SNAP-METRO): where the route served the metro's own figure, the\n"
+    + "              // caption is the one IT composed - it is the side that knows whether the\n"
+    + "              // Census published this figure for this area or whether this pipeline derived\n"
+    + "              // it from one that was published. A word invented here would be a second copy\n"
+    + "              // of that judgement, which is how a geography the server never served reached\n"
+    + "              // the screen before (A34/D-C51). Both phrases it can send are in that\n"
+    + "              // ruling's own closed list.\n"
+    + "              : metro ? metro.basis\n"
+    + '              : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),\n',
+  count: 1
+};
+
+/** A31.14c — the snapshot strip's footnote. Supersedes A34.8, two of whose sentences this
+ *  release makes false by its own act (the A27.5 rule).
+ *
+ *  A34.8's §4 paragraph DEFINES what a metro figure is, and from here it is not always a median
+ *  of areas: on `income` and `households` it is the Census's own published estimate for the
+ *  metro. The next sentence goes with it — "In AREA mode each card is the median across the
+ *  metro's Census tracts, places, counties or ZIP areas" is the same claim one sentence later,
+ *  and the BARS still are that distribution, so the corrected sentence says which half is which.
+ *
+ *  Everything else in the paragraph is untouched, byte for byte: A34's own three-kinds opening,
+ *  the LOCATION half of the AREA/LOCATION sentence, the derived-estimates sentence and A24.20's
+ *  growth caveat. That is the fix-round-3 lesson `CLAUDE.md` records and the reason AMEND-GUARD
+ *  exists, so this `find` stops exactly where this entry's own text does.
+ *
+ *  Re-bases `browse-market-strip` and `browse-market-strip-location`: a footnote renders whatever
+ *  the data says, so it moves on the fixture path where A31.14a/A31.14b do not. */
+const A31_14c: Amendment = {
+  id: 'A31.14c', ...SNAPMETRO,
+  find: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the median across every area of that kind in the metro. In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'Three kinds of figure appear here and they measure different things. A Census tract figure is the Census\u2019s own published estimate for that one tract. A practice\u2019s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says. In AREA mode each card is that metro figure and its own caption says which of the two it is, with the bars beneath it the distribution across the metro\u2019s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** A31.14d — the docked panel's footnote, which carries the SAME sentence. Consumes A48.5,
+ *  whose own `find` was A34.7's whole `replace`; see the note on the entry itself.
+ *
+ *  A34.7 and A34.8 wrote one paragraph into two footnotes deliberately — "the same words, because
+ *  the same three kinds of figure appear on both surfaces and two wordings of one fact is how they
+ *  come to disagree" — so correcting one and leaving the other would produce exactly the
+ *  divergence that entry exists to prevent. One fact, one wording, both surfaces.
+ *
+ *  Re-bases the Browse states that render the docked panel. */
+const A31_14d: Amendment = {
+  id: 'A31.14d', ...SNAPMETRO,
+  // CHAINED ON A48.5, not on A34.7 (merge of `feat/snap-metro` into main, 2026-09-15). Both
+  // families take A34.7's whole paragraph and BOTH `find`s run to its closing `</p>`, so
+  // whichever ran second could not find its text: A48.5 inserts its competition footnote
+  // immediately before that `</p>`. A48 reached main first and runs first, so this entry
+  // takes ITS output -- the A48.5-on-A34.7 idiom one link further along. MEASURED: the span
+  // below occurs exactly once inside `A48_5.replace`, and the result is byte for byte this
+  // entry's own `replace` with A48.5's footnote before the `</p>`, so neither family's text
+  // is altered and neither ruling is softened.
+  find: A48_5.replace,
+  replace: A48_5.replace.replace(
+    'median across every area of that kind in the metro',
+    'Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas'
+  ),
+  count: 1
+};
+
+
+/** A31.14e — the AREA mode's own sub-line. Supersedes A31.7's sentence.
+ *
+ *  This is the 12.5 px line directly under the 800-weight mode heading — the one line that says
+ *  what the member is looking at in this mode, and the most prominent of the three prose strings
+ *  this family touches. It named the Census areas alone, which from here describes the BARS and
+ *  not the figures above them on the layers the Census publishes a metro figure for. Naming the
+ *  wrong thing on the prominent line while correcting the 10.5 px grey footnote beneath it is the
+ *  D-C51 defect class exactly, so the sub-line names both halves in the footnote's own terms.
+ *
+ *  LOCATION mode's arm is untouched, byte for byte: it is the listing's own `communityLabel` and
+ *  has nothing to do with the metro. Re-bases `browse-market-strip` alone —
+ *  `browse-market-strip-location` renders the LOCATION arm, and the design's fixtures carry no
+ *  `communityLabel`, so `hasStripModeSub` is false there and no element is drawn. */
+const A31_14e: Amendment = {
+  id: 'A31.14e', ...SNAPMETRO,
+  find: '      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",\n',
+  replace: '      stripModeSub: sel ? (sel.communityLabel || "") : "The metro\u2019s own figures, with the Census areas the map shades beneath them",\n',
+  count: 1
+};
+
+/** A31.14f — the source line beneath a served metro figure. CHAINED on A31.12.
+ *
+ *  IMPORTANT-2 of review 1 (2026-09-14), ruled by the controller: **when the published metro
+ *  figure is shown the card names ONE geography, the metro, and the tract line belongs only to
+ *  the derived figure.**
+ *
+ *  MEASURED on the served path before this entry, through the real `Component`:
+ *
+ *      $98K   Census published for the metro          <- the CBSA's own level-310 estimate
+ *      [ five bars ]                                  <- the metro's Census TRACTS
+ *      U.S. Census ACS 5-year estimates (2023) · Census tract
+ *
+ *  Two geographies on one card, and the more source-like of them attached to the figure it does
+ *  NOT describe — which is D-C51's own complaint ("THEY ARE ALL LABELED THE SAME SO THE LOGIC
+ *  WOULD BE THEY ARE SAME"), one line below where A31.14b had just answered it. Worse, the same
+ *  line means two different things across one strip: on `econ` and `competition`, which have no
+ *  metro figure, `· County` and `· ZIP Code Tabulation Area` still describe the HEADLINE.
+ *
+ *  The fix is A31.12b's own rule, not a new one: "a caller with NO geography to name gets the
+ *  dataset alone". A card whose headline geography is already on its own note has none left to
+ *  give this line, exactly as LOCATION mode has none — so the same term that spells `sel` spells
+ *  `metro` beside it, and the bars' geography stays where A31.14c's footnote already puts it
+ *  ("with the bars beneath it the distribution across the metro's Census tracts, places,
+ *  counties or ZIP areas"). The DERIVED path is byte-identical: there the headline IS the
+ *  metro's tracts, so the line names them exactly as A31.12 left it. */
+const A31_14f: Amendment = {
+  id: 'A31.14f', ...SNAPMETRO,
+  find: '            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),\n',
+  replace: "            // A31.14f (review 1, Important-2): …and a card whose headline is the METRO's own\n"
+    + "            // figure has no geography left to give this line either - A31.14b's note carries\n"
+    + "            // it, and printing `\u00b7 Census tract` under it would put a SECOND geography on the\n"
+    + "            // card, attached to the figure it does not describe. Same term, same reason, one\n"
+    + "            // fact per string; the derived path keeps the tract line, which is its own.\n"
+    + '            src: metaSource(k, (sel || metro) ? "" : (AREA_LABEL[k] || "")),\n',
+  count: 1
+};
+
+/** A31.14g — the sentence A31.14f makes half-false, in `metaSource`'s own head comment.
+ *  Supersedes A34.3's own clause, which is the text standing at this line today.
+ *
+ *  The comment names the callers that hand this helper a geography: "the map's own geography for
+ *  the legend and the tip, the map's community notes, and the snapshot strip's AREA mode, which
+ *  measures those same polygons." From A31.14f the strip's AREA mode is no longer one of them
+ *  whenever the route served a metro figure — on four of six layers, on any real metro — and a
+ *  comment describing a rule the code no longer follows is the thing AMEND-GUARD exists to stop
+ *  being left behind. The first two members of the list stay byte for byte and the third gains
+ *  the condition it now carries; A34.3's own following paragraph is untouched. */
+const A31_14g: Amendment = {
+  id: 'A31.14g', ...SNAPMETRO,
+  find: "// notes, and the snapshot strip's AREA mode, which measures those same polygons.\n",
+  replace: "// notes, and the snapshot strip's AREA mode wherever the card's own headline IS those\n"
+    + "// polygons. A31.14f: where the route served the METRO's own figure the card's note carries\n"
+    + "// its geography, so the strip hands this line nothing and it prints the dataset alone,\n"
+    + "// exactly as LOCATION mode does.\n",
+  count: 1
+};
+
+/** A50 (John's requirement of 2026-09-15 — Task PET-RATE-PROVENANCE). THE PET-HOUSEHOLD ESTIMATE
+ *  SAYS WHOSE RATE IT USES, AND STOPS KEEPING ITS OWN.
+ *
+ *  His objective, in his own numbering: the incidence rate behind every "estimated pet households"
+ *  figure must be (1) explicitly sourced to the AVMA, (2) tied to a Sourcebook edition and
+ *  reference year, (3) updated from the historical 57 % planning placeholder to the current
+ *  approved figure, (4) stored as provenance rather than as an unexplained magic constant, (5)
+ *  rendered as a DERIVED/ESTIMATED local value and (6) never represented as Census-observed pet
+ *  households. And: "The UI must never calculate `households * 0.586` directly inside a rendering
+ *  component if the application architecture supports a centralized metric/data layer."
+ *
+ *  WHAT WAS THERE. `0.57` appeared TWICE in this bundle as an active number — once as the
+ *  multiplier in `communities()` and once inside the map tooltip's own sentence — with nothing
+ *  anywhere saying where it came from. It traces to the AVMA's 2017-2018 Sourcebook, which
+ *  reported 56.8 % at year-end 2016; the code carried the rounding, not the figure, and carried
+ *  neither the source nor the year. The backend kept a third copy (`metrics.PET_RATE`), so the
+ *  design and the pipeline could disagree about the same figure with nothing to notice.
+ *
+ *  THE RATE IS NOW 0.586 — the AVMA's 2025 Pet Ownership and Demographics Sourcebook, 58.6 % of
+ *  United States households owning at least one pet. `app/census/pet_rate.py` is the ONE place it
+ *  is written down and it carries the whole provenance record beside it (source, dataset, edition,
+ *  reference period, rate geography, the household source and ITS active vintage, the derivation,
+ *  the ESTIMATED status, the methodology version, the Sourcebook's own methodology sentence, and
+ *  the licence status — SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED).
+ *
+ *  HOW THE DESIGN STOPS KEEPING ITS OWN, without breaking the pixel gate (controller ruling 2, and
+ *  it is A33.1's idiom exactly, for the identical problem one figure over). The API serves the rate
+ *  each listing's own estimate was computed with — `market_metric.inputs.pet_incidence_rate`, the
+ *  stamp the pipeline writes, through `GET /api/listings` as `pet_rate` — and A50.5 prefers it
+ *  GATED ON ADAPTER PRESENCE (`this.props.market`, the app-only Browse adapter the reference is
+ *  never handed), never on data. With the adapter the rate is the SERVED one or the figure is
+ *  absent; with no adapter the design's own constant answers. That constant is DEMOTED, not
+ *  deleted — deleting it would blank an approved element on a path that has no API and no ruling
+ *  to do that under, which is the measured reason A33.1a kept `incomeNat` — and its comment now
+ *  says what it is: the reference path's own fixture arithmetic, not a production rate.
+ *
+ *  IT IS THE SAME NUMBER. The demoted constant moves to 0.586 too, because John's §3 is explicit
+ *  that 56.8 %/57 % is retained as provenance and "must not remain the active production
+ *  multiplier merely because the code previously used 0.57" — and the reference path is a path the
+ *  product ships. So the fixture pets values move, and WHICH approved states move with them is
+ *  MEASURED rather than predicted: baselines were regenerated before and after and the 55 PNG
+ *  hashes diffed, and exactly THREE move — `browse-market-strip`, `browse-market-strip-location`
+ *  and `browse-panel-lightbox`. `browse-market-panel` does NOT, which is the proof the change
+ *  reaches the figure and nothing else: it selects Cedar Park, whose 27,600 households read
+ *  15,732 and now read 16,174, and the tile prints `fmtMetric`'s "16K" either way, while the
+ *  lightbox capture's Round Rock moves 25,137 -> 25,843 and "25K" -> "26K". None of
+ *  `baseline-manifest.json`'s thirteen frozen hashes moves, none being a Browse capture.
+ *
+ *  THE MAP'S CLASS BREAKS DO NOT MOVE, and A50.1 is why (controller ruling 3). `AREA_LAYERS.pets`
+ *  was cut as the tract households distribution "times 0.57", so the comment that records the
+ *  derivation is false the moment the rate moves. The pets layer is `round(households x rate)`
+ *  over exactly the tracts the households layer serves (`geo_metric._pets` walks the same cached
+ *  scan and inherits the same suppression), so it is a MONOTONE transform and its quantiles are
+ *  the households quantiles through the rate — pinned in
+ *  `tests/census/test_pet_rate.py::test_the_pets_class_breaks_are_the_households_breaks_through_the_rate`
+ *  using `scripts/measure_area_breaks.py`'s own `quantile`. The measurement of record (QA,
+ *  2026-09-12: 83,783 served tracts, p25 1,054, p50 1,446, p75 1,897) therefore gives 618 / 847 /
+ *  1,112 at 0.586 against 601 / 824 / 1,081 at 0.57, and both round to the same legend-readable
+ *  [600, 850, 1100] the table already carries. The STOPS are untouched; the sentence that says how
+ *  they were cut is corrected.
+ *
+ *  `VALUE_LAYERS.pets.stops` ([10000, 25000, 40000]) is NOT derived from the rate and is untouched:
+ *  it is the design's own community-scale choice, one round number per class, and `households`
+ *  beside it carries [10000, 25000, 45000] — which is not that table times any rate at all.
+ *
+ *  Six literal edits. A50.1 consumes A24.25's derivation line, A50.2 consumes A34.1's `dataset:`
+ *  line and A50.4 consumes A24.30b's tooltip sentence; A50.3, A50.5 and A50.6 take pristine text. */
+const PETRATE = { date: '2026-09-15', ruling: "the pet-household rate is the AVMA's, dated, current, centralised and shown as a derived estimate (John, 2026-09-15)" };
+
+const A50_1: Amendment = {
+  id: 'A50.1', ...PETRATE,
+  find: '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n',
+  replace: '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// the AVMA national pet-ownership rate — 618 / 847 / 1,112 at 0.586, where 0.57 gave\n'
+    + '// 601 / 824 / 1,081, both rounding to the same legend-readable breaks below. The pets\n'
+    + '// layer is round(households x rate) over exactly the tracts households serves, so it is a\n'
+    + '// monotone transform and its quantiles are the households quantiles through the rate:\n'
+    + '// the table is RE-DERIVED from that one measurement rather than re-measured, and\n'
+    + '// `tests/census/test_pet_rate.py` pins the identity with the measuring script\'s own\n'
+    + '// quantile. Competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n',
+  count: 1
+};
+
+const A50_2: Amendment = {
+  id: 'A50.2', ...PETRATE,
+  find: '    dataset: "Derived estimate from ACS household counts (2023)",\n',
+  replace: '    dataset: "ACS household counts (2023) × the AVMA 2025 national pet-ownership rate",\n',
+  count: 1
+};
+
+const A50_3: Amendment = {
+  id: 'A50.3', ...PETRATE,
+  find: '    means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",\n',
+  replace: '    means: "Census household counts for the area multiplied by the American Veterinary Medical Association\'s national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",\n',
+  count: 1
+};
+
+const A50_4: Amendment = {
+  id: 'A50.4', ...PETRATE,
+  find: '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: households × 0.57. Not an observed count."\n',
+  replace: '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count."\n',
+  count: 1
+};
+
+const A50_5: Amendment = {
+  id: 'A50.5', ...PETRATE,
+  find: '  communities() {\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + '    return P.filter((p) => p.market === market && p.status === "published").map((p) => {\n'
+    + '      const hh = p.hh != null ? num(p.hh) : undefined;\n',
+  replace: '  communities() {\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + "    // THE DESIGN'S OWN FIXTURE ARITHMETIC, and not a production rate. A pet-household figure\n"
+    + '    // is `households x a national pet-ownership incidence rate`; that rate belongs to the\n'
+    + '    // API — `app/census/pet_rate.py` is the one place it is written down, with its whole\n'
+    + "    // provenance, and `GET /api/listings` serves the rate each listing's own figure was\n"
+    + '    // actually computed with. This constant exists so the REFERENCE, which has no API and no\n'
+    + "    // served rate, can still draw the design's own fixtures, and it is read nowhere else.\n"
+    + '    const petRateFixture = 0.586;\n'
+    + '    return P.filter((p) => p.market === market && p.status === "published").map((p) => {\n'
+    + '      const hh = p.hh != null ? num(p.hh) : undefined;\n'
+    + "      // A16.1's rule in A33.1c's shape: gated on ADAPTER PRESENCE, never on data. With the\n"
+    + '      // Browse adapter the rate is the SERVED one or the figure is absent — a pet-household\n'
+    + '      // count computed from a rate nobody recorded is what this seam exists to remove.\n'
+    + '      const petRate = this.props.market ? p.petRate : petRateFixture;\n',
+  count: 1
+};
+
+const A50_6: Amendment = {
+  id: 'A50.6', ...PETRATE,
+  find: '        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,\n',
+  replace: '        pets: (hh !== undefined && petRate != null) ? Math.round(hh * petRate) : undefined,\n',
+  count: 1
+};
+
 /**
  * A51 — THE RECENTER BUTTON (Task MAP-RECENTER, John, 2026-09-16, with a screenshot of the
  * control stack and of a crosshair icon): "add a 'recenter' button that recenters the map on the
@@ -8128,6 +8591,22 @@ export function amendments(): Amendment[] {
     // VALUE_LAYERS label named CBP for a fill served from ZBP. Not chained; its `find` is the
     // pristine bundle's own declaration.
     A34_23,
+    // A38 -- the Data Sources tab reads the dataset registry (Task A38, D-C53, 2026-09-13).
+    // Appended after A40, whose `loadAdmin` body A38.2 is CHAINED on, and BEFORE A39: A38.2's
+    // `find` is A40.3's own `adminListings` line plus the `return Promise.all(loads);` beneath
+    // it, and A39.2/A39.5 rewrite that same line, so A38 has to insert its own arm between them
+    // while the line A38.2 anchors on is still A40.3's. The REMOVALS run first inside the family
+    // (A38.4/A38.5 before A38.1) so that A38.1's own `replace` re-introduces the post-removal rows
+    // rather than a later entry eating text it had just put there (AMEND-GUARD's LINE tier).
+    //
+    // A38.3a and A38.3b are RETIRED and their ids may NOT be reused (merge of `origin/main`,
+    // 2026-09-15). They were the badge's shared `sc-if` and its `hasCount` flag, and their own
+    // docstring said so: "the mechanism for ALL FOUR badges ... must REUSE these two rather than
+    // add a second `sc-if`". A39 merged to main first and carries the identical pair as A39.3b
+    // and A39.3a, and the two cannot coexist -- each one's `find` is the other's `replace`, so
+    // whichever ran second would match nothing. Main's are the ones that shipped (0.1.25), so
+    // A38.3c below reads A39.3a's `hasCount` and the amended design is byte-identical either way.
+    A38_4, A38_5, A38_1, A38_2, A38_3c,
     // A39 -- the Listings tab's badge, dates and refresh (Task A39, D-C53, 2026-09-13). Applied
     // AFTER A40 though it is numerically before it, for A24's own reason: two of its four entries
     // are CHAINED on A40's output -- A39.2 rewrites A40.3's whole `adminListings` line and A39.4
@@ -8162,10 +8641,29 @@ export function amendments(): Amendment[] {
     // earlier entry introduced any of the lines they take. A49.2 and A49.4 are the dead-code
     // orphans A49.1 and A49.3 leave, in the order that makes each one's `find` still present.
     A49_1, A49_2, A49_3, A49_4,
+    // A31.14 -- SNAP-METRO (2026-09-14): the AREA headline is the metro's own published figure
+    // where the Census publishes one. Appended LAST, as every family is, and it has to be: all
+    // five are CHAINED -- A31.14a on A31.8, A31.14b on A31.12, A31.14c on A34.8, A31.14d on A34.7
+    // and A31.14e on A31.7 -- and two of those predecessors are A34's, which is why this block
+    // runs after A34 rather than beside A31.13b. Definition order in this file matches this list
+    // (m8).
+    A31_14a, A31_14b, A31_14c, A31_14d, A31_14e,
+    // A31.14f/A31.14g -- fix round 1 (review 1's Important-2, 2026-09-14). A31.14f is CHAINED on
+    // A31.12's own `src:` line and A31.14g on A34.3's own clause in `metaSource`'s head comment,
+    // so both run after them, which appending the family last already guarantees.
+    A31_14f, A31_14g,
+    // A50 -- the pet-household rate is the AVMA's, dated, current and centralised (Task
+    // PET-RATE-PROVENANCE, John 2026-09-15). Appended last, as every family is. THREE are
+    // CHAINED on an earlier family's output -- A50.1 on A24.25's derivation comment,
+    // A50.2 on A34.1's `dataset:` line and A50.4 on A24.30b's tooltip sentence -- so each
+    // runs after the entry it reads; A50.3, A50.5 and A50.6 take pristine text.
+    // Definition order in this file matches this list (m8).
+    A50_1, A50_2, A50_3, A50_4, A50_5, A50_6,
     // A51 -- the recenter button in the map's own control stack (Task MAP-RECENTER, John's
     // request of 2026-09-16). Appended last, as every family is. Neither entry is chained:
     // each `find` occurs exactly once in the pristine twin, and A51.2's insertion point is the
-    // divider the pristine row already carries, not one A51.1 introduced. A50 belongs to
-    // `feat/pet-rate-provenance` and its ids are reserved across the unmerged branches.
+    // divider the pristine row already carries, not one A51.1 introduced. A50 was
+    // `feat/pet-rate-provenance`'s and is above this block since that branch merged (Task
+    // RELEASE-0126, 2026-09-15).
     A51_1, A51_2];
 }

@@ -27,10 +27,14 @@ failure it names is not a ledger.
 | 094 | `094_registry_blocked_reason.sql` | `feat/admin-data-sources` | the member-facing "why is this blocked" column |
 | 095 | `095_ingest_run_notes.sql` | `fix/census-204` | per-run notes (which states were skipped, and why) |
 | 096 | `096_request.sql` | *(reserved — A43, the Requests build)* | `request` + `request_event` |
+| 099 | `099_avma_pet_rate_registry.sql` | `feat/pet-rate-provenance` | the AVMA cited-statistic registry row, and the blocked per-geography feed's note stops standing in for it |
 
-**Next free: 099.** `097` is held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
+**Next free: 097.** `097` WAS held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
 were told "097" in briefs written minutes apart by the same author who wrote this file, and were
-deconflicted by message before either wrote a file. Neither number is claimed below yet, because a row
-here means a file exists; if either task turns out to need no migration, its number returns to free.
+deconflicted by message before either wrote a file. **Both numbers returned to free on 2026-09-15**,
+when those two branches merged to `main` having written no migration at all: this file's own rule is
+that a row here means a file exists, and the per-ref loop above finds no `096`, `097` or `098` on any
+ref. `096` stays RESERVED for A43 (the row above), which is a reservation and not a file. `099` is
+claimed — the row above, and the file beside it.
 
 The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `043`–`049` are still free inside it.

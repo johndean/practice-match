@@ -135,6 +135,13 @@ export function designIncomeIndex(p) {
   return Math.round(((num(p.income) - INCOME_NAT) / INCOME_NAT) * 100);
 }
 
+//: A50 (Task PET-RATE-PROVENANCE, 2026-09-15). The DESIGN'S OWN pet-ownership incidence rate, read
+//: out of the method that declares it — `communities()`'s `const petRateFixture = …;`, the demoted
+//: fixture constant A50.5 left standing for the reference path — rather than typed here, exactly as
+//: `INCOME_NAT` above is read out of `marketPanel`. A re-citation moves the oracle with the design
+//: instead of leaving the two quietly disagreeing about one number.
+const PET_RATE = Number(/const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities))[1]);
+
 /** The whole design catalogue as one `GET /api/listings` page body.
  *
  * A33.1c — WHY THIS BODY CARRIES ONE FIELD `toApiShape` DOES NOT. With the market adapter present
@@ -147,13 +154,17 @@ export function designIncomeIndex(p) {
  * seller's listings and the admin review queue (A16.1, A17.1): "the oracle answers the app with
  * those same four rows".
  *
- * It is added HERE and not in `toApiShape` because that function has one promise — it is the
+ * A50 adds `pet_rate` for the identical reason one figure over: with the adapter the design
+ * derives its estimated-pet-household figure from the SERVED rate or shows none at all, so an
+ * oracle that sent `null` would blank that card on the app and leave it drawn on the reference.
+ *
+ * Both are added HERE and not in `toApiShape` because that function has one promise — it is the
  * exact inverse of `load.ts`'s `toPractice`, pinned fixture by fixture in
  * `frontend/src/listings/load.test.ts` — and a field the design's own `P` cannot carry would
  * break it. This function stands in for the SERVER, which does carry it. */
 export function designListingsBody() {
   return JSON.stringify({
-    items: P.map((p, i) => ({ ...toApiShape(p, i), income_vs_us_pct: designIncomeIndex(p) })),
+    items: P.map((p, i) => ({ ...toApiShape(p, i), income_vs_us_pct: designIncomeIndex(p), pet_rate: PET_RATE })),
     next_cursor: null
   });
 }

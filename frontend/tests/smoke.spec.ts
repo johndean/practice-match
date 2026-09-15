@@ -2,8 +2,12 @@ import { test, expect, type BrowserContext, type Locator, type Page } from '@pla
 import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, guard, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
+import { designSummaryBody } from './design-summary.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
 // render in a real browser; this one proves the same for a token-bearing URL — the gate frame
@@ -1854,7 +1858,10 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
 
     const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
     await expect(strip.getByText(/^AREA · /)).toBeVisible();
-    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // A31.14e (Task SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the
+    // AREA headline is the Census's own PUBLISHED metro figure wherever the Census publishes one,
+    // so the Census areas describe the BARS and the sub-line names both halves.
+    await expect(strip.getByText('The metro\u2019s own figures, with the Census areas the map shades beneath them')).toBeVisible();
     // The figure the card prints IS the answered median, formatted by the design's own
     // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
     const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
@@ -1944,6 +1951,69 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const printed = (await strip.innerText()).split(LABEL).length - 1;
     expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
     console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
+  });
+
+  // A31.14 (Task SNAP-METRO, 2026-09-14) — THE SERVED-FIGURE ARM, which no approved state reaches.
+  //
+  // The design's own fixtures carry no `metro` key: `summarySet()` computes none and
+  // `design-summary.mjs` sends none, which is precisely why every one of the 55 approved states
+  // keeps A31.12's "median of N Census tracts" caption and only ONE of them re-bases at all (the
+  // footnote's, which is prose). So the PUBLISHED path — the whole point of the ruling — has no
+  // pixel oracle and this is the case that carries it: a real browser, the real adapter, the real
+  // route wiring, and a summary body carrying exactly what `app.api.market._metro_figure` serves
+  // for CBSA 12420 (`acs_measure` summary level 310, B19013_001E = 97,638 ± 1,163 against the
+  // 94,801 median of the same metro's valued tracts). The two numbers DISCRIMINATE: a card that
+  // went on printing the median would print $95K here and this fails.
+  test('the AREA headline is the Census’s own published metro figure where one is served (A31.14)', async ({ page }) => {
+    const PUBLISHED = 97638;      // the Census's own metro median for CBSA 12420, ACS 2019–2023
+    const BASIS = 'Census published for the metro';   // `app.api.market.METRO_BASIS['published']`
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The DESIGN's own distribution — the same body `harness.ts` answers this route with, so the
+    // bars, the counts and the geography label are the ones every other case reads — plus the
+    // `metro` object the real route serves for `income` and nothing else. Composed here rather
+    // than fetched through `route.fetch()`, which bypasses `page.route` and would reach the real
+    // API for a CBSA it has never heard of.
+    const body = JSON.parse(designSummaryBody('12420')) as { layers: Record<string, unknown>[] };
+    const median = body.layers.find((l) => l.layer === 'income')!.median as number;
+    for (const layer of body.layers) {
+      if (layer.layer === 'income') layer.metro = { value: PUBLISHED, moe: 1163, kind: 'published', basis: BASIS };
+    }
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/summary'),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(PUBLISHED / 1000)}K`);
+    await expect(card).toContainText(BASIS);
+    // IMPORTANT-2 (review 1, 2026-09-14): ONE geography on the card, and it is the metro's. The
+    // note carries it; the source line carries the DATASET ALONE, which is A31.12b's own rule for
+    // a caller with no geography to name and what LOCATION mode already does. Measured before the
+    // fix: "$98K · Census published for the metro" sat above "U.S. Census ACS 5-year estimates
+    // (2023) · Census tract" — two geographies, the source-looking one attached to the figure it
+    // does not describe, which is the D-C51 defect one line below where this family answered it.
+    await expect(card, 'the source line still names the TRACT beneath a metro figure').not.toContainText('Census tract');
+    // …and the DERIVED figure it replaced is gone from the card, caption and all. Read off the
+    // body the page was actually answered with rather than retyped, so the case cannot drift.
+    expect(Math.round(median / 1000), 'the fixture median equals the published figure, so this case proves nothing')
+      .not.toBe(Math.round(PUBLISHED / 1000));
+    await expect(card, 'the headline is the tract median, not the published metro figure').not.toContainText(`$${Math.round(median / 1000)}K`);
+    await expect(card, 'the derived caption survives beside a published figure').not.toContainText('median of');
+    // The layers the route serves no metro figure for are UNTOUCHED — `econ` and `competition` are
+    // Business Patterns, which publishes nothing at summary level 310, so those cards keep the
+    // median of their own counties or ZIP areas and say so.
+    const households = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Households' }).first();
+    await expect(households).toContainText('median of');
+    // …and their source line KEEPS its geography, because there the headline IS those polygons.
+    await expect(households, 'the derived path lost the geography its own figure is measured at').toContainText('Census tract');
+    console.log(`[A31.14] the income card reads "$${Math.round(PUBLISHED / 1000)}K · ${BASIS}" where the derived figure was $${Math.round(median / 1000)}K`);
+    expect(errors).toEqual([]);
   });
 });
 
@@ -2663,6 +2733,267 @@ test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
     await expect(page.getByText('Population growth is measured for the surrounding city or county, not the tract.').first()).toBeVisible();
     await expect(page.getByText('Pet-household counts and average practice payroll are derived estimates, not observed values.').first()).toBeVisible();
     expect(errors).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task A38 (D-C53) — the Admin > Data Sources tab reads `dataset_registry`, in a real browser.
+//
+// This is the surface CLAUDE.md marks LEGALLY load-bearing ("Blocked datasets never ship … The
+// admin Data Sources tab shows this gate; keep it"), and until this task it was five literal
+// fixture rows — two of them false about the running product. The approved-state oracle proves
+// the tab keeps its PIXELS through the design's own rows; what a pixel gate cannot say is that a
+// REAL registry reaches it, so these walk Chromium against a registry-shaped answer of the size
+// and shape the API actually sends (a bare array, ordered by key, no envelope and no cursor).
+//
+// Every stub row below is a real `dataset_registry` row's shape — `app/api/admin_data_sources.py`
+// `::_row`'s own keys — including the two states this tab exists to show: `blocked` with no
+// licence URL (pet ownership, the CLAUDE.md gate) and `unresolved` (the Esri basemap rows
+// migration 092 registers, which SHIP while their licence is undecided).
+// ---------------------------------------------------------------------------------------
+test.describe('admin data sources', () => {
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'acs5', display_name: 'ACS 5-Year Detailed Tables', api_dataset_id: '2023/acs/acs5',
+    vintage: '2019–2023', refresh_cadence: 'Annual (Dec)', license_status: 'cleared',
+    license_name: 'Public domain', license_url: 'https://www.census.gov/data/developers/about/terms-of-service.html',
+    attribution_text: 'Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023',
+    last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  // Sixteen of the nineteen keys migration 092 leaves in the registry, plus the three the tab is
+  // FOR: the blocked dataset with no terms page, and BOTH Esri basemap rows, which ship while
+  // their licence is undecided. Both of them, not one: 092 registers two, and the badge below is
+  // the count of rows nobody has cleared — with a single unresolved row beside the blocked one
+  // the fixture would answer exactly the design's own literal "2" and prove nothing about which
+  // of the two the tab is reading (gate run, 2026-09-14).
+  const REGISTRY = [
+    ...Array.from({ length: 15 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
+    registryRow({
+      dataset_key: 'esri_tiles', display_name: 'Base map and tiles (Esri Light Gray Canvas)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement', attribution_text: 'Tiles © Esri'
+    }),
+    registryRow({
+      dataset_key: 'esri_imagery', display_name: 'Satellite imagery (Esri World Imagery)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement',
+      attribution_text: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+    }),
+    registryRow({
+      dataset_key: 'pet_ownership', display_name: 'Pet ownership incidence (commercial)',
+      license_status: 'blocked', license_name: null, license_url: null, refresh_cadence: 'n/a',
+      attribution_text: 'Pet-ownership incidence (licensed) — not in use',
+      notes: 'Ship only the ACS-derived estimate (rate 0.57) until a licence is signed',
+      drift_flagged: true
+    }),
+    registryRow({ dataset_key: 'zzz_cleared' })
+  ];
+
+  async function dataTab(page: Page, answer: { status: number; body?: string }, arm?: number) {
+    await prepare(page);
+    // Registered AFTER prepare()'s own collection stub — Playwright matches the LAST handler first.
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (route) => route.fulfill({ status: answer.status, contentType: 'application/json', body: answer.body ?? '{}' }));
+    // `expectApiStatus` tells the app from the reference by reading `page.url()`, so it needs a
+    // page that has already navigated, and it must be armed BEFORE the refusal it allows reaches
+    // the console. The signed-out boot is that navigation and logs nothing of its own — the
+    // ROUTES loop at the top of this file is what says so (gate run, 2026-09-14).
+    if (arm !== undefined) {
+      await booted(page);
+      expectApiStatus(page, arm);
+    }
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+  }
+
+  /** One status pill per row, and the head row has none — so this counts ROWS, and counts them
+   *  by the cell that carries the legal gate rather than by a div nesting a refactor could move.
+   *  `.sc-interp` is the generated template's own interpolation span, so each pill counts once. */
+  const statusPills = (page: Page) =>
+    page.locator('span.sc-interp').filter({ hasText: /^(Cleared|Unresolved|Blocked)$/ });
+
+  test('every registry row renders, with the blocked dataset\'s own pill and its attribution verbatim', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+
+    // The design draws five rows; a real registry has nineteen. Proving the COUNT is what says the
+    // tab stopped being a fixture — the pixel oracle can only ever say it still looks like one.
+    await expect(page.getByText('Base map and tiles (Esri Light Gray Canvas)').first()).toBeVisible();
+    await expect(page.getByText('Pet ownership incidence (commercial)').first()).toBeVisible();
+    await expect(statusPills(page), 'one status pill per registry key').toHaveCount(REGISTRY.length);
+    // …and NONE of the design's own fixture rows survives beside them.
+    await expect(page.getByText('Prior VetVision work'), 'a design fixture row is still on the tab').toHaveCount(0);
+
+    // The legal gate itself: the blocked dataset says Blocked, and its attribution is the
+    // `attribution_text` column verbatim, never composed.
+    await expect(statusPills(page).filter({ hasText: 'Blocked' })).toHaveCount(1);
+    await expect(page.getByText('Pet-ownership incidence (licensed) — not in use').first()).toBeVisible();
+    // `drift_flagged` is appended to the source sub-line — no fourth pill (controller ruling).
+    await expect(page.getByText(/Terms drift flagged/).first()).toBeVisible();
+    // The Esri row ships while its licence is undecided, and the tab says so in both columns.
+    await expect(page.getByText('Tiles © Esri').first()).toBeVisible();
+    await expect(page.getByText('Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community').first()).toBeVisible();
+    await expect(statusPills(page).filter({ hasText: 'Unresolved' })).toHaveCount(2);
+    await expect(page.getByText('Licence not recorded').first()).toBeVisible();
+  });
+
+  test('the badge counts the rows nobody has cleared — never the design\'s literal 2', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const outstanding = REGISTRY.filter((r) => r.license_status !== 'cleared').length;
+    expect(outstanding, 'the fixture must not accidentally equal the design\'s own 2').toBeGreaterThan(2);
+    await expect(page.getByRole('button', { name: `Data Sources ${outstanding}`, exact: true })).toBeVisible();
+  });
+
+  test('View terms renders only where a licence URL is recorded, and opens that page', async ({ page, context }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const terms = page.getByRole('button', { name: 'View terms' });
+    // Every row but the blocked one — the only row in the fixture with a null `license_url`.
+    await expect(terms).toHaveCount(REGISTRY.length - 1);
+
+    // `window.open(url, '_blank', 'noopener')` — the page the button actually reaches for.
+    const opened = await page.evaluate(() => {
+      const w = window as unknown as { __opened: unknown[] };
+      w.__opened = [];
+      window.open = (...args: unknown[]) => { w.__opened.push(args); return null; };
+      return true;
+    });
+    expect(opened).toBe(true);
+    await terms.first().click();
+    expect(await page.evaluate(() => (window as unknown as { __opened: unknown[][] }).__opened))
+      .toEqual([['https://www.census.gov/data/developers/about/terms-of-service.html', '_blank', 'noopener']]);
+    expect(context.pages(), 'the stub replaced window.open, so no tab may actually have opened').toHaveLength(1);
+  });
+
+  test('a refusal empties the tab and the badge — it never falls back to the design\'s five rows', async ({ page }) => {
+    // A17.1's rule, applied to the surface that carries the legal gate: showing a reviewer five
+    // datasets that are not the ones the platform holds is worse than showing none, and a badge
+    // over no rows is the "Data Sources 2" defect this task closed.
+    await dataTab(page, { status: 403, body: '{"error":{"code":"FORBIDDEN","message":"no"}}' }, 403);
+    await expect(statusPills(page), 'no row at all, rather than the design\'s five').toHaveCount(0);
+    await expect(page.getByText('Prior VetVision work')).toHaveCount(0);
+    await expect(page.getByText('Pet ownership estimates')).toHaveCount(0);
+    // No number at all, rather than a stale or fabricated one (A39.3b/A38.2).
+    await expect(page.getByRole('button', { name: /^Data Sources\s*\d/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Data Sources', exact: true })).toBeVisible();
+    // The footnote — the sentence the whole gate rests on — is the design's own and still there.
+    await expect(page.getByText(/No dataset reaches production until its license is recorded here/).first()).toBeVisible();
+    await settleExpectedApiFailures(page);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// A38 review F11 — the committed re-derivation of the two layout caps.
+//
+// `app/census/registry.py` holds `SOURCE_SUBLINE_CAP` and `DATASET_SUBLINE_CAP` with their
+// measurements in prose, and `tests/census/test_registry.py` holds every registry row to them. A
+// number measured once in a browser and then written down is a number that goes stale the day the
+// admin table's grid, its padding, the design's 12.5 px/1.5 sub-line type or the card's own
+// max-width moves — so the probe that produced them is committed, runs in the same real Chromium
+// at the same 1440 x 940, and FAILS if either cap no longer buys two lines.
+//
+// `scripts/measure_source_subline_cap.py` runs this case and compares what it prints with the two
+// constants, the way `scripts/measure_area_breaks.py` re-derives `AREA_LAYERS`.
+// ---------------------------------------------------------------------------------------
+test.describe('A38 — the measured sub-line caps', () => {
+  // The registry's own longest `license_name`, which the Source sub-line carries in front of the
+  // note, and the design's own tallest fixture row, which is the budget both caps are cut to.
+  const LONGEST_LICENCE = 'CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)';
+  const TWO_SUBLINES_PX = 61;
+
+  /** The caps DERIVED from `app/census/registry.py`, never retyped (review Minor 7). That module
+   *  is the one place both numbers live — the pytest pin, the licence-decision route and the CLI
+   *  all import them from there — and a probe that declared its own copy could go on asserting a
+   *  number nothing else uses. Read out of the source, the way `tests/test_docs.py` reads this
+   *  repository's TypeScript literals from the other direction. */
+  function capFromPython(name: string): number {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app', 'census', 'registry.py'), 'utf8');
+    const m = new RegExp(`^${name} = (\\d+)$`, 'm').exec(src);
+    expect(m, `app/census/registry.py declares no ${name}`).not.toBeNull();
+    return Number(m![1]);
+  }
+
+  // `.slice` then `.trim()` could take a character back off the end, so two of the Dataset probe's
+  // seven rows used to compose 77 and never tested the cap itself (review Minor 7). Padding is
+  // added to the LAST word instead, so every row is exactly `n` characters.
+  const words = (w: number, n: number) => {
+    const out = Array.from({ length: Math.ceil(n / (w + 1)) }, () => 'abcdefghijklmnopqrstuvwxyz'.slice(0, w)).join(' ').slice(0, n);
+    return out.length === n && !out.endsWith(' ') ? out : out.slice(0, n - 1) + 'z';
+  };
+
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'probe', display_name: 'D', api_dataset_id: null, vintage: null,
+    refresh_cadence: 'n/a', license_status: 'cleared', license_name: null, license_url: null,
+    attribution_text: 'A', last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  /** Each cell's height for a page of probe rows, in the app's own admin table. */
+  async function heights(page: Page, rows: object[], cell: 0 | 1): Promise<number[]> {
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    return page.evaluate((which) => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => Math.round(e.children[which].getBoundingClientRect().height)), cell);
+  }
+
+  test('the Source column still holds SOURCE_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
+    // The sub-line is `license_name · notes`, so the note carries the cap minus the licence name
+    // and the separator. Word lengths 5 to 22: the note text that packs worst is what the cap has
+    // to survive, not the average.
+    const CAP = capFromPython('SOURCE_SUBLINE_CAP');
+    const MIXES = [5, 8, 12, 16, 22];
+    const rows = MIXES.flatMap((w) =>
+      [CAP, CAP + 10].map((n) => registryRow({ license_name: LONGEST_LICENCE, notes: words(w, n - LONGEST_LICENCE.length - 3) })));
+    const got = await heights(page, rows, 1);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
+    expect(Math.max(...atCap), `SOURCE_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    // Both sides of the number (review Minor 7): a cap that has become needlessly TIGHT is a
+    // measurement gone stale too, and until this the probe generated the over-cap rows and read
+    // none of them. The cap is the largest count that fits for EVERY word mix, so ten past it must
+    // fail for at least ONE of them — `max`, not `min`: a generous mix fitting more is what makes
+    // the floor a floor.
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] SOURCE_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the Dataset column still holds DATASET_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
+    // `refresh_cadence` is printed verbatim as the first clause, which is the cheapest way to
+    // drive a sub-line of an exact length; ` · Terms verified never` (23) is always appended.
+    // Word lengths 4 to 16 — the range this sub-line's own vocabulary spans, its longest token
+    // being `Current_Current` at 15.
+    const CAP = capFromPython('DATASET_SUBLINE_CAP');
+    const TAIL = ' · Terms verified never'.length;
+    const MIXES = [4, 5, 6, 8, 10, 12, 16];
+    const rows = MIXES.flatMap((w) => [CAP, CAP + 10].map((n) => registryRow({ refresh_cadence: words(w, n - TAIL) })));
+    const got = await heights(page, rows, 0);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
+    expect(Math.max(...atCap), `DATASET_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] DATASET_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the design\'s own tallest fixture row is still the 94 px budget both caps are cut to', async ({ page }) => {
+    const { designAdminDataSourcesBody } = await import('./design-admin-data-sources.mjs');
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: designAdminDataSourcesBody() }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => [Math.round(e.getBoundingClientRect().height),
+                   Math.round(e.children[0].getBoundingClientRect().width),
+                   Math.round(e.children[1].getBoundingClientRect().width)]));
+    expect(Math.max(...rows.map((r) => r[0]))).toBe(94);
+    expect(rows[0][1]).toBe(258);  // Dataset column
+    expect(rows[0][2]).toBe(376);  // Source column
+    console.log(`[A38-CAPS] designTallestPx=${Math.max(...rows.map((r) => r[0]))} datasetPx=${rows[0][1]} sourcePx=${rows[0][2]}`);
   });
 });
 

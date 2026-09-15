@@ -209,7 +209,10 @@ def test_weighted_median_is_bounded_by_its_parts_and_invariant_to_duplicating_th
 
 
 def test_pet_households_est() -> None:
-    assert m.pet_households_est(27600) == 15732
+    # Computed from the ONE rate (`app.census.pet_rate.INCIDENCE_RATE`), never a number typed
+    # here: a hand-pinned product is how the retired 0.57 survived a year of review unread.
+    # `tests/census/test_pet_rate.py` carries the provenance cases this one deliberately omits.
+    assert m.pet_households_est(27600) == round(27600 * m.PET_RATE) == 16174
     assert m.pet_households_est(None) is None
 
 

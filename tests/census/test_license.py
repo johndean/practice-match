@@ -140,3 +140,55 @@ def test_a_terms_body_over_the_bound_is_recorded_as_that_datasets_error(conn):
     assert results["acs5"].sha256 is None
     assert results["acs5"].status is None
     assert results["acs5"].changed is False
+
+
+def test_one_terms_page_is_fetched_once_however_many_rows_share_it(conn):
+    """A38 fix round 1 (review M8). `esri_tiles` and `esri_imagery` are two registered datasets
+    with ONE terms page between them -- Esri's master agreement -- and the sweep walked the
+    registry row by row, so it asked that host for the same document twice in a quarter and would
+    ask N times the day a vendor's N products are registered. The fetch is now per distinct URL:
+    one request, one hash, one recorded status, attributed to EVERY row that carries it, so the
+    two rows still each get their own `license_audit_log` entry and their own drift verdict.
+
+    A counting transport, not an inspection: the fake answers every request and records the URL,
+    so "fetched once" is a measurement of what left the process."""
+    seen: list[str] = []
+
+    def handler(r):
+        seen.append(str(r.url))
+        return httpx.Response(200, text="terms")
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_url FROM dataset_registry WHERE dataset_key = 'esri_tiles'")
+        shared = cur.fetchone()[0]
+    assert shared is not None, "esri_tiles carries no terms URL, so this test measures nothing"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM dataset_registry WHERE license_url = %s", (shared,))
+        sharers = cur.fetchone()[0]
+    assert sharers >= 2, f"only {sharers} row(s) carry {shared} -- the duplication this pins is gone"
+
+    out = {r.dataset_key: r for r in license.audit(conn, http)}
+    assert seen.count(shared) == 1, f"the shared terms page was fetched {seen.count(shared)} times"
+    # One fetch, but every row that carries the URL is still audited on its own terms.
+    assert out["esri_tiles"].sha256 == out["esri_imagery"].sha256
+    assert out["esri_tiles"].status == out["esri_imagery"].status == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT dataset_key, url FROM license_audit_log WHERE url = %s ORDER BY dataset_key", (shared,))
+        assert cur.fetchall() == [("esri_imagery", shared), ("esri_tiles", shared)]
+
+
+def test_a_shared_terms_page_that_changes_flags_every_row_that_carries_it(conn):
+    """The other half of M8: one page, one verdict, applied to all of its rows. A vendor edits its
+    master agreement once; both products drift, and a sweep that flagged only the first row the
+    registry happens to return would leave the second saying its terms were verified."""
+    body = {"n": 0}
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=f"v{body['n']}")))
+    license.audit(conn, http)
+    body["n"] = 1
+    out = {r.dataset_key: r for r in license.audit(conn, http)}
+    assert out["esri_tiles"].changed is True and out["esri_imagery"].changed is True
+    with conn.cursor() as cur:
+        cur.execute("SELECT dataset_key FROM dataset_registry WHERE drift_flagged ORDER BY dataset_key")
+        flagged = {row[0] for row in cur.fetchall()}
+    assert {"esri_tiles", "esri_imagery"} <= flagged

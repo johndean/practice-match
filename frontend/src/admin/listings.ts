@@ -279,7 +279,33 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
     // and no column held, invented by the mapping on the one tab whose ruling forbids exactly
     // that. The honest copy was already in this expression: "Untitled listing", what the seller's
     // own dashboard shows a row that has nothing to name itself by.
-    const title = item.city && item.type ? `${item.type} practice — ${item.city}` : 'Untitled listing';
+    const label = item.city && item.type ? `${item.type} practice — ${item.city}` : null;
+    // D-C53, John's ruling of 2026-09-16: "the admin listings rows should name their practice".
+    // Measured on QA 0.1.25 with the staff persona, this table labelled every row by type and city
+    // and that label was shared by more than one row six times over — SEVEN rows all read "Small
+    // animal practice — Dallas" — while the queue served a practice `name` on 30 of its 32 rows
+    // and rendered it on none. A reviewer about to press Unpublish was telling those seven apart
+    // by asking price and date, which is not an identity, and a label that cannot identify its own
+    // row falls short of "everything must be surfaced and wired to UX".
+    //
+    // Nothing is DISCLOSED by this that the reviewer was not already holding: `list_all` builds
+    // every item from `serialise_draft` — the OWNER's own truth, every column unblanked — and the
+    // buyer contract's blanking (`app/api/listings.py::serialise`, which swaps an undisclosed name
+    // for `anonymised_name`) is a different serialiser on a different route. `anon` is the SELLER's
+    // switch over what BUYERS see ("Keep practice name and address hidden until I approve a buyer",
+    // logic.js's step 7; "Sellers control what buyers can see", A10.2), and the VIN Foundation
+    // admin is the party Rev 3's own disclosure request makes the OVERRIDER of it.
+    //
+    // The composed label is not discarded — type and city are how a reviewer SCANS, the name is
+    // how they IDENTIFY — so it joins the status line beneath the title in the design's own ` · `
+    // idiom, the join the figures cell beside it already uses, and leads it so the scan target
+    // keeps a fixed left edge down the column. Where `name` is null every string below is what it
+    // was byte for byte, which is the ruling's own floor: two of the thirty-two rows are in that
+    // state, and the `Untitled listing` fallback under them is fix round 1's own correction of a
+    // fabricated clinical category, weakened by nothing here.
+    const title = item.name || label || 'Untitled listing';
+    const listing = [item.name ? label : null, statusLine(item)]
+      .filter((part): part is string => part !== null).join(' · ');
     const figures: string[] = [item.price != null ? `${money(item.price)} asking` : 'Asking price not set'];
     if (item.rev != null) figures.push(`${money(item.rev)} revenue`);
     if (item.docs != null) figures.push(`${item.docs} ${item.docs === 1 ? 'doctor' : 'doctors'}`);
@@ -290,7 +316,7 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
     if (item.status !== 'published') figures.push('hidden from search');
     const actions = (ACTIONS[item.status] ?? []).map((action) => A(LABEL[action], TONE[action], decision(item, action, ui)));
     return [
-      cell(title, statusLine(item)),
+      cell(title, listing),
       cell(item.seller_name, figures.join(' · ')),
       cell(null, null, pill, tone),
       cell(null, null, null, null, actions.length ? actions : null)

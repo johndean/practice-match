@@ -66,10 +66,12 @@ const SHEET = 'div[style*="z-index: 700"]';
 // trigger added later fails there rather than silently re-pointing these two states.
 const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
-// The strip's footnote paragraph, as A31.11 (Task SNAP, D-C50 as revised) leaves it: A27.5's
-// sentence said the figures describe the area around each PRACTICE, which AREA mode makes false —
-// it is the metro's Census areas now, and the practice's own community only when one is selected.
-const STRIP_FOOTNOTE = 'In AREA mode each card is the median across the metro\u2019s Census tracts';
+// The strip's footnote paragraph, as A31.14c (Task SNAP-METRO, 2026-09-14) leaves it. A31.11
+// (Task SNAP, D-C50 as revised) replaced A27.5's sentence — the figures describe the metro's
+// Census areas in AREA mode, and the practice's own community only when one is selected — and
+// A31.14c then supersedes A34.8's own definition of a metro figure, because from here the AREA
+// headline is the Census's own PUBLISHED metro figure wherever the Census publishes one.
+const STRIP_FOOTNOTE = 'In AREA mode each card is that metro figure and its own caption says';
 
 /**
  * `browse-market-strip` alone: the strip's OWN `.rf-scroll` container, pinned to its bottom.

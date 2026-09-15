@@ -44,6 +44,7 @@ from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import vintage as census_vintage
 from app.census import zbp as census_zbp
+from app.census.registry import DATASET_SUBLINE_CAP
 from app.census.states import STATES as _STATES
 from scripts import census_load
 
@@ -1440,6 +1441,28 @@ def test_cmd_activate_passes_a_given_note_through_without_force(scratch_dsn, mon
     assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--note", "routine refresh"]) == 0
 
     assert captured["note"] == "routine refresh"
+
+
+def test_an_activation_note_longer_than_the_tab_can_render_is_refused_at_this_door(scratch_dsn, monkeypatch, capsys):
+    """A38 fix round 3 (re-review Minor 4). `active_vintage.note` is `text` with no bound, and the
+    admin Data Sources tab prints it VERBATIM in the design's own parenthesis beside the live
+    vintage it explains — inside a Dataset sub-line the design gives two lines of at 258 px. It was
+    the last unbounded input to that line, and this CLI is the only thing that writes it.
+
+    Argparse's own refusal (exit 2), for the reason the `--force` guard beside it gives: refused
+    before anything is opened."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--note", "x" * (DATASET_SUBLINE_CAP + 1)])
+    assert exc.value.code == 2
+    assert f"at most {DATASET_SUBLINE_CAP} characters" in capsys.readouterr().err
+
+    # And the length itself is accepted, so the bound is a bound and not a wall.
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
+        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded", note)
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--note", "x" * DATASET_SUBLINE_CAP]) == 0
 
 
 def test_cmd_activate_passes_the_force_flag_and_required_note_through(scratch_dsn, monkeypatch):

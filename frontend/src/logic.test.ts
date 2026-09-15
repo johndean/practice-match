@@ -3533,8 +3533,18 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
       expect(typeof comm[k], `communities().${k} for a listing with figures`).toBe('number');
     }
-    // The design's own arithmetic, unchanged: pets is 57 % of households, econ is thousands.
-    expect(comm.pets).toBe(Math.round(comm.hh * 0.57));
+    // The design's own arithmetic: pets is `households x the rate`, econ is thousands. A50 (Task
+    // PET-RATE-PROVENANCE, 2026-09-15) moved the rate to the AVMA 2025 Sourcebook's 58.6 % and
+    // took the literal out of this case: the expected value is read from the design's OWN
+    // declaration — `communities()`'s demoted `petRateFixture`, which answers on the reference
+    // path where there is no adapter and no served rate — so a re-citation moves this case with
+    // the design rather than leaving a number nobody can trace, which is the defect A50 removes.
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, 'communities() no longer declares `const petRateFixture = …;` on one line').toBeTruthy();
+    expect(comm.pets).toBe(Math.round(comm.hh * Number(declared![1])));
+    // …and the demoted constant is NOT the retired 0.57: John's ruling of 2026-09-15 is that the
+    // historical rate is kept as provenance and never as an active multiplier, on any path.
+    expect(Number(declared![1])).toBe(0.586);
   });
 
   // ---- F-2/F-3/F-8, the panel's Insights tab -----------------------------------------------
@@ -3867,7 +3877,10 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const md = c.renderVals().md;
     expect(md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
     expect(md.hasStripModeSub).toBe(true);
-    expect(md.stripModeSub).toBe('Census areas across the metro, as the map shades them');
+    // A31.14e (SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the AREA
+    // headline is the Census's own PUBLISHED metro figure wherever the Census publishes one, so
+    // the Census areas describe the BARS and the sub-line names both halves.
+    expect(md.stripModeSub).toBe('The metro\u2019s own figures, with the Census areas the map shades beneath them');
     // Every card names the MAP's geography, which is what it now measures — the interim
     // per-listing basis (A24.53's `stripBasis`) is gone with the figures it described.
     const income = md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0];
@@ -5384,7 +5397,11 @@ describe('A24 — real boundary polygons', () => {
     expect(tip).toContain('authoritative geography');
     // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
     const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
-    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    // A50.4: the sentence names the figure's two sources rather than a bare rate — the Census
+    // supplies the households and the AVMA the incidence, and a caption naming only one of them
+    // is what John's §5 forbids. "Not an observed count." is carried forward byte for byte.
+    expect(pets).toContain('Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count.');
+    expect(pets, 'the retired rate is never printed again').not.toContain('0.57');
     expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
   });
 
@@ -6420,6 +6437,50 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
     expect(c2.state.adminListingRows, 'the rejection arm is token-checked too').toEqual([['second']]);
     expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
   });
+
+  // ---------------------------------------------------------------------------------------
+  // A38.2's arm of the SAME function, given the same token at the merge of `origin/main`
+  // (2026-09-15). A39.5 put a request token on the Listings arm; the Data Sources arm was
+  // written on `feat/admin-data-sources` before A39 existed and had none — so after the merge
+  // one function held two loaders, one of which let a superseded answer go and one of which
+  // painted it, with the token already declared one line above the arm that ignored it. Two
+  // `loadAdmin` calls in flight is the ordinary case here and not an exotic one:
+  // `componentDidMount` makes the first (A40.4) and the header nav's own door makes another
+  // (A40.6), with A39.4's `onDecision` on top of both.
+  // ---------------------------------------------------------------------------------------
+  const PAGE_DATA = { rows: [['a registry row']], count: 2 };
+  const adminDataSources = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE_DATA)) => ({ list: answer });
+
+  it("A38.2: the Data Sources arm discards a superseded ANSWER, on A39.5's own token", async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminDataRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], count: 1 });
+    await older;
+    expect(c2.state.adminDataRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
+  it('A38.2: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminDataRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
 });
 
 // -------------------------------------------------------------------------------------------
@@ -6824,10 +6885,17 @@ describe('A48 — the competition figure names its area, its universe and its fl
   it('…and the other five layers\' prose is byte-identical to what it was', () => {
     // The ruling reached ONE layer's `means`. Pinned as literals, because the whole point of a
     // characterisation case is that a later edit to the shared `LAYER_META` object cannot move a
-    // neighbour in silence.
+    // neighbour in silence — which is exactly what it caught when A50 landed beside A48.
+    //
+    // `pets` MOVED, under its own ruling and not this one (A50.3, Task PET-RATE-PROVENANCE, John
+    // 2026-09-15). Its prose said the figure is "a modelled estimate … not a measured figure" and
+    // never said modelled FROM WHAT or BY WHOM; his §5 requires the product to say that the
+    // household count is Census ACS, the incidence is the AVMA's, and the national rate does not
+    // establish the local one. The literal is updated rather than the layer dropped from this
+    // table: dropping it would retire the guard on the one layer that has since proved it works.
     const UNCHANGED: Record<string, string> = {
       income: 'Higher-income areas may support stronger demand, but income alone does not indicate practice performance.',
-      pets: 'This is a modelled estimate of how many households in an area keep pets, not a measured figure.',
+      pets: "Census household counts for the area multiplied by the American Veterinary Medical Association's national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",
       growth: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
       households: 'The count of occupied housing units in each community — the denominator behind most other figures here.',
       econ: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures."
@@ -6836,5 +6904,128 @@ describe('A48 — the competition figure names its area, its universe and its fl
       browse(layer, null);
       expect(c.marketVals(P).active.means, `${layer}'s prose moved and this ruling did not touch it`).toBe(text);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the METRO's own figure where the Census
+// publishes one (ruling D-C50's own deferral, the ONE-VOCABULARY audit's collision C2).
+//
+// Measured on QA, the income card read "$95K · median of 541 Census tracts" — `percentile_cont`
+// over the metro's valued tracts, 94,801 on CBSA 12420 — while the Census publishes 97,638 ±
+// 1,163 for that same CBSA at the same release. Two "metro" numbers, one metro, and the one the
+// member could check was the one the screen did not show.
+describe('the Market snapshot AREA card prefers the metro’s own published figure (A31.14)', () => {
+  const AUSTIN = 'Austin, TX';
+  const adapter = () => ({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+  const QUANTILES = [48200, 67400, 92150, 121300, 158900];
+  const row = (metro: unknown) => ({
+    income: {
+      layer: 'income', geo_label: 'Census tract', with_value: 541,
+      median: 94801, quantiles: QUANTILES, metro
+    }
+  });
+  const card = (c: any, title = 'Median household income') =>
+    c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === title)[0];
+  // The design's own `LAYER_META[k].dataset`, read through the design rather than retyped, so the
+  // assertions below cannot drift from the string the card actually composes.
+  const LAYER_DATASET = { income: 'U.S. Census ACS 5-year estimates (2023)' };
+
+  it('the published metro figure is the headline and its own caption is the one the route sent', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    const income = card(c);
+    expect(income.value, 'the headline is the tract median, not the published metro figure').toBe(c.fmtMetric('income', 97638));
+    expect(income.value).not.toBe(c.fmtMetric('income', 94801));
+    expect(income.valueNote).toBe('Census published for the metro');
+    // IMPORTANT-2 (review 1, 2026-09-14). The card names ONE geography and it is the metro's:
+    // the note carries it and the source line carries the DATASET ALONE, which is A31.12b's own
+    // rule for a caller with no geography to name and exactly what LOCATION mode already does.
+    // Before this the card read "$98K · Census published for the metro" over "U.S. Census ACS
+    // 5-year estimates (2023) · Census tract" — two geographies, the more source-like of them
+    // attached to the figure it does not describe, which is the D-C51 defect this family exists
+    // to remove, one line down from where it removed it.
+    expect(income.src, 'the source line still names the TRACT beneath a metro figure').toBe(LAYER_DATASET.income);
+    expect(income.src).not.toContain('Census tract');
+    // The BARS are untouched: they are the polygons the map shades, which is the shape this
+    // figure sits in, and they are the whole reason the distribution is still fetched.
+    expect(income.bars).toHaveLength(5);
+    expect(income.bars.map((b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1]))
+      .toEqual(QUANTILES.map((v) => c.bucket('income', v, true).color));
+  });
+
+  it('a derived metro figure carries the route’s own word for it, not the published one', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 806400, moe: null, kind: 'derived', basis: 'derived estimate for the metro' })
+    });
+    expect(card(c).valueNote, 'the design composed a caption of its own').toBe('derived estimate for the metro');
+  });
+
+  it('no metro figure keeps A31.12’s "median of N Census tracts" caption, byte for byte', () => {
+    // `econ` and `competition` are Business Patterns, which publishes nothing at summary level
+    // 310, so those two cards live on this arm for ever — and so does every fixture path.
+    const c: any = new Component(adapter());
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: row(null) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+    // The DERIVED path is byte-identical: the figure IS the metro's tracts, so the source line
+    // names them exactly as it did before this family existed (A31.12's own output).
+    expect(card(c).src).toBe(`${LAYER_DATASET.income} · Census tract`);
+    // …and a metro object whose own value is null is the same absence, not a headline of nothing.
+    c.setState({ mdSummary: row({ value: null, moe: null, kind: 'published', basis: 'Census published for the metro' }) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+  });
+
+  it('a card with no figure at all still carries NO caption — A31.12’s rule survives', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { income: { layer: 'income', geo_label: 'Census tract', with_value: 0, median: null, quantiles: null, metro: null } }
+    });
+    expect(card(c).value).toBeUndefined();
+    expect(card(c).valueNote).toBeUndefined();
+  });
+
+  it('LOCATION mode is untouched: the practice’s own figure, never the metro’s', () => {
+    // The ternary's LOCATION arm never read this endpoint and must not start: a metro median is
+    // not a statement about the practice a member has just clicked.
+    const c: any = new Component(adapter());
+    const p = (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    expect(card(c).value).not.toBe(c.fmtMetric('income', 97638));
+    expect(card(c).valueNote).not.toBe('Census published for the metro');
+  });
+
+  it('the reference path — no adapter — never sees a metro figure and never can', () => {
+    // `summarySet()` is the design's own answer to the endpoint and it computes no `metro` key,
+    // so the reference, the Claude Design preview and every approved state stay on A31.12's
+    // caption whatever this family does.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    for (const layer of Object.keys(c.summarySet())) {
+      expect(c.summarySet()[layer].metro, `summarySet() invented a metro figure for ${layer}`).toBeUndefined();
+    }
+    for (const s of c.renderVals().md.stripCards) {
+      if (s.valueNote !== undefined) expect(s.valueNote).toMatch(/^median of /);
+    }
+  });
+
+  it('the AREA mode sub-line says what a metro figure is (A31.14e)', () => {
+    // A31.7's own sentence, one of the three prose strings this family corrects. The two
+    // FOOTNOTES (A31.14c, A31.14d) are template text and are asserted where template text is
+    // asserted — `tests/design-amendments.test.ts`'s own footnote case — not here.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    expect(c.renderVals().md.stripModeSub)
+      .toBe('The metro’s own figures, with the Census areas the map shades beneath them');
   });
 });

@@ -422,6 +422,16 @@ describe('local design amendments (spec D15)', () => {
     // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
     // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
     'A34.23',
+    // A38 (Task A38, D-C53) — the Data Sources tab reads the dataset registry. The two
+    // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
+    // fixture rows, so taking a button out afterwards would be an entry eating text an
+    // earlier entry had just put there (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both
+    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40 —
+    // and BEFORE A39, whose A39.2/A39.5 rewrite the same `adminListings` line A38.2 anchors on.
+    // A38.3a and A38.3b are RETIRED, not missing: A39.3b and A39.3a are the same two edits and
+    // reached main first, and the two pairs cannot coexist (see `design-amendments.ts`). Their
+    // ids may not be reused.
+    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3c',
     // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
     // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
     // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
@@ -450,10 +460,25 @@ describe('local design amendments (spec D15)', () => {
     // the control, and the two render values each leaves orphaned. `MarketMapV3.jsx` is not
     // edited: its block is already guarded on `onBasemap &&`, so A49 never meets A35 there.
     'A49.1', 'A49.2', 'A49.3', 'A49.4',
+    // A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the Census's own PUBLISHED metro
+    // figure where the Census publishes one (summary level 310), and the tract distribution is
+    // the shape beneath it. Appended after A34 because A31.14c and A31.14d take the definition
+    // sentence A34.8 and A34.7 wrote into the two footnotes.
+    'A31.14a', 'A31.14b', 'A31.14c', 'A31.14d', 'A31.14e',
+    // A31.14f/A31.14g — fix round 1 (review 1's Important-2, 2026-09-14): a card whose headline
+    // is the METRO's own figure names ONE geography, on its note, and its source line carries the
+    // dataset alone — and `metaSource`'s own head comment says so.
+    'A31.14f', 'A31.14g',
+    // A50 -- the pet-household rate is the AVMA's, dated, current and centralised (Task
+    // PET-RATE-PROVENANCE, John 2026-09-15). Appended last, as every family is. Three are
+    // CHAINED: A50.1 on A24.25's derivation comment, A50.2 on A34.1's `dataset:` line and
+    // A50.4 on A24.30b's tooltip sentence; A50.6 rewrites A21.1c's own `pets:` line.
+    'A50.1', 'A50.2', 'A50.3', 'A50.4', 'A50.5', 'A50.6',
     // A51 — the recenter button in the map's own control stack (Task MAP-RECENTER, John's
     // request of 2026-09-16). Both entries are `file: 'jsx'` and neither is chained: each `find`
     // occurs exactly once in the pristine twin, and no earlier entry introduced either line.
-    // A50 is `feat/pet-rate-provenance`'s and is reserved across the unmerged branches.
+    // A50 was `feat/pet-rate-provenance`'s and is above this block since that branch merged
+    // (Task RELEASE-0126, 2026-09-15).
     'A51.1', 'A51.2',
   ];
 
@@ -486,7 +511,10 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;');
     expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
     // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
-    expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
+    // A50.4 (Task PET-RATE-PROVENANCE, 2026-09-15) replaced the bare `0.57` with the two
+    // sources the figure actually has; "Not an observed count." is carried forward, and it is
+    // the half of the sentence §9 is about.
+    expect(amended).toContain('"Modelled estimate: Census households \u00d7 the AVMA national pet-ownership rate. Not an observed count."');
     // §15: a competition count never reaches the screen bare — it names what it counts and the
     // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
     expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
@@ -520,7 +548,12 @@ describe('local design amendments (spec D15)', () => {
     // gone under the bundle's own dead-code rule (A31.9).
     // …and A31.12 (fix round 1, 2026-09-13) takes the basis OFF the LOCATION arm: the card's
     // own note carries the geography there, so the source line carries the dataset alone.
-    expect(amended).toContain("            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),");
+    // A31.14f (SNAP-METRO fix round 1, review 1's Important-2, 2026-09-14) spells the same term
+    // for a served METRO figure, for the same reason: its geography is on the card's own note,
+    // so printing the map's would put a SECOND geography on the card, attached to the figure it
+    // does not describe. The derived path — no `metro` — keeps the map's geography, which IS
+    // what it measures.
+    expect(amended).toContain("            src: metaSource(k, (sel || metro) ? \"\" : (AREA_LABEL[k] || \"\")),");
     expect(amended, 'metaSource still glues a separator onto an empty basis')
       .toContain('  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;');
     expect(amended, 'the interim per-listing basis survived A31.8').not.toContain('stripBasis');
@@ -575,7 +608,15 @@ describe('local design amendments (spec D15)', () => {
     // figure" on their own captions since A31.12 gave them "surrounding city or county" and
     // "surrounding county", so the clause says what is true of all six. The AREA clause is
     // carried forward byte for byte, and A34.8's own three-kinds paragraph sits in front of it.
-    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    // A31.14c (Task SNAP-METRO, 2026-09-14) then SUPERSEDES A34.8's own definition sentence and
+    // the AREA clause beside it: from here the AREA headline is the Census's own PUBLISHED metro
+    // figure wherever the Census publishes one, so "each card is the median across the metro's
+    // Census tracts…" describes the BARS and not the figure above them. The LOCATION half of that
+    // sentence is carried forward byte for byte, and so are the two sentences below.
+    expect(footnote).toContain('A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says.');
+    expect(footnote).toContain('with the bars beneath it the distribution across the metro\u2019s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    expect(footnote, 'A34.8\'s superseded definition sentence survives in the footnote')
+      .not.toContain('A metro figure is the median across every area of that kind in the metro.');
     expect(footnote, 'the three kinds of figure are no longer distinguished on the strip').toContain('Three kinds of figure appear here and they measure different things.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
     // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
@@ -651,7 +692,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(369);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(387);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1374,6 +1415,26 @@ describe('local design amendments (spec D15)', () => {
   // A6/A7 block appended after everything. The set case below could not see it, and the file is
   // read by people. The order that matters is the order the edits are APPLIED, which is also the
   // order the ids are pinned in above.
+  // A38 fix round 1 (review M1): the seven A38 rows were appended after a BLANK line, which ends a
+  // GitHub-flavoured Markdown table — so they rendered as literal `| A38.4 | … |` text in the one
+  // file CLAUDE.md calls the per-amendment record, and nothing could see it: every other ledger
+  // case here matches rows by their `| A<id> |` prefix, which a broken table satisfies exactly as
+  // well as a live one. The table is ONE table from its delimiter row to the last amendment, and
+  // the file ends with a newline like every other text file in the repository.
+  it('LOCAL_AMENDMENTS.md is one unbroken table, so every row renders as a row', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const lines = md.split('\n');
+    const delimiter = lines.findIndex((l) => /^\|-{3}\|/.test(l));
+    expect(delimiter, 'the ledger has no `|---|---|---|---|` delimiter row').toBeGreaterThan(0);
+    const last = lines.map((l) => /^\|\s*A[\w.]+\s*\|/.test(l)).lastIndexOf(true);
+    const broken = lines.slice(delimiter + 1, last + 1)
+      .map((l, i) => [delimiter + 2 + i, l] as const)
+      .filter(([, l]) => !/^\|/.test(l));
+    expect(broken, 'a line inside the table does not start a table row, which ends the table there')
+      .toEqual([]);
+    expect(md.endsWith('\n'), 'LOCAL_AMENDMENTS.md does not end with a newline').toBe(true);
+  });
+
   it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);

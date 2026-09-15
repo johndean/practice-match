@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, allowAnonymousBootRefusal, allowsAnonymousBootRefusal, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { designAdminDataSourceRows, designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
 import { designAdminUserCounts, designAdminUserRows, designAdminUsersBody } from './design-admin-users.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
@@ -7,7 +8,7 @@ import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
-import { P } from '../src/logic.js';
+import { Component, P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 import { readFileSync } from 'node:fs';
@@ -265,6 +266,23 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
     expect(body.items).toHaveLength((P as unknown as unknown[]).length);
     expect(body.next_cursor, 'the stub is one page — a cursor would send load.ts round again').toBeNull();
   });
+
+  // A50 (Task PET-RATE-PROVENANCE, 2026-09-15) — the same rule A33.1c's `income_vs_us_pct` row
+  // states, for the same reason. With the Browse adapter present the design derives its
+  // pet-household figure from the SERVED rate or shows no figure at all, and the app under test
+  // always has that adapter while the reference never does. An oracle that answered `pet_rate:
+  // null` would make the app render no estimated-pet-household figure over a reference that
+  // renders one, and every Browse state that carries that card would diverge for a reason about
+  // the harness rather than about the design. So it answers with the DESIGN'S OWN rate — read out
+  // of `communities()`'s own declaration, not typed here, so a re-citation moves the oracle with
+  // the design instead of leaving the two quietly disagreeing.
+  it("answers with the design's own pet rate on every row, read from the design's own declaration", () => {
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, "communities() no longer declares `const petRateFixture = …;` on one line").toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThan(0);
+    expect(body.items.every((r) => r.pet_rate === Number(declared![1]))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------------------
@@ -424,11 +442,11 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(submitStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
   });
 
-  it('names all three collections on the local app origin, on the port the run uses', () => {
+  it('names all four collections on the local app origin, on the port the run uses', () => {
     expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users']);
+      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users', 'http://localhost:5473/api/admin/data-sources']);
     expect(collectionStubUrls({} as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users']);
+      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users', 'http://localhost:5173/api/admin/data-sources']);
   });
 
   it('serves every design seller fixture as one complete page (A-SL23 (2))', () => {
@@ -455,6 +473,31 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(body.items).toHaveLength(5);
     expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
     expect(collectionStubBody('http://localhost:5473/api/admin/listings')).toBe(designAdminListingsBody());
+  });
+
+  it('serves the whole design registry as the bare array the route really answers (Task A38)', () => {
+    // `list_data_sources` returns a LIST, not an `{items, next_cursor}` envelope — no pagination,
+    // the whole registry in one body — so the oracle answers in that shape and the adapter's own
+    // `Array.isArray` guard is exercised by the frozen capture rather than only by a unit test.
+    const rows = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/data-sources')) as unknown[];
+    expect(Array.isArray(rows), 'the registry route answers a bare array').toBe(true);
+    expect(rows).toEqual(designAdminDataSourceRows());
+    expect(rows).toHaveLength(5);
+    expect(collectionStubBody('http://localhost:5473/api/admin/data-sources')).toBe(designAdminDataSourcesBody());
+  });
+
+  it('speaks dataset_registry\'s own licence vocabulary, so the badge is one rule (Task A38)', () => {
+    // The design prints exactly the three words the column's CHECK constraint allows, so the
+    // fixture's `license_status` is its own pill lower-cased and `notCleared` counts it exactly as
+    // it counts a real row. Two of the five are not cleared — the design's own literal badge "2".
+    const rows = designAdminDataSourceRows() as { license_status: string; actions: { label: string }[] }[];
+    expect(rows.map((r) => r.license_status))
+      .toEqual(['cleared', 'cleared', 'cleared', 'unresolved', 'blocked']);
+    expect(rows.filter((r) => r.license_status !== 'cleared')).toHaveLength(2);
+    // Controller ruling 18: the two unbacked buttons left the design (A38.4/A38.5), so exactly the
+    // three rows with a recorded terms page carry an action.
+    expect(rows.map((r) => r.actions.map((a) => a.label)))
+      .toEqual([['View terms'], ['View terms'], ['View terms'], [], []]);
   });
 
   it('serves every design Users fixture, and the badge the design shows, as one page (Task A36)', () => {
