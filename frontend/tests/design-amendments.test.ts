@@ -474,6 +474,12 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A50.1 on A24.25's derivation comment, A50.2 on A34.1's `dataset:` line and
     // A50.4 on A24.30b's tooltip sentence; A50.6 rewrites A21.1c's own `pets:` line.
     'A50.1', 'A50.2', 'A50.3', 'A50.4', 'A50.5', 'A50.6',
+    // A51 — the recenter button in the map's own control stack (Task MAP-RECENTER, John's
+    // request of 2026-09-16). Both entries are `file: 'jsx'` and neither is chained: each `find`
+    // occurs exactly once in the pristine twin, and no earlier entry introduced either line.
+    // A50 was `feat/pet-rate-provenance`'s and is above this block since that branch merged
+    // (Task RELEASE-0126, 2026-09-15).
+    'A51.1', 'A51.2',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -686,7 +692,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(385);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(387);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1640,7 +1646,9 @@ describe('local design amendments (spec D15)', () => {
     // changes file still fails here.
     expect(amendmentsFor('jsx').map((a) => a.id)).toEqual([
       'A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12',
-      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7'
+      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7',
+      // A51 (Task MAP-RECENTER, John, 2026-09-16) — the recenter button in the control stack.
+      'A51.1', 'A51.2'
     ]);
   });
 
@@ -1796,6 +1804,48 @@ describe('local design amendments (spec D15)', () => {
     }
     // …and each pair is at the END of its own paragraph, not spliced into the middle of one.
     expect(amended.split(`${FLOOR}</p>`).length - 1, 'the sentences were not appended at the end of both paragraphs').toBe(2);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A51 (John, 2026-09-16): "add a 'recenter' button that recenters the map on the selected city
+  // and or if selected practice location, place this recenter icon between the + | -".
+  //
+  // The control stack is `+ | -` since A49 withdrew the desktop `on-basemap` (the Map | Satellite
+  // pair is behind `onBasemap &&` and the desktop mount no longer passes it), so the button joins
+  // that one flex row between the two zoom buttons, with a SECOND copy of the row's own 1 px
+  // divider. Both entries edit `MarketMapV3.jsx` (`file: 'jsx'`, A28.1's precedent).
+  // ---------------------------------------------------------------------------------------
+  it('A51 puts a Recenter button BETWEEN the two zoom buttons, in the row\'s own style and divider', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+    // The pristine stack really is the two buttons and one divider this entry sits inside — the
+    // removal direction, so the assertions below cannot pass against a file that already had it.
+    expect(pristineJsx, 'the pristine bundle already carries a Recenter control').not.toContain('"aria-label": "Recenter"');
+    expect((pristineJsx.match(/React\.createElement\("span", \{ style: \{ width: "1px", background: "#e6e6e6" \} \}\),/g) ?? []).length).toBe(1);
+
+    // ORDER is the ruling: Zoom in, divider, Recenter, divider, Zoom out — read off the file as
+    // one sequence rather than three independent `toContain`s, which could not tell the order.
+    const labels = [...jsx.matchAll(/"aria-label": "(Zoom in|Zoom out|Recenter)"/g)].map((m) => m[1]);
+    expect(labels).toEqual(['Zoom in', 'Recenter', 'Zoom out']);
+    expect((jsx.match(/React\.createElement\("span", \{ style: \{ width: "1px", background: "#e6e6e6" \} \}\),/g) ?? []).length,
+      'the second divider is what keeps the three buttons evenly separated').toBe(2);
+
+    // The row's OWN style, not a new token: `stackBtn` with the same two overrides its two
+    // neighbours carry. `ctrlIcon` is the file's own control-stack icon style (V2's `iconImg`
+    // body), declared here since the V3 rewrite and read by nothing until now.
+    expect(jsx).toContain('style: Object.assign({}, stackBtn, { flex: 1, width: "auto" }),\n                onClick: () => recenterView(),\n                "aria-label": "Recenter"');
+    expect(jsx).toContain('React.createElement("img", { src: "assets/icons/sub-recenter-disc.svg", alt: "", width: 15, height: 15, style: ctrlIcon })');
+    expect(jsx.split('const ctrlIcon = ').length - 1, 'ctrlIcon is declared once and is no longer an orphan').toBe(1);
+
+    // The behavioural branch, and A25's own finite test in it: a listing whose seller has not
+    // disclosed its location is served lat/lng null, and a missing point omits rather than
+    // fabricating a centre (`Number.isFinite`, never `!= null` — a NaN passes that).
+    expect(jsx).toContain('const sel = practices.filter((p) => p.id === activeId)[0];');
+    expect(jsx).toContain('if (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) map.setView([sel.lat, sel.lng], map.getZoom(), { animate: true });');
+    expect(jsx).toContain('else if (center) map.setView(center, zoom, { animate: true });');
+    // The zoom is the map's OWN on the practice arm and the metro's on the other: a control that
+    // silently zooms is performing a second action its label does not name.
+    expect(jsx, 'the practice arm must not re-apply the metro zoom').not.toContain('map.setView([sel.lat, sel.lng], zoom');
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

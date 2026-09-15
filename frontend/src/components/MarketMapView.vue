@@ -20,6 +20,8 @@
         <div style="display: flex;">
           <button :style="stackBtn" aria-label="Zoom in" @click="engine && engine.zoomIn()">+</button>
           <span style="width: 1px; background: #e6e6e6;"></span>
+          <button :style="stackBtn" aria-label="Recenter" @click="engine && recenterView(engine)"><img src="/assets/icons/sub-recenter-disc.svg" alt="" width="15" height="15" :style="ctrlIcon"></button>
+          <span style="width: 1px; background: #e6e6e6;"></span>
           <button :style="stackBtn" aria-label="Zoom out" @click="engine && engine.zoomOut()">−</button>
         </div>
       </div>
@@ -90,7 +92,35 @@ function publishViewport() {
   publish({ w: b[0][1], s: b[0][0], e: b[1][1], n: b[1][0], zoom: engine.getZoom() }, { force });
 }
 
+// A51 (John, 2026-09-16): "add a 'recenter' button that recenters the map on the selected city
+// and or if selected practice location". The mirror of `MarketMapV3.jsx`'s own `recenterView`,
+// arm for arm. It drives the engine DIRECTLY, exactly as the `+`/`−` buttons beside it do, so it
+// writes NO state: the selected practice stays selected and its docked panel stays open, which is
+// half the ruling. `md.resetView`/`recenterKey` are a different control (the bottom-right "Reset
+// view" button) and are untouched, so the recentre WATCHER below — and the boundary-request
+// optimisation in it — is never reached by this click. The `setView` settles into Leaflet's own
+// `moveend`, which publishes WITHOUT force, so a recentre to where the map already is asks the API
+// for nothing and one after a pan asks exactly once.
+//
+// `Number.isFinite`, never `!= null` (A25.1): an undisclosed location is served `lat: null,
+// lng: null` and a NaN would pass the looser test. A missing point takes the metro's own centre
+// and zoom rather than [0, 0] or a centre the practice is not at.
+//
+// The engine is handed IN rather than read off the closure, which is the one place this differs
+// from `MarketMapV3.jsx`'s `if (!map) return;` — the guard lives in the template here, exactly as
+// it does on the two zoom buttons beside it (`engine && engine.zoomIn()`), so there is no arm that
+// no click can reach. Both files are otherwise arm for arm.
+function recenterView(map) {
+  const sel = props.practices.filter((p) => p.id === props.activeId)[0];
+  if (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) map.setView([sel.lat, sel.lng], map.getZoom(), true);
+  else if (props.center) map.setView(props.center, props.zoom, true);
+}
+
 const BASEMAP_KEYS = ['map', 'satellite'];
+// A51's glyph style: `MarketMapV3.jsx`'s own `ctrlIcon`, which is V2's `iconImg` body. Declared
+// as a binding rather than written inline so the two targets' `el.style` cannot drift — the DOM
+// oracle compares live declarations, and this is the one element of the stack that carries any.
+const ctrlIcon = 'display: block; opacity: .85;';
 const stackBtn = 'width: auto; height: 32px; display: grid; place-items: center; padding: 0; background: none; border: 0; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 500; color: #003a70; line-height: 1; flex: 1;';
 const basemapTabStyle = (k) =>
   'flex: 1; height: 28px; border: 0; border-radius: 5px; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 500; line-height: 1; color: ' +

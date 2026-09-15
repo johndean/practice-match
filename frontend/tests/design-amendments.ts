@@ -6837,7 +6837,7 @@ const A35_7: Amendment = {
  *  doors for every account, while the app renders the account's own. Approved states are captured
  *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
  *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
- *  the filter moved 28 of the 55 approved states — every DOM and pixel capture of a member screen
+ *  the filter moved 28 of the 56 approved states — every DOM and pixel capture of a member screen
  *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
  *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
  *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
@@ -8290,6 +8290,109 @@ const A50_6: Amendment = {
   count: 1
 };
 
+/**
+ * A51 — THE RECENTER BUTTON (Task MAP-RECENTER, John, 2026-09-16, with a screenshot of the
+ * control stack and of a crosshair icon): "add a 'recenter' button that recenters the map on the
+ * selected city and or if selected practice location, place this recenter icon between the + | -".
+ *
+ * WHERE. The desktop control stack is `+ | -` and nothing else since A49 withdrew the desktop
+ * mount's `on-basemap` — the Map | Satellite pair is behind `onBasemap &&` and no desktop mount
+ * passes it any more — so "between the + | -" is one flex row with one 1 px divider in it, and
+ * the button joins it with a SECOND copy of that divider. Two literal edits, both `file: 'jsx'`
+ * (A28.1's precedent, A24's partition), neither chained: each `find` occurs exactly once in the
+ * pristine twin and no earlier entry introduced either line.
+ *
+ * WHAT IT DOES, which is the ruling and not a reading of it:
+ *   a practice selected  -> centre on THAT practice's own point, at the map's CURRENT zoom, and
+ *                           keep it selected (the docked panel stays open).
+ *   nothing selected     -> the metro's own centre and zoom.
+ * The zoom is deliberately not touched on the first arm: a control that silently zooms is
+ * performing a second action its label does not name. On the second it IS restored, because that
+ * is what "recenter on the selected city" means.
+ *
+ * A25's rule, not a new one: `location_disclosed` is `NOT NULL DEFAULT false`, so a published
+ * listing can be served `lat: null, lng: null`, and a missing point OMITS rather than fabricating
+ * — `md.practices` already drops such a listing (A25.1) and the test here is `Number.isFinite`,
+ * never `!= null`, because a NaN passes that. A selected practice with no finite point therefore
+ * takes the metro centre rather than [0, 0] or a ring drawn where the practice is not.
+ *
+ * NO NEW STATE, NO NEW PROP, NO NEW WATCHER, and that is measured rather than asserted. The
+ * button drives the map DIRECTLY — `mapRef.current.setView(...)` — exactly as its two neighbours
+ * do and exactly as V2's own Recenter button did (`design_handoff_practice_match_v2/
+ * MarketMap.jsx:236`, which drew this very glyph). Three consequences follow from that and each
+ * is the point rather than a side effect:
+ *   - the selection survives the click, because nothing writes state;
+ *   - `md.resetView` and `md.recenterKey` are UNTOUCHED, so the bottom-right "Reset view" button
+ *     (`Practice Match V3.dc.html`'s own, which has always called it) keeps its exact behaviour —
+ *     clear the selection and return to the metro. The two controls differ only when a practice
+ *     is selected, which is the case John's request is about;
+ *   - the boundary-request optimisation in `MarketMapView.vue`'s recentre watcher is not even
+ *     reached. A `setView` settles into Leaflet's own `moveend`, which publishes WITHOUT force,
+ *     so a recenter on an unmoved map still asks the API for nothing and a recenter after a pan
+ *     asks exactly once — proved behaviourally in `src/components/MarketMapView.test.ts`.
+ *
+ * THE ICON is the bundle's own `assets/icons/sub-recenter-disc.svg` — a filled disc with four
+ * knocked-out crosshair ticks and a centre dot, which is the glyph in John's screenshot, and V2's
+ * own choice for this exact button. `sub-reset-view.svg` was measured against the screenshot and
+ * rejected: it is a circular arrow (an arc plus an arrowhead), the "reload" glyph, and it is
+ * already spoken for by the bottom-right "Reset view" button. Nothing is drawn and no asset is
+ * added: the file is in the bundle and byte-identical in `frontend/public/assets/icons/`. It is
+ * sized 15 x 15 (the design's own standalone-icon size, as on `sub-close-thin` and `sub-chevron`)
+ * and styled with `ctrlIcon` — the file's OWN control-stack icon style, V2's `iconImg` body,
+ * declared here since the V3 rewrite and read by nothing until now, so no style token is invented.
+ */
+/** John's words of 2026-09-16 are "place this recenter icon between the + | \u2212", and the
+ *  VERTICAL BAR is the one character a `LOCAL_AMENDMENTS.md` cell cannot carry: the ledger is a
+ *  markdown table and `design-amendments.test.ts` compares the ruling cell against this string
+ *  byte for byte, reading it with `|` as the column separator. So the bar — which stands for the
+ *  gap between the two buttons, not for a word — is written "and", and his exact phrasing is kept
+ *  in the rows' own "What changes" column, which the gate does not read. Nothing else is edited. */
+const MAP_RECENTER = { date: '2026-09-16', file: 'jsx' as AmendmentFile,
+  ruling: "add a 'recenter' button that recenters the map on the selected city and or if selected practice location, place this recenter icon between the + and \u2212" };
+
+/** A51.1 — the handler, declared beside the style constants the control stack is built from and
+ *  above the first of them, so it reads in the order the stack does. */
+const A51_1: Amendment = {
+  id: 'A51.1', ...MAP_RECENTER,
+  find: '  const stackBtn = {\n',
+  replace: '  // A51 (John, 2026-09-16). Drives the map DIRECTLY, as its two neighbours do and as V2\'s\n'
+    + '  // own Recenter button did (MarketMap.jsx:236): no state is written, so the selected practice\n'
+    + '  // stays selected and its docked panel stays open. A selected practice centres the map on its\n'
+    + '  // OWN point at the current zoom; nothing selected restores the metro\'s centre and zoom.\n'
+    + '  // `Number.isFinite`, not `!= null` (A25.1): an undisclosed location is served lat/lng null\n'
+    + '  // and a NaN would pass the looser test, and a missing point omits rather than fabricating.\n'
+    + '  const recenterView = () => {\n'
+    + '    const map = mapRef.current;\n'
+    + '    if (!map) return;\n'
+    + '    const sel = practices.filter((p) => p.id === activeId)[0];\n'
+    + '    if (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) map.setView([sel.lat, sel.lng], map.getZoom(), { animate: true });\n'
+    + '    else if (center) map.setView(center, zoom, { animate: true });\n'
+    + '  };\n'
+    + '\n'
+    + '  const stackBtn = {\n',
+  count: 1
+};
+
+/** A51.2 — the button itself and the row's second divider, inserted after the first one so the
+ *  order is Zoom in, divider, Recenter, divider, Zoom out. The divider line is the row's own,
+ *  copied byte for byte rather than composed. */
+const A51_2: Amendment = {
+  id: 'A51.2', ...MAP_RECENTER,
+  find: '            React.createElement("span", { style: { width: "1px", background: "#e6e6e6" } }),\n',
+  replace: '            React.createElement("span", { style: { width: "1px", background: "#e6e6e6" } }),\n'
+    + '            React.createElement(\n'
+    + '              "button",\n'
+    + '              {\n'
+    + '                style: Object.assign({}, stackBtn, { flex: 1, width: "auto" }),\n'
+    + '                onClick: () => recenterView(),\n'
+    + '                "aria-label": "Recenter"\n'
+    + '              },\n'
+    + '              React.createElement("img", { src: "assets/icons/sub-recenter-disc.svg", alt: "", width: 15, height: 15, style: ctrlIcon })\n'
+    + '            ),\n'
+    + '            React.createElement("span", { style: { width: "1px", background: "#e6e6e6" } }),\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -8555,5 +8658,12 @@ export function amendments(): Amendment[] {
     // A50.2 on A34.1's `dataset:` line and A50.4 on A24.30b's tooltip sentence -- so each
     // runs after the entry it reads; A50.3, A50.5 and A50.6 take pristine text.
     // Definition order in this file matches this list (m8).
-    A50_1, A50_2, A50_3, A50_4, A50_5, A50_6];
+    A50_1, A50_2, A50_3, A50_4, A50_5, A50_6,
+    // A51 -- the recenter button in the map's own control stack (Task MAP-RECENTER, John's
+    // request of 2026-09-16). Appended last, as every family is. Neither entry is chained:
+    // each `find` occurs exactly once in the pristine twin, and A51.2's insertion point is the
+    // divider the pristine row already carries, not one A51.1 introduced. A50 was
+    // `feat/pet-rate-provenance`'s and is above this block since that branch merged (Task
+    // RELEASE-0126, 2026-09-15).
+    A51_1, A51_2];
 }
