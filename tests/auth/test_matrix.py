@@ -179,11 +179,16 @@ REAUTH_OUTSIDE_THE_SWEEP = {
     # (app/api/admin_users.py). Driven over HTTP, as a token and as a session, by
     # tests/api/test_admin_users.py::test_an_api_token_never_satisfies_a_reauth_gate.
     "users.revoke": "in-handler guard",
-    # No route mounts this yet — it arrives with the Map-engines sub-project, and the rows above
-    # will pick it up on the commit that adds it. (`licence.decide` left this list in Census Task
-    # A9: `POST /api/admin/data-sources/{dataset_key}/license` carries it as a route-level guard,
-    # so the sweep sees it — A-C0 ¶3.)
-    "engine.activate": "no route yet",
+    # `engine.activate` LEFT this list on 2026-09-14, Task 1 of the admin control surface:
+    # `POST /api/admin/vintages/{dataset_key}/activate` (`app/api/admin_settings.py`) carries it as
+    # a module-level route guard, so the sweep sees it — exactly as `licence.decide` left the list
+    # in Census Task A9 when `POST /api/admin/data-sources/{dataset_key}/license` landed (A-C0 ¶3).
+    # It is the mechanism this dict's own header promises ("an entry that gains a route ... fails
+    # here instead of quietly leaving the sweep") working as written: the assertion below went RED
+    # on the commit that mounted the route, and the entry is removed rather than the assertion
+    # widened. The route the older Map-engines plan sketched for it
+    # (`POST /api/admin/data-sources/{key}/activate`) is superseded by decision D2 of
+    # `docs/superpowers/plans/2026-09-14-admin-control-surface.md`; nothing else here moves.
 }
 
 

@@ -8,7 +8,8 @@ before assuming a field exists.
 
 This document is generated from, and kept honest against, the running code: `tests/api/
 test_contract_doc.py` fails if a route below stops matching `app.api.market`/`app.api.
-admin_data_sources`, or if this document stops naming the fixture field names the frontend reads.
+admin_data_sources`/`app.api.admin_settings`, or if this document stops naming the fixture field
+names the frontend reads.
 It does not fail if the *prose* goes stale, so treat the route list and JSON shapes as the source
 of truth and the surrounding sentences as commentary.
 
@@ -24,8 +25,10 @@ of truth and the surrounding sentences as commentary.
 | GET | `/api/listings/{listing_id}/market` | `market.read` |
 | GET | `/api/admin/data-sources` | `data_sources.read` (staff/admin) |
 | POST | `/api/admin/data-sources/{dataset_key}/license` | `licence.decide` (admin, re-authenticated within 10 minutes) |
+| GET | `/api/admin/settings` | `data_sources.read` (staff/admin) |
+| POST | `/api/admin/vintages/{dataset_key}/activate` | `engine.activate` (admin, re-authenticated within 10 minutes) |
 
-**Mounted only while `SITE_MODE=app`.** All eight routes live inside `app/main.py`'s `if
+**Mounted only while `SITE_MODE=app`.** All ten routes live inside `app/main.py`'s `if
 settings.site_mode == "app":` block, the same gate `admin_users_router`/`listings_router` sit
 behind. Production runs `coming_soon` until launch (`CLAUDE.md`), so on production today every one
 of these paths 404s through `not_found_router`, exactly like every other member or admin surface —
@@ -43,9 +46,11 @@ unguarded. `MARKET_DATA_PUBLIC` stays `false` in every environment today (John's
 (3)); `GET /api/config` publishes the flag's current value unconditionally so the frontend's own
 `can('market.read', …)` check can honour the same rule without a second, drifting copy of it.
 
-`/api/admin/*` above uses `data_sources.read` (staff or admin) for both routes, plus
-`licence.decide` (admin only, and in `permissions.REAUTH` — an `api_token` can never satisfy it)
-on `/license` alone.
+`/api/admin/*` above uses `data_sources.read` (staff or admin) for the two reads —
+`/data-sources` and `/settings` — plus one admin-only, re-authenticated permission on each write:
+`licence.decide` on `/license` and `engine.activate` on `/vintages/{dataset_key}/activate`. Both
+are in `permissions.REAUTH`, so an `api_token` can never satisfy either one, whatever role it
+carries (`deps.TokenCannotReauth`).
 
 ## `GET /api/layers`
 
@@ -538,6 +543,82 @@ leaves the flag standing; only a decision made here clears it. Do not build a UI
 `attribution_text` is returned verbatim and composed nowhere in the frontend — it is legally
 load-bearing (spec §12), and the point of holding it in the database is that a terms change is one
 `UPDATE`, not a redeploy.
+
+## `GET /api/admin/settings` and `POST /api/admin/vintages/{dataset_key}/activate`
+
+The Admin **Settings** tab's one read, and the one write it draws a button for. The sample below is
+the real answer, with the vintage list cut to two of the seventeen registered datasets:
+
+```json
+{
+  "market_data_public": {
+    "value": false,
+    "environment": "qa",
+    "set_in": "Railway environment variable MARKET_DATA_PUBLIC",
+    "writable": false
+  },
+  "vintages": [
+    { "dataset_key": "acs5", "display_name": "ACS 5-Year Detailed Tables",
+      "active_vintage": "2018\u20132022", "activated_at": "2026-09-14T15:55:49.108632+00:00",
+      "activated_by": "seed@example.org", "activation_note": null,
+      "loaded_vintage": "2019\u20132023", "last_load_finished_at": "2026-09-14T15:55:49.104415+00:00",
+      "activatable": true },
+    { "dataset_key": "cbp", "display_name": "County Business Patterns",
+      "active_vintage": null, "activated_at": null, "activated_by": null, "activation_note": null,
+      "loaded_vintage": null, "last_load_finished_at": null, "activatable": false }
+  ],
+  "signups": { "total": 2, "launch_mailed": 1, "not_mailed": 1,
+               "last_mailed_at": "2026-09-14T15:55:49.123342+00:00", "sendable": true }
+}
+```
+
+**`market_data_public` is read-only and says so** (`"writable": false`). It is a Railway
+environment variable, per service per environment; no route in this application has ever written
+it, and `scripts/verify-deploy.sh` refuses a production deploy where it is true. `set_in` is the
+constant `app.api.admin_settings.MARKET_FLAG_SOURCE`, so a console can state where the value lives
+rather than offering a control that cannot complete. `GET /api/config` publishes the same flag to
+anonymous callers; this row adds the environment it is set in and the fact that it is not writable
+here.
+
+**One row per registered dataset, not one "Census data vintage" row** (controller decision D11):
+each dataset carries its own active vintage, its own last load and its own activation. The list is
+ordered by `dataset_key` and carries every row `dataset_registry` holds, so a dataset nobody has
+loaded appears with nulls rather than being omitted. `activatable` is `true` exactly when the
+newest SUCCEEDED `ingest_run` names a vintage that is not the one already active — a hint for the
+screen and never the gate: the write below re-asks `app.census.vintage.qa` on the way in, so a
+stale tab cannot force an activation this flag would have hidden.
+
+**`signups` is the launch-mail row's counts, not its send.** `sendable` is `SITE_MODE=app`; the
+send itself is `POST /api/admin/signups/launch-mail` (`signups.notify`, admin-only,
+re-authenticated) and is not duplicated here.
+
+```
+POST /api/admin/vintages/{dataset_key}/activate
+{ "vintage": "2019–2023", "force"?: boolean, "note"?: string }
+→ { "dataset_key": "acs5", "vintage": "2019–2023", "prior_vintage": "2018–2022",
+    "rows": 10, "ratio": 1.0, "note": null }
+```
+
+This is `scripts/census_load.py activate` reached from a screen: the route delegates to
+`app.census.vintage.activate`, the CLI's own function, so there is ONE activation path and not
+two, with one QA gate rather than a second copy of it. `active_vintage` is the table the API reads
+— never `ingest_run` — so nothing a load wrote goes live until this route (or the CLI) flips it.
+
+Refusals carry the same `{"error": {"code", "message"}}` envelope as the rest of this document:
+
+| Code | Status | When |
+|---|---|---|
+| `BAD_DATASET` | 422 | `dataset_key` is not one of `app.census.vintage.TABLE_FOR`'s keys. Refused before anything is read. |
+| `NOTE_REQUIRED` | 422 | `force` is true and `note` is empty. A row-count override with no recorded why is exactly what the ratio guard exists to prevent. |
+| `ACTIVATION_REFUSED` | 409 | `app.census.vintage.activate` said no — the vintage's latest `ingest_run` did not succeed, or the row-count ratio against the active vintage is outside `[0.8, 1.25]` and `force` was not set. The message is that function's own. |
+| `REAUTH_REQUIRED` | 403 | An admin whose password was not confirmed in the last ten minutes. |
+| `REAUTH_TOKEN` | 403 | An `api_token`. It has no password to confirm, so this route is permanently out of its reach whatever role it carries. |
+
+`engine.activate` is in `permissions.AUDITED`: the handler writes one `audit_log` row naming the
+dataset, the vintage it replaced and the one it installed, with `force` and the operator's own
+`note`. A legacy operator bearer (`API_SECRET_KEY`) names no `account` row, so `active_vintage.
+activated_by` records the literal `"operator"` and the audit row's `actor_role` reads
+`legacy:operator`.
 
 ## Fixture → field mapping (`logic.js` → this API)
 
