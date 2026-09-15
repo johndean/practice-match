@@ -51,7 +51,7 @@ PET_OWNING_HOUSEHOLDS = 77_500_000
 RATE_GEOGRAPHY = "United States"
 
 HOUSEHOLD_SOURCE = "U.S. Census Bureau, American Community Survey 5-Year Estimates"
-DERIVATION = "local Census households × national AVMA pet-household incidence rate"
+DERIVATION = "local Census households \u00d7 national AVMA pet-household incidence rate"
 #: Never "Pet households", which implies direct observation (John's §4).
 STATUS = "ESTIMATED"
 
@@ -79,7 +79,7 @@ LICENCE_STATUS = "SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED"
 HISTORICAL: dict[str, Any] = {
     "source": SOURCE,
     "source_dataset": "Pet Ownership & Demographics Sourcebook",
-    "source_edition": "2017–2018",
+    "source_edition": "2017\u20132018",
     "reference_period": "2016-12-31",
     "incidence_rate": 0.568,
     "rounded_as_used": 0.57,

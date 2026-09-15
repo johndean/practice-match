@@ -1702,3 +1702,61 @@ def test_a_listing_with_no_pet_row_is_served_no_rate_at_all(conn):
     active, registry = _seed_active_and_registry(conn)
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
     assert row["pet_rate"] is None
+
+
+def test_an_uncleared_dataset_serves_no_pet_rate_even_though_the_stamp_is_there(conn):
+    """The rate is provenance for a figure, and a figure whose dataset is not licence-cleared is
+    not shown at all — so neither is the rate behind it. Same term `_servable` applies to every
+    other figure on this row, applied here to the one member that is not a figure."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        # The row is written while the dataset IS cleared: `market_metric_license_gate` refuses a
+        # write from an uncleared dataset outright (`migrations/062`), so the state this test is
+        # about — a stamped row whose licence was withdrawn AFTERWARDS — is only reachable in that
+        # order. That is also the real sequence: the pipeline writes, counsel changes its mind.
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', %s, now())",
+            (listing_id, '{"acs5": "2019-2023", "geo_level": "place", "pet_incidence_rate": 0.586}'),
+        )
+        cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None
+
+
+def test_a_pet_row_with_no_inputs_at_all_serves_no_rate(conn):
+    """`market_metric.inputs` is NULLABLE, and a row written before the stamp existed carries no
+    `inputs` object to read a key out of. That is "nobody recorded a rate", which is exactly the
+    answer `None` means here — never the module's current constant standing in for a figure it
+    did not produce."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', NULL, now())",
+            (listing_id,),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None
+
+
+def test_a_stamp_that_is_not_a_number_names_no_rate(conn):
+    """`inputs` is jsonb, so ANY json value can arrive on that key. A boolean is the one that
+    would slip a plain `isinstance(x, (int, float))` — `isinstance(True, int)` is True in Python,
+    so a stamped `true` would become the rate 1.0 and the design would report every household in
+    the ring as a pet household. A non-number names no rate, and the design shows no figure."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'cleared' WHERE dataset_key = 'acs5'")
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, suppressed, source_dataset, inputs, computed_at) VALUES "
+            "(%s, 'place', 'pet_households_est', '2019-2023', 31350, 'count', true, 'v1', false, 'acs5', %s, now())",
+            (listing_id, '{"acs5": "2019-2023", "geo_level": "place", "pet_incidence_rate": true}'),
+        )
+    active, registry = _seed_active_and_registry(conn)
+    assert community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]["pet_rate"] is None

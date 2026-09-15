@@ -80,9 +80,9 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census import pet_rate as PR
 from app.census.bands import HOUSEHOLDS_STOPS, INCOME_STOPS, band_ambiguous
 from app.census.geo_metric import GEO_VERSION_KEY
-from app.census import pet_rate as PR
 from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
 from app.tasks.celery_app import celery_app

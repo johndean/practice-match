@@ -31,7 +31,7 @@ def test_the_historical_rate_is_kept_as_history_and_is_not_the_active_one() -> N
     multiplier. The record carries the edition and the reference date it was measured at, which
     is what makes it history rather than a number somebody deleted."""
     assert PR.HISTORICAL["incidence_rate"] == 0.568
-    assert PR.HISTORICAL["source_edition"] == "2017–2018"
+    assert PR.HISTORICAL["source_edition"] == "2017\u20132018"
     assert PR.HISTORICAL["reference_period"] == "2016-12-31"
     assert PR.HISTORICAL["rounded_as_used"] == 0.57
     assert PR.HISTORICAL["incidence_rate"] != PR.INCIDENCE_RATE
@@ -51,17 +51,17 @@ def test_provenance_reads_the_vintage_and_the_version_it_is_given() -> None:
     to state: the first is whichever ACS release is active in THIS database and the second is the
     formula version the pipeline stamps. Typing either here would be a second copy of a fact the
     system already holds, which is the whole defect this task removes."""
-    p = PR.provenance(household_vintage="2019–2023", methodology_version="v1")
-    assert p["household_vintage"] == "2019–2023"
+    p = PR.provenance(household_vintage="2019\u20132023", methodology_version="v1")
+    assert p["household_vintage"] == "2019\u20132023"
     assert p["methodology_version"] == "v1"
-    other = PR.provenance(household_vintage="2020–2024", methodology_version="v2")
-    assert other["household_vintage"] == "2020–2024" and other["methodology_version"] == "v2"
+    other = PR.provenance(household_vintage="2020\u20132024", methodology_version="v2")
+    assert other["household_vintage"] == "2020\u20132024" and other["methodology_version"] == "v2"
 
 
 def test_provenance_carries_every_field_john_named() -> None:
     """His §6 list, plus CONTROLLER RULING (1)'s `methodology_note` and nothing else. The set is
     pinned both ways so a field cannot be quietly dropped or quietly added."""
-    p = PR.provenance(household_vintage="2019–2023", methodology_version="v1")
+    p = PR.provenance(household_vintage="2019\u20132023", methodology_version="v1")
     assert set(p) == {
         "source", "source_dataset", "source_edition", "reference_period", "incidence_rate",
         "incidence_rate_display", "rate_geography", "household_source", "household_vintage",
@@ -75,7 +75,7 @@ def test_provenance_carries_every_field_john_named() -> None:
     assert p["incidence_rate_display"] == "58.6%"
     assert p["rate_geography"] == "United States"
     assert p["household_source"] == "U.S. Census Bureau, American Community Survey 5-Year Estimates"
-    assert p["derivation"] == "local Census households × national AVMA pet-household incidence rate"
+    assert p["derivation"] == "local Census households \u00d7 national AVMA pet-household incidence rate"
     assert p["status"] == "ESTIMATED"
 
 
@@ -84,7 +84,7 @@ def test_the_provenance_carries_the_sourcebooks_own_methodology_sentence() -> No
     Introduction says the findings draw on surveys conducted in 2023, 2024 AND 2025. His value
     stands and the note sits beside it, so the record is never less precise than the source it
     cites."""
-    note = PR.provenance(household_vintage="2019–2023", methodology_version="v1")["methodology_note"]
+    note = PR.provenance(household_vintage="2019\u20132023", methodology_version="v1")["methodology_note"]
     assert "conducted in 2023, 2024, and 2025" in note
     assert "6,979 respondents" in note and "7,539" in note and "7,519" in note
     assert "weighted based on certain demographic and other variables" in note
@@ -95,7 +95,7 @@ def test_the_licence_status_is_the_unresolved_one_and_says_both_halves() -> None
     written permission, so the source is VERIFIED and the redistribution right is NOT. The string
     the registry row and the API both carry is this one, never a composed variant."""
     assert PR.LICENCE_STATUS == "SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED"
-    assert PR.provenance(household_vintage="2019–2023", methodology_version="v1")["licence_status"] == PR.LICENCE_STATUS
+    assert PR.provenance(household_vintage="2019\u20132023", methodology_version="v1")["licence_status"] == PR.LICENCE_STATUS
 
 
 def test_the_derivation_reads_the_one_rate_rather_than_a_number_of_its_own() -> None:
