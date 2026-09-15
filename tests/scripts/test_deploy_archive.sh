@@ -161,6 +161,43 @@ grep -q -- "--environment QA --service worker" "$FAKE_LOG" || fail "worker not d
 grep -q "^UPLOAD_BUILD_SHA $repo_sha$" "$FAKE_LOG" \
   || fail "BUILD_SHA must carry SOURCE_DIR's short HEAD ($repo_sha); got: $(grep '^UPLOAD_BUILD_SHA' "$FAKE_LOG" || echo none)"
 
+# NOTE: this case runs its own deploy and resets FAKE_LOG, so it must NOT sit between
+# case 1 and case 2 -- case 2 is an assertion ABOUT case 1's upload and reads the log
+# case 1 left behind. Splitting that pair made case 2 read this fixture's sha instead.
+# --- 2b. the upload does not carry what .railwayignore says must never ship ------
+# ROOT CAUSE, measured 2026-09-16: `railway up` reached "Uploading..." and the HTTP request
+# to backboard.railway.com timed out ("operation timed out"). Railway still recorded a
+# deployment, which then sat INITIALIZING with nothing to build and finally reported
+# "Failed to create code snapshot". Three deploys failed that way in one day.
+#
+# The upload was a `git archive` of the WHOLE tree -- 42 MB, of which 22 MB is `docs/` and
+# `tests/`, paths `.railwayignore` already declares must never ship. deploy.sh handed all of
+# it to the CLI and let Railway discard half after the fact, which is half an upload's
+# timeout budget spent on files the image cannot use. The archive now honours that file
+# BEFORE the upload, so the two can never disagree and the list is written down once.
+ignrepo="$tmp/ignored-paths"; new_repo "$ignrepo" 9.9.9
+mkdir -p "$ignrepo/docs" "$ignrepo/tests" "$ignrepo/app"
+echo "a plan nobody deploys" > "$ignrepo/docs/plan.md"
+echo "a test nobody deploys" > "$ignrepo/tests/test_thing.py"
+echo "shipped" > "$ignrepo/app/main.py"
+printf '.git\ndocs\ntests\n' > "$ignrepo/.railwayignore"
+git_q -C "$ignrepo" add -A; git_q -C "$ignrepo" commit -q -m "tracked docs, tests and a .railwayignore"
+mark_pushed "$ignrepo"
+reset_state; : > "$FAKE_LOG"
+out=$(scripts/deploy.sh QA "$ignrepo" 2>&1) || fail "a repo with a .railwayignore must still deploy; got: $out"
+if grep -q '^UPLOAD_ENTRY \./docs' "$FAKE_LOG"; then
+  fail "the upload carried docs/, which .railwayignore excludes: $(grep '^UPLOAD_ENTRY \./docs' "$FAKE_LOG")"
+fi
+if grep -q '^UPLOAD_ENTRY \./tests' "$FAKE_LOG"; then
+  fail "the upload carried tests/, which .railwayignore excludes: $(grep '^UPLOAD_ENTRY \./tests' "$FAKE_LOG")"
+fi
+# ...and the application itself is still there. An exclusion that empties the upload would
+# pass both checks above, so the positive half is what makes them mean anything.
+grep -q '^UPLOAD_ENTRY \./app/main.py' "$FAKE_LOG" \
+  || fail "the upload must still carry the application; entries were: $(grep -c '^UPLOAD_ENTRY ' "$FAKE_LOG")"
+grep -q '^UPLOAD_ENTRY \./\.railwayignore' "$FAKE_LOG" \
+  || fail ".railwayignore itself must still ship, so Railway applies the same list"
+
 # --- 3. an uncommitted tracked edit is refused (66), before the CLI is touched ---
 reset_state; : > "$FAKE_LOG"
 printf '[project]\nname = "practice-match"\nversion = "9.9.9-uncommitted"\n' > "$repo/pyproject.toml"
