@@ -830,7 +830,9 @@ describe('MarketMapView — the V3 map', () => {
     const mobile = mount(MarketMapView, { props: v3Props() });
     await flushPromises();
     expect(mobile.findAll('button[aria-pressed]')).toHaveLength(0);
-    expect(mobile.findAll('button[aria-label]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom in', 'Zoom out']);
+    // A51 (John, 2026-09-16) put Recenter BETWEEN the two zoom buttons, which is the ruling
+    // literally — so the order is read here rather than the set.
+    expect(mobile.findAll('button[aria-label]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom in', 'Recenter', 'Zoom out']);
   });
 
   it('the basemap tabs call onBasemap and the zoom buttons drive the engine', async () => {
@@ -862,7 +864,7 @@ describe('MarketMapView — the V3 map', () => {
     installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props(), attachTo: document.body });
     await flushPromises();
-    for (const label of ['Zoom in', 'Zoom out']) {
+    for (const label of ['Zoom in', 'Recenter', 'Zoom out']) {
       expect((w.find(`button[aria-label="${label}"]`).element as HTMLElement).style.width).toBe('auto');
     }
     w.unmount();
@@ -875,6 +877,126 @@ describe('MarketMapView — the V3 map', () => {
     expect(() => areaChildren(layerGroups(stub).overlay)[0].on_click!()).not.toThrow();
     await w.setProps({ onBasemap: NO_FN });
     expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A51 — the recenter button (John, 2026-09-16): "add a 'recenter' button that recenters the map
+  // on the selected city and or if selected practice location, place this recenter icon between
+  // the + | −". The mirror of `MarketMapV3.jsx`'s own `recenterView`, and the same two arms.
+  // ---------------------------------------------------------------------------------------
+  const recenter = (w: ReturnType<typeof mount>) => w.find('button[aria-label="Recenter"]').trigger('click');
+
+  it('Recenter with a practice selected centres on THAT practice, at the zoom the member is on', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: 'p2' }) });
+    await flushPromises();
+    // The member has zoomed and panned since the metro loaded — both must survive the click,
+    // the zoom because the control centres and does not zoom, the centre because it is replaced.
+    stub.map.setView([40, -70], 13);
+    await recenter(w);
+    expect(stub.map.center, 'the map did not move to the selected practice').toEqual([30.33, -97.73]);
+    expect(stub.map.zoom, 'recentring changed the zoom — a second action the label does not name').toBe(13);
+  });
+
+  it('Recenter with a practice selected writes no state: the selection and its docked panel survive', async () => {
+    installLeafletStub();
+    const picked: string[] = [];
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: 'p1', onSelect: (id: string) => picked.push(id) }) });
+    await flushPromises();
+    await recenter(w);
+    // The whole reason the control drives the map directly (as `+`/`−` do, and as V2's own
+    // Recenter button did): nothing is written, so `mdSel` cannot be cleared by this click and
+    // the docked panel it opens cannot close.
+    expect(picked, 'Recenter reported a selection change').toEqual([]);
+    expect(w.props('activeId')).toBe('p1');
+  });
+
+  it('Recenter with nothing selected restores the metro\'s own centre AND zoom', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: NO_ID }) });
+    await flushPromises();
+    stub.map.setView([40, -70], 13);
+    await recenter(w);
+    expect(stub.map.center).toEqual([30.31, -97.75]);
+    expect(stub.map.zoom, '"reset to the city" restores the metro zoom too').toBe(10);
+  });
+
+  // A25 (John, 2026-09-10): `location_disclosed` is `NOT NULL DEFAULT false`, so a published
+  // listing can be served `lat: null, lng: null`. A missing point OMITS; it never fabricates a
+  // centre. `md.practices` already drops such a listing, so the selected id resolves to nothing
+  // here — and the finite test is `Number.isFinite`, because a NaN passes `!= null`.
+  it.each([
+    ['a selected id no longer in the pin list (its point was never disclosed)', practices(2), 'p9'],
+    ['a selected practice carrying nulls for its point', [{ id: 'p0', lat: null, lng: null, priceLabel: '$1M' }], 'p0'],
+    ['a selected practice carrying NaN for its point', [{ id: 'p0', lat: NaN, lng: NaN, priceLabel: '$1M' }], 'p0']
+  ])('Recenter falls back to the metro for %s', async (_why, list, id) => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: list, activeId: id }) });
+    await flushPromises();
+    stub.map.setView([40, -70], 13);
+    await recenter(w);
+    expect(stub.map.center, 'a listing with no point was centred on all the same').toEqual([30.31, -97.75]);
+    expect(stub.map.zoom).toBe(10);
+  });
+
+  // The design's own last guard, kept because the recentre watcher carries it too: a mount with
+  // no centre at all has nothing to fall back TO, and drawing [0, 0] would be the fabrication A25
+  // forbids one control over. Vue substitutes a prop's default for `undefined` only, so an
+  // explicit null really does reach the component.
+  it('Recenter does nothing at all when there is no metro centre and no practice to centre on', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: NO_ID }) });
+    await flushPromises();
+    // Withdrawn after the mount, the way the watcher's own no-centre case does it: the engine
+    // needs a centre to be created with at all, and it is the LATER absence this guard is about.
+    await w.setProps({ center: NO_LATLNG });
+    stub.map.setView([40, -70], 13);
+    await recenter(w);
+    expect(stub.map.center, 'a map with no centre was moved somewhere all the same').toEqual([40, -70]);
+    expect(stub.map.zoom).toBe(13);
+  });
+
+  // THE OPTIMISATION THIS CHANGE MUST NOT BREAK (A32's own reasoning, one control over). The
+  // recentre WATCHER arms `recentring` only when the view actually moved, because a forced
+  // publish for an unchanged box buys six boundary requests, twelve on a wide screen. This button
+  // never reaches that watcher — it calls `engine.setView` directly, and Leaflet's own `moveend`
+  // publishes WITHOUT force — so the module's "same snapped box, say nothing" rule is what
+  // decides, and these two cases are the proof rather than the argument.
+  it('a Recenter on a map nobody has moved asks the API for nothing', async () => {
+    installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: NO_ID }) });
+    await flushPromises();
+    await settle();
+
+    const cb = vi.fn();
+    const off = viewport.subscribe(cb);
+    await recenter(w);
+    await settle();
+    expect(cb, 'a recentre to the view the map is already on asked the API again').not.toHaveBeenCalled();
+
+    off();
+    w.unmount();
+  });
+
+  it('a Recenter AFTER a pan asks exactly once — the box really did change', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ practices: practices(3), activeId: NO_ID }) });
+    await flushPromises();
+    await settle();
+
+    // A drag far enough to leave the 1/8-tile cell, then let its own publish land, so the one
+    // this case counts is the RECENTRE's and not the pan's.
+    stub.map.setView([31.31, -96.75], 10);
+    await settle();
+
+    const cb = vi.fn();
+    const off = viewport.subscribe(cb);
+    await recenter(w);
+    await settle();
+    expect(cb, 'the recentre moved the map back and the shading was never reloaded').toHaveBeenCalledTimes(1);
+
+    off();
+    w.unmount();
   });
 
   // The bbox wiring (2026-09-12). This component is the only thing in the app that holds a map,
@@ -1046,7 +1168,10 @@ describe('MarketMapView — the V3 map', () => {
     expect(hostEl.style.inset).toBe('0px');
     expect(hostEl.outerHTML).not.toMatch(/width:\s*\d+px/);
     const fixed = [...root.querySelectorAll<HTMLElement>('*')].map((el) => el.style.width).filter((wd) => /px$/.test(wd));
-    expect(fixed).toEqual(['132px', '1px']);          // the control cluster and its hairline
+    // A51 added a SECOND hairline, because the recenter button sits between the two zoom
+    // buttons and each pair of neighbours in that row is separated by one. The recenter
+    // glyph's own 15 px is an ATTRIBUTE, not a style, so it is not among these.
+    expect(fixed).toEqual(['132px', '1px', '1px']);   // the control cluster and its two hairlines
     expect(fixed.every((wd) => parseFloat(wd) <= 390)).toBe(true);
     w.unmount();
   });

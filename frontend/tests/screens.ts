@@ -546,6 +546,27 @@ export const SCREENS: Screen[] = [
     await expect(p.getByText(/^AREA \u00b7 /), 'both mode words are on screen at once').toHaveCount(0);
     await p.waitForTimeout(400);
   } },
+
+  // A51 (John, 2026-09-16) — the recenter control, in the state it exists for. The button is on
+  // every desktop Browse capture already, so what this state adds is the BEHAVIOUR: the selected
+  // practice's pin is brought to the middle of the map and the docked panel that names it is
+  // still open beside it, which is the half of the ruling a still of the toolbar cannot show.
+  // Cedar Park is `browse-market-panel`'s own selection, so the two states differ by the click.
+  //
+  // Both targets reach it by the same click on the same control — `MarketMapV3.jsx`'s button on
+  // the reference and its hand-written mirror in `MarketMapView.vue` on the app — which is what
+  // makes this an oracle rather than a screenshot of the app's own opinion.
+  { name: 'browse-recenter-location', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Cedar Park').first().click();
+    await p.getByText('View full listing').first().waitFor({ state: 'visible' });
+    // The selection's own `panInside` is an ANIMATED pan (MarketMapV3.jsx:305), and recentring
+    // mid-flight would capture two different maps on the two targets. Settled first, then clicked.
+    await p.waitForTimeout(700);
+    await p.getByRole('button', { name: 'Recenter' }).click();
+    // …and the recentre is itself animated (`{ animate: true }`), so it is settled as well.
+    await p.waitForTimeout(700);
+  } },
 ];
 
 /**

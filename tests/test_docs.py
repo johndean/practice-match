@@ -1850,7 +1850,7 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
@@ -1869,7 +1869,9 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     A18 (2026-09-09) made sixteen families and the tuple stopped at "Fifteen", so the assertion
     below failed on its own vocabulary before it ever compared CLAUDE.md — the tuple runs to
     "Twenty" now, which covers A19 (seventeen) and the seller branch's reserved A16/A17 (nineteen
-    after that merge)."""
+    after that merge). It runs to "Forty" since A51 (2026-09-16) made thirty-nine families: the
+    discriminator case below asks for `family_count + 1` as well, so the tuple has to carry one
+    word more than the ledger currently needs."""
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = re.findall(r"id: 'A(\d+)", ts)
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"

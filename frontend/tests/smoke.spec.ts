@@ -2665,3 +2665,115 @@ test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
     expect(errors).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A51 — THE RECENTER CONTROL (Task MAP-RECENTER, John, 2026-09-16): "add a 'recenter' button
+// that recenters the map on the selected city and or if selected practice location, place this
+// recenter icon between the + | −".
+//
+// The approved state `browse-recenter-location` photographs the result on BOTH targets, which is
+// the oracle. What it cannot say is a NUMBER — that the zoom the member was on survived, and that
+// the pin landed at the middle of the map rather than merely somewhere new — so those are read
+// here, off real Chromium and off the DOM, without the production code growing a test-only seam
+// (the A35 discipline, one control over).
+//
+// The pin's own anchor is what makes this exact: `marker(..., { size: [78, 34], anchor: [39, 34] })`
+// puts the practice's latitude and longitude at the icon box's horizontal centre and its BOTTOM
+// edge, so that point — not the box's middle — is what the map centres.
+// ---------------------------------------------------------------------------------------
+test.describe('A51 — the recenter control centres what is selected, and the city when nothing is', () => {
+  const SELECTED = '.leaflet-marker-pane .leaflet-marker-icon';
+  const CEDAR_PARK = 'Cedar Park Animal Hospital';
+
+  /** How far ONE named practice's own point sits from the middle of the map, in CSS pixels.
+   *
+   *  Addressed by the marker's `title`, which the design sets to `name + " — " + priceLabel`
+   *  (MarketMapV3.jsx's own marker options) and Leaflet renders onto the icon. NOT by z-index, and
+   *  that is measured rather than stylistic: `Marker._setPos` computes `_zIndex = pos.y +
+   *  zIndexOffset`, so the selected pin's 1000 is an offset on a PIXEL ordinate, and at zoom 12 a
+   *  practice far enough south sits thousands of pixels down and outranks it — the first draft of
+   *  this case read Kyle's pin and reported the selected practice 165 px off centre while the
+   *  screenshot showed it dead centre. */
+  const pinOffset = (page: Page, name: string) => page.evaluate(([sel, want]) => {
+    const map = document.querySelector('.leaflet-container') as HTMLElement | null;
+    const pin = [...document.querySelectorAll<HTMLElement>(sel)].find((el) => (el.title || '').startsWith(want));
+    if (map === null || pin === undefined) return null;
+    const m = map.getBoundingClientRect();
+    const p = pin.getBoundingClientRect();
+    // anchor [39, 34] on a [78, 34] icon: horizontal centre, bottom edge.
+    return { dx: Math.abs(p.left + 39 - (m.left + m.width / 2)), dy: Math.abs(p.top + 34 - (m.top + m.height / 2)) };
+  }, [SELECTED, name] as const);
+
+  /** The map's own zoom, off Leaflet's animation proxy — the A35 reader, verbatim. */
+  const zoomOf = (page: Page) => page.evaluate(() => {
+    const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+    if (proxy === null) return null;
+    const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+    return m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1;
+  });
+
+  const recenter = (page: Page) => page.getByRole('button', { name: 'Recenter' }).first().click();
+
+  test('a selected practice is brought to the middle of the map, at the zoom the member is on, with its panel still open', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    await page.getByText('Cedar Park').first().click();
+    await page.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await page.waitForTimeout(700);                    // the selection's own animated panInside
+
+    // The member zooms in twice and drags the map away, so "it did not move" cannot pass for
+    // "it recentred" and the zoom the control must NOT touch is not the metro's own 10.
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(700);
+    const zoomed = await zoomOf(page);
+    expect(zoomed, 'the + control did not move the map, so this case proves nothing about the zoom').toBe(12);
+    const before = await pinOffset(page, CEDAR_PARK);
+    expect(before, 'the selected practice has no pin on the map at all').not.toBeNull();
+    // …and it is NOT already at the middle, or the assertion below would pass on the pan rather
+    // than on the recentre.
+    expect(before!.dx + before!.dy, 'the map already had the practice centred before Recenter was pressed').toBeGreaterThan(4);
+
+    await recenter(page);
+    await page.waitForTimeout(900);                    // the recentre is animated too
+
+    const after = (await pinOffset(page, CEDAR_PARK))!;
+    expect(after.dx, 'the selected practice is not at the middle of the map horizontally').toBeLessThanOrEqual(2);
+    expect(after.dy, 'the selected practice is not at the middle of the map vertically').toBeLessThanOrEqual(2);
+    expect(await zoomOf(page), 'recentring changed the zoom — a second action the label does not name').toBe(12);
+    // THE OTHER HALF OF THE RULING: the selection survives, so the docked panel that names the
+    // practice is still open beside the map. `resetView` (the bottom-right "Reset view" button)
+    // is what clears a selection, and this control is deliberately not it.
+    await expect(page.getByText('View full listing').first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('with nothing selected it returns the metro to its own centre AND zoom', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    // The map as the metro opens it, read through every pin's position at once — a centre this
+    // test can compare without reaching into Leaflet for one.
+    const pins = () => page.evaluate((sel) => [...document.querySelectorAll<HTMLElement>(sel)]
+      .map((el) => { const r = el.getBoundingClientRect(); return `${Math.round(r.left)},${Math.round(r.top)}`; }).join(' '), SELECTED);
+    const home = await pins();
+    expect(home, 'no pins are drawn, so nothing here can move').not.toBe('');
+    expect(await zoomOf(page)).toBe(10);
+
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(700);
+    expect(await pins(), 'the map never moved, so the recentre below would pass vacuously').not.toBe(home);
+
+    await recenter(page);
+    await page.waitForTimeout(900);
+    expect(await zoomOf(page), 'the metro zoom was not restored').toBe(10);
+    expect(await pins(), 'the metro centre was not restored').toBe(home);
+    expect(errors).toEqual([]);
+  });
+});
