@@ -47,8 +47,15 @@ function recordingUi(note: string | null = 'a reviewer note', fields: { state: s
   return { ui, calls };
 }
 
+// `name: null` is the DESIGN's own row as a live payload, and it is what every case outside the
+// "names the practice" block below is about. Until John's 2026-09-16 ruling this field was the one
+// member of `ListingItem` nothing read, so it carried an arbitrary `'Mixed practice'`; a named row
+// now takes its own name as the title, so leaving that value here would have quietly turned this
+// whole file into the NAMED arm and left the unnamed one — the arm the ruling says must not
+// regress, two of the thirty-two rows on QA — pinned by nothing. Every assertion below is
+// unchanged from before that ruling, byte for byte, which is the proof it did not regress.
 const BASE: ListingItem = {
-  id: 'l1', status: 'in_review', name: 'Mixed practice', type: 'Mixed', city: 'Bastrop',
+  id: 'l1', status: 'in_review', name: null, type: 'Mixed', city: 'Bastrop',
   price: 860000, rev: 1200000, docs: 2, bldg: 'Leased', state: null, seller_name: 'Dr. Susan Ortiz',
   submitted_at: '2026-09-01T12:00:00Z',
   // A39: the three the queue now serves beside the draft (`app/api/admin_listings.py::list_all`)
@@ -90,6 +97,48 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
 
   it('...and still names the practice when the type IS set', () => {
     expect(rowsFor([item({ type: 'Mixed' })])[0][0].main).toBe('Mixed practice — Bastrop');
+  });
+
+  // -------------------------------------------------------------------------------------
+  // D-C53, John's ruling of 2026-09-16: "the admin listings rows should name their practice".
+  // Measured on QA 0.1.25 with the staff persona: `GET /api/admin/listings` served a practice
+  // `name` on 30 of its 32 rows and the tab rendered it on NONE — every row was labelled by type
+  // and city, and that label was shared by more than one row six times over (seven rows all read
+  // "Small animal practice — Dallas"). A reviewer about to press Unpublish was telling them apart
+  // by asking price and date. The name was already on the wire: `list_all` builds every item from
+  // `serialise_draft`, the OWNER's own truth, and `ListingItem.name` has carried it since SL8.
+  //
+  // The composed label is NOT discarded — type and city are how a reviewer SCANS, the name is how
+  // they IDENTIFY — so it moves onto the status line beneath the title in the design's own ` · `
+  // idiom, the join the figures cell beside it already uses.
+  // -------------------------------------------------------------------------------------
+  it('names the practice the row is about, where the queue serves a name', () => {
+    expect(rowsFor([item({ name: 'Round Rock Animal Hospital' })])[0][0].main).toBe('Round Rock Animal Hospital');
+  });
+
+  it('keeps the type and city a reviewer scans by, on the status line beneath the name', () => {
+    expect(rowsFor([item({ name: 'Round Rock Animal Hospital' })])[0][0])
+      .toMatchObject({ hasSub: true, sub: 'Mixed practice — Bastrop · Submitted September 1' });
+  });
+
+  it('joins nothing it does not have: a named row with no label, and a named row with no date', () => {
+    // The `metaSource` rule, one surface over: a composer with one half missing writes the half it
+    // has, never a dangling ` · `. A named draft that has not reached a city yet has no label to
+    // scan by, and an undated row has no status line — each leaves the other standing alone.
+    expect(rowsFor([item({ name: 'Round Rock Animal Hospital', city: null })])[0][0])
+      .toMatchObject({ main: 'Round Rock Animal Hospital', hasSub: true, sub: 'Submitted September 1' });
+    expect(rowsFor([item({ name: 'Round Rock Animal Hospital', submitted_at: null })])[0][0])
+      .toMatchObject({ main: 'Round Rock Animal Hospital', hasSub: true, sub: 'Mixed practice — Bastrop' });
+  });
+
+  it('leaves an UNNAMED row exactly as it stood — the composed label, and the status line alone', () => {
+    // The ruling's own floor: two of the thirty-two rows on QA are in this state and nothing about
+    // them may regress. `BASE` carries no name, so every case in this file outside this block is
+    // already a pin on that arm; these two say it in one place.
+    expect(rowsFor([item({ name: null })])[0][0])
+      .toMatchObject({ main: 'Mixed practice — Bastrop', hasSub: true, sub: 'Submitted September 1' });
+    expect(rowsFor([item({ name: null, city: null })])[0][0])
+      .toMatchObject({ main: 'Untitled listing', hasSub: true, sub: 'Submitted September 1' });
   });
 
   it('omits a figure the listing does not have, rather than inventing one', () => {
