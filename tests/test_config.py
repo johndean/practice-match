@@ -141,3 +141,38 @@ def test_the_rejected_log_level_is_recorded_only_while_there_is_one():
     assert config.log_level_rejected == "nonsense"
     _settings(log_level="ERROR")
     assert config.log_level_rejected is None
+
+
+@pytest.mark.parametrize(("name", "value"), [("privacy_engine_module", "tests.e2e.stub_engines"),
+                                             ("celery_task_always_eager", True)])
+def test_a_test_only_setting_is_refused_outside_the_test_environment(name, value, monkeypatch, capsys):
+    """The Playwright execution model (spec 2026-09-09 G) needs the pipeline to run eagerly with
+    stub engines inside the api process. No DEPLOYED service may ever do that — a stubbed OCR would
+    mean a photograph that was never scanned reaching READY_FOR_REVIEW. Refused at boot, naming the
+    variable and never its value, in the `_qa_never_serves_the_coming_soon_page` shape.
+
+    "Never its value" is asserted on the two renderings anyone ever reads — the validator's own
+    message, and the ONE line `load_settings` prints to stderr when the process refuses to boot —
+    and NOT on `str(ValidationError)`, which pydantic 2.13 composes with an `input_value=` echo of
+    the whole constructor dict, truncated head-and-tail, so the offending value is in that repr
+    whatever any validator does (measured 2026-09-13; `_qa_never_serves_the_coming_soon_page` has
+    always had the same property, and `load_settings` is why it has never mattered — it reads
+    `e["msg"]` alone). Task P4 report, deviation D1."""
+    from pydantic import ValidationError
+
+    from app.config import Settings, load_settings
+    base = {"database_url": "postgresql://x/y", "redis_url": "redis://localhost:6379/0",
+            "api_secret_key": "k", "environment": "qa", name: value}
+    with pytest.raises(ValidationError) as caught:
+        Settings(**base)
+    message = caught.value.errors()[0]["msg"]
+    assert name.upper() in message and str(value) not in message
+    Settings(**{**base, "environment": "test"})
+
+    monkeypatch.setenv("ENVIRONMENT", "qa")
+    monkeypatch.setenv(name.upper(), str(value))
+    with pytest.raises(SystemExit) as info:
+        load_settings()
+    assert info.value.code == 1
+    err = capsys.readouterr().err
+    assert name.upper() in err and str(value) not in err

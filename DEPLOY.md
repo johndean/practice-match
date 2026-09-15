@@ -33,6 +33,8 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `S3_ACCESS_KEY_ID` | ✓ | ✓ | Railway bucket credentials, set by the controller after John's demo — never printed. `ObjectStore.from_settings` returns `None` (object store disabled, logged) until all four `S3_*` variables are set |
 | `S3_SECRET_ACCESS_KEY` | ✓ | ✓ | Same handling rule as `S3_ACCESS_KEY_ID` — never in git, chat, or CI |
 | `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); held in the operator's macOS Keychain (service `practice-match-qa`, account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed to the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1) (Identity plan Task I5) |
+| `PRIVACY_ENGINE_MODULE` | | | **Test only, and never set in Railway.** The module the Playwright api under test loads stub OCR and barcode engines from (`tests/e2e/stub_engines.py`); `Settings` refuses it at boot in every other environment, naming the variable and never its value, because a stubbed OCR would let a photograph reach `READY_FOR_REVIEW` unscanned (image-identifiability plan Task P4) |
+| `CELERY_TASK_ALWAYS_EAGER` | | | **Test only, and never set in Railway.** Runs `media.process_photo` inline in the api process for the Playwright suite instead of publishing it to the `media` queue; refused at boot in every other environment, for the same reason and by the same validator (image-identifiability plan Task P4) |
 > **Setting a variable is not the same as the process seeing it.** `railway variable set … --skip-deploys`
 > writes the value but leaves the running container with its old environment, so a job started with
 > `railway ssh` afterwards still sees nothing. Either omit `--skip-deploys`, or run
@@ -127,6 +129,34 @@ everything it depends on; the test suite applies the whole ladder into a fresh d
 run, which is where a mis-numbered dependency fails.
 
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
+
+## Runtime image size (measured, never estimated)
+
+The image-identifiability pipeline's engines are the largest dependency change this repository has
+made, and the figures below are measurements rather than estimates — the `f454fe7` precedent, which
+measured +42 MB against a ~10 MB estimate. Taken with `docker build --build-arg ENVIRONMENT=qa`
+(`scripts/verify-image.sh`'s own invocation, so `linux/arm64` on the operator's machine rather than
+Railway's amd64) on the same machine immediately before and immediately after this change and
+nothing else, 2026-09-13: **810 MB → 1.57 GB** as `docker images` reports SIZE, which decomposes in
+`docker history` as **+510 MB across two layers** — `poetry install --only main` 288 MB → 585 MB and
+the runtime stage's `apt-get install` line 4.25 MB → 217 MB. (The two Docker measures of the same
+pair of images disagree by about 250 MB; both are recorded here rather than one being chosen.)
+
+Three packages, each with its licence: `rapidocr-onnxruntime` 1.4.4 (Apache-2.0 — its three PP-OCR
+ONNX models are inside the 14.9 MB wheel, so the worker downloads nothing at run time and opens no
+socket to read a photograph), `onnxruntime` 1.30.0 (MIT — the runtime rapidocr drives) and
+`zxing-cpp` 3.1.1 (Apache-2.0, a ~1 MB wheel with its own `py.typed`). Five transitive additions:
+`opencv-python` 5.0.0.93, `protobuf` 7.36.1, `flatbuffers` 25.12.19, `pyclipper` 1.4.0 and `tqdm`
+4.70.1.
+
+`libgl1` and `libglib2.0-0` join the runtime stage's existing `ca-certificates curl` line because
+`rapidocr-onnxruntime` requires the FULL `opencv-python`, which links libGL. That single apt line
+costs **+213 MB**, of which `libllvm15` is 109 MB and `libgl1-mesa-dri` 23 MB — a software OpenGL
+stack in a container that never renders anything. The measured delta is three to five times the
++120–150 MB the spec estimated, so it is RECORDED for a controller ruling rather than accepted as a
+fait accompli (image-identifiability plan Task P4, deviation D5); the spec's own D-IDP-10 already
+names the alternative, and `opencv-python-headless` 5.0.0.93 (36.5 MB against 50.6 MB on aarch64)
+needs neither apt package.
 
 ## Identity operations (Wave 2a)
 
