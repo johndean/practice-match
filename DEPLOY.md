@@ -171,6 +171,18 @@ fait accompli (image-identifiability plan Task P4, deviation D5); the spec's own
 names the alternative, and `opencv-python-headless` 5.0.0.93 (36.5 MB against 50.6 MB on aarch64)
 needs neither apt package.
 
+`scripts/start.sh`'s **worker** role exports **`ORT_DISABLE_TELEMETRY=1`** before it starts celery.
+MEASURED (2026-09-16, onnxruntime 1.30.0): `import onnxruntime` — before any inference session
+exists — writes `deviceid` and a SQLite database under
+`$HOME/Library/Application Support/Microsoft/DeveloperTools/.onnxruntime/` (the platform equivalent
+elsewhere), so the Python switch `onnxruntime.disable_telemetry_events()` **cannot prevent it**: it
+can only run after the import that already wrote the file. With the variable set, no such file is
+created at all. It is not a robustness fix and is not documented as one — an unwritable `$HOME` does
+not fail the engine, measured: onnxruntime logs `Failed to persist telemetry device ID; using an
+in-memory identifier` and constructs the session anyway. It is set so the worker writes no
+unasked-for file in a container. `tests/scripts/test_start_sh.sh` asserts the worker role's dry run
+carries it.
+
 ## Identity operations (Wave 2a)
 
 The operator page is **[docs/RUNBOOK-identity.md](docs/RUNBOOK-identity.md)** — the review queue and

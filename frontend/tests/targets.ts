@@ -67,7 +67,20 @@ const API_ENV_DEFAULTS: Record<string, string> = {
   S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
   S3_BUCKET: 'pm-e2e',
   S3_ACCESS_KEY_ID: 'test-only-key-id',
-  S3_SECRET_ACCESS_KEY: 'test-only-secret'
+  S3_SECRET_ACCESS_KEY: 'test-only-secret',
+  // Spec 2026-09-09 E, controller amendment A-IDP-2. The image-identifiability pipeline runs in
+  // the WORKER, and this config starts no worker — so without these two a wizard photograph stops
+  // at `UPLOADED` and every assertion in `listing-flows.spec.ts` that waits for its review tile is
+  // unreachable. Eager Celery runs `process_photo` inline in the api process the moment the upload
+  // commits (`record.enqueue_processing`'s eager branch calls `apply_async`, which honours the
+  // setting; `send_task`, which the deployed path uses, ignores it), and the engine module points
+  // the OCR and 2D-symbol adapters at deterministic stubs so the run loads no wheel and finds the
+  // same two lines every time. `Settings` REFUSES both outside `ENVIRONMENT=test`, which the entry
+  // above sets, so no deployed service can take this path; `tests/e2e/api_under_test.py` defaults
+  // them too, and they are forwarded here as well so the config a reader inspects states them.
+  // Same rule as every default above: a run that carries its own value keeps it.
+  CELERY_TASK_ALWAYS_EAGER: '1',
+  PRIVACY_ENGINE_MODULE: 'tests.e2e.stub_engines'
 };
 
 export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number; api: number }): Targets {

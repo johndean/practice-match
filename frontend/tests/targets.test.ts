@@ -75,7 +75,9 @@ describe('resolveTargets', () => {
         S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
         S3_BUCKET: 'pm-e2e',
         S3_ACCESS_KEY_ID: 'test-only-key-id',
-        S3_SECRET_ACCESS_KEY: 'test-only-secret'
+        S3_SECRET_ACCESS_KEY: 'test-only-secret',
+        CELERY_TASK_ALWAYS_EAGER: '1',
+        PRIVACY_ENGINE_MODULE: 'tests.e2e.stub_engines'
       });
     });
 
@@ -90,7 +92,22 @@ describe('resolveTargets', () => {
         S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
         S3_BUCKET: 'ci-bucket',
         S3_ACCESS_KEY_ID: 'test-only-key-id',
-        S3_SECRET_ACCESS_KEY: 'test-only-secret'
+        S3_SECRET_ACCESS_KEY: 'test-only-secret',
+        CELERY_TASK_ALWAYS_EAGER: '1',
+        PRIVACY_ENGINE_MODULE: 'tests.e2e.stub_engines'
+      });
+    });
+
+    // Spec 2026-09-09 E, controller amendment A-IDP-2. The privacy pipeline is worker-only and
+    // this config starts no worker, so without these two a wizard photograph stops at UPLOADED and
+    // every assertion in `listing-flows.spec.ts` that waits for the review tile is unreachable.
+    // `Settings` refuses both outside `ENVIRONMENT=test`, which the entry above already sets, and
+    // `tests/e2e/api_under_test.py` defaults them too -- forwarded HERE as well so the values are
+    // visible in the config a reader inspects, and so the same "process env wins" rule applies.
+    it('arms the privacy pipeline the app project needs, under the same process-env rule', () => {
+      expect(api({ PRIVACY_ENGINE_MODULE: 'tests.e2e.some_other_stub' })!.env).toMatchObject({
+        CELERY_TASK_ALWAYS_EAGER: '1',
+        PRIVACY_ENGINE_MODULE: 'tests.e2e.some_other_stub'
       });
     });
   });
