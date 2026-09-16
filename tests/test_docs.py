@@ -2083,6 +2083,11 @@ PRIVACY_WRITERS = {
         "docstring says why: the `updated_at` back-date that opens the six-minute lost-child "
         "window, and the `redacted_sha256 := NULL` that builds the ready-row-with-no-derivative "
         "shape `lap_ready_has_derivative_ck` permits and `confirm` must refuse.",
+    "tests/tasks/test_media.py":
+        "the Celery pipeline's own suite (Task P8). One deliberate column poke, `_age`: every "
+        "sweeper window is `updated_at < now() - interval ...`, so a row is made old by moving "
+        "that column backwards, which is the only way to open a window without sleeping for six "
+        "minutes. It moves no row through a transition.",
     "tests/test_listing_privacy_schema.py":
         "`041`/`042`'s own column, CHECK and trigger contract (Task P1). It inserts rows column by "
         "column to drive each CHECK from both sides, and its one UPDATE sets the stale flag on a "

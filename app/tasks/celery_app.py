@@ -20,7 +20,7 @@ from celery.schedules import crontab  # type: ignore[import-untyped]  # celery s
 
 from app.config import settings
 
-celery_app = Celery("practice_match", broker=settings.redis_url, backend=settings.redis_url, include=["app.mail.tasks", "app.tasks.census"])
+celery_app = Celery("practice_match", broker=settings.redis_url, backend=settings.redis_url, include=["app.mail.tasks", "app.tasks.census", "app.tasks.media"])
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
@@ -54,6 +54,21 @@ celery_app.conf.beat_schedule.update({
     # acs_measure off one database at the same moment. Never on the request path (spec §10).
     "geo-metric-nightly": {"task": "census.materialize_geo_metrics", "schedule": crontab(minute=30, hour=3)},
 })
+
+
+# The image-identifiability sweeper (spec 2026-09-09 C.5): six rules, every five minutes, each of
+# them one UPDATE or one enqueue. It decides nothing about a photograph -- it puts back what the
+# pipeline lost, which is what makes "no image may silently fall through" true across a worker
+# restart, a killed child or a lost message. `.update(...)` on the dict built above, never a second
+# `beat_schedule=` keyword (A-C0 ¶2).
+celery_app.conf.beat_schedule.update({"media-sweep-5min": {"task": "media.sweep", "schedule": 300.0}})
+# `media.*` on its own queue so a burst of fifty photographs cannot delay the minutely mail drain;
+# `scripts/start.sh`'s one worker consumes `celery,media`, so the separation is of BACKLOGS and not
+# of processes. `task_always_eager` is the Playwright launcher's alone -- `Settings` refuses the
+# variable outside `ENVIRONMENT=test` (spec 2026-09-09 E), and `record.enqueue_processing`'s eager
+# branch is what reads it, because `send_task` ignores it (controller amendment A-IDP-2).
+celery_app.conf.update(task_routes={"media.*": {"queue": "media"}},
+                       task_always_eager=settings.celery_task_always_eager)
 
 
 @celery_app.task(name="practice_match.ping")  # type: ignore[untyped-decorator]  # celery.Celery.task is untyped upstream

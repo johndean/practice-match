@@ -56,6 +56,25 @@ LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 S3_SETTINGS = ("S3_ENDPOINT_URL", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY")
 #: The host suffix moto's interceptor matches (A-SL16 M4).
 INTERCEPTED_SUFFIX = ".amazonaws.com"
+#: The two settings that make the privacy pipeline run INSIDE this process (spec 2026-09-09 E,
+#: controller amendment A-IDP-2). The pipeline is worker-only and the Playwright launcher starts no
+#: worker, so without them a wizard photograph reaches `UPLOADED` and stops there and every
+#: assertion that depends on `READY_FOR_REVIEW` is unreachable.
+#:
+#: `CELERY_TASK_ALWAYS_EAGER` is read by `record.enqueue_processing`'s eager branch, which calls
+#: `apply_async` rather than `send_task` -- `send_task` IGNORES the setting, warns
+#: `AlwaysEagerIgnored` and publishes anyway -- and by the `apply_async` inside the retry ladder,
+#: which then recurses inline to the bound and stops at REVIEW_REQUIRED. `PRIVACY_ENGINE_MODULE`
+#: points the OCR and 2D-symbol adapters at `tests/e2e/stub_engines.py`, so the run is
+#: deterministic and loads no wheel. `Settings` REFUSES both outside `ENVIRONMENT=test`, which this
+#: launcher has already required above -- so no deployed service can take this path.
+#:
+#: `setdefault`, so a run that set either one keeps its own value, exactly as the four `S3_*`
+#: settings are handled by `frontend/tests/targets.ts`.
+PIPELINE_DEFAULTS = {
+    "CELERY_TASK_ALWAYS_EAGER": "1",
+    "PRIVACY_ENGINE_MODULE": "tests.e2e.stub_engines",
+}
 #: What `frontend/tests/targets.ts`'s bare command served, unchanged.
 APP = "app.main:app"
 
@@ -94,6 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     endpoint = os.environ["S3_ENDPOINT_URL"]
     if not endpoint.rstrip("/").split("://", 1)[-1].split("/", 1)[0].endswith(INTERCEPTED_SUFFIX):
         return refuse(f"S3_ENDPOINT_URL must be an AWS-shaped host (*{INTERCEPTED_SUFFIX}) for moto to intercept it; anything else would reach the network")
+
+    # Set BEFORE uvicorn imports `app.main` (and therefore `app.config`), which is the only moment
+    # `Settings` reads the environment; after the refusals above, so a launcher that is about to
+    # exit 2 changes nothing about the process it was started in.
+    for name, value in PIPELINE_DEFAULTS.items():
+        os.environ.setdefault(name, value)
 
     bucket = os.environ["S3_BUCKET"]
     with mock_aws():

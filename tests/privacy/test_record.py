@@ -49,6 +49,9 @@ TRANSITIONS = (
     ("PROCESSING_FAILED", "UPLOADED", "reset_for_retry"),
     ("REDACTION_FAILED", "UPLOADED", "reset_for_retry"),
     ("REPROCESS_REQUIRED", "UPLOADED", "reset_for_retry"),
+    # Task P8's sweeper rule (2): a PROCESSING row older than `LOST_AFTER` is a child that died
+    # mid-run. A state and not a flag -- it has no derivative to go on serving.
+    ("PROCESSING", "REPROCESS_REQUIRED", "sweep_lost"),
 )
 
 # States from which the claim must write NOTHING: a ready row is never re-run by this path (its
@@ -108,6 +111,14 @@ def _all_columns(conn: Any, asset_id: UUID) -> dict[str, Any]:
         return dict(zip([d.name for d in cur.description], found, strict=True))
 
 
+def _age(conn: Any, asset_id: UUID, *, minutes: int) -> None:
+    """The row, moved backwards in time. Every sweeper window and the claim's own lost-child term
+    read `updated_at`, which is why every writer in `record.py` sets it explicitly."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset_privacy SET updated_at = %s WHERE asset_id = %s",
+                    (datetime.now(UTC) - timedelta(minutes=minutes), asset_id))
+
+
 def _perform(conn: Any, call: str, asset_id: UUID, listing_id: UUID) -> None:
     """The one call each transition names, with the arguments that transition takes. A `match` and
     not a dict of partials: each arm is read against its own TRANSITIONS row, and an arm added
@@ -132,6 +143,12 @@ def _perform(conn: Any, call: str, asset_id: UUID, listing_id: UUID) -> None:
             record.fail(conn, asset_id, state=state, code="UNDECODABLE")
         case "exhaust":
             record.exhaust(conn, asset_id, code="OCR_ERROR")
+        case "sweep_lost":
+            # The WINDOW is part of this transition and not a fixture detail: rule (2) is
+            # "PROCESSING for longer than `LOST_AFTER`", so the back-date belongs inside the one
+            # call the row names.
+            _age(conn, asset_id, minutes=30)
+            record.sweep_candidates(conn)
         case _:
             record.reset_for_retry(conn, asset_id)
 
@@ -408,6 +425,7 @@ def _privacy_updates(module: Any) -> dict[str, list[str]]:
 PRIVACY_UPDATES = {
     "claim": 1,
     "record_scan": 1,
+    "record_scan_in_place": 1,
     "record_derivative": 1,
     "mark_ready": 1,
     "fail": 1,
@@ -416,6 +434,12 @@ PRIVACY_UPDATES = {
     "reset_confirmation": 2,
     "reset_for_retry": 1,
     "flag_stale": 1,
+    "flag_stale_version": 1,
+    # Task P8's sweeper. Rule (2)'s lost-child transition is ONE statement that both finds the row
+    # and moves it; rule (5)'s version flag is `flag_stale_version`'s, shared with
+    # `scripts/reprocess_photos.py --all-stale`. The other four rules only SELECT and are counted
+    # by nothing here, which is right -- they write nothing.
+    "sweep_candidates": 1,
     "advance_in_place": 1,
     "bump_attempt": 1,
     "mark_published": 1,
@@ -902,6 +926,77 @@ def test_no_attempt_is_counted_from_a_state_no_in_place_re_run_owns(conn: Any, s
     asset_id, _ = _row(conn, processing_status=start, attempts=1)
     before = _all_columns(conn, asset_id)
     assert record.bump_attempt(conn, asset_id) is None
+    assert _all_columns(conn, asset_id) == before
+
+
+@pytest.mark.parametrize("start", [s for s in ALL_STATES if s != "PROCESSING"])
+def test_the_sweepers_lost_child_rule_moves_nothing_from_any_other_state(conn: Any, start: str) -> None:
+    """Rule (2)'s dead ends. It is the sweeper's only STATE transition, and an unguarded version of
+    it would take a SCANNED row mid-encode, a REVIEW_REQUIRED row the seller has not touched and a
+    PUBLISHED row's whole listing back to the queue every five minutes for ever."""
+    asset_id, _ = _row(conn, processing_status=start)
+    _age(conn, asset_id, minutes=60)
+    before = _all_columns(conn, asset_id)
+    record.sweep_candidates(conn)
+    after = _all_columns(conn, asset_id)
+    # `flag_stale_version` legitimately marks a ready row below the version; nothing else may move.
+    assert after["processing_status"] == before["processing_status"]
+    assert after["last_error"] == before["last_error"]
+
+
+def test_the_lost_child_rule_waits_out_its_window(conn: Any) -> None:
+    """The window is the whole difference between "a worker is busy with this" and "a worker died
+    with this". Inside it the row is left alone; outside it the row is taken back."""
+    asset_id, _ = _row(conn, processing_status="PROCESSING", attempts=1)
+    _age(conn, asset_id, minutes=5)
+    assert record.sweep_candidates(conn)["lost"] == []
+    assert _read(conn, asset_id).processing_status == "PROCESSING"
+    _age(conn, asset_id, minutes=7)
+    assert record.sweep_candidates(conn)["lost"] == [asset_id]
+    assert _read(conn, asset_id).processing_status == "REPROCESS_REQUIRED"
+
+
+def test_the_version_flag_marks_a_stale_ready_row_once_and_leaves_its_state_alone(conn: Any) -> None:
+    """Rule (5), and `scripts/reprocess_photos.py --all-stale`'s own statement. Staleness is a FLAG
+    (D-IDP-16): the row keeps its state, its confirmation and its visibility, and goes on serving
+    the derivative it has while the in-place re-run replaces it.
+
+    Idempotent, which is what stops five minutes of sweeps enqueueing five re-runs of one
+    photograph: a row that already carries a reason is not re-stamped."""
+    stale, _ = _row(conn, processing_status="PUBLISHED", processing_version=0, buyer_visible=True)
+    current, _ = _row(conn, processing_status="PUBLISHED", processing_version=1, buyer_visible=True)
+    not_ready, _ = _row(conn, processing_status="PROCESSING_FAILED", processing_version=0)
+    assert record.flag_stale_version(conn, reason="VERSION") == [stale]
+    after = _read(conn, stale)
+    assert (after.processing_status, after.buyer_visible, after.reprocess_reason) == ("PUBLISHED", True, "VERSION")
+    assert _read(conn, current).reprocess_reason is None
+    assert _read(conn, not_ready).reprocess_reason is None
+    assert record.flag_stale_version(conn, reason="OPERATOR") == []
+    assert _read(conn, stale).reprocess_reason == "VERSION", "a flagged row was re-stamped"
+
+
+def test_the_in_place_scan_writes_its_columns_without_touching_the_state(conn: Any) -> None:
+    """`record_scan`'s twin for the re-run: the four scan columns, and no transition at all."""
+    asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True, buyer_visible=True)
+    record.record_scan_in_place(conn, asset_id, ocr={"size": [800, 600], "lines": []},
+                                identity_matches=[{"field": "name", "line": 0, "method": "exact", "score": 1.0}],
+                                vision={"status": "unavailable"}, detected_regions=[{"source": "vision"}])
+    row = _all_columns(conn, asset_id)
+    assert (row["processing_status"], row["buyer_visible"]) == ("SELLER_CONFIRMED", True)
+    assert row["identity_matches"] == [{"field": "name", "line": 0, "method": "exact", "score": 1.0}]
+    assert row["detected_regions"] == [{"source": "vision"}]
+    assert row["vision"] == {"status": "unavailable"}
+
+
+@pytest.mark.parametrize("start", [s for s in ALL_STATES if s not in record.READY_STATES])
+def test_the_in_place_scan_writes_nothing_from_a_state_that_is_not_ready(conn: Any, start: str) -> None:
+    """Its dead ends. An in-place re-run happens in a ready state and nowhere else, so a row that
+    stopped being ready mid-run must not have a late scan written over the one its own run
+    recorded -- the four `jsonb` columns are exactly what `_all_columns` exists to compare."""
+    asset_id, _ = _row(conn, processing_status=start)
+    before = _all_columns(conn, asset_id)
+    record.record_scan_in_place(conn, asset_id, ocr={"size": [1, 1], "lines": []}, identity_matches=[],
+                                vision={"status": "ok"}, detected_regions=[{"source": "ocr_match"}])
     assert _all_columns(conn, asset_id) == before
 
 
