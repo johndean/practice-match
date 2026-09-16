@@ -306,7 +306,16 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     expect(uploadResponse.status(), `the upload: ${await uploadResponse.text()}`).toBe(201);
     const captionResponse = await captioned;
     expect(captionResponse.status(), `the caption PATCH: ${await captionResponse.text()}`).toBe(200);
-    await expect(page.getByText(CAPTION, { exact: true })).toBeVisible();
+    // A-IDP-P11 finding (2026-09-16): A20's step-6 tile now renders a loaded photograph through
+    // <ImageSlot>, whose shadow root carries its OWN placeholder caption (ImageSlot.vue's
+    // `.empty .cap`) alongside the tile's own always-visible name label below it. `getByText`
+    // pierces shadow DOM regardless of CSS visibility, so once the upload has a real `src` the
+    // hidden `.empty .cap` node (ImageSlot sets `empty.style.display = 'none'` the moment a photo
+    // loads -- render(), the `url && !attrError` branch) still text-matches and strict mode refuses
+    // to pick between it and the one truly on-screen label. `.and(':visible')` keeps the assertion
+    // about what a seller actually SEES, which is what it was written to prove; the hidden node
+    // is not a leak (it never had a photo to hide) and needs no change to app code.
+    await expect(page.getByText(CAPTION, { exact: true }).and(page.locator(':visible'))).toBeVisible();
     const row = await draftOf(page, id);
     expect(row.photos.map((p) => p.name), 'one photograph, in the seller\'s own words').toEqual([CAPTION]);
     expect(row.assets).toHaveLength(1);
