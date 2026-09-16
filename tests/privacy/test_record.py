@@ -498,7 +498,22 @@ def test_every_update_in_the_module_sets_updated_at() -> None:
     """The sweeper's age windows and `listing_asset_privacy_sweep_idx` read `updated_at`, and there
     is no trigger precedent in `migrations/` -- `listing.updated_at` is maintained the same way, by
     hand, in `app/api/seller_listings.py`. A statement that forgets it makes a row invisible to the
-    sweeper for ever, so the rule is checked rather than trusted (spec C.3)."""
+    sweeper for ever, so the rule is checked rather than trusted (spec C.3).
+
+    WHAT THIS WALK CANNOT SEE, stated rather than left to be discovered (re-review 3, Minor-c; Task
+    P8 closed it on entry): `_executed_sql` keys every statement by the FUNCTION that owns it, so a
+    statement at MODULE level -- outside any `def`, executed at import -- is counted by nothing
+    here, and would therefore escape this count, the `updated_at` rule and
+    `test_every_update_in_the_module_names_the_state_it_is_allowed_from`'s predicate rule alike.
+    That is acceptable for `record.py` specifically, and for two reasons rather than one. First,
+    the module opens NO connection and holds no cursor: every statement it runs is run through a
+    `conn` its caller passed, so a module-level `cur.execute` would need a module-level connection
+    this file has never had and whose addition is not a subtle edit. Second, EXISTENCE is still
+    caught elsewhere -- `tests/test_docs.py::test_every_writer_of_the_privacy_row_is_declared_and_
+    only_one_is_production` regexes the file's TEXT, not its AST, so a module-level writer is seen
+    there whatever encloses it. What would genuinely escape is the PREDICATE check, which is why
+    this is written down: a module-level writer in `record.py` is a finding, not a style, and the
+    walk is to be widened rather than the statement explained."""
     by_function = _privacy_updates(record)
     assert {name: len(sqls) for name, sqls in by_function.items()} == PRIVACY_UPDATES
     missing = [sql[:120] for sqls in by_function.values() for sql in sqls
@@ -965,15 +980,26 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
         name. `psycopg2.Error` and not a blind `Exception`: that is the whole class this finding is
         about (`OperationalError: server closed the connection unexpectedly`, `InterfaceError:
         connection already closed`), and a bug in `record.claim` itself is not a masking error --
-        it is one pytest SHOULD surface however loudly it can."""
-        racer = psycopg2.connect(scratch_dsn)
-        racer.autocommit = True
+        it is one pytest SHOULD surface however loudly it can.
+
+        The CONNECT is inside the `try` too (re-review 3, Minor-b; Task P8 closed it on entry).
+        It used to sit above it, so the one `psycopg2.Error` most likely of all -- the connection
+        itself failing -- was the one error this arm could not record, and it escaped as exactly
+        the `PytestUnhandledThreadExceptionWarning` the paragraph above exists to prevent.
+        Reproduced by pointing this connect at a closed port: one `-W error` run reported the case
+        FAILED and errored a second time in the same run, two reports for one cause."""
+        racer: Any = None
         try:
+            racer = psycopg2.connect(scratch_dsn)
+            racer.autocommit = True
             answers["racer"] = record.claim(racer, asset_id, 1)
         except psycopg2.Error as exc:
             escaped.append(exc)
         finally:
-            racer.close()
+            # `None` when the connect itself was what failed: there is nothing to close, and a
+            # bare `racer.close()` would raise an AttributeError over the error just recorded.
+            if racer is not None:
+                racer.close()
 
     # Built before the `try`, so the `finally` can always ask whether it is still running -- a
     # `finally` that cannot name the thread is the same defect one step further out.
@@ -990,7 +1016,14 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
         # The lock goes FIRST, so a racer blocked on it finishes in milliseconds, and only then do
         # we wait -- the thread owns its own connection, so there is nothing here to close.
         holder.close()
-        thread.join(timeout=30)
+        # ONLY a thread that was started (re-review 3, Minor-a; Task P8 closed it on entry).
+        # `Thread.join` raises `RuntimeError: cannot join thread before it is started`, and this
+        # `finally` runs for every way the body above can fail -- including the ways that fail
+        # BEFORE `thread.start()`, such as the row lock itself. Reproduced by raising one line
+        # above `start()`: the real error was reported only as "During handling of the above
+        # exception, another exception occurred" behind a `RuntimeError` about joining.
+        if thread.ident is not None:
+            thread.join(timeout=30)
     assert not thread.is_alive(), (
         "the racing claim did not return within 30 s of the lock being released; its connection is "
         "the thread's own, so nothing here has closed it and no second error is masking this one"
