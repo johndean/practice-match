@@ -64,18 +64,24 @@ export interface ApiDocument extends ApiAsset { url: string }
  * `masks` are the regions the pipeline found, in the shape Task P12's review dialog draws them:
  * an id, a `[x, y, w, h]` box and a `source` (`auto` | `manual`), never a confidence score or any
  * other model internal. `width`/`height` are the photograph's own natural dimensions, `null` until
- * known. */
+ * known.
+ *
+ * All six are OPTIONAL here, `WizardAsset`'s own shape (a document has none of them, and most of
+ * this module's own test fixtures describe a photograph by name and source alone) — the real
+ * endpoint always sends every one, per Tasks P8/P9's own contract, and `toWizardDraft` reads them
+ * with `p.src` etc. rather than a default, so a fixture that omits one carries `undefined`
+ * through exactly as it always could for any other unlisted field. */
 export interface ApiPhoto {
   id: string;
   name: string;
   source: 'seed' | 'asset';
   position?: number;
-  src: string | null;
-  variant: string;
-  state: 'processing' | 'review' | 'confirmed' | 'failed';
-  masks: { id: string; box: [number, number, number, number]; source: string }[];
-  width: number | null;
-  height: number | null;
+  src?: string | null;
+  variant?: string;
+  state?: 'processing' | 'review' | 'confirmed' | 'failed';
+  masks?: { id: string; box: [number, number, number, number]; source: string }[];
+  width?: number | null;
+  height?: number | null;
 }
 
 /** The OWNER's own truth, exactly as `app/api/seller_listings.py::serialise_draft` sends it: the

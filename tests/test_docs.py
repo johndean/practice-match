@@ -2233,15 +2233,18 @@ def test_runbook_names_the_five_account_routes():
 # before it ever compared a string: A18 (2026-09-09) made sixteen families and it stopped at
 # "Fifteen"; `feat/card-geography` hit it at A27; and A24 — real Census boundary polygons,
 # 2026-09-11 — makes TWENTY-FIVE against a tuple that stopped at "Twenty-four". It now runs to
-# thirty-nine, which is roughly a year of families at the current rate. When it runs out again,
-# extend it: an index error here is never evidence about CLAUDE.md.
+# forty-three (Task P11, 2026-09-16, made forty-two families) — the headroom check below wants one
+# word past the current family count, so an extension lands here whenever the count is even with
+# the tuple's own end. When it runs out again, extend it: an index error here is never evidence
+# about CLAUDE.md.
 NUMBER_WORDS = {n: w for n, w in enumerate(
     ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
      "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two",
+     "Forty-three"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

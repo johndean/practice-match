@@ -65,7 +65,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
   // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
   // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
-  // the filter moved 28 of the 56 approved states and seven of the thirteen frozen hashes. The
+  // the filter moved 28 of the 58 approved states and seven of the thirteen frozen hashes. The
   // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
   // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
   // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
@@ -3460,6 +3460,25 @@ describe('A20 — the identifiable-image control and the step-6 tiles', () => {
 
   it('the once-only line appears above the tiles under NOT_SHOW and never under SHOW', () => {
     const c2 = mountWithPhotos();
+    expect(c2.wizardVals().privacyNote).toBe(
+      'We\'ve automatically hidden information that could identify the hospital. '
+      + 'Review your images before publishing.');
+    c2.setState({ w: { ...c2.state.w, showIdentifiable: true } });
+    expect(c2.wizardVals().privacyNote).toBe('');
+  });
+
+  // A20.4b's own widening (Task P11 Step 5/6): the reference reaches a tile WITH a src through
+  // `startWizardPhotos` alone, with no adapter — and the privacy line has to agree with the tiles
+  // it sits above, on the SAME condition, or `wizard-step-6-photos`/`wizard-step-6-review` would
+  // show a tile with a photograph and no line above it on the reference while the app (a real
+  // adapter, the same simulated draft) shows both — the exact mismatch the pixel gate exists to
+  // catch, and did.
+  it('the once-only line also appears with no adapter, once a simulated wizAssets seed is present', () => {
+    const c2: any = new Component({});   // no adapter — the reference's own path
+    c2.setState({
+      screen: 'seller', sellerView: 'wizard', step: 6,
+      wizAssets: [{ kind: 'Photo', name: 'Front entrance', id: 'wp-1', source: 'asset', src: '/x.webp', state: 'review' }]
+    });
     expect(c2.wizardVals().privacyNote).toBe(
       'We\'ve automatically hidden information that could identify the hospital. '
       + 'Review your images before publishing.');

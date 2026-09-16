@@ -3517,7 +3517,7 @@ class Component extends DCLogic {
       isForm: !s.wizSubmitted && step <= 7,
       isPreview: !s.wizSubmitted && step === 8,
       previewPhotos: uploads.filter((u) => u.hasSrc),
-      privacyNote: this.props.listings && !w.showIdentifiable ? "We've automatically hidden information that could identify the hospital. Review your images before publishing." : "",
+      privacyNote: (this.props.listings || (s.wizAssets && s.wizAssets.length)) && !w.showIdentifiable ? "We've automatically hidden information that could identify the hospital. Review your images before publishing." : "",
       isDone: s.wizSubmitted,
       title: names[step - 1],
       blurb: cfg.blurb,

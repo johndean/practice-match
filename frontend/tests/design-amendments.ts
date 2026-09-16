@@ -3211,17 +3211,22 @@ const A20_7: Amendment = {
 /** A20.8 — `renderVals()`'s wizard block gains `previewPhotos` (the same `uploads` entries,
  *  filtered to the ones with a source — step 8 shows the buyer-facing variant of every visible
  *  photograph, not a second copy of it) and `privacyNote` (John's own two sentences, gated on
- *  BOTH `!w.showIdentifiable` and adapter presence — `this.props.listings`, the app-only Browse
- *  adapter's own idiom (A16.1) applied here: the reference has no redaction pipeline behind it,
- *  so claiming one "automatically hidden" anything would be false on the one path with no API to
- *  do it under, which is why the reference-path case asserts an empty string regardless of the
- *  design's own NOT_SHOW default). */
+ *  BOTH `!w.showIdentifiable` and the SAME "adapter or simulated seed" disjunct A20.4b's own
+ *  condition uses — `this.props.listings || (s.wizAssets && s.wizAssets.length)`: the reference
+ *  has no redaction pipeline behind it, so claiming one "automatically hidden" anything would be
+ *  false on the one path with no API to do it under, UNLESS `startWizardPhotos` has already
+ *  simulated a processed seed (A20.4c) — measured on the e2e gate itself (Task P11 Step 9): a
+ *  narrower gate left `wizard-step-6-photos`/`wizard-step-6-review` showing the tile WITH its
+ *  photograph on the reference and the app alike, but the privacy line only on the app, which is
+ *  the exact per-target disagreement the pixel gate exists to catch, and did. The reference-path
+ *  case with no `wizAssets` seed either asserts an empty string regardless of the design's own
+ *  NOT_SHOW default, unchanged. */
 const A20_8: Amendment = {
   id: 'A20.8', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
   find: '      isPreview: !s.wizSubmitted && step === 8,\n',
   replace: '      isPreview: !s.wizSubmitted && step === 8,\n'
       + '      previewPhotos: uploads.filter((u) => u.hasSrc),\n'
-      + '      privacyNote: this.props.listings && !w.showIdentifiable ? "We\'ve automatically hidden information that could identify the hospital. Review your images before publishing." : "",\n'
+      + '      privacyNote: (this.props.listings || (s.wizAssets && s.wizAssets.length)) && !w.showIdentifiable ? "We\'ve automatically hidden information that could identify the hospital. Review your images before publishing." : "",\n'
 };
 
 /** A20.9 — step 8's preview card gains two things above its existing note: a strip of the same
@@ -7060,7 +7065,7 @@ const A35_7: Amendment = {
  *  doors for every account, while the app renders the account's own. Approved states are captured
  *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
  *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
- *  the filter moved 28 of the 56 approved states — every DOM and pixel capture of a member screen
+ *  the filter moved 28 of the 58 approved states — every DOM and pixel capture of a member screen
  *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
  *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
  *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
