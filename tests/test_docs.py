@@ -1977,6 +1977,13 @@ LISTING_WRITERS = {
     "tests/api/test_admin_listings.py":
         "review-queue fixtures with no photographs; a listing with an empty `photos` array has "
         "nothing for the gate's predicate to find.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "Task P9's own delivery-resolver suite. `_publish` writes two UPDATEs; by the time the "
+        "second names `status`, `_process` has already given the listing's one photograph a "
+        "SELLER_CONFIRMED-or-later privacy row, so the gate is met by the pipeline's own state, "
+        "`test_listing_assets.py`'s own shape. `_seed_listing` INSERTs directly as `published` "
+        "(no INSERT arm, A-IDP-6); its other UPDATEs — a visibility flip, a photos-array swap for "
+        "the IDOR case — never name `status` and do not fire the trigger at all.",
     "tests/api/test_geo_wire.py":
         "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
         "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "
@@ -2008,6 +2015,12 @@ LISTING_WRITERS = {
         "than something it works around; its two direct UPDATEs write the visibility setting a "
         "flip test has to START from and an `in_review` status the decline case needs, and "
         "neither touches `status = 'published'`.",
+    "tests/perf/test_api_latency.py":
+        "Task P9's own photo-budget test, `test_buyer_photo_delivery.py`'s `_process`/`_publish` "
+        "shape: one UPDATE gives the listing's uploaded photograph a SELLER_CONFIRMED privacy row "
+        "before a second UPDATE names `status`, so the gate is met by that already-ready row. "
+        "`test_listings_p95_within_budget`'s own UPDATE flips the seeded eighteen to SHOW and "
+        "never names `status`, so the trigger does not fire for it at all.",
     "tests/perf/test_query_plans.py":
         "query-plan fixtures inserted directly with their status; no INSERT arm.",
     "tests/privacy/conftest.py":
@@ -2081,10 +2094,39 @@ PRIVACY_WRITERS = {
         "the state machine itself (Task P3) — the one production writer. One function per "
         "transition of spec C.4, each carrying the predicate that names its own source states, so "
         "a transition the table does not hold matches no row and writes nothing.",
+    "tests/api/test_admin_listings.py":
+        "the reviewer's own step-6/bytes-route suite (Task P9). One UPDATE plants a "
+        "READY_FOR_REVIEW row — a redacted key, its sha256, the region and OCR JSON a completed "
+        "pass leaves — onto the row the real upload route already created, so the admin tile can "
+        "be exercised without running the pipeline; it is a column poke, never a transition "
+        "through `app/privacy/record.py`.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "the delivery resolver's own suite (Task P9, directives 20/21). `_process` plants the "
+        "pipeline's OUTCOME onto the row the real upload route already created — whichever state "
+        "a scenario needs, with every CHECK migration `041` carries for that state already true — "
+        "and one case pokes `buyer_visible`/`processing_status` back to a not-yet-finished shape "
+        "to prove SHOW's own floor. Neither is a transition through `app/privacy/record.py`; both "
+        "are direct column pokes, `tests/privacy/test_record.py`'s own idiom.",
     "tests/api/test_listing_assets.py":
         "P2's own upload and delivery suite. Two `_SEED_INSERT`s build the privacy rows a "
         "published seed listing needs for migration `042`'s gate to pass; neither moves a row "
         "through a transition, they insert the end state directly.",
+    "tests/api/test_listings.py":
+        "the photo-caption suite's own builder, `_asset` (A-L11/Task P9): for a PHOTOGRAPH kind it "
+        "INSERTs the privacy row the real `upload_photo` writes in the same transaction as its "
+        "`listing_asset` row, already `PUBLISHED` and `buyer_visible`, so a caption fixture never "
+        "represents a shape no real upload produces.",
+    "tests/api/test_seller_listings.py":
+        "`_uploaded_and_processed`'s own builder (Task P9) — its own docstring: \"what is planted "
+        "here is its outcome.\" One UPDATE moves the row the real upload route created to a named "
+        "post-pipeline state, READY_FOR_REVIEW by default, with the redaction regions and OCR size "
+        "a finished pass leaves, so the step-6 tile can be asserted without running the pipeline.",
+    "tests/perf/test_api_latency.py":
+        "the photo-budget test's own plant (Task P9), `test_buyer_photo_delivery.py`'s `_process` "
+        "shape: one UPDATE moves the uploaded photograph's row to SELLER_CONFIRMED with a "
+        "redacted key and matching sha256 before the listing's own UPDATE moves it into "
+        "`published`, so what is timed is the resolver's warm path and never the pipeline that "
+        "fed it.",
     "tests/privacy/conftest.py":
         "the privacy suites' shared builder (Task P3) — one INSERT that makes a row in any state "
         "with whatever `041`'s CHECKs require of that state already true, so a CHECK that changes "

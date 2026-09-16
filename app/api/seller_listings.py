@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import closing
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -57,6 +57,7 @@ from app.api.listings import (
     PHOTOS_ROOT,
     REQUIRE_LISTING_READ,
     _error,
+    _object_bytes,
     clear_geocode_dedupe,
     enqueue_geocode,
     has_geocode,
@@ -82,6 +83,7 @@ from app.mail.outbox import enqueue
 from app.media.encode import encode_webp, sha256_hex
 from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, gate, original_key, photo_prefix
 from app.privacy import record as privacy_record
+from app.privacy.delivery import OWNER_HEADERS, owner_url
 from app.storage import ObjectStore
 
 router = APIRouter(prefix="/api/seller")
@@ -378,7 +380,74 @@ def seed_captions() -> dict[str, str]:
         return {}
 
 
-def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+#: The four words a tile can say (spec H). A status the map does not name is a status migration 041
+#: does not have — a `KeyError` here is the right answer, not a default that invents a pill.
+TILE_PILL = {
+    "UPLOADED": "processing", "PROCESSING": "processing", "SCANNED": "processing",
+    "REDACTION_GENERATED": "processing", "REPROCESS_REQUIRED": "processing",
+    "READY_FOR_REVIEW": "review", "SELLER_CONFIRMED": "confirmed", "PUBLISHED": "confirmed",
+    "REVIEW_REQUIRED": "failed",
+}
+#: The two states whose pill depends on whether a retry is still coming. Directive 15: do not make
+#: the seller understand technical detection results — a photograph the worker will try again reads
+#: "Processing..." and only one whose attempts are spent reads "Failed".
+RETRYING = ("PROCESSING_FAILED", "REDACTION_FAILED")
+#: The shape of a tile that has no privacy record to describe: a seed PATH entry, and a photograph
+#: whose row is somehow absent. The design's badge band renders exactly as it does today and no
+#: `src` is invented.
+NO_PRIVACY_TILE: dict[str, Any] = {"src": None, "variant": None, "state": "processing", "masks": [],
+                                   "width": None, "height": None}
+
+
+def _mask_box(polygon: list[list[float]]) -> list[float]:
+    """A stored polygon as the axis-aligned box the dialog outlines. The dialog draws rectangles;
+    the record keeps the polygon, because a rotated sign is covered by the quad the engine returned
+    and the FILL uses that quad, not this box."""
+    xs = [float(point[0]) for point in polygon]
+    ys = [float(point[1]) for point in polygon]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _tile_privacy(row: dict[str, Any], asset: dict[str, Any] | None, *, owner_route: str) -> dict[str, Any]:
+    """The five privacy fields of one tile (spec C.6).
+
+    No storage key, no OCR text, no identity match, no confidence, no engine and no model name:
+    `tests/api/test_seller_listings.py::test_the_draft_payload_carries_masks_and_state_and_nothing_technical`
+    is the pin and directive 15 is the reason."""
+    if asset is None or asset.get("_status") is None:
+        return dict(NO_PRIVACY_TILE)
+    status = str(asset["_status"])
+    not_show = row["identifiable_content_visibility"] == "NOT_SHOW"
+    variant = "redacted" if not_show else "display"
+    digest = asset["_redacted"] if not_show else asset["_sha256"]
+    state = TILE_PILL[status] if status not in RETRYING else (
+        "processing" if int(asset["_attempts"]) < privacy_record.MAX_ATTEMPTS else "failed")
+    size = asset["_size"] or [None, None]
+    return {
+        "src": None if digest is None else owner_url(owner_route, asset["id"], str(digest)),
+        "variant": variant,
+        "state": state,
+        # Only what the dialog draws and what Remove targets: an id, a box in display pixels, and
+        # whether the seller put it there. Never `expanded_from`, never `pad_px`, never `by`, and
+        # never a region the seller has already removed.
+        "masks": [{"id": region["id"], "box": _mask_box(region["polygon"]), "source": region["source"]}
+                  for region in asset["_regions"] if region["source"] != "removed-by-seller"],
+        "width": size[0],
+        "height": size[1],
+    }
+
+
+def _public(asset: Mapping[str, Any]) -> dict[str, Any]:
+    """An asset entry without the underscored privacy columns `assets_for` carries for
+    `photo_tiles`. Those are INPUTS to the tile projection and never part of a payload: a draft
+    response carries no hash of any variant, no processing status under that name and no raw
+    region. Underscore-prefixed rather than a second return value, so a column added to the SELECT
+    for the tiles cannot be leaked by forgetting to remove it from a list somewhere else."""
+    return {key: value for key, value in asset.items() if not key.startswith("_")}
+
+
+def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]], *,
+                owner_route: str) -> list[dict[str, Any]]:
     """Step 6's tiles in `listing.photos`' own order, named by what the photograph SHOWS.
 
     Order comes from `listing.photos` and from nowhere else (D15 reason 3), which is why this is a
@@ -398,7 +467,15 @@ def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[
     rule, not a second query. The DISCRIMINATOR (`source`, plus `position` for a seed entry) is on
     the TILE, not on `serialise_draft`'s own top-level keys (A-SL25 (4)'s pin is scoped there),
     so the frontend can route a click without parsing an id: `PATCH .../assets/{id}` for `"asset"`,
-    the positional route by `position` for `"seed"`."""
+    the positional route by `position` for `"seed"`.
+
+    Task P9 (spec C.6) adds the five fields the seller's REVIEW needs, and takes none away: the
+    buyer-facing variant's URL, the variant's name, a four-word state pill, the masks the dialog
+    draws, and the display size those masks are measured in. `owner_route` is the caller's own
+    prefix — the seller router's for the owner, the admin router's for the reviewer — so each
+    payload points at the route that principal's permission opens, and
+    `app/privacy/delivery.py::owner_url` is the ONE producer of the `?v=` on both."""
+    by_id = {asset["id"]: asset for asset in assets if asset["kind"] == "photo"}
     captions = {asset["id"]: asset["caption"] for asset in assets if asset["kind"] == "photo"}
     own = photo_list(row["photo_captions"])
     seeded = seed_captions()
@@ -410,15 +487,19 @@ def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[
         if entry is None:
             continue
         if "/" not in entry:
-            tiles.append({"id": entry, "name": captions.get(entry) or "", "source": "asset"})
+            tiles.append({"id": entry, "name": captions.get(entry) or "", "source": "asset",
+                          **_tile_privacy(row, by_id.get(entry), owner_route=owner_route)})
         else:
             stored = own[position - 1] if position - 1 < len(own) else None
+            # A seed PATH entry has no asset row and therefore no privacy record: the shape with
+            # nothing in it, so the design's badge band renders exactly as it does today.
             tiles.append({"id": entry, "name": stored or seeded.get(entry) or "",
-                          "source": "seed", "position": position})
+                          "source": "seed", "position": position, **dict(NO_PRIVACY_TILE)})
     return tiles
 
 
-def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[str, Any]:
+def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]], *,
+                    owner_route: str | None = None) -> dict[str, Any]:
     """The OWNER's own truth (D11) — every column unblanked, nulls preserved, plus `assets[]`.
 
     Deliberately not `serialise`: that one is the BUYER contract, it applies the disclosure
@@ -427,7 +508,13 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
 
     The keys are the wizard's own (`state.w` in logic.js:204), not the columns': the adapter hands
     this straight to `setW`, so `services` comes back as `desc`, `facility_type` as `facilityType`
-    and `bldg` in the design's own wording."""
+    and `bldg` in the design's own wording.
+
+    `owner_route` is the prefix each photo tile's `src` points at (Task P9, spec C.6). It DEFAULTS
+    to this router's own, because nine of the twelve callers are the seller's own routes; the three
+    in `app/api/admin_listings.py` pass the reviewer's. A caller that forgot would hand a reviewer
+    a URL their permission does not open — a 404 through `owned_row`, never another principal's
+    bytes — and `tests/api/test_admin_listings.py` is what holds that side honest."""
     return {
         # `slug` is the owner's own row (D11 unblanks everything; the BUYER's `serialise` is what
         # hides it when the name is undisclosed). A-SL19 (9), Info-4: `/decide` answers this whole
@@ -453,12 +540,13 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
         "decline_reason": row["decline_reason"].removeprefix(DECLINE_PREFIX) if row["decline_reason"] else None,
         "submitted_at": row["submitted_at"].isoformat() if row["submitted_at"] else None,
         "updated_at": row["updated_at"].isoformat(),
-        "assets": assets,
+        "assets": [_public(asset) for asset in assets],
         # The two ordered views step 6 renders (D26). `assets` stays exactly as SL3 wrote it — the
         # upload-ordered whole — and these are the projections: photographs in `listing.photos`'
         # order, documents with the route that reads each one back under D19's lock.
-        "photos": photo_tiles(row, assets),
-        "documents": [{**asset, "url": f"/api/seller/listings/{row['id']}/documents/{asset['id']}"}
+        "photos": photo_tiles(row, assets,
+                              owner_route=owner_route or f"/api/seller/listings/{row['id']}/photos"),
+        "documents": [{**_public(asset), "url": f"/api/seller/listings/{row['id']}/documents/{asset['id']}"}
                       for asset in assets if asset["kind"] != "photo"],
     }
 
@@ -528,11 +616,26 @@ def assets_for(conn: Any, listing_ids: list[Any]) -> dict[Any, list[dict[str, An
         # first thing a new seller sees.
         return grouped
     with conn.cursor() as cur:
-        cur.execute("SELECT listing_id, id, kind, name, content_type, byte_size, caption FROM listing_asset"
-                    " WHERE listing_id = ANY(%s) ORDER BY listing_id, created_at, id", (listing_ids,))
+        # A LEFT JOIN, because a DOCUMENT has no privacy row (D19) and the join must not decide
+        # that. No storage key of any kind is selected — the property
+        # `tests/api/test_listing_assets.py`'s "storage_key never emitted" pin already holds, and
+        # Task P9 extends it to the three derivatives.
+        cur.execute("SELECT a.listing_id, a.id, a.kind, a.name, a.content_type, a.byte_size, a.caption,"
+                    "       a.sha256, p.processing_status, p.attempts, p.redacted_sha256,"
+                    "       p.redaction_regions, p.ocr -> 'size' AS size"
+                    "  FROM listing_asset a"
+                    "  LEFT JOIN listing_asset_privacy p ON p.asset_id = a.id"
+                    " WHERE a.listing_id = ANY(%s) ORDER BY a.listing_id, a.created_at, a.id",
+                    (listing_ids,))
         for r in cur.fetchall():
             grouped[r[0]].append({"id": str(r[1]), "kind": r[2], "name": r[3],
-                                  "content_type": r[4], "byte_size": r[5], "caption": r[6]})
+                                  "content_type": r[4], "byte_size": r[5], "caption": r[6],
+                                  # Underscored and never serialised: `photo_tiles` reads these and
+                                  # emits the five public fields, and `_public` strips them at both
+                                  # projections. `documents[]` and `_asset_payload` keep emitting
+                                  # exactly what they emit today.
+                                  "_sha256": r[7], "_status": r[8], "_attempts": r[9],
+                                  "_redacted": r[10], "_regions": r[11] or [], "_size": r[12]})
     return grouped
 
 
@@ -1240,6 +1343,78 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
     if on_market:
         drop_list_cache_quietly()
     return JSONResponse(payload)
+
+
+#: The three representations of one photograph a principal who owns or reviews it may ask for
+#: (spec C.6). Nothing else is a variant, and `?variant=` is the ONLY way the original is ever
+#: named — the buyer route has no such parameter and no such arm.
+VARIANTS = ("display", "redacted", "original")
+#: The inverse of `app.privacy.PHOTO_EXT` — the extension the upload's magic-byte sniff chose.
+ORIGINAL_MEDIA_TYPE = {ext: content_type for content_type, ext in PHOTO_EXT.items()}
+
+
+def photo_variant_response(conn: Any, listing_row: dict[str, Any], asset_id: str,
+                           requested: str | None, request: Request) -> Response:
+    """The bytes of one variant, for a caller who has already been proved owner or reviewer.
+
+    The ONLY handler body in this codebase that can return `original.*`, and it can do so only for
+    `?variant=original`. The default is the listing's own BUYER-facing variant, so the step-6 tile
+    and the review dialog show what a buyer would see rather than what the seller uploaded.
+
+    ONE body, mounted twice (spec C.6): `app/api/admin_listings.py` calls this behind
+    `listing.review` with the listing read by id and no ownership scope. A second body there would
+    be a second place the original can be reached from, which is exactly what
+    `tests/api/test_buyer_photo_delivery.py::test_the_original_key_is_read_only_where_the_spec_says`
+    counts.
+
+    Every "no" is one 404: a bad uuid, a photograph of another listing, a variant that has not been
+    produced yet, an object the bucket has lost. Only an unknown variant NAME is a 400, because
+    that is the caller's own spelling mistake rather than a fact about this photograph."""
+    parsed = _asset_uuid(asset_id, "photograph")
+    row = privacy_record.read(conn, parsed)
+    if row is None or str(row.listing_id) != str(listing_row["id"]):
+        raise Refusal("NOT_FOUND", "No such photograph.", 404)
+    if requested is not None and requested not in VARIANTS:
+        raise Refusal("BAD_REQUEST", f"variant must be one of {', '.join(VARIANTS)}.", 400)
+    default = "redacted" if listing_row["identifiable_content_visibility"] == "NOT_SHOW" else "display"
+    wanted = requested or default
+    key, digest = {
+        "original": (row.original_storage_key, None),
+        "display": (row.display_storage_key, row.display_sha256),
+        "redacted": (row.redacted_storage_key, row.redacted_sha256),
+    }[wanted]
+    if key is None:
+        raise Refusal("NOT_FOUND", "No such photograph.", 404)
+    # `_object_bytes`, not this module's `_fetch`: a READ of a photograph answers 404 for a missing
+    # key and for a bucket that errored alike (`app/api/listings.py`, directive 19), while `_fetch`
+    # is the DOCUMENT route's and raises 503 — and a 503 on this route would tell a caller that a
+    # photograph they may not be able to see exists.
+    body = _object_bytes(key)
+    if body is None:
+        raise Refusal("NOT_FOUND", "No such photograph.", 404)
+    etag = f'"{digest or sha256_hex(body)}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={**OWNER_HEADERS, "ETag": etag})
+    # The original's media type comes from its own key's extension — the sniff at upload chose that
+    # extension from the magic bytes, so it is the one fact about those bytes we know.
+    media_type = "image/webp" if wanted != "original" else ORIGINAL_MEDIA_TYPE[key[key.rfind("."):]]
+    return Response(content=body, media_type=media_type, headers={**OWNER_HEADERS, "ETag": etag})
+
+
+@router.get("/listings/{listing_id}/photos/{asset_id}")
+async def read_photo(listing_id: str, asset_id: str, request: Request, principal: Owner) -> Response:
+    """The owner's own photograph. Ownership is in the SQL (`owned_row`), so another seller's is a
+    404 byte-identical to a missing one (D7).
+
+    NOT audited: a polled bytes route must not write an audit row per poll — the `users.review`
+    lesson, and the reason `listing.manage_own` is not in `permissions.AUDITED` at all."""
+    try:
+        with closing(sync_conn()) as conn, conn:
+            row = owned_row(conn, listing_id, principal)
+            return photo_variant_response(conn, row, asset_id,
+                                          request.query_params.get("variant"), request)
+    except Refusal as exc:
+        return _refused(exc)
 
 
 @router.patch("/listings/{listing_id}/assets/{asset_id}")

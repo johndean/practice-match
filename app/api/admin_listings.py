@@ -32,7 +32,16 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.listings import _error, enqueue_geocode, has_geocode
-from app.api.seller_listings import _COLUMNS, _row, _rows, assets_for, assets_of, serialise_draft
+from app.api.seller_listings import (
+    _COLUMNS,
+    Refusal,
+    _row,
+    _rows,
+    assets_for,
+    assets_of,
+    photo_variant_response,
+    serialise_draft,
+)
 from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import require
@@ -231,7 +240,8 @@ async def list_all(request: Request) -> Response:
         page = rows[:limit]
         assets = assets_for(conn, [row["id"] for row in page])
         names = sellers_for(conn, [row["seller_id"] for row in page if row["seller_id"] is not None])
-        items = [{**serialise_draft(row, assets[row["id"]]),
+        items = [{**serialise_draft(row, assets[row["id"]],
+                                    owner_route=f"/api/admin/listings/{row['id']}/photos"),
                   "seller_id": str(row["seller_id"]) if row["seller_id"] is not None else None,
                   "seller_name": names.get(row["seller_id"]),
                   # Ruling 5's three: the date a listing reached the market (016's own column,
@@ -367,7 +377,8 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         # listing it has just published — the slug it needs for that link is written above, by this
         # request. Read after the audit row so `decline_reason` carries the decision just made.
         decided = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE id = %s", (parsed,))[0]
-        payload = serialise_draft(decided, assets_of(conn, parsed))
+        payload = serialise_draft(decided, assets_of(conn, parsed),
+                                  owner_route=f"/api/admin/listings/{parsed}/photos")
     # AFTER the commit (D16): a publish must reach Browse at once and an unpublish must leave it at
     # once, and dropping the key while the write was uncommitted would re-cache the old payload.
     drop_list_cache_quietly()
@@ -389,4 +400,29 @@ async def read_one(listing_id: str) -> Response:
         row: dict[str, Any] | None = _row(conn, listing_id)
         if row is None:
             return _error("NOT_FOUND", "No such listing.", 404)
-        return JSONResponse(serialise_draft(row, assets_of(conn, row["id"])))
+        return JSONResponse(serialise_draft(row, assets_of(conn, row["id"]),
+                                            owner_route=f"/api/admin/listings/{row['id']}/photos"))
+
+
+@router.get("/listings/{listing_id}/photos/{asset_id}", dependencies=[Depends(REQUIRE_REVIEW)])
+async def read_photo(listing_id: str, asset_id: str, request: Request) -> Response:
+    """One seller's photograph, to the reviewer — spec A.4 row 6, closed: until this route existed
+    nobody could look at an uploaded photograph before publication and the reviewer decided blind.
+
+    The handler body is `app/api/seller_listings.py::photo_variant_response`, IMPORTED and not
+    re-implemented, for the reason `serialise_draft` is: the reviewer and the owner must see the
+    same photograph, and two bodies for one contract is how they stop agreeing — and the second
+    would be a second place `original.*` can be reached from.
+
+    No ownership scope: `listing.review` is the permission to look at anybody's listing, which is
+    the whole job. NOT audited, like the queue read beside it: a bytes route the review dialog
+    polls must not write one audit row per poll."""
+    try:
+        with closing(sync_conn()) as conn, conn:
+            row: dict[str, Any] | None = _row(conn, listing_id)
+            if row is None:
+                return _error("NOT_FOUND", "No such listing.", 404)
+            return photo_variant_response(conn, row, asset_id,
+                                          request.query_params.get("variant"), request)
+    except Refusal as exc:
+        return _error(exc.code, exc.message, exc.status)

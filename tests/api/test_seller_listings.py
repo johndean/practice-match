@@ -377,6 +377,9 @@ async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is
         # three unconditionally. `geo_precision` is `None` here — this listing has never been
         # geocoded, which is the state a seller's draft is in.
         "photo_captions": [], "asset_captions": {}, "geo_precision": None,
+        # Task P9, the same rule one column further on: `serialise` resolves every photo slot
+        # through the privacy state, so the buyer contract reads both of `_SELECT`'s new columns.
+        "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},
     }
     assert serialise(row, datetime.now(UTC))["rev"] is None
     assert serialise({**row, "rev_disclosed": True}, datetime.now(UTC))["rev"] == 2_100_000
@@ -1257,6 +1260,18 @@ RETURNING id
 """
 
 
+def _tile(expected: dict[str, Any], **privacy: Any) -> dict[str, Any]:
+    """An expected step-6 tile: the fields these cases are about, plus the five Task P9 adds for
+    the seller's own review (spec C.6).
+
+    The defaults are the "no privacy record" shape — a seed PATH entry, and an asset whose row is
+    somehow absent — so a case that IS about the privacy fields names the ones it means. An asset
+    uploaded through the route and not yet processed passes `variant="redacted"`: it HAS a record,
+    in `UPLOADED`, and the listing's own setting defaults to NOT_SHOW."""
+    return {**expected, "src": None, "variant": None, "state": "processing", "masks": [],
+            "width": None, "height": None, **privacy}
+
+
 def _seed_listing(conn: Any, seller_id: Any, status: str = "published",
                   photos: list[str | None] | None = None,
                   photo_captions: list[str | None] | None = None) -> str:
@@ -1398,7 +1413,8 @@ async def test_a_seed_photograph_shows_the_inventorys_caption_until_the_seller_d
     listing_id = _seed_listing(conn, account_id, photos=["abc_animal_hospital/1.webp"])
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
     assert read.json()["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1}
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 1})
     ]
 
 
@@ -1412,7 +1428,8 @@ async def test_the_listings_own_caption_wins_over_the_seed_inventory(client: Any
                                photo_captions=["The reception desk at sunrise"])
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
     assert read.json()["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "The reception desk at sunrise", "source": "seed", "position": 1}
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "The reception desk at sunrise", "source": "seed",
+               "position": 1})
     ]
 
 
@@ -1425,7 +1442,8 @@ async def test_an_empty_seed_slot_carries_no_tile_and_does_not_shift_position(
     listing_id = _seed_listing(conn, account_id, photos=[None, "abc_animal_hospital/1.webp"])
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
     assert read.json()["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 2}
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 2})
     ]
 
 
@@ -1439,7 +1457,8 @@ async def test_the_owner_can_describe_a_seeded_photograph_positionally(
                                   json={"caption": "  The lobby, freshly painted  "}, headers=signed)
     assert response.status_code == 200, response.text
     assert response.json()["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "The lobby, freshly painted", "source": "seed", "position": 1}
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "The lobby, freshly painted", "source": "seed",
+               "position": 1})
     ]
     with conn.cursor() as cur:
         cur.execute("SELECT photo_captions FROM listing WHERE id=%s", (listing_id,))
@@ -2351,3 +2370,252 @@ async def test_the_identity_documents_audit_sentence_is_what_the_seller_routes_w
         "the identity documents' audit sentence does not say that creating a listing and editing a "
         f"draft leave no audit row, which is what this test just measured: {sentence!r}"
     )
+
+
+# --- Task P9 step 6: the step-6 tile carries what the seller's own review needs -----------------
+#
+# Spec C.6. Nothing produced these fields before: `photo_tiles` emitted `{id, name, source}` and
+# `assets_for` selected no privacy column at all, so P11's A20.4 tiles would have read `a.src` and
+# `a.state` off a payload that had neither. The five are the buyer-facing variant's URL, the
+# variant's name, a four-word state pill, the masks the review dialog draws, and the display size
+# those masks are measured in.
+
+_REGIONS = [
+    {"id": "r1", "polygon": [[100, 120], [400, 118], [402, 170], [98, 172]], "source": "auto",
+     "expanded_from": 0, "pad_px": 12, "by": None, "at": None},
+    {"id": "r2", "polygon": [[600, 40], [700, 40], [700, 90], [600, 90]], "source": "manual",
+     "expanded_from": None, "pad_px": 0, "by": "someone", "at": "2026-09-09T00:00:00Z"},
+    {"id": "r3", "polygon": [[10, 10], [20, 10], [20, 20], [10, 20]], "source": "removed-by-seller",
+     "expanded_from": None, "pad_px": 0, "by": "someone", "at": "2026-09-09T00:00:00Z"},
+]
+
+
+async def _draft_as(client: Any, signed: dict[str, str]) -> str:
+    """`_create`'s own POST for a caller that already holds the merged headers."""
+    response = await client.post("/api/seller/listings", headers=signed)
+    assert response.status_code == 201, response.text
+    listing_id: str = response.json()["id"]
+    return listing_id
+
+
+async def _upload_one(client: Any, listing_id: str, signed: dict[str, str]) -> str:
+    from tests.api.conftest import _jpeg_bytes
+
+    response = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                 files={"file": ("front.jpg", _jpeg_bytes(), "image/jpeg")},
+                                 headers=signed)
+    assert response.status_code == 201, response.text
+    asset_id: str = response.json()["id"]
+    return asset_id
+
+
+async def _uploaded_and_processed(client: Any, signed: dict[str, str], store: Any, conn: Any,
+                                  *, status: str = "READY_FOR_REVIEW") -> tuple[str, str]:
+    """A draft with one photograph whose pipeline run has FINISHED: a real redacted object on the
+    bucket, the regions it covered, and the display size `app/tasks/media.py::_scan` records in
+    `ocr.size`. The pipeline itself is Task P8's; what is planted here is its outcome, because what
+    this task owns is what the payload does with it."""
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    from app.privacy import redacted_key
+
+    listing_id = await _draft_as(client, signed)
+    asset_id = await _upload_one(client, listing_id, signed)
+    buffer = io.BytesIO()
+    Image.new("RGB", (240, 180), (10, 200, 90)).save(buffer, "WEBP", lossless=True)
+    body = buffer.getvalue()
+    key = redacted_key(listing_id, asset_id)
+    store.put(key, body, "image/webp")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset_privacy SET processing_status = %s, redacted_storage_key = %s,"
+                    " redacted_sha256 = %s, redaction_regions = %s::jsonb,"
+                    " ocr = %s::jsonb WHERE asset_id = %s",
+                    (status, key, hashlib.sha256(body).hexdigest(), json.dumps(_REGIONS),
+                     json.dumps({"size": [1200, 900], "lines": []}), asset_id))
+    return listing_id, asset_id
+
+
+async def _plant_photo(client: Any, signed: dict[str, str], conn: Any, *, status: str,
+                       attempts: int) -> tuple[str, str]:
+    """A photograph in a named state, through `tests/privacy/conftest.py`'s builder — the one place
+    that knows what every CHECK migration 041 carries requires of each state."""
+    from uuid import UUID as _UUID
+
+    from tests.privacy.conftest import make_row
+
+    listing_id = await _draft_as(client, signed)
+    asset_id, _listing = make_row(conn, listing_id=_UUID(listing_id), processing_status=status,
+                                  attempts=attempts)
+    return listing_id, str(asset_id)
+
+
+async def test_a_draft_photo_tile_carries_its_variant_state_masks_and_size(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """Spec C.6. Every field the wizard reads is produced here, and the shape is asserted whole so
+    a missing one fails in this task rather than becoming a mystery in P11."""
+    from uuid import UUID as _UUID
+
+    from app.privacy import record
+
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id, asset_id = await _uploaded_and_processed(client, signed, store, conn)
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    row = record.read(conn, _UUID(asset_id))
+
+    assert tile["id"] == asset_id and tile["variant"] == "redacted" and tile["state"] == "review"
+    assert tile["src"] == f"/api/seller/listings/{listing_id}/photos/{asset_id}?v={row.redacted_sha256[:12]}"
+    assert (tile["width"], tile["height"]) == (1200, 900)
+    assert tile["masks"] and all(set(mask) == {"id", "box", "source"} for mask in tile["masks"])
+    assert all(len(mask["box"]) == 4 for mask in tile["masks"])
+    # The axis-aligned box of the stored POLYGON, and never a region the seller has removed.
+    assert [mask["id"] for mask in tile["masks"]] == ["r1", "r2"]
+    assert tile["masks"][0]["box"] == [98, 118, 402, 172]
+    # A-SL25 (4)'s own two fields are still here: the wizard routes a re-caption click by them.
+    assert tile["source"] == "asset" and "position" not in tile
+
+
+async def test_the_tile_names_the_variant_the_listings_own_setting_would_serve(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """The step-6 thumbnail is what a BUYER would see, so a listing set to SHOW shows the display
+    derivative and the default NOT_SHOW shows the redaction — one rule, read from the listing."""
+    from uuid import UUID as _UUID
+
+    from app.privacy import record
+
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id, asset_id = await _uploaded_and_processed(client, signed, store, conn)
+    row = record.read(conn, _UUID(asset_id))
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    assert tile["variant"] == "display"
+    assert tile["src"] == f"/api/seller/listings/{listing_id}/photos/{asset_id}?v={row.display_sha256[:12]}"
+
+
+@pytest.mark.parametrize(("status", "attempts", "pill"), [
+    ("UPLOADED", 0, "processing"), ("PROCESSING", 1, "processing"), ("SCANNED", 1, "processing"),
+    ("REDACTION_GENERATED", 1, "processing"), ("REPROCESS_REQUIRED", 1, "processing"),
+    ("PROCESSING_FAILED", 1, "processing"), ("REDACTION_FAILED", 2, "processing"),
+    ("PROCESSING_FAILED", 3, "failed"), ("REVIEW_REQUIRED", 3, "failed"),
+    ("READY_FOR_REVIEW", 0, "review"), ("SELLER_CONFIRMED", 0, "confirmed"),
+    ("PUBLISHED", 0, "confirmed"),
+])
+async def test_the_pill_says_processing_while_a_retry_is_pending_and_failed_once_they_are_spent(
+    client: Any, conn: Any, redis: Any, member: Any, status: str, attempts: int, pill: str
+) -> None:
+    """Directive 15: "Do NOT force the seller to understand technical detection results." A
+    photograph the worker will try again says Processing..., and only one whose attempts are spent
+    says Failed. Twelve rows, which is every status the map names plus both sides of the retry
+    rule — the parametrisation IS the coverage of `_tile_privacy`'s branch."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id, _asset_id = await _plant_photo(client, signed, conn, status=status, attempts=attempts)
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    assert tile["state"] == pill
+
+
+async def test_a_seed_path_entry_still_renders_the_designs_badge_band(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A claimed demo hospital: `listing.photos` holds paths, there is no asset row and no privacy
+    row, and the tile must come back with the shape and no `src` rather than not come back at
+    all."""
+    account_id, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = _seed_listing(conn, account_id, status="draft",
+                               photos=["abc_animal_hospital/1.webp"], photo_captions=["Exterior"])
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                               json={"name": "Claimed"}, headers=signed)).status_code == 200
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    assert tile["src"] is None and tile["state"] == "processing" and tile["masks"] == []
+    assert (tile["width"], tile["height"]) == (None, None)
+    assert tile["variant"] is None
+    assert tile["source"] == "seed" and tile["position"] == 1 and tile["name"] == "Exterior"
+
+
+async def test_an_asset_entry_with_no_matching_asset_row_still_renders_a_tile(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """`_tile_privacy`'s OTHER "somehow absent" row -- the seed one is
+    `test_a_seed_path_entry_still_renders_the_designs_badge_band`, above, and bypasses
+    `_tile_privacy` entirely (a seed entry has no uuid to look up). This is the ASSET-style entry: a
+    bare uuid in `listing.photos` that `by_id` -- `assets_for`'s own dict, keyed by `listing_asset`
+    id -- has no row for at all, which is what a caller mid-upload or a stale positional reference
+    looks like. The design's badge band is what it renders; a KeyError is not an option."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _draft_as(client, signed)
+    ghost = str(uuid4())
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photos=%s::jsonb WHERE id=%s", (json.dumps([ghost]), listing_id))
+
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    assert tile["id"] == ghost and tile["source"] == "asset" and tile["name"] == ""
+    assert tile["src"] is None and tile["variant"] is None and tile["state"] == "processing"
+    assert tile["masks"] == [] and (tile["width"], tile["height"]) == (None, None)
+
+
+async def test_the_draft_payload_carries_masks_and_state_and_nothing_technical(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """Directive 15 again, and spec F's "API response leakage" row: the owner's own payload carries
+    boxes and a pill, and nothing from `ocr`, `identity_matches` or `vision` — and no hash of any
+    variant under a name of its own, which is what the underscored columns `assets_for` now selects
+    would be if `_public` did not strip them."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id, _asset_id = await _uploaded_and_processed(client, signed, store, conn)
+    body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).text
+    # QUOTED, because `byte_size` is a legitimate public field and contains "_size": what must not
+    # reach a payload is the KEY, and a key in JSON is always quoted.
+    for forbidden in ("storage_key", "original", '"ocr"', "identity_matches", "vision", "confidence",
+                      "expanded_from", "pad_px", "detected_regions", "rapidocr", "zxing", "claude",
+                      '"_sha256"', '"_status"', '"_attempts"', '"_redacted"', '"_regions"', '"_size"',
+                      "processing_status", "redacted_sha256", "buyer_visible"):
+        assert forbidden not in body, forbidden
+    payload = json.loads(body)
+    assert all(not key.startswith("_") for asset in payload["assets"] for key in asset)
+    assert all(not key.startswith("_") for document in payload["documents"] for key in document)
+
+
+async def test_the_dashboard_carries_the_same_tiles_as_the_wizard(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """`list_mine` and `read_one` are one serialiser (A16.1 reads the dashboard's rows), so the
+    tiles must not differ between them — and `assets_for`'s LEFT JOIN must survive a listing with
+    no assets at all, which is the first thing a new seller has."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id, _asset_id = await _uploaded_and_processed(client, signed, store, conn)
+    empty = await _draft_as(client, signed)
+    rows = {row["id"]: row for row in (await client.get("/api/seller/listings", headers=signed)).json()["items"]}
+    one = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+    assert rows[listing_id]["photos"] == one["photos"]
+    assert rows[empty]["photos"] == [] and rows[empty]["assets"] == []
+
+
+async def test_a_document_never_gains_a_privacy_row_or_a_tile(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """D19: documents carry no privacy record, which is why `assets_for`'s join is a LEFT one — and
+    a document is never a photo tile whatever the join answers."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _draft_as(client, signed)
+    uploaded = await client.post(f"/api/seller/listings/{listing_id}/documents",
+                                 files={"file": ("accounts.pdf", b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n",
+                                                 "application/pdf")}, headers=signed)
+    assert uploaded.status_code == 201, uploaded.text
+    payload = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+    assert payload["photos"] == []
+    assert [document["id"] for document in payload["documents"]] == [uploaded.json()["id"]]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing_asset_privacy WHERE listing_id = %s", (listing_id,))
+        assert cur.fetchone()[0] == 0

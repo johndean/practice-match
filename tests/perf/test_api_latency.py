@@ -402,6 +402,12 @@ async def test_listings_p95_within_budget(origin_client, conn, redis, member):
     from tests.api.conftest import auth_headers
 
     SL.seed(settings.database_url, reset=True)
+    # A-IDP-4 (John, 2026-09-10): the seeds start NOT_SHOW, under which a seed PATH entry has no
+    # derivative and the photo route correctly answers 404 — so the "photo" budget below would be
+    # measuring a refusal. Set here, by this test, and by neither the seeder nor the migration; the
+    # DEFAULT's own behaviour is `tests/api/test_buyer_photo_delivery.py`'s.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility = 'SHOW' WHERE source = 'seed'")
     _, cookies, headers = member()
     auth = auth_headers(cookies, headers)
 
@@ -425,6 +431,70 @@ async def test_listings_p95_within_budget(origin_client, conn, redis, member):
         ("photo", f"/api/listings/{first['id']}/photos/1"),
     ):
         await gate_p95(lambda p=path: measure(p), LISTINGS_BUDGET_MS[label], label=path)
+
+
+@pytest.mark.timing
+async def test_a_sellers_redacted_photograph_is_served_within_the_photo_budget(
+    origin_client, conn, redis, member, store
+):
+    """Task P9, under the EXISTING `photo: 150` budget, which is NOT raised.
+
+    The seed arm above reads a committed file off disk; this is the arm the resolver added — two
+    indexed reads (the listing's own `photos` and setting, then the photograph's privacy record)
+    and one object fetch, on a NOT_SHOW listing, which is every seller photograph's own path once
+    the pipeline has run. Moto answers the bucket in process, so what is measured is this API's
+    work and never a network: the point is that resolving per request costs no more than the
+    single query it replaced."""
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    from app.privacy import redacted_key
+    from tests.api.conftest import _jpeg_bytes, auth_headers
+
+    _, cookies, headers = member(roles=("buyer", "seller"), email="perf-seller@example.org")
+    signed = auth_headers(cookies, headers)
+    created = await origin_client.post("/api/seller/listings", headers=signed)
+    assert created.status_code == 201, created.text
+    listing_id = created.json()["id"]
+    uploaded = await origin_client.post(f"/api/seller/listings/{listing_id}/photos",
+                                        files={"file": ("front.jpg", _jpeg_bytes(), "image/jpeg")},
+                                        headers=signed)
+    assert uploaded.status_code == 201, uploaded.text
+    asset_id = uploaded.json()["id"]
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (1200, 900), (10, 200, 90)).save(buffer, "WEBP", lossless=True)
+    body = buffer.getvalue()
+    key = redacted_key(listing_id, asset_id)
+    store.put(key, body, "image/webp")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset_privacy SET processing_status='SELLER_CONFIRMED',"
+                    " seller_confirmed=true, seller_confirmed_at=now(), final_privacy_state='NOT_SHOW',"
+                    " redacted_storage_key=%s, redacted_sha256=%s, confirmed_sha256=%s,"
+                    " buyer_visible=true WHERE asset_id=%s",
+                    (key, hashlib.sha256(body).hexdigest(), hashlib.sha256(body).hexdigest(), asset_id))
+        cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park',"
+                    " zip='78613', type='Small animal', est=1998, price=1450000, sqft=3000,"
+                    " state='TX', market='Austin, TX', area='Cedar Park' WHERE id=%s", (listing_id,))
+        cur.execute("UPDATE listing SET status='published' WHERE id=%s", (listing_id,))
+
+    _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="perf-buyer@example.org")
+    auth = auth_headers(buyer_cookies, buyer_headers)
+    path = f"/api/listings/{listing_id}/photos/1"
+
+    async def measure() -> list[float]:
+        await origin_client.get(path, headers=auth)   # warm-up, so a re-measurement is warm too
+        samples = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            r = await origin_client.get(path, headers=auth)
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 200 and r.content == body
+        return samples
+
+    await gate_p95(measure, LISTINGS_BUDGET_MS["photo"], label=f"{path} (redacted, NOT_SHOW)")
 
 
 # --- Census Task B5 budgets (policy §3; plan Task B5) --------------------------------------------

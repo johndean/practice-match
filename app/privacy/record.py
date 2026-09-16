@@ -32,6 +32,7 @@ review Minor-2); P10's `apply_visibility_change` and P12's mask routes name the 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -203,6 +204,28 @@ def read(conn: Any, asset_id: UUID) -> PrivacyRow | None:
         cur.execute(f"{_READ} WHERE p.asset_id = %s", (asset_id,))
         found = cur.fetchone()
     return None if found is None else _built(found)
+
+
+def delivery_row(entry: str, listing_id: object, found: Mapping[str, Any]) -> PrivacyRow:
+    """`app/api/listings.py`'s `visible_photos` aggregate object, as the row `buyer_variant` reads.
+
+    Only the six fields the resolver actually reads carry a value; the rest take the dataclass's
+    neutral ones, and NOTHING built here is ever serialised -- it exists for the length of one
+    `buyer_variant` call. `original_storage_key` is the empty string rather than the real key
+    because the resolver never reads it and the list route must never carry it: that is the
+    security matrix's "unauthorised original-image access" row, and it is why this function is here
+    rather than in the module that calls it
+    (`tests/api/test_buyer_photo_delivery.py::test_the_original_key_is_read_only_where_the_spec_says`
+    is what counts the modules that name that identifier)."""
+    return PrivacyRow(
+        asset_id=UUID(entry), listing_id=UUID(str(listing_id)),
+        processing_status=str(found["status"]), processing_version=0, attempts=0,
+        original_storage_key="", redacted_storage_key=found.get("redacted_key"),
+        redacted_sha256=found.get("redacted"), confirmed_sha256=None, seller_confirmed=False,
+        buyer_visible=bool(found["visible"]), redaction_regions=[], reprocess_reason=None,
+        final_privacy_state=None, display_storage_key=found.get("display_key"),
+        display_sha256=found.get("display"),
+    )
 
 
 def rows_for(conn: Any, listing_id: UUID) -> list[PrivacyRow]:
