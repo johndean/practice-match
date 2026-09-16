@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from app.privacy import aggregate
-from app.privacy.barcodes import Symbol
+from app.privacy.barcodes import EXPAND, Symbol
 from app.privacy.identity import Match
 from app.privacy.ocr import Line
 
@@ -62,7 +62,7 @@ def test_every_symbol_is_a_region_and_is_expanded_about_its_centroid() -> None:
     # the width back out as 115.0, while `100 * 1.15` is 114.99999999999999. Both are correct
     # IEEE754 and they are not equal; asserting bit equality on a scaled float is a test that fails
     # for arithmetic rather than for behaviour.
-    assert (x1 - x0) == pytest.approx(100 * aggregate.BARCODE_EXPAND)
+    assert (x1 - x0) == pytest.approx(100 * EXPAND)
     assert ((x0 + x1) / 2, (y0 + y1) / 2) == pytest.approx((150.0, 150.0))
 
 
@@ -241,3 +241,86 @@ def test_two_symbols_merging_report_no_line_because_neither_came_from_one() -> N
     _detected, redaction = aggregate.regions_for(lines=[], matches=[], symbols=symbols,
                                                  vision={"status": "unavailable"}, size=SIZE)
     assert len(redaction) == 1 and redaction[0]["expanded_from"] is None
+
+
+# ---------------------------------------------------------------------------------------------
+# A region that would cover NOTHING (controller ruling, 2026-09-16: "there must be no input that
+# silently results in nothing being covered"). Normalise first, then refuse.
+#
+# On a privacy feature a region that quietly covers nothing is the worst failure there is: the
+# seller is told the mark is hidden and it is not, and nothing anywhere says otherwise. Every one
+# of these arrived at a fill and drew no pixel before this ruling.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_an_inverted_vision_box_covers_the_region_it_plainly_meant() -> None:
+    """`x1 < x0` is a model handing back its corners the other way round. It is finite, so the
+    non-finite guard passes it; `_pads` then took a NEGATIVE width, the `max(minimum, ...)` floor
+    applied, and the result was a rectangle whose right edge sat left of its left edge -- which
+    `PIL.ImageDraw.polygon` draws as nothing at all. The corners are swapped, and the region is the
+    one the upright box would have produced, byte for byte."""
+    inverted = {"status": "ok", "identifies_practice": True,
+                "regions": [{"kind": "logo", "label": "wall logo", "box": [600, 500, 400, 400],
+                             "confidence": "low"}]}
+    upright = {"status": "ok", "identifies_practice": True,
+               "regions": [{"kind": "logo", "label": "wall logo", "box": [400, 400, 600, 500],
+                            "confidence": "low"}]}
+    swapped, swapped_redaction = aggregate.regions_for(
+        lines=[], matches=[], symbols=[], vision=inverted, size=SIZE)
+    plain, plain_redaction = aggregate.regions_for(
+        lines=[], matches=[], symbols=[], vision=upright, size=SIZE)
+    assert swapped_redaction[0]["polygon"] == plain_redaction[0]["polygon"]
+    assert swapped[0]["polygon"] == plain[0]["polygon"], "the RECORD keeps the region, not the inversion"
+    assert _box(swapped_redaction[0])[0] == 400 - 40, "and it is the per-axis pad, as an upright box gets"
+
+
+def test_a_vision_box_of_zero_area_is_refused_rather_than_padded_into_a_region() -> None:
+    """A degenerate point or line is not a localisation, and padding one INVENTS a region 48 px
+    across where the model said nothing was. `max(VISION_PAD_MIN, ...)` would have done exactly
+    that, so this cannot be left to the covers-a-pixel check further down."""
+    vision = {"status": "ok", "identifies_practice": True,
+              "regions": [{"kind": "logo", "label": "a line", "box": [400, 400, 400, 500],
+                           "confidence": "high"}]}
+    with pytest.raises(aggregate.UnmeasurableRegion, match="vision covers no area"):
+        aggregate.regions_for(lines=[], matches=[], symbols=[], vision=vision, size=SIZE)
+
+
+def test_an_ocr_quad_of_zero_area_is_refused() -> None:
+    """The same rule at the same door. The pad would have rescued this one into a 24 px block, so
+    it is not caught by "covers a pixel" either -- a line with no extent is not a line."""
+    quad = [(100.0, 100.0)] * 4
+    with pytest.raises(aggregate.UnmeasurableRegion, match="ocr_match covers no area"):
+        aggregate.regions_for(lines=[Line("HILL COUNTRY", 0.95, quad)],
+                              matches=[Match("name", 0, "exact", 1.0)], symbols=[],
+                              vision={"status": "unavailable"}, size=SIZE)
+
+
+def test_a_symbol_quad_of_zero_area_is_refused() -> None:
+    """`_scaled` multiplies the half-extents by 1.15, so a degenerate symbol scales to a point and
+    the fill draws nothing -- the one arm no pad protects."""
+    symbol = Symbol("QRCode", "url", [(100.0, 100.0), (200.0, 100.0), (200.0, 100.0), (100.0, 100.0)])
+    with pytest.raises(aggregate.UnmeasurableRegion, match="barcode covers no area"):
+        aggregate.regions_for(lines=[], matches=[], symbols=[symbol],
+                              vision={"status": "unavailable"}, size=SIZE)
+
+
+def test_a_detection_entirely_outside_the_image_is_refused_rather_than_clamped_to_nothing() -> None:
+    """The second way to cover nothing, and the one no area check on the DETECTION can see. The
+    quad is 100 x 40 and perfectly measurable; it is the CLAMP that empties it -- `max(0, x0 - pad)`
+    holds at 1988 while `min(1600, x1 + pad)` falls to 1600, so the expanded box comes out with its
+    right edge 388 px left of its left edge and the fill paints nothing."""
+    lines = [_line("HILL COUNTRY ANIMAL HOSPITAL", 2000, 100, 2100, 140)]
+    with pytest.raises(aggregate.UnmeasurableRegion, match="ocr_match lies outside the image"):
+        aggregate.regions_for(lines=lines, matches=[Match("name", 0, "exact", 1.0)], symbols=[],
+                              vision={"status": "unavailable"}, size=SIZE)
+
+
+def test_a_detection_that_merely_overhangs_the_edge_is_kept_and_clamped() -> None:
+    """The boundary of the rule above: a sign at the edge of the frame is a real region and must
+    still be covered. Only a detection with NO pixel inside the image is refused."""
+    lines = [_line("HILL COUNTRY ANIMAL HOSPITAL", 1550, 100, 1700, 140)]
+    _detected, redaction = aggregate.regions_for(
+        lines=lines, matches=[Match("name", 0, "exact", 1.0)], symbols=[],
+        vision={"status": "unavailable"}, size=SIZE)
+    x0, _y0, x1, _y1 = _box(redaction[0])
+    assert x0 == 1538 and x1 == 1600 and x1 > x0

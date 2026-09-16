@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
-from app.privacy.barcodes import Symbol
+from app.privacy.barcodes import EXPAND, Symbol
 from app.privacy.identity import Match
 from app.privacy.ocr import Line
 
@@ -31,8 +31,10 @@ VISION_PAD_MIN = 24
 VISION_PAD_FRACTION = 0.20
 #: Expanded boxes that overlap or sit within this many pixels become one polygon.
 MERGE_GAP_PX = 8
-#: A symbol's four corners, scaled about their centroid.
-BARCODE_EXPAND = 1.15
+#: A symbol's four corners are scaled about their centroid by `barcodes.EXPAND`. THE CONSTANT IS
+#: NOT RESTATED HERE (controller ruling, 2026-09-16): `app/privacy/barcodes.py` declares it beside
+#: the adapter whose symbols it describes, and a second copy of 1.15 in this module was a number
+#: that could be changed in one place and not the other with nothing to notice.
 
 Box = tuple[float, float, float, float]
 
@@ -82,15 +84,49 @@ def _bounds(polygon: Sequence[Sequence[float]]) -> Box:
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _checked(polygon: Sequence[Sequence[float]], source: str) -> Sequence[Sequence[float]]:
-    """`polygon`, or `UnmeasurableRegion`. The one door; see that class for why it is a refusal.
+def _checked(polygon: Sequence[Sequence[float]], source: str) -> Box:
+    """The detection's bounds, NORMALISED -- or `UnmeasurableRegion`. The one door every detection
+    enters by; see that class for why a refusal rather than a repair.
 
-    EVERY ordinate, never the bounding box's four: `min`/`max` swallow a NaN that is not the first
-    value they see, so a check on `_bounds`' output would pass exactly the quads whose region
-    silently shrinks. `math.isfinite` is false for a NaN and for both infinities."""
+    Three things happen here, in this order, and the order is the controller's ruling of
+    2026-09-16: normalise first, then refuse.
+
+    FINITE, over EVERY ordinate and never the bounding box's four: `min`/`max` swallow a NaN that
+    is not the first value they see, so a check on `_bounds`' output would pass exactly the quads
+    whose region silently shrinks. `math.isfinite` is false for a NaN and for both infinities.
+
+    NORMALISED, which is what `_bounds` IS -- `min`/`max` over the corners, so a vision box handed
+    back as `x1 < x0` becomes the region it plainly meant rather than a rectangle whose right edge
+    sits left of its left edge. Measured before the fix: `[600, 500, 400, 400]` produced the
+    polygon `[[576, 476], [424, 476], [424, 424], [576, 424]]`, which `PIL.ImageDraw.polygon`
+    draws as NOTHING.
+
+    NON-DEGENERATE: a point or a line is not a localisation. This cannot be left to `_covering`
+    below, because both pads would RESCUE it -- `max(VISION_PAD_MIN, ...)` turns a zero-area vision
+    box into an invented 48 px block where the model said nothing was, and `max(OCR_PAD_MIN, ...)`
+    does the same at 24 px for a line with no extent. A symbol has no pad at all and scales to a
+    point, so that arm is the one that drew nothing outright."""
     if not all(math.isfinite(float(ordinate)) for point in polygon for ordinate in (point[0], point[1])):
-        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source}")
-    return polygon
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} is not finite")
+    box = _bounds(polygon)
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} covers no area")
+    return box
+
+
+def _covering(box: Box, source: str) -> Box:
+    """The EXPANDED box, or `UnmeasurableRegion` when the clamp has emptied it.
+
+    The second way to cover nothing, and the one no check on the detection itself can see: a quad
+    wholly outside the image is perfectly measurable and perfectly non-degenerate, and it is
+    `_padded`'s own clamp that empties it -- `max(0.0, x0 - pad)` holds at the detection while
+    `min(float(w), x1 + pad)` falls to the image's edge, so the box comes out inverted and the fill
+    paints nothing. A detection that merely OVERHANGS the frame still clamps to a real region and
+    is kept, which is the boundary this guard is written against: a sign at the edge of the
+    photograph is covered, and only a detection with no pixel inside the image at all is refused."""
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} lies outside the image")
+    return box
 
 
 def rect(box: Box) -> list[list[float]]:
@@ -194,23 +230,27 @@ def regions_for(*, lines: Sequence[Line], matches: Sequence[Match], symbols: Seq
         if index >= len(lines):
             continue
         source = "regex" if all(m.field.startswith("regex:") for m in matches if m.line == index) else "ocr_match"
-        polygon = _checked(lines[index].quad, source)
-        detected.append({"source": source, "polygon": [[x, y] for x, y in polygon], "line": index, "label": None})
-        box, pad = _padded(_bounds(polygon), OCR_PAD_MIN, OCR_PAD_FRACTION, size)
-        padded.append((box, pad, index))
+        quad = lines[index].quad
+        bounds = _checked(quad, source)
+        detected.append({"source": source, "polygon": [[x, y] for x, y in quad], "line": index, "label": None})
+        box, pad = _padded(bounds, OCR_PAD_MIN, OCR_PAD_FRACTION, size)
+        padded.append((_covering(box, source), pad, index))
 
     for symbol in symbols:
-        quad = _checked(symbol.quad, "barcode")
-        detected.append({"source": "barcode", "polygon": [[x, y] for x, y in quad],
+        _checked(symbol.quad, "barcode")
+        detected.append({"source": "barcode", "polygon": [[x, y] for x, y in symbol.quad],
                          "line": None, "label": symbol.payload_kind})
-        padded.append((_scaled(quad, BARCODE_EXPAND, size), 0, None))
+        padded.append((_covering(_scaled(symbol.quad, EXPAND, size), "barcode"), 0, None))
 
     for region in vision.get("regions", ()):
-        box = (float(region["box"][0]), float(region["box"][1]), float(region["box"][2]), float(region["box"][3]))
-        polygon = _checked(rect(box), "vision")
-        detected.append({"source": "vision", "polygon": list(polygon), "line": None, "label": region.get("label")})
-        grown, pad = _padded(box, VISION_PAD_MIN, VISION_PAD_FRACTION, size, per_axis=True)
-        padded.append((grown, pad, None))
+        # `_checked` NORMALISES as well as refusing, so the box below is upright whichever way
+        # round the model handed its corners back -- and the RECORD keeps that region rather than
+        # the inversion, because `detected_regions` is what makes a decision explainable later.
+        upright = _checked(rect((float(region["box"][0]), float(region["box"][1]),
+                                 float(region["box"][2]), float(region["box"][3]))), "vision")
+        detected.append({"source": "vision", "polygon": rect(upright), "line": None, "label": region.get("label")})
+        grown, pad = _padded(upright, VISION_PAD_MIN, VISION_PAD_FRACTION, size, per_axis=True)
+        padded.append((_covering(grown, "vision"), pad, None))
 
     redaction = [{"id": str(uuid4()), "polygon": rect(box), "source": "auto",
                   "expanded_from": origin, "pad_px": pad, "by": None, "at": None}

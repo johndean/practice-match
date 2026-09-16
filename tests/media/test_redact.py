@@ -123,11 +123,31 @@ def test_no_regions_still_re_encodes_so_the_derivative_always_exists() -> None:
     assert out is not None and len(out[1]) == 64
 
 
-def test_a_two_point_polygon_is_ignored_rather_than_drawn() -> None:
-    """`ImageDraw.polygon` needs three points; the guard is a branch and therefore needs a case."""
-    out = redact.fill_regions(_display(), [[(10.0, 10.0), (20.0, 20.0)]])
-    untouched = redact.fill_regions(_display(), [])
-    assert out is not None and untouched is not None and out[1] == untouched[1]
+def test_a_two_point_polygon_fails_the_whole_derivative_rather_than_being_skipped() -> None:
+    """Controller ruling, 2026-09-16: "there must be no input that silently results in nothing
+    being covered."
+
+    The plan's own version of this case asserted the opposite -- that a polygon `ImageDraw` cannot
+    draw is IGNORED and the derivative comes back as though the region had never been asked for.
+    On a privacy feature that is the worst outcome available: the seller is told the mark is hidden,
+    the derivative is published, and nothing anywhere records that one of the regions was dropped.
+    `aggregate.py` can no longer produce such a polygon, but this function is also handed
+    `fillable(row.redaction_regions)` -- jsonb, including P12's seller-drawn masks -- so the door
+    is closed on this side too. `None` is REDACTION_FAILED at the caller, which is a state a
+    reviewer can see."""
+    assert redact.fill_regions(_display(), [[(10.0, 10.0), (20.0, 20.0)]]) is None
+
+
+def test_a_polygon_enclosing_no_area_fails_the_derivative_too() -> None:
+    """Three points is not the whole of "can be drawn". Four identical corners is a point, and a
+    stored region collapsed to one covers nothing while satisfying every count-based guard."""
+    assert redact.fill_regions(_display(), [[(10.0, 10.0)] * 4]) is None
+
+
+def test_one_unusable_polygon_fails_the_call_even_beside_good_ones() -> None:
+    """Fail CLOSED, not partially: a derivative that covered three of four regions and said so
+    nowhere is the same defect wearing a better number."""
+    assert redact.fill_regions(_display(), [BOX, [(10.0, 10.0), (20.0, 20.0)]]) is None
 
 
 def test_bytes_that_will_not_fit_the_ladder_are_None_not_an_exception(monkeypatch: pytest.MonkeyPatch) -> None:
