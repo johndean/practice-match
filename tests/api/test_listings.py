@@ -1,4 +1,5 @@
 """GET /api/listings, /api/listings/{id} and /api/listings/{id}/photos/{n} (spec D8/D9, A-L5)."""
+import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -25,13 +26,13 @@ INSERT = (
     "INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status,"
     " location_disclosed, name_disclosed, rev_disclosed, geom, area, type, market, price, rev, docs, rooms, sqft,"
     " bldg, est, listed_at, note, staff, services, facility, ownership, photos, photo_captions,"
-    " source)"
+    " source, identifiable_content_visibility)"
     " VALUES (%(slug)s,%(name)s,%(street)s,%(city)s,%(state)s,%(zip)s,%(phone)s,%(hours)s,"
     " %(status)s,%(disclosed)s,%(name_disclosed)s,%(rev_disclosed)s,"
     " ST_SetSRID(ST_MakePoint(%(lng)s,%(lat)s),4326)::geography,"
     " %(area)s,'Small animal',%(market)s,1000000,1500000,2,4,3000,'Included',2001,"
     " now() - make_interval(days => %(days)s),'n','s','sv','f','o',%(photos)s::jsonb,"
-    " %(photo_captions)s::jsonb,'seed')"
+    " %(photo_captions)s::jsonb,'seed',%(visibility)s)"
     " RETURNING id"
 )
 
@@ -44,6 +45,13 @@ def _insert(conn: Any, **over: Any) -> str:
         "lat": 30.2672, "lng": -97.7431, "area": "Austin", "market": "Austin, TX", "days": 3,
         "rev_disclosed": True,
         "photos": json.dumps([]), "photo_captions": json.dumps([]),
+        # SHOW, named EXPLICITLY (Task P9). The column's own default is NOT_SHOW — John's ruling
+        # A-IDP-4, "Default -> NOT SHOW, including all 18 seeds" — under which a seed path entry
+        # has no derivative and is served to nobody, so every photo assertion in this file would
+        # be a `null` slot and a 404. What this file tests is the READ CONTRACT (disclosure,
+        # positions, captions, cursors); the DEFAULT's own behaviour is
+        # `tests/api/test_buyer_photo_delivery.py`, which is where the privacy gate is asserted.
+        "visibility": "SHOW",
     }
     params.update(over)
     with conn.cursor() as cur:
@@ -228,12 +236,18 @@ async def test_a_hidden_name_appears_nowhere_in_any_response_body(
 async def test_photos_are_served_as_webp_with_a_private_cache_header(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
+    """RE-PINNED by Task P9 under D-IDP-11: `private, max-age=86400` let a buyer's browser paint,
+    for twenty-four hours, a variant the seller's privacy flip had already replaced. `no-cache`
+    means REVALIDATE (never "do not store"), and the ETag is the content hash — so an unchanged
+    derivative still costs one header exchange and a changed one cannot be served from cache."""
     listing_id = _insert(conn, photos=json.dumps(["abc_animal_hospital/1.webp"]))
     _, cookies, headers = member()
     r = await client.get(f"/api/listings/{listing_id}/photos/1", headers=auth_headers(cookies, headers))
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/webp"
-    assert r.headers["cache-control"] == "private, max-age=86400"
+    assert r.headers["cache-control"] == "private, no-cache"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["etag"] == f'"{hashlib.sha256(r.content).hexdigest()}"'
     assert r.content[:4] == b"RIFF" and r.content[8:12] == b"WEBP"
 
 
@@ -383,9 +397,47 @@ def _row(**over: Any) -> dict[str, Any]:
         # row. Present for `rev_disclosed`'s own reason (SL3 review L8): a row this helper builds
         # must be a row `_rows()` could build.
         "geo_precision": None,
+        # Task P9: `_SELECT`'s own two new columns. `serialise` resolves EVERY photo slot through
+        # `app/privacy/delivery.py::buyer_variant`, which reads exactly these — so a row without
+        # them is not a row `_rows()` could build, and a row whose photographs carry no privacy
+        # record serves no photographs at all. SHOW for `_insert`'s own reason, above.
+        "identifiable_content_visibility": "SHOW",
     }
     base.update(over)
+    base.setdefault("visible_photos", _visible_photos(base["photos"]))
     return base
+
+
+#: The display derivative's content hash in `_visible_photos`' records, and therefore the `?v=`
+#: every ASSET photograph's URL carries in the direct tests below.
+DISPLAY_SHA = "d" * 64
+
+
+def _visible_photos(photos: Any) -> dict[str, Any]:
+    """`_SELECT`'s `visible_photos` aggregate for these photographs: every ASSET entry as a
+    PUBLISHED, buyer-visible record.
+
+    Derived from the row's own `photos` rather than typed per test, so the twenty direct
+    `serialise` cases below go on being about captions and positions. A photograph with NO record
+    is a null slot — that is the RULE, and it is asserted where it belongs, in
+    `tests/api/test_buyer_photo_delivery.py`. A seed PATH entry carries no record here either: its
+    digest comes from the committed inventory through `seed_digests()`."""
+    return {entry: {"status": "PUBLISHED", "visible": True,
+                    "redacted_key": f"listings/l/photos/{entry}/redacted.webp", "redacted": "b" * 64,
+                    "display_key": f"listings/l/photos/{entry}/display.webp", "display": DISPLAY_SHA}
+            for entry in photo_list(photos) if entry is not None and "/" not in entry}
+
+
+def _photo_url(listing_id: str, n: int, entry: str) -> str:
+    """What `serialise` emits for slot `n` since Task P9: the positional URL the design has always
+    read, plus twelve characters of the content hash of the variant the RESOLVER chose (D-IDP-11).
+
+    The hash is a cache key and never a selector — a `?v=` naming an old hash still resolves to the
+    current variant — so what this helper encodes is "the URL changes when the bytes do"."""
+    from app.api.listings import seed_digests
+
+    digest = seed_digests()[entry] if "/" in entry else DISPLAY_SHA
+    return f"/api/listings/{listing_id}/photos/{n}?v={digest[:12]}"
 
 
 def test_photo_list_accepts_both_a_list_and_a_json_string() -> None:
@@ -400,7 +452,7 @@ def test_photo_list_accepts_both_a_list_and_a_json_string() -> None:
 def test_serialise_handles_photos_arriving_as_a_json_string() -> None:
     now = datetime(2026, 9, 6, tzinfo=UTC)
     body = serialise(_row(photos='["abc_animal_hospital/1.webp"]'), now)
-    assert body["photos"] == [f"/api/listings/{body['id']}/photos/1"]
+    assert body["photos"] == [_photo_url(body["id"], 1, "abc_animal_hospital/1.webp")]
 
 
 def test_serialise_omits_a_point_a_disclosed_listing_never_had() -> None:
@@ -501,11 +553,17 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
         ("GET", "/api/listings/{listing_id}"),
         ("GET", "/api/listings/{listing_id}/market"),
         ("GET", "/api/listings/{listing_id}/photos/{n}"),
+        # Task P9: the bytes route declares `methods=["GET", "HEAD"]`, because FastAPI's `APIRoute`
+        # does not add HEAD beside GET the way Starlette's `Route` does and spec F requires "HEAD
+        # mirrors GET". It is ONE route object with two methods, so the guard assertion below
+        # covers both rows.
+        ("HEAD", "/api/listings/{listing_id}/photos/{n}"),
     ]
     expected_guard = {
         ("GET", "/api/listings"): "listing.read",
         ("GET", "/api/listings/{listing_id}"): "listing.read",
         ("GET", "/api/listings/{listing_id}/photos/{n}"): "listing.read",
+        ("HEAD", "/api/listings/{listing_id}/photos/{n}"): "listing.read",
         ("GET", "/api/listings/{listing_id}/market"): "market.read",
     }
     for (method, path), route in mounted.items():
@@ -518,6 +576,22 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
     assert Depends(REQUIRE_LISTING_READ).dependency is REQUIRE_LISTING_READ
     assert deps.permission_of(REQUIRE_MARKET_READ) == "market.read"
     assert Depends(REQUIRE_MARKET_READ).dependency is REQUIRE_MARKET_READ
+
+
+def _show_every_seed(conn: Any) -> None:
+    """Every seeded hospital set to SHOW — an explicit act of the THREE tests below, never of the
+    seeder (`scripts/seed_listings.py` names the column in neither half of its UPSERT).
+
+    John's ruling A-IDP-4, 2026-09-10: the seeds are listings like any other and start NOT_SHOW,
+    so a seed path entry — which has no asset row and therefore no redacted derivative — is served
+    to nobody until it has been ingested, processed and confirmed (A-IDP-4 (4) and (5), the QA
+    consequence he accepted in the ruling itself). What these three assert is that the seeder wrote
+    every row, that the endpoint serves every photograph it wrote and that every one carries its
+    description; the DEFAULT's own behaviour is
+    `tests/api/test_buyer_photo_delivery.py::test_a_seed_path_entry_is_hidden_under_not_show_and_served_under_show`.
+    """
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility = 'SHOW' WHERE source = 'seed'")
 
 
 async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn: Any, redis: Any, member: Any) -> None:
@@ -533,6 +607,7 @@ async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn:
     from scripts import seed_listings as SL
 
     SL.seed(settings.database_url, reset=True)
+    _show_every_seed(conn)
     _, cookies, headers = member()
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
@@ -555,6 +630,7 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
     from scripts import seed_listings as SL
 
     SL.seed(settings.database_url, reset=True)
+    _show_every_seed(conn)
     _, cookies, headers = member()
     auth = auth_headers(cookies, headers)
     items = (await client.get("/api/listings?limit=200", headers=auth)).json()["items"]
@@ -598,8 +674,13 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
 
     monkeypatch.setattr(settings, "site_mode", "app")
     live = create_app(dist=dist)
-    assert sorted(p for _, p, _ in walk_routes(live.routes) if p.startswith("/api/listings")) == [
-        "/api/listings", "/api/listings/{listing_id}", "/api/listings/{listing_id}/market", "/api/listings/{listing_id}/photos/{n}",
+    # (method, path) since Task P9: the bytes route declares GET and HEAD, so a path-only list
+    # would carry it twice and read as a duplicate rather than as the second method.
+    assert sorted({(m, p) for m, p, _ in walk_routes(live.routes) if p.startswith("/api/listings")}) == [
+        ("GET", "/api/listings"), ("GET", "/api/listings/{listing_id}"),
+        ("GET", "/api/listings/{listing_id}/market"),
+        ("GET", "/api/listings/{listing_id}/photos/{n}"),
+        ("HEAD", "/api/listings/{listing_id}/photos/{n}"),
     ]
     async with httpx.AsyncClient(transport=ASGITransport(app=live), base_url=ORIGIN) as c:
         for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1", f"/api/listings/{uuid4()}/market"):
@@ -632,6 +713,13 @@ async def test_a_disclosed_revenue_reaches_a_buyer_and_a_hidden_one_does_not(
 # design's own placeholder for it. Compacting the list here would slide every later photograph up
 # one slot and caption it with a subject it does not show.
 
+#: Three real entries from the committed inventory (`seeds/hospitals/photos/index.json`) and
+#: three asset uuids: since Task P9 a SEED slot resolves through `seed_digests()` and an ASSET slot
+#: through its privacy record, so neither an invented path nor an invented id is a photograph any
+#: buyer can see. `_visible_photos` is what gives the three ids their records.
+SEEDS = [f"abc_animal_hospital/{n}.webp" for n in (1, 2, 3)]
+AS1, AS2, AS3 = (str(uuid4()) for _ in range(3))
+
 EMPTY_SLOTS = ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/2.webp", None, None, None]
 
 
@@ -645,7 +733,7 @@ def test_serialise_emits_null_for_an_empty_photo_slot() -> None:
     body = serialise(_row(photos=EMPTY_SLOTS), datetime(2026, 9, 6, tzinfo=UTC))
     listing_id = body["id"]
     assert body["photos"] == [
-        f"/api/listings/{listing_id}/photos/1", None, f"/api/listings/{listing_id}/photos/3",
+        _photo_url(listing_id, 1, EMPTY_SLOTS[0]), None, _photo_url(listing_id, 3, EMPTY_SLOTS[2]),
         None, None, None,
     ]
 
@@ -689,7 +777,8 @@ ELEVEN_CAPTIONS = [f"Interior — view {n}" for n in range(1, 12)]
 def test_serialise_emits_a_caption_for_every_photograph() -> None:
     body = serialise(_row(photos=ELEVEN, photo_captions=ELEVEN_CAPTIONS), datetime(2026, 9, 6, tzinfo=UTC))
     listing_id = body["id"]
-    assert body["photos"] == [f"/api/listings/{listing_id}/photos/{n}" for n in range(1, 12)]
+    assert body["photos"] == [_photo_url(listing_id, n, entry)
+                              for n, entry in enumerate(ELEVEN, start=1)]
     assert body["photo_captions"] == ELEVEN_CAPTIONS
     assert len(body["photo_captions"]) == len(body["photos"]), "the two lists are parallel"
 
@@ -714,9 +803,9 @@ def test_serialise_carries_an_undescribed_photograph_at_its_own_position() -> No
 
 def test_an_interior_null_is_a_string_on_the_merged_path_too() -> None:
     """The same rule where a seller HAS described one of the photographs beside it."""
-    body = serialise(_row(photos=["as-1", "as-2", "as-3"],
+    body = serialise(_row(photos=[AS1, AS2, AS3],
                           photo_captions=["The seeder's guess", None, None],
-                          asset_captions={"as-3": "The dental suite"}),
+                          asset_captions={AS3: "The dental suite"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["The seeder's guess", "", "The dental suite"]
 
@@ -725,7 +814,7 @@ def test_serialise_handles_photo_captions_arriving_as_a_json_string() -> None:
     """`photo_list`'s string arm, on the caption column. One photograph beside the one caption
     since A-SL25 (7): the answer is `len(photos)` long, so a row with no photographs at all can
     carry no caption and this case would have proved nothing."""
-    body = serialise(_row(photos='["a/1.webp"]', photo_captions='["Exterior — front"]'),
+    body = serialise(_row(photos='["abc_animal_hospital/1.webp"]', photo_captions='["Exterior — front"]'),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Exterior — front"]
 
@@ -740,7 +829,7 @@ async def test_a_hospital_with_eleven_photographs_serves_the_eleventh(
     _, cookies, headers = member()
     auth = auth_headers(cookies, headers)
     body = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
-    assert body["photos"][10] == f"/api/listings/{listing_id}/photos/11"
+    assert body["photos"][10] == _photo_url(listing_id, 11, ELEVEN[10])
     assert body["photo_captions"][10] == "Interior — view 11"
     photo = await client.get(f"/api/listings/{listing_id}/photos/11", headers=auth)
     assert photo.status_code == 200
@@ -764,6 +853,7 @@ async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
     from scripts import seed_listings as SL
 
     SL.seed(settings.database_url, reset=True)
+    _show_every_seed(conn)
     _, cookies, headers = member()
     items = (await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))).json()["items"]
     assert len(items) == len(SL.load_seed(SL.SEEDS_FILE)) == 29
@@ -812,10 +902,24 @@ ASSET_INSERT = (
 
 
 def _asset(conn: Any, listing_id: str, caption: str | None, kind: str = "photo") -> str:
+    """One `listing_asset` row — and, for a PHOTOGRAPH, the privacy record every uploaded
+    photograph really has.
+
+    `app/api/seller_listings.py::upload_photo` writes both in ONE transaction, so an asset without
+    a record is a shape no path produces (which is why `buyer_variant` answers it with a null slot,
+    asserted in `tests/api/test_buyer_photo_delivery.py`). A DOCUMENT carries no record at all
+    (D19), which is what keeps the last test in this group honest."""
     asset_id = str(uuid4())
     with conn.cursor() as cur:
         cur.execute(ASSET_INSERT, {"id": asset_id, "listing": listing_id, "kind": kind,
                                    "key": f"listings/{listing_id}/{asset_id}", "caption": caption})
+        if kind == "photo":
+            cur.execute(
+                "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
+                " original_storage_key, processing_status, redacted_storage_key, redacted_sha256,"
+                " buyer_visible) VALUES (%s,%s,1,%s,'PUBLISHED',%s,%s,true)",
+                (asset_id, listing_id, f"listings/{listing_id}/photos/{asset_id}/original.jpg",
+                 f"listings/{listing_id}/photos/{asset_id}/redacted.webp", "f" * 64))
     return asset_id
 
 
@@ -885,9 +989,9 @@ def test_photo_captions_prefers_the_asset_s_own_words_over_the_column() -> None:
     """The one row where both homes have something to say. `listing.photo_captions` is the
     seeder's; `listing_asset.caption` is the seller's, and the seller has looked at the
     photograph — so theirs wins, position by position."""
-    body = serialise(_row(photos=["as-1", "as-2"],
+    body = serialise(_row(photos=[AS1, AS2],
                           photo_captions=["The seeder's guess", "The seeder's other guess"],
-                          asset_captions={"as-1": "Reception, looking in"}),
+                          asset_captions={AS1: "Reception, looking in"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Reception, looking in", "The seeder's other guess"]
 
@@ -895,8 +999,8 @@ def test_photo_captions_prefers_the_asset_s_own_words_over_the_column() -> None:
 def test_photo_captions_pads_to_the_photographs_when_only_assets_speak() -> None:
     """A seller's listing has an EMPTY `photo_captions` column, so the two lists must be made
     parallel here rather than left ragged — `photoSet` reads them by index."""
-    body = serialise(_row(photos=["as-1", "as-2", None], photo_captions=[],
-                          asset_captions={"as-2": "The dental suite"}),
+    body = serialise(_row(photos=[AS1, AS2, None], photo_captions=[],
+                          asset_captions={AS2: "The dental suite"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["", "The dental suite", ""]
 
@@ -910,28 +1014,28 @@ def test_photo_captions_pads_to_the_photographs_when_only_assets_speak() -> None
 
 def test_photo_captions_truncates_a_column_longer_than_the_photographs() -> None:
     """Seeds only: no asset has anything to say, and the column still comes back one-per-photo."""
-    body = serialise(_row(photos=["a/1.webp"], photo_captions=["Exterior — front", "Interior — exam"]),
+    body = serialise(_row(photos=[SEEDS[0]], photo_captions=["Exterior — front", "Interior — exam"]),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Exterior — front"]
 
 
 def test_photo_captions_pads_a_column_shorter_than_the_photographs() -> None:
-    body = serialise(_row(photos=["a/1.webp", "a/2.webp", "a/3.webp"], photo_captions=["Exterior — front"]),
+    body = serialise(_row(photos=SEEDS, photo_captions=["Exterior — front"]),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Exterior — front", "", ""]
 
 
 def test_photo_captions_truncates_a_longer_column_once_a_seller_has_spoken_too() -> None:
     """The merged path, same rule: the surplus goes whether or not an asset caption exists."""
-    body = serialise(_row(photos=["as-1"], photo_captions=["The seeder's guess", "and another"],
-                          asset_captions={"as-1": "Reception, looking in"}),
+    body = serialise(_row(photos=[AS1], photo_captions=["The seeder's guess", "and another"],
+                          asset_captions={AS1: "Reception, looking in"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Reception, looking in"]
 
 
 def test_photo_captions_pads_a_shorter_column_once_a_seller_has_spoken_too() -> None:
-    body = serialise(_row(photos=["as-1", "as-2"], photo_captions=[],
-                          asset_captions={"as-1": "Reception, looking in"}),
+    body = serialise(_row(photos=[AS1, AS2], photo_captions=[],
+                          asset_captions={AS1: "Reception, looking in"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Reception, looking in", ""]
 
@@ -1181,6 +1285,8 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
         "geo_precision": None,
+        # Task P9: `_SELECT` selects both, and `serialise` reads them for every photo slot.
+        "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},
     }
     now = datetime(2026, 9, 6, tzinfo=UTC)
 

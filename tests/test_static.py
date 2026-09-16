@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import httpx
 from httpx import ASGITransport
 
@@ -103,3 +105,48 @@ async def test_head_answers_like_get_without_a_body(client):
         assert head.headers.get("cache-control") == get.headers.get("cache-control"), path
         assert head.headers.get("content-type") == get.headers.get("content-type"), path
         assert head.content == b"", path
+
+
+# --- Task P9: the ONE public, unauthenticated path that can return image bytes -------------------
+#
+# `mount_spa` serves everything under the built site to anybody — no session, no permission, no
+# resolver. That is right for the bundle, the design-system CSS and the fonts, and it is why what
+# lives there has to be pinned: a seller's photograph copied into `frontend/public` would be served
+# to the whole internet with `buyer_variant` never asked.
+
+_ROOT = Path(__file__).resolve().parent.parent
+_PUBLIC = _ROOT / "frontend" / "public"
+
+
+def test_public_photos_are_exactly_the_three_design_fixtures() -> None:
+    """The design's own Round Rock fixtures (amendment A19's lightbox states photograph these),
+    committed to the repository and shipped in the bundle. NOTHING else: no seller upload, no seed
+    hospital, no derivative of either."""
+    photos = sorted(f.name for f in (_PUBLIC / "assets" / "photos").iterdir() if f.is_file())
+    assert photos == ["round-rock-exterior-parking.jpeg", "round-rock-exterior-side.webp",
+                      "round-rock-exterior-street.webp"]
+    # …and no image anywhere else under the public tree but the VIN Foundation's own logo.
+    elsewhere = sorted(str(f.relative_to(_PUBLIC)) for f in _PUBLIC.rglob("*")
+                       if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif")
+                       and f.parent != _PUBLIC / "assets" / "photos")
+    assert elsewhere == ["assets/vin-foundation-logo.png"]
+
+
+def test_index_html_carries_no_share_image_no_preload_and_no_manifest() -> None:
+    """Three ways a photograph reaches a viewer with no request of its own: an `og:image` (which a
+    link unfurler fetches server-side, with no session at all), a `<link rel=preload>` and a web
+    app manifest's icon list. The approved design asks for none of them, and this is what keeps
+    that true — spec F's "social preview" row."""
+    head = (_ROOT / "frontend" / "index.html").read_text().lower()
+    for forbidden in ("og:image", "twitter:image", "rel=\"preload\"", "rel='preload'",
+                      "manifest", "apple-touch-icon", "photos/"):
+        assert forbidden not in head, forbidden
+
+
+def test_nothing_under_app_or_scripts_writes_into_the_public_tree() -> None:
+    """The other half of the pin above: the list is only worth pinning if nothing can add to it at
+    runtime. No module under `app/` or `scripts/` names that directory at all."""
+    named = sorted(str(f.relative_to(_ROOT)) for directory in ("app", "scripts")
+                   for f in (_ROOT / directory).rglob("*.py")
+                   if "frontend/public" in f.read_text())
+    assert named == [], named

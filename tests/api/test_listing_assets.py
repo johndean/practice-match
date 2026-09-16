@@ -4,7 +4,7 @@ The `store` fixture points `settings`' four `S3_*` fields at a moto-backed bucke
 one test, so the routes reach object storage through their OWN `store_for_request()` — no test
 needs credentials and none reaches the network. (The brief proposed monkeypatching
 `store_for_request` itself; pointing the settings instead leaves the real function on the path, so
-its configured arm is exercised rather than replaced, and `app/api/listings.py::_asset_bytes`,
+its configured arm is exercised rather than replaced, and `app/api/listings.py::_object_bytes`,
 which builds its own store from the same settings, is reached by the same fixture.) It lives in
 `tests/conftest.py` since Task P2 Step 0, with `BUCKET`, `ENDPOINT` and `_intercepted_by_moto`:
 the image-identifiability pipeline gave three suites outside `tests/api/` a bucket to need, and
@@ -18,6 +18,7 @@ Every refusal is asserted as an `{"error": {...}}` body, never `{"detail": ...}`
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from contextlib import closing
@@ -102,17 +103,36 @@ def _asset_rows(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
         return list(cur.fetchall())
 
 
-def _publish(conn: Any, listing_id: str) -> None:
+def _redacted_bytes() -> bytes:
+    """A real WebP, distinct from the display derivative `encode_webp` produced from `_jpeg()`, so
+    "the buyer got the redacted one" is a byte comparison rather than a hash the test chose."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (240, 180), (10, 200, 90)).save(buffer, "WEBP", lossless=True)
+    return buffer.getvalue()
+
+
+def _publish(conn: Any, listing_id: str, store: Any = None) -> None:
     """The draft, made publishable: 030's two CHECKs want the wizard's own fields plus the three
     the reviewer supplies at the first publish (D12) — the original ten columns, unchanged — and
     migration 042 now also wants a ready privacy row for every photograph (spec 2026-09-09 C.8).
     A helper that could publish an unprocessed photograph would be a hole in exactly the gate this
-    sub-project exists to close."""
+    sub-project exists to close.
+
+    It names NO visibility (A-IDP-4 (1)), so the row takes the column's own NOT_SHOW default and a
+    buyer is served the REDACTED derivative — which is why `store` exists (Task P9): pass it and
+    the object this helper's row names is really written, so a test that then reads the buyer route
+    gets bytes instead of the 404 a named-but-absent derivative correctly earns."""
     with conn.cursor() as cur:
         cur.execute("SELECT jsonb_array_elements_text(photos) FROM listing WHERE id = %s", (listing_id,))
         for (entry,) in cur.fetchall():
             if "/" in entry:                      # a seed path entry: no asset row, SHOW only
                 continue
+            redacted = f"listings/{listing_id}/photos/{entry}/redacted.webp"
+            digest = "f" * 64
+            if store is not None:
+                body = _redacted_bytes()
+                store.put(redacted, body, "image/webp")
+                digest = hashlib.sha256(body).hexdigest()
             cur.execute(
                 "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
                 " original_storage_key, processing_status, seller_confirmed, seller_confirmed_at,"
@@ -124,12 +144,24 @@ def _publish(conn: Any, listing_id: str) -> None:
                 " redacted_storage_key = EXCLUDED.redacted_storage_key,"
                 " redacted_sha256 = EXCLUDED.redacted_sha256, buyer_visible = true",
                 (entry, listing_id, f"listings/{listing_id}/photos/{entry}/original.jpg",
-                 "f" * 64, f"listings/{listing_id}/photos/{entry}/redacted.webp", "f" * 64),
+                 digest, redacted, digest),
             )
         cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park',"
                     " zip='78613', type='Small animal', est=1998, price=1450000, sqft=3000, state='TX',"
                     " market='Austin, TX', area='Cedar Park', status='published' WHERE id=%s",
                     (listing_id,))
+
+
+def _tile(expected: dict[str, Any], **privacy: Any) -> dict[str, Any]:
+    """An expected step-6 tile: the fields these cases are about, plus the five Task P9 adds for
+    the seller's own review (spec C.6).
+
+    The defaults are the "no privacy record" shape — a seed PATH entry, and an asset whose row is
+    somehow absent — so a case that IS about the privacy fields names the ones it means. An asset
+    uploaded through the route and not yet processed passes `variant="redacted"`: it HAS a record,
+    in `UPLOADED`, and the listing's own setting defaults to NOT_SHOW."""
+    return {**expected, "src": None, "variant": None, "state": "processing", "masks": [],
+            "width": None, "height": None, **privacy}
 
 
 def _seed_listing(conn: Any, photos: list[str | None]) -> str:
@@ -217,7 +249,8 @@ async def test_a_caption_is_the_sellers_own_words_for_one_photograph(
     response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                   json={"caption": "  Reception, looking in  "}, headers=signed)
     assert response.status_code == 200, response.text
-    assert response.json()["photos"] == [{"id": asset_id, "name": "Reception, looking in", "source": "asset"}]
+    assert response.json()["photos"] == [_tile({"id": asset_id, "name": "Reception, looking in",
+                                            "source": "asset"}, variant="redacted")]
     assert [a["caption"] for a in response.json()["assets"]] == ["Reception, looking in"]
 
 
@@ -233,7 +266,8 @@ async def test_an_undescribed_photograph_is_named_by_nothing_at_all(
     asset_id = (await _upload_photo(client, listing_id, signed, filename="DSC_0431.jpg")).json()["id"]
 
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
-    assert read.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
+    assert read.json()["photos"] == [_tile({"id": asset_id, "name": "", "source": "asset"},
+                                       variant="redacted")]
 
 
 async def test_a_blank_caption_clears_the_one_that_was_there(
@@ -252,7 +286,8 @@ async def test_a_blank_caption_clears_the_one_that_was_there(
         response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                       json={"caption": blank}, headers=signed)
         assert response.status_code == 200, response.text
-        assert response.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
+        assert response.json()["photos"] == [_tile({"id": asset_id, "name": "", "source": "asset"},
+                                               variant="redacted")]
 
 
 async def test_a_caption_is_refused_when_it_is_not_text_and_when_the_asset_is_not_this_listings(
@@ -630,24 +665,42 @@ async def test_a_document_whose_object_has_vanished_is_a_404_not_a_500(client: A
 async def test_a_sellers_photograph_is_served_through_the_unchanged_buyer_route(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
-    """D15 reason 2: `serialise` emits `/api/listings/{id}/photos/{n}` and that route does not
-    change, so the frontend, the design and the pixel oracles see nothing at all."""
+    """D15 reason 2: `serialise` emits `/api/listings/{id}/photos/{n}` and that POSITIONAL route
+    does not change, so the frontend, the design and the pixel oracles see nothing at all.
+
+    Task P9 re-pins the two things that DID change, and the byte-identity assertion becomes the
+    SHOW case. The URL carries a `?v=` (D-IDP-11, a cache key and never a selector), the headers
+    are `private, no-cache` plus an ETag, and WHICH object the bytes come from is now the
+    listing's own privacy setting: the DEFAULT is NOT_SHOW, under which the buyer gets the redacted
+    derivative, and only a listing set to SHOW serves the display one."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
     asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
-    _publish(conn, listing_id)
+    _publish(conn, listing_id, store)
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     buyer = auth_headers(buyer_cookies, buyer_headers)
+    display = store.get(f"listings/{listing_id}/photos/{asset_id}/display.webp")
 
+    hidden = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+    assert hidden.status_code == 200
+    assert hidden.headers["content-type"] == "image/webp"
+    assert hidden.headers["cache-control"] == "private, no-cache"
+    assert hidden.content == store.get(f"listings/{listing_id}/photos/{asset_id}/redacted.webp")
+    assert hidden.content != display
+    assert hidden.content[:4] == b"RIFF"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
     response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
-    assert response.headers["cache-control"] == "private, max-age=86400"
-    assert response.content == store.get(f"listings/{listing_id}/photos/{asset_id}/display.webp")
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert response.content == display
     assert response.content[:4] == b"RIFF"
     detail = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1"]
+    digest = hashlib.sha256(display).hexdigest()[:12]
+    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={digest}"]
     assert (await client.get(f"/api/listings/{listing_id}/photos/2", headers=buyer)).status_code == 404
 
 
@@ -657,6 +710,13 @@ async def test_a_seed_listings_photograph_still_comes_off_disk(client: Any, conn
     from app.api.listings import PHOTOS_ROOT
 
     listing_id = _seed_listing(conn, ["abc_animal_hospital/1.webp"])
+    # SHOW, named by THIS test and by neither `_SEED_INSERT` nor the seeder (A-IDP-4 (1)): a seed
+    # photograph has no asset row and therefore no derivative, so under the column's own NOT_SHOW
+    # default there is nothing it could honestly serve and the route answers 404 — which is
+    # `tests/api/test_buyer_photo_delivery.py`'s own case. What THIS one is about is the other arm
+    # of D15 reason 3's single `if`: a path entry read off disk rather than out of the bucket.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
     _, cookies, headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=auth_headers(cookies, headers))
     assert response.status_code == 200
@@ -667,8 +727,9 @@ async def test_a_seed_listings_photograph_still_comes_off_disk(client: Any, conn
 async def test_a_photo_entry_that_names_no_asset_is_a_404_not_a_500(
     client: Any, conn: Any, redis: Any, member: Any, store: Any, entry: str
 ) -> None:
-    """Both arms of `_asset_bytes`'s two refusals: an entry that is not a uuid at all, and a uuid
-    that names no row of this listing."""
+    """Both arms of the bytes route's own two refusals: an entry that is not a uuid at all, and a
+    uuid that names no photograph of this listing. Neither resolves, so neither reaches an object
+    (`_privacy_for`, Task P9 — before it, `_asset_bytes` asked the same question of `listing_asset`)."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     _publish(conn, listing_id)
@@ -699,12 +760,17 @@ async def test_uploads_are_refused_with_a_clear_message_when_storage_is_unconfig
         assert "S3_BUCKET" in refused.json()["error"]["message"]
 
     seed_id = _seed_listing(conn, ["abc_animal_hospital/1.webp"])
+    with conn.cursor() as cur:
+        # SHOW: the claim under test is "a read that needs no bucket keeps working", and under the
+        # column's own NOT_SHOW default a seed photograph is unservable for a reason that has
+        # nothing to do with storage (A-IDP-4 (4)).
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (seed_id,))
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     buyer = auth_headers(buyer_cookies, buyer_headers)
     assert (await client.get(f"/api/listings/{seed_id}/photos/1", headers=buyer)).status_code == 200
 
-    # A seller entry with no bucket to read it from is a 404, not a 500 — `_asset_bytes`'s
-    # `store is None` arm.
+    # A seller entry with no bucket to read it from is a 404, not a 500 — `_object_bytes`'s
+    # `store is None` arm, reached through a privacy row `_publish` writes for this very asset.
     asset_id = uuid4()
     with conn.cursor() as cur:
         cur.execute("INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size, sha256, storage_key)"
@@ -978,8 +1044,9 @@ async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents
                                json={"ids": [second, first]}, headers=signed)).status_code == 200
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
-    assert body["photos"] == [{"id": second, "name": "Reception, looking in", "source": "asset"},
-                              {"id": first, "name": "", "source": "asset"}]
+    assert body["photos"] == [_tile({"id": second, "name": "Reception, looking in", "source": "asset"},
+                                    variant="redacted"),
+                              _tile({"id": first, "name": "", "source": "asset"}, variant="redacted")]
     assert body["documents"] == [{"id": document, "kind": "other", "name": "accounts.pdf",
                                   "content_type": "application/pdf", "byte_size": len(PDF),
                                   "caption": None,
@@ -1003,13 +1070,17 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
     # The committed inventory's own captions, curated slot by slot against the photographs
     # themselves (A-L10, merged from `main`).
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
-        {"id": "abc_animal_hospital/2.webp", "name": "Interior — reception", "source": "seed", "position": 2},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 1}),
+        _tile({"id": "abc_animal_hospital/2.webp", "name": "Interior — reception", "source": "seed",
+               "position": 2}),
+        _tile({"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed",
+               "position": 3}),
         # An entry the inventory does not name is named by NOTHING (A-SL22 (2)): a file name is
         # not a description, and the design's own slot caption at that position is what the
         # wizard renders in its place (amendment A16.4).
-        {"id": "abc_animal_hospital/nope.webp", "name": "", "source": "seed", "position": 4},
+        _tile({"id": "abc_animal_hospital/nope.webp", "name": "", "source": "seed",
+               "position": 4}),
     ]
     assert body["documents"] == []
 
@@ -1032,8 +1103,10 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 1}),
+        _tile({"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed",
+               "position": 3}),
     ]
 
     moved = await client.patch(f"/api/seller/listings/{listing_id}/photos",
@@ -1370,7 +1443,7 @@ async def test_a_storage_failure_on_a_document_read_is_a_503_in_the_envelope(
 async def test_a_storage_failure_on_the_buyer_photo_route_is_a_404_not_a_500(
     client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
 ) -> None:
-    """`_asset_bytes`'s own docstring promises "every 'no' is the same None … never a 500"."""
+    """`_object_bytes`'s own docstring promises "every 'no' is the same None … never a 500"."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     await _upload_photo(client, listing_id, auth_headers(cookies, headers))
@@ -1502,7 +1575,7 @@ async def test_the_seller_photo_arm_opens_one_connection(
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     await _upload_photo(client, listing_id, auth_headers(cookies, headers))
-    _publish(conn, listing_id)
+    _publish(conn, listing_id, store)
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     opened.clear()
 

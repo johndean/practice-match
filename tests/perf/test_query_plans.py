@@ -41,6 +41,10 @@ from app.census.catchment import METHOD as CATCHMENT_METHOD
 from app.census.catchment import SQL as CATCHMENT_SQL
 from app.census.serve import _PRECISION_SQL, _SCOPE_NAME_SQL
 
+# The bytes route's own single-row read, imported rather than retyped (Task P9): the plan
+# pinned below is the plan `record.read` actually runs.
+from app.privacy.record import _READ as PRIVACY_READ_SQL
+
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
 # endpoint's OWN query, imported from the handler rather than retyped, so this gate cannot drift
 # from the thing it is a gate on. Its parameters are what `list_users` builds for a first page
@@ -120,6 +124,23 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_counts": (
         "EXPLAIN (FORMAT JSON) " + USERS_COUNTS_SQL,
         {"open": list(USERS_OPEN_STATUSES), "decidable": list(USERS_DECIDABLE_STATES)},
+    ),
+    # Task P9, the two reads every buyer image request now makes. The FIRST is the list route's
+    # own `visible_photos` aggregate (`app/api/listings.py::_SELECT`), which resolves a whole page
+    # of photographs in one statement rather than a lookup per photograph; the SECOND is the bytes
+    # route's single-row sibling (`app/privacy/record.py::read`, through `_privacy_for`).
+    "listing_privacy_aggregate": (
+        ("EXPLAIN (FORMAT JSON) SELECT coalesce((SELECT jsonb_object_agg(p.asset_id::text,"
+         "   jsonb_build_object('status', p.processing_status, 'visible', p.buyer_visible,"
+         "     'redacted_key', p.redacted_storage_key, 'redacted', p.redacted_sha256,"
+         "     'display_key', a.storage_key, 'display', a.sha256))"
+         "   FROM listing_asset_privacy p JOIN listing_asset a ON a.id = p.asset_id"
+         "  WHERE p.listing_id = listing.id), '{}'::jsonb) FROM listing WHERE id = %s"),
+        (_CATCHMENT_LISTING_ID,),
+    ),
+    "listing_privacy_row": (
+        "EXPLAIN (FORMAT JSON) " + PRIVACY_READ_SQL + " WHERE p.asset_id = %s",
+        ("11111111-1111-1111-1111-111111111111",),
     ),
     "session_lookup": (
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",
@@ -252,6 +273,14 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # per account row.
     "users_queue": ("account_listing_idx", "application_account_idx"),
     "session_lookup": ("session_pkey",),
+    # Task P9. MEASURED, not assumed (the `panel` entry's own discipline): the aggregate filters on
+    # `p.listing_id`, which is `listing_asset_privacy_listing_idx (listing_id, processing_status)`'s
+    # leading column, and joins `listing_asset` by its primary key; the single-row read is by
+    # `asset_id`, which IS that table's PRIMARY KEY, so `listing_asset_privacy_pkey` is the one
+    # index it can be right to use — the plan's own sketch named the listing index for both, which
+    # a PK lookup will never choose.
+    "listing_privacy_aggregate": ("listing_asset_privacy_listing_idx", "listing_pkey"),
+    "listing_privacy_row": ("listing_asset_privacy_pkey",),
     "signups_list": ("interest_signup_listing_idx",),
     "signups_unmailed": ("interest_signup_unmailed_idx",),
     # migrations/018_census_geo.sql's GiST index on geo_area.geom — the one correction 5 exists to
