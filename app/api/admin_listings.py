@@ -39,6 +39,8 @@ from app.auth.deps import require
 from app.cache import drop_list_cache_quietly, sync_redis
 from app.db import sync_conn
 from app.mail.outbox import enqueue
+from app.privacy import gate
+from app.privacy import record as privacy_record
 
 router = APIRouter(prefix="/api/admin")
 
@@ -281,11 +283,12 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         return _error("NOT_FOUND", "No such listing.", 404)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, name, state, seller_id, sqft FROM listing WHERE id = %s FOR UPDATE", (parsed,))
+            cur.execute("SELECT status, name, state, seller_id, sqft, identifiable_content_visibility"
+                        " FROM listing WHERE id = %s FOR UPDATE", (parsed,))
             row = cur.fetchone()
             if row is None:
                 return _error("NOT_FOUND", "No such listing.", 404)
-            before, name, state, seller_id, sqft = row
+            before, name, state, seller_id, sqft, visibility = row
             if before not in allowed_from:
                 return _error("STATE", f"cannot {body.action} a listing in state {before}", 409)
             # A-SL33 (1), fix round 1 on the SL8 review's Critical finding: `listing_publishable_ck`
@@ -313,6 +316,17 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             problem = bad_field(body.state.strip(), body.market.strip()) if first_publish else None
             if problem is not None:
                 return _error("BAD_FIELD", problem, 422)
+            # Directive 11 (spec 2026-09-09 C.8), on the PUBLISH branch alone: a decline or an
+            # unpublish takes a listing off the market and asks nothing. The same predicate the
+            # seller's own two routes call and the same one migration 042's trigger evaluates —
+            # answered in this module's own `_error` idiom, with the additive `photos` key inside
+            # decision A5's envelope, because a reviewer needs to know WHICH photograph is holding
+            # a listing back and not merely that one is.
+            offenders = gate.photos_not_ready(conn, parsed) if body.action == "publish" else []
+            if offenders:
+                return JSONResponse({"error": {"code": "PHOTOS_NOT_READY",
+                                               "message": gate.NOT_READY_MESSAGE[visibility],
+                                               **gate.not_ready_extra(offenders)}}, status_code=422)
             sets = "status = %(status)s, updated_at = now()"
             params: dict[str, Any] = {"status": after, "id": parsed}
             if first_publish:
@@ -329,6 +343,11 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             cur.execute(f"UPDATE listing SET {sets} WHERE id = %(id)s", params)
             cur.execute("SELECT email FROM account WHERE id = %s", (seller_id,))
             owner = cur.fetchone()
+        if body.action == "publish":
+            # In the SAME transaction as the status it records (spec C.4). PUBLISHED means
+            # "published at least once" and is not reverted by a later pause, unpublish or
+            # withdrawal — the listing's own status filter is what hides it.
+            privacy_record.mark_published(conn, parsed)
         template = MAIL.get(body.action)
         if template is not None and owner is not None:
             # A-SL19 (6): only `listing_declined` declares a `reason`, so passing one with a

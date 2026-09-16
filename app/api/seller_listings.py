@@ -80,7 +80,7 @@ from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
 from app.media.encode import encode_webp, sha256_hex
-from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, original_key, photo_prefix
+from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, gate, original_key, photo_prefix
 from app.privacy import record as privacy_record
 from app.storage import ObjectStore
 
@@ -107,6 +107,11 @@ MAX_JSON_BYTES = 64 * 1024
 # does the same for `applications.submit`/`answer`/`reapply` — so the AST drift test never sees
 # them and there is no list to add them to. One namespace, so an auditor greps `listing.` once.
 EDIT_ACTION = "listing.edit"
+# The listing's one privacy switch moving, in either direction (spec 2026-09-09 C.1 (1)). Its
+# `before`/`after` carry the visibility key and NO `status` key: `_COLUMNS`' decline-reason
+# subquery reads the latest audit row whose `after ->> 'status' = 'declined'`, so an action that
+# wrote a status here would corrupt the sentence a declined seller reads on their own dashboard.
+PRIVACY_ACTION = "listing.privacy"
 # The two states an edit re-enters review from (D3, widened by A-SL19 (1) on the SL5 review's
 # Major-1). `paused` is published-but-hidden: it has been through review, the seller can put it
 # back on the market with one click, and the arm used to fire on `published` alone — so pause →
@@ -135,7 +140,9 @@ STEP_FIELDS: dict[int, tuple[str, ...]] = {
     3: ("price", "rev", "revBand"),
     4: ("docs", "rooms", "sqft", "hours", "desc"),
     5: ("bldg", "facilityType", "facility"),
-    7: ("anon", "revBand", "docsLocked"),
+    # `showIdentifiable` is the listing's ONE privacy switch (spec 2026-09-09 C.1, directive 7).
+    # Step 7 is the owner's own disclosure step and this is the only door the setting has.
+    7: ("anon", "revBand", "docsLocked", "showIdentifiable"),
 }
 # The design's own option lists (logic.js:1174, :1178), checked here so a CheckViolation from the
 # database can never become a 500.
@@ -175,6 +182,7 @@ SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 _COLUMNS = """id, slug, name, city, zip, state, area, market, type, est, ownership, price, rev,
               docs, rooms, sqft, hours, services, bldg, facility_type, facility, status,
               location_disclosed, name_disclosed, rev_disclosed, documents_disclosed,
+              identifiable_content_visibility,
               photos, photo_captions, seller_id, submitted_at, created_at, updated_at,
               (SELECT a.reason FROM audit_log a
                 WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
@@ -189,11 +197,15 @@ DECLINE_PREFIX = "decline: "
 
 
 class Refusal(Exception):
-    """A refusal the route renders through `_error`. Carries the envelope, never a status alone."""
+    """A refusal the route renders through `_error`. Carries the envelope, never a status alone.
 
-    def __init__(self, code: str, message: str, status: int) -> None:
+    `extra` is an ADDITIVE key inside A5's `error` object -- today only `PHOTOS_NOT_READY`'s
+    `photos` list (spec 2026-09-09 C.8) -- so an existing client that reads `code` and `message` is
+    unaffected."""
+
+    def __init__(self, code: str, message: str, status: int, extra: dict[str, Any] | None = None) -> None:
         super().__init__(message)
-        self.code, self.message, self.status = code, message, status
+        self.code, self.message, self.status, self.extra = code, message, status, extra
 
 
 def _number(field: str, raw: object) -> int | None:
@@ -325,6 +337,12 @@ def columns_for(step: int, body: dict[str, Any], row: dict[str, Any] | None = No
             out["rev_disclosed"] = not _flag("revBand", raw)
         elif field == "docsLocked":
             out["documents_disclosed"] = not _flag("docsLocked", raw)
+        elif field == "showIdentifiable":
+            # NOT the inverted polarity of `anon`/`revBand`/`docsLocked`. Those three are "hide
+            # this"; John's control is "IDENTIFIABLE IMAGE CONTENT [ SHOW ] [ NOT SHOW ]" with the
+            # default at NOT SHOW, so the switch is off for the safe state and ON means SHOW
+            # (spec 2026-09-09 C.1, C.9 (a)).
+            out["identifiable_content_visibility"] = "SHOW" if _flag("showIdentifiable", raw) else "NOT_SHOW"
         else:
             out[field] = _text(field, raw)
     if step == 2 and "city" in out:
@@ -426,6 +444,8 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
         "anon": not row["name_disclosed"],
         "revBand": not row["rev_disclosed"],
         "docsLocked": not row["documents_disclosed"],
+        # ...and the fourth, in its OWN polarity: on means SHOW (spec 2026-09-09 C.1).
+        "showIdentifiable": row["identifiable_content_visibility"] == "SHOW",
         "state": row["state"], "market": row["market"], "area": row["area"],
         # Info-3: the seller had no in-app way to read WHY a listing was declined — the reason
         # reached them by email and the Declined pill explained nothing. The latest decline's, and
@@ -522,7 +542,25 @@ def assets_of(conn: Any, listing_id: Any) -> list[dict[str, Any]]:
 
 
 def _refused(exc: Refusal) -> JSONResponse:
-    return _error(exc.code, exc.message, exc.status)
+    if exc.extra is None:
+        return _error(exc.code, exc.message, exc.status)
+    return JSONResponse({"error": {"code": exc.code, "message": exc.message, **exc.extra}},
+                        status_code=exc.status)
+
+
+def refuse_unready_photographs(conn: Any, row: dict[str, Any]) -> None:
+    """Directive 11's gate, at every route that can put a listing on the market.
+
+    One predicate, `app/privacy/gate.py`, calling the same SQL function migration 042's trigger
+    calls -- so a route and the database cannot disagree about what ready means, and the trigger is
+    the backstop rather than a second opinion. The refusal names the offending photographs in an
+    additive key inside A5's envelope, because "a photograph is not ready" is a fact about
+    particular tiles and the wizard has to be able to point at them."""
+    offenders = gate.photos_not_ready(conn, row["id"])
+    if offenders:
+        raise Refusal("PHOTOS_NOT_READY",
+                      gate.NOT_READY_MESSAGE[row["identifiable_content_visibility"]], 422,
+                      gate.not_ready_extra(offenders))
 
 
 @router.get("/listings", dependencies=[Depends(REQUIRE_MANAGE_OWN)])
@@ -609,6 +647,10 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     published -> in_review transition and dropping the listings cache after the commit (D16)."""
     hit(sync_redis(), "listing:patch", str(principal.account_id), *LISTING_PATCH)
     raw_step = request.query_params.get("step", "")
+    # The rows `apply_visibility_change` re-enqueues, published AFTER the commit for
+    # `upload_photo`'s own reason: a task taken by a prefork child before the transaction lands
+    # would read the row as it was.
+    requeue: list[UUID] = []
     try:
         body = await _json_body(request)
         step = int(raw_step) if raw_step.isdecimal() else -1
@@ -650,6 +692,12 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             # ...but only a PUBLISHED listing sits in a cached Browse payload, so the cache drop
             # stays keyed on that alone (A-SL13 L6's rule, unchanged by A-SL19 (1)).
             leaving_market = row["status"] == "published"
+            # Spec 2026-09-09 C.1: "every change of the value, on any status". A no-op write is not
+            # a change — the wizard's autosave PATCHes step 7 on every visit — so the audit row,
+            # the per-photograph work and the unconditional cache drop all hang on this one term.
+            visibility_changed = ("identifiable_content_visibility" in columns
+                                  and columns["identifiable_content_visibility"]
+                                  != row["identifiable_content_visibility"])
             assignments = ", ".join(f"{name} = %({name})s" for name in columns)
             sets = f"{assignments}, " if assignments else ""
             if re_entering:
@@ -668,6 +716,13 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
                     # location. `market_metric`/`practice_catchment` are keyed on the listing and
                     # are rebuilt by `census.backfill_listing` after the next geocode.
                     cur.execute("DELETE FROM practice_location WHERE listing_id = %s", (row["id"],))
+            if visibility_changed:
+                # In the SAME transaction as the column it follows (spec C.1 step 3): a committed
+                # NOT_SHOW beside photographs still claiming derivatives nobody verified is exactly
+                # the state this exists to prevent, and a bucket outage here rolls the setting back
+                # with the rest rather than leaving the two halves disagreeing.
+                requeue = apply_visibility_change(conn, row, principal, request,
+                                                  to=columns["identifiable_content_visibility"])
             claim_from_seed(conn, row, principal)
             if re_entering:
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
@@ -687,8 +742,14 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # Only when the listing WAS on the market, which is D16's own wording — "every write that can
     # change a published payload" (review L6). A draft's autosave changes nothing a buyer can read,
     # and a SCAN plus a DELETE per key on each of 240 patches an hour flushes Browse for everyone.
-    if leaving_market:
+    # ...and UNCONDITIONALLY for a visibility change (spec 2026-09-09 C.1 (2)): the autosave arm
+    # above is conditional because it fires 240 times an hour, and a privacy control moving is not
+    # that. A draft's buyer payload is not cached, so the SCAN matches nothing and costs one round
+    # trip; a published one's is, and every photograph it serves may have just changed.
+    if leaving_market or visibility_changed:
         drop_list_cache_quietly()
+    for asset_id in requeue:
+        privacy_record.enqueue_processing(asset_id, PROCESSING_VERSION)
     # GEO-WIRE (2), after the commit like every other cache write here: the dedupe key is what
     # would otherwise swallow the re-geocode, since a correction arrives precisely inside the
     # window the publish that revealed the mistake opened.
@@ -1010,6 +1071,55 @@ def _exists(store: ObjectStore, key: str) -> bool:
         return store.exists(key)
     except (BotoCoreError, ClientError) as exc:
         raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
+
+
+def apply_visibility_change(conn: Any, row: dict[str, Any], principal: S.Principal, request: Request,
+                            *, to: str) -> list[UUID]:
+    """Directive 16, both directions. Returns the rows to enqueue AFTER the commit.
+
+    SHOW -> NOT_SHOW: "the system must immediately require/verify that redacted derivatives exist
+    for EVERY image". Verified against the BUCKET and not only the row -- a key whose object is gone
+    is a row that claims a derivative it cannot serve -- so the store must be configured: with it
+    unconfigured this refuses 503 rather than skipping the check. A row confirmed under NOT_SHOW
+    against the derivative it serves keeps its state; every other row goes back to review with the
+    confirmation reset; a row whose object is missing loses its key and is re-processed through
+    `record.reset_for_reprocess`, which is this table's ONE writer (P3 review Minor-3).
+
+    NOT_SHOW -> SHOW: nothing is deleted (16 again -- "Retain them for future switching back"),
+    confirmations stand as recorded, and visibility follows readiness."""
+    audit.write(conn, actor=principal, action=PRIVACY_ACTION, target_type="listing",
+                target_id=row["id"], reason="visibility",
+                before={"identifiable_content_visibility": row["identifiable_content_visibility"]},
+                after={"identifiable_content_visibility": to}, request=request)
+    rows = privacy_record.rows_for(conn, row["id"])
+    if to == "SHOW":
+        for asset in rows:
+            privacy_record.set_visibility(
+                conn, asset.asset_id, visible=asset.processing_status in privacy_record.READY_STATES)
+        return []
+    store = store_for_request() if rows else None
+    requeue: list[UUID] = []
+    for asset in rows:
+        if asset.redacted_storage_key is None or store is None or not _exists(
+                store, asset.redacted_storage_key):
+            privacy_record.reset_for_reprocess(conn, asset.asset_id)
+            requeue.append(asset.asset_id)
+        elif asset.seller_confirmed and asset.final_privacy_state == "NOT_SHOW":
+            # Confirmed under NOT_SHOW against the derivative it serves (`lap_confirmed_ck` holds
+            # `confirmed_sha256 = redacted_sha256`), so the confirmation stands and the row is
+            # visible again at once -- spec C.1 step 3's "keeps its state".
+            privacy_record.set_visibility(conn, asset.asset_id, visible=True)
+        elif not privacy_record.reset_confirmation(conn, asset.asset_id):
+            # NOT ready, so `reset_confirmation` refused it -- which is the answer, not a problem.
+            # A REDACTION_FAILED or REVIEW_REQUIRED row can still carry a stale
+            # `redacted_storage_key` whose object is present (`lap_ready_has_derivative_ck` only
+            # constrains the ready states), so the `exists()` arm above passes it through and an
+            # unguarded reset would PROMOTE it into READY_FOR_REVIEW, then into confirmable, then
+            # into `buyer_visible` over a derivative whose regeneration had failed. It goes on the
+            # re-enqueue arm instead: back to UPLOADED, key cleared, pipeline re-run.
+            privacy_record.reset_for_reprocess(conn, asset.asset_id)
+            requeue.append(asset.asset_id)
+    return requeue
 
 
 def _fetch(store: ObjectStore, key: str) -> bytes | None:
@@ -1455,6 +1565,10 @@ async def submit_listing(listing_id: str, request: Request, principal: Owner) ->
             if before not in SUBMITTABLE_FROM:
                 raise Refusal("STATE", f"cannot submit a listing in state {before}", 409)
             _complete_enough(row)
+            # Directive 11, at the seller's own door and AFTER the completeness rules: a listing
+            # missing a price is not "waiting for a photograph", and the seller is owed the first
+            # thing that is actually wrong.
+            refuse_unready_photographs(conn, row)
             with conn.cursor() as cur:
                 # `AND submitted_at IS NOT NULL`: an in-review listing always carries a stamp
                 # through this API (both roads into `in_review` write one), and the key below is
@@ -1499,9 +1613,20 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
             before = row["status"]
             if before not in allowed_from:
                 raise Refusal("STATE", f"cannot {action} a listing in state {before}", 409)
+            # Directive 11. `republish` is the one action here that puts a listing BACK on the
+            # market, so it is the one that asks; a pause or a withdrawal takes a listing OFF it,
+            # which is the direction a privacy gate has no business in. Before the UPDATE, so
+            # migration 042's trigger stays the backstop rather than the thing the seller meets.
+            if after == "published":
+                refuse_unready_photographs(conn, row)
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET status = %s, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s", (after, row["id"], principal.account_id))
+            if after == "published":
+                # In the SAME transaction as the status it records (spec C.4): PUBLISHED means
+                # "published at least once", so a row that reaches the market is stamped by the
+                # statement that put it there and by nothing later.
+                privacy_record.mark_published(conn, row["id"])
             # GEO-WIRE (1). Read INSIDE the transaction — the enqueue itself is after the commit,
             # below. It used to be read after it, through `conn` — a connection `closing()` had
             # already returned to `app.db`'s pool, so the statement ran on a connection another

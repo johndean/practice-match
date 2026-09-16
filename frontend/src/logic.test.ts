@@ -6,6 +6,11 @@ import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 let c: any;
 beforeEach(() => { c = new Component({}); });
 
+/** `src/listings/seller.test.ts`'s own list, declared there with the whole reason: keys
+ *  `STEP_FIELDS` names that the design's `state.w` does not carry yet. One entry, `showIdentifiable`
+ *  (Task P10's listing privacy setting; Task P11 draws the control that adds it to `w`). */
+const PENDING_W = ['showIdentifiable'];
+
 describe('logic.js — characterisation of the approved prototype (file untouched)', () => {
   it('starts signed out on the sign-in gate with the design defaults', () => {
     expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin', auth: false, viewport: 'desktop', mobileTab: 'list', adminTab: 'users', detailId: 'p1', sellerView: 'dash' });
@@ -1776,11 +1781,18 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       await c2.wizardVals().next();
       expect(sent.map((r) => r.method), `step ${step}`).toEqual(['PATCH']);
       expect(sent[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
-      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual([...keys].sort());
+      // `PENDING_W` is `src/listings/seller.test.ts`'s own list and its own reason, in the one
+      // other place a step's projection of `w` is pinned: `showIdentifiable` is STEP_FIELDS[7]'s
+      // fourth key (Task P10, the listing's one privacy writer) and the design's `w` gains it in
+      // Task P11 with the control. Self-retiring — the loop below fails once `w` carries it.
+      const sendable = [...keys].filter((key) => !PENDING_W.includes(key)).sort();
+      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual(sendable);
       expect(c2.state.wizErr, `step ${step}`).toBe('');
       expect(c2.state.step, `step ${step}`).toBe(Math.min(8, Number(step) + 1));
       vi.unstubAllGlobals();
     }
+    const w = Object.keys(new Component({}).state.w);
+    for (const key of PENDING_W) expect(w, `${key} is in w now`).not.toContain(key);
   });
 
   it('Continue on step 6 advances without a PATCH — its assets were saved on upload', async () => {

@@ -2002,6 +2002,12 @@ LISTING_WRITERS = {
     "tests/census/test_market_api.py":
         "sets `location_disclosed` on an existing row and never `status`, so the trigger — BEFORE "
         "UPDATE **OF status** — does not fire at all.",
+    "tests/api/test_listing_privacy.py":
+        "the publishing gate's own route suite (Task P10). Every listing it publishes goes through "
+        "the real routes — submit, decide and republish — so the gate is what it measures rather "
+        "than something it works around; its two direct UPDATEs write the visibility setting a "
+        "flip test has to START from and an `in_review` status the decline case needs, and "
+        "neither touches `status = 'published'`.",
     "tests/perf/test_query_plans.py":
         "query-plan fixtures inserted directly with their status; no INSERT arm.",
     "tests/privacy/conftest.py":
@@ -2010,6 +2016,11 @@ LISTING_WRITERS = {
         "SET photos`, which the trigger — BEFORE UPDATE **OF status** — does not fire on. No row it "
         "makes ever moves into `published`, because the state machine it builds rows for is tested "
         "on `listing_asset_privacy` alone.",
+    "tests/privacy/test_gate.py":
+        "the gate PREDICATE's own suite (Task P10). It reads `listing_photos_not_ready` directly "
+        "and never publishes: its UPDATEs plant a `photos` array — a seed path entry, a reordered "
+        "pair — on a `draft` row the builder made, which the trigger (BEFORE UPDATE **OF status**) "
+        "does not fire on.",
     "tests/scripts/test_seed_listings.py":
         "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
         "use `draft` rows precisely so the gate is not what they are measuring.",
@@ -2078,6 +2089,11 @@ PRIVACY_WRITERS = {
         "the privacy suites' shared builder (Task P3) — one INSERT that makes a row in any state "
         "with whatever `041`'s CHECKs require of that state already true, so a CHECK that changes "
         "fails in one place rather than in every suite.",
+    "tests/api/test_listing_privacy.py":
+        "the flip's own route suite (Task P10). One deliberate column poke, in a case whose "
+        "docstring says why: the REDACTION_FAILED row that still carries a live "
+        "`redacted_storage_key` — the shape `lap_ready_has_derivative_ck` permits outside the "
+        "ready states, and the one `reset_confirmation` must refuse to promote.",
     "tests/privacy/test_record.py":
         "the state machine's own suite. Two deliberate column pokes, each in a case whose "
         "docstring says why: the `updated_at` back-date that opens the six-minute lost-child "

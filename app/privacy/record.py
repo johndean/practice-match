@@ -73,6 +73,14 @@ def enqueue_processing(asset_id: UUID, version: int) -> None:
 
 #: Spec C.4's three ready states. `buyer_visible` is never true outside them (lap_visible_ready_ck).
 READY_STATES = ("READY_FOR_REVIEW", "SELLER_CONFIRMED", "PUBLISHED")
+#: Every state migration 041's column CHECK permits, in its own order. It is the predicate of the
+#: ONE writer here that is legal from all of them -- `reset_for_reprocess`, P10's SHOW -> NOT_SHOW
+#: arm -- and it is a named tuple rather than an absent WHERE so that a state added to `041` has to
+#: be added HERE too, instead of being silently refused by a writer nobody re-read.
+#: `tests/privacy/test_record.py` reads this tuple and pins it against `pg_constraint` both ways.
+ALL_STATES = ("UPLOADED", "PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
+              "SELLER_CONFIRMED", "PUBLISHED", "PROCESSING_FAILED", "REDACTION_FAILED",
+              "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
 #: Directive 6's four. Left only by the claim of a retry, a Try-again or a delete.
 ERROR_STATES = ("PROCESSING_FAILED", "REDACTION_FAILED", "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
 #: What `media.process_photo` may take. REVIEW_REQUIRED is NOT here: its retries are spent and only
@@ -369,6 +377,41 @@ def reset_for_retry(conn: Any, asset_id: UUID) -> bool:
             (asset_id, list(ERROR_STATES)),
         )
         return cur.fetchone() is not None
+
+
+def reset_for_reprocess(conn: Any, asset_id: UUID) -> None:
+    """The SHOW -> NOT_SHOW flip's re-processing arm (spec C.1 step 3): "a key whose object is gone
+    has `redacted_storage_key`/`redacted_sha256` cleared, the reset rule applied,
+    `processing_status := 'UPLOADED'`, and is enqueued after the commit".
+
+    It lives HERE and not beside its one caller in `app/api/seller_listings.py`, where the plan
+    drew it: `app/privacy/record.py` is the ONE writer of this table under `app/` and `scripts/`
+    (P3 review Minor-3, pinned by `tests/test_docs.py`), so every state transition is in one place
+    and carries its own predicate.
+
+    **Guarded by `ALL_STATES`, which is every state the table names, and that is the transition
+    rather than an absent guard**: the flip meets a row in any of the eleven -- a READY_FOR_REVIEW
+    row whose object somebody deleted is exactly as unservable as an UPLOADED one -- and the
+    statement lands every one of them fail-closed, because it applies the reset rule and writes no
+    derivative claim. What the tuple buys is the twelfth state: a state added to `041` has to be
+    added to `ALL_STATES` or this writer refuses it, and the pin over the CHECK makes that a
+    failure rather than a silence.
+
+    **The stale flag goes with it**, which the plan's own sketch omitted: `reprocess_reason` is a
+    flag on a READY row awaiting an IN-PLACE re-run (D-IDP-16), `advance_in_place` is the only
+    writer that clears it, and nothing on the fresh `claim` -> `mark_ready` path ever reaches that
+    function. A row sent back to UPLOADED still carrying one would come back READY_FOR_REVIEW and
+    STALE for ever -- unpublishable by the gate's own third arm, and named TWICE in one refusal --
+    so a fresh run supersedes the pending in-place one. Both columns move together:
+    `lap_stale_ck` holds `(reprocess_reason IS NULL) = (reprocess_requested_at IS NULL)`."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE listing_asset_privacy SET redacted_storage_key = NULL, redacted_sha256 = NULL,"
+            f" processing_status = 'UPLOADED', attempts = 0, last_error = NULL,"
+            f" reprocess_reason = NULL, reprocess_requested_at = NULL, {RESET_COLUMNS},"
+            f" updated_at = now() WHERE asset_id = %s AND processing_status = ANY(%s)",
+            (asset_id, list(ALL_STATES)),
+        )
 
 
 def flag_stale(conn: Any, *, listing_id: UUID, reason: str) -> list[UUID]:

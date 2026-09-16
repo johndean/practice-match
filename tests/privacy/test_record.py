@@ -56,14 +56,14 @@ TRANSITIONS = (
 UNCLAIMABLE = ("PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
                "SELLER_CONFIRMED", "PUBLISHED", "REVIEW_REQUIRED")
 
-#: Every state migration 041's CHECK permits, written out here because a `parametrize` argument is
-#: read at COLLECTION time and cannot come from a database fixture. It is pinned against
-#: `pg_constraint` itself, both ways, by
+#: Every state migration 041's CHECK permits, read at COLLECTION time -- which is why it is a
+#: literal somewhere rather than a database fixture. THE MODULE's own, not a second copy (Task
+#: P10): `reset_for_reprocess` is guarded by exactly this tuple, so the dead-end parametrisations
+#: below and that writer's predicate cannot disagree about what the eleven states are. It is
+#: pinned against `pg_constraint` itself, both ways, by
 #: `test_the_state_tuples_are_the_states_the_column_check_permits` -- so a state added to the table
 #: without a dead end being ruled for it fails here rather than going unnoticed.
-ALL_STATES = ("UPLOADED", "PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
-              "SELLER_CONFIRMED", "PUBLISHED", "PROCESSING_FAILED", "REDACTION_FAILED",
-              "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
+ALL_STATES = record.ALL_STATES
 
 #: Spec C.4 names ONE source per failure state: `PROCESSING -> PROCESSING_FAILED` (a decode,
 #: OCR or vision error) and `SCANNED -> REDACTION_FAILED` (the fill or the re-encode). Written as
@@ -420,6 +420,7 @@ PRIVACY_UPDATES = {
     "bump_attempt": 1,
     "mark_published": 1,
     "set_visibility": 1,
+    "reset_for_reprocess": 1,
 }
 
 
@@ -654,6 +655,43 @@ def test_the_retry_clears_the_attempts_the_ladder_spent(conn: Any) -> None:
     assert record.reset_for_retry(conn, asset_id) is True
     after = _read(conn, asset_id)
     assert (after.processing_status, after.attempts) == ("UPLOADED", 0)
+
+
+@pytest.mark.parametrize("start", ALL_STATES)
+def test_the_reprocess_reset_starts_any_state_again_and_leaves_it_fail_closed(
+    conn: Any, start: str
+) -> None:
+    """P10's SHOW -> NOT_SHOW arm (spec C.1 step 3), from every state the table names.
+
+    The flip meets a row in any of the eleven -- a READY_FOR_REVIEW row whose derivative somebody
+    deleted off the bucket is exactly as unservable as an UPLOADED one -- so `ALL_STATES` IS this
+    transition, and what the parametrisation asserts is that the landing is fail-closed from each:
+    UPLOADED, no derivative claim, no confirmation, invisible, and the ladder's budget back."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=2,
+                       confirmed=start == "SELLER_CONFIRMED", buyer_visible=start in record.READY_STATES)
+    record.reset_for_reprocess(conn, asset_id)
+    after = _read(conn, asset_id)
+    assert after.processing_status == "UPLOADED"
+    assert (after.redacted_storage_key, after.redacted_sha256, after.confirmed_sha256) == (None, None, None)
+    assert (after.seller_confirmed, after.buyer_visible, after.attempts) == (False, False, 0)
+    assert _review_status(conn, asset_id) == "pending"
+
+
+def test_the_reprocess_reset_clears_the_stale_flag_a_fresh_run_supersedes(conn: Any) -> None:
+    """D-IDP-16: `reprocess_reason` is a flag on a READY row awaiting an IN-PLACE re-run, and
+    `advance_in_place` is the only writer that clears it -- nothing on the fresh `claim` ->
+    `mark_ready` path ever reaches that function. A row sent back to UPLOADED still carrying one
+    would come back READY_FOR_REVIEW and STALE for ever, which the publishing gate's own third arm
+    reads as an offender. Both columns move together: `lap_stale_ck` holds
+    `(reprocess_reason IS NULL) = (reprocess_requested_at IS NULL)`."""
+    asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True,
+                       buyer_visible=True, reprocess_reason="VERSION")
+    record.reset_for_reprocess(conn, asset_id)
+    assert _read(conn, asset_id).reprocess_reason is None
+    with conn.cursor() as cur:
+        cur.execute("SELECT reprocess_requested_at FROM listing_asset_privacy WHERE asset_id = %s",
+                    (asset_id,))
+        assert cur.fetchone()[0] is None, "lap_stale_ck's other half"
 
 
 def test_the_scan_records_what_the_run_found(conn: Any) -> None:

@@ -17,6 +17,23 @@ import stepFields from './step-fields.json';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: unknown } }
 
+/**
+ * Keys `STEP_FIELDS` names that the DESIGN's own `state.w` does not carry yet (Task P10).
+ *
+ * `showIdentifiable` is the listing's one privacy switch, spec 2026-09-09 C.1: Task P10 gave the
+ * API its single writer — `PATCH /api/seller/listings/{id}?step=7` through `columns_for` — and
+ * Task P11 draws the control that puts the key in `w`. Between the two, `patch()` assigns
+ * `body.showIdentifiable = undefined` and `JSON.stringify` drops it, so the adapter sends the
+ * three keys `w` HAS. That is correct rather than lenient: the API reads a missing field as
+ * "unchanged", and a `null` would be `400 showIdentifiable must be true or false.`
+ *
+ * It is a LIST rather than a loosened assertion so the gap stays visible and SELF-RETIRING: the
+ * pin below also asserts every key here really is absent from `w`, so P11's own amendment turns
+ * this file red until the entry is deleted. `src/logic.test.ts` carries the same list, for the
+ * same two steps, against the design's own Continue.
+ */
+const PENDING_W = ['showIdentifiable'];
+
 /** The network boundary and nothing else — `src/auth/api.test.ts`'s own stub, unchanged. */
 function stubFetch(...answers: Array<{ status: number; body?: unknown; text?: string }>): Call[] {
   const calls: Call[] = [];
@@ -251,9 +268,13 @@ describe('the adapter', () => {
       const calls = stubFetch({ status: 200, body: draft() });
       await api().patch('a3f1', Number(step), whole);
       expect(calls[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
-      expect(Object.keys(JSON.parse(String(calls[0].init.body))).sort(), `step ${step}`).toEqual([...keys].sort());
+      const sendable = [...keys].filter((key) => !PENDING_W.includes(key)).sort();
+      expect(Object.keys(JSON.parse(String(calls[0].init.body))).sort(), `step ${step}`).toEqual(sendable);
       vi.unstubAllGlobals();
     }
+    // ...and the gap `PENDING_W` names is still a gap: the moment the design's `w` carries one of
+    // those keys, this fails and the entry must go, which is what keeps the pin above TOTAL.
+    for (const key of PENDING_W) expect(Object.keys(whole), `${key} is in w now`).not.toContain(key);
     // `photos` — the design's own fake photograph counter — belongs to no step, and `state` is the
     // reviewer's (spec Q2). Both live in `w` and neither may ever be sent.
     expect(Object.values(STEP_FIELDS).flat()).not.toContain('photos');

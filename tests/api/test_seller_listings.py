@@ -1631,6 +1631,8 @@ DESIGN_W: dict[str, Any] = {
     "docs": "2", "rooms": "4", "sqft": "3,000", "hours": "Mon-Fri 8-6", "desc": "Dentistry",
     "bldg": "Included", "facilityType": "Standalone", "facility": "Two surgical suites",
     "docsLocked": True,
+    # Spec 2026-09-09 C.1: on means SHOW, and NOT_SHOW is the default the seller has to leave.
+    "showIdentifiable": True,
 }
 
 
