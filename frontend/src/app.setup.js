@@ -53,6 +53,13 @@ const props = defineProps({
   // place; `[]` is a real, empty answer. The app never passes it — it loads the seller's real
   // listings in `componentDidMount` (A16.9).
   startMyListings: { type: Array, default: null },
+  // A20.4c (Task P11, spec 2026-09-09-image-identifiability-protection-design.md C.9): the
+  // wizard's own step-6 tiles — real photographs, real captions, a real `src` per tile — on
+  // load. The reference has no adapter to fetch a draft's real assets through, so the two
+  // approved states this task appends (`wizard-step-6-photos`, `wizard-step-6-review`) hand it
+  // a JSON-encoded array over this same prop seam, parsed in `componentDidMount`. The app never
+  // passes it — it loads the seller's real draft instead (A16.9's own `openDraft`).
+  startWizardPhotos: { type: String, default: '' },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

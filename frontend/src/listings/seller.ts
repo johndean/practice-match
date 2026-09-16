@@ -48,8 +48,35 @@ export interface ApiDocument extends ApiAsset { url: string }
  *  `source` is SL7b's discriminator (A-SL25 (10)): `id` alone cannot tell an ASSET (a uuid,
  *  `PATCH .../assets/{id}`) from a SEED entry (a `<slug>/<file>` path, the new POSITIONAL route)
  *  without parsing it, so the API states which — and, for a seed entry, its `position` (1-based,
- *  the route's own `{n}`), which the click handler needs and the id does not carry. */
-export interface ApiPhoto { id: string; name: string; source: 'seed' | 'asset'; position?: number }
+ *  the route's own `{n}`), which the click handler needs and the id does not carry.
+ *
+ * The five fields below are Task P11's own addition (spec 2026-09-09-image-identifiability-
+ * protection-design.md C.9): what the identifiability pipeline (Tasks P8/P9) writes per photograph
+ * and the wizard's step-6 tile reads. `src` is the delivery resolver's own served URL — `null`
+ * while nothing has resolved one yet — never the storage key or any other pipeline internal
+ * (directive 15: nothing technical is exposed). `variant` names the served REPRESENTATION
+ * (`original` | `display` | `redacted` | `placeholder`) rather than being read directly by the
+ * wizard tile, which only needs `src`/`state`; it is carried through because a caller downstream
+ * of `toWizardDraft` (Task P12's review dialog) needs it and this is the one seam both use.
+ * `state` is the per-image pipeline's own four-value machine — `processing` while the pipeline
+ * has not finished, `review` once it has found something to show the seller, `confirmed` once the
+ * seller (or an auto-clear) has accepted the served variant, `failed` on an error state — and
+ * `masks` are the regions the pipeline found, in the shape Task P12's review dialog draws them:
+ * an id, a `[x, y, w, h]` box and a `source` (`auto` | `manual`), never a confidence score or any
+ * other model internal. `width`/`height` are the photograph's own natural dimensions, `null` until
+ * known. */
+export interface ApiPhoto {
+  id: string;
+  name: string;
+  source: 'seed' | 'asset';
+  position?: number;
+  src: string | null;
+  variant: string;
+  state: 'processing' | 'review' | 'confirmed' | 'failed';
+  masks: { id: string; box: [number, number, number, number]; source: string }[];
+  width: number | null;
+  height: number | null;
+}
 
 /** The OWNER's own truth, exactly as `app/api/seller_listings.py::serialise_draft` sends it: the
  *  keys are the wizard's (`state.w` in logic.js:204), not the columns'. */
@@ -76,6 +103,11 @@ export interface Draft {
   anon: boolean;
   revBand: boolean;
   docsLocked: boolean;
+  /** Task P10's own switch (spec C.1): `true` shows identifiable image content to buyers, `false`
+   *  (the DEFAULT, both in the database and in the design's own `w`) keeps it hidden. Always
+   *  present — `serialise_draft` returns it on every draft read, never null — so it is a plain
+   *  `boolean` here, exactly like `anon`/`revBand`/`docsLocked` above it. */
+  showIdentifiable: boolean;
   state: string | null;
   market: string | null;
   area: string | null;
@@ -123,8 +155,25 @@ export interface DesignRow { id: string; status: string; title: string; meta: st
  *  names which of the two caption routes describes it, and `position` is the positional route's
  *  own `{n}` for a seed entry (absent for an asset, which routes by `id` alone). A document tile
  *  carries neither: it has no caption route of its own (`caption_asset`'s own `kind = 'photo'`
- *  guard), and the click handler never fires for one (A16.21's own guard, `u.kind !== 'Photo'`). */
-export interface WizardAsset { kind: string; name: string; id: string; source?: 'seed' | 'asset'; position?: number }
+ *  guard), and the click handler never fires for one (A16.21's own guard, `u.kind !== 'Photo'`).
+ *
+ *  The five optional fields are Task P11's own addition, `ApiPhoto`'s own shape carried through
+ *  for a photograph tile (a document has none of them): the design's `uploads` map (A20.4) reads
+ *  `src` and `state` directly, and `masks`/`width`/`height`/`variant` ride along for Task P12's
+ *  review dialog, which reads the SAME `wizAssets` array this type describes. */
+export interface WizardAsset {
+  kind: string;
+  name: string;
+  id: string;
+  source?: 'seed' | 'asset';
+  position?: number;
+  src?: string | null;
+  variant?: string;
+  state?: 'processing' | 'review' | 'confirmed' | 'failed';
+  masks?: { id: string; box: [number, number, number, number]; source: string }[];
+  width?: number | null;
+  height?: number | null;
+}
 
 /** What Continue, Edit and every save hand back to the design's script. */
 export interface WizardDraft { w: Record<string, string | boolean>; assets: WizardAsset[] }
@@ -285,6 +334,7 @@ export function toWizardState(d: Draft): Record<string, string | boolean> {
   w.anon = d.anon;
   w.revBand = d.revBand;
   w.docsLocked = d.docsLocked;
+  w.showIdentifiable = d.showIdentifiable;
   return w;
 }
 
@@ -300,8 +350,14 @@ function toWizardDraft(d: Draft): WizardDraft {
     w: toWizardState(d),
     // Photographs first, in `listing.photos`' order, then the documents: the design's own literal
     // list is ordered the same way, and A16.4's name fallback counts photo tiles by position.
+    // Task P11: every `ApiPhoto` field the identifiability pipeline writes carries straight
+    // through — the design's own uploads map (A20.4) reads `src`/`state` and Task P12's review
+    // dialog reads the rest off this same array, so there is one place this projection happens.
     assets: [
-      ...d.photos.map((p) => ({ kind: 'Photo', name: p.name, id: p.id, source: p.source, position: p.position })),
+      ...d.photos.map((p) => ({
+        kind: 'Photo', name: p.name, id: p.id, source: p.source, position: p.position,
+        src: p.src, variant: p.variant, state: p.state, masks: p.masks, width: p.width, height: p.height
+      })),
       ...d.documents.map((doc) => ({ kind: badge(doc.name), name: doc.name, id: doc.id }))
     ]
   };

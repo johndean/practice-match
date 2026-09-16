@@ -1270,13 +1270,22 @@
                         <div style="padding: 34px 22px; text-align: center; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">
                           <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--color-navy);">Drag photos and documents here</div>
                           <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;">Exterior, lobby, treatment area and exam rooms cover most of what buyers ask for. Floor plans and financial summaries can stay locked until you approve a buyer.</p>
+                          <template v-if="v.wiz?.privacyNote"><p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;"><span v-if="__s(v.wiz?.privacyNote) !== null" class="sc-interp">{{ __s(v.wiz?.privacyNote) }}</span></p></template>
                           <button @click="v.wiz?.addPhoto" style="font-family: var(--rf-display); height: 42px; padding: 0 20px; font-size: 13px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Add files</button>
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <template v-for="(u, $index) in __arr(v.wiz?.uploads)" :key="$index">
                             <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" @click="u?.describe">
-                              <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;"><span v-if="__s(u?.kind) !== null" class="sc-interp">{{ __s(u?.kind) }}</span></div>
+                              <template v-if="u?.hasSrc">
+                                <div style="height: 68px; border-radius: 8px; overflow: hidden;">
+                                  <ImageSlot shape="rect" :src="u?.src" :placeholder="u?.name"></ImageSlot>
+                                </div>
+                              </template>
+                              <template v-if="u?.noSrc">
+                                <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;"><span v-if="__s(u?.kind) !== null" class="sc-interp">{{ __s(u?.kind) }}</span></div>
+                              </template>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;"><span v-if="__s(u?.name) !== null" class="sc-interp">{{ __s(u?.name) }}</span></div>
+                              <template v-if="u?.pill"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;"><span v-if="__s(u?.pill) !== null" class="sc-interp">{{ __s(u?.pill) }}</span></span></template>
                             </div>
                           </template>
                         </div>
@@ -1313,6 +1322,18 @@
                         </div>
                       </template>
                     </div>
+                    <template v-if="v.wiz?.previewPhotos?.length">
+                      <div style="display: flex; gap: 9px; margin-top: 18px; flex-wrap: wrap;">
+                        <template v-for="(pp, $index) in __arr(v.wiz?.previewPhotos)" :key="$index">
+                          <div style="width: 92px; height: 68px; border-radius: 8px; overflow: hidden;">
+                            <ImageSlot shape="rect" :src="pp?.src" :placeholder="pp?.name"></ImageSlot>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                    <template v-if="v.wiz?.error">
+                      <div style="margin-top: 18px; padding: 12px 14px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13.5px; line-height: 1.55; color: #494949;"><span v-if="__s(v.wiz?.errorText) !== null" class="sc-interp">{{ __s(v.wiz?.errorText) }}</span></div>
+                    </template>
                     <div style="margin-top: 18px; padding: 14px 16px; background: var(--color-off-white); border-left: 3px solid #339dde; border-radius: 4px; font-size: 13px; line-height: 1.6; color: #494949;"><span v-if="__s(v.wiz?.previewNote) !== null" class="sc-interp">{{ __s(v.wiz?.previewNote) }}</span></div>
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--rf-line);">
                       <button @click="v.wiz?.back" :style="v.wiz?.backStyle">Back to edit</button>
@@ -1726,6 +1747,13 @@ const props = defineProps({
   // place; `[]` is a real, empty answer. The app never passes it — it loads the seller's real
   // listings in `componentDidMount` (A16.9).
   startMyListings: { type: Array, default: null },
+  // A20.4c (Task P11, spec 2026-09-09-image-identifiability-protection-design.md C.9): the
+  // wizard's own step-6 tiles — real photographs, real captions, a real `src` per tile — on
+  // load. The reference has no adapter to fetch a draft's real assets through, so the two
+  // approved states this task appends (`wizard-step-6-photos`, `wizard-step-6-review`) hand it
+  // a JSON-encoded array over this same prop seam, parsed in `componentDidMount`. The app never
+  // passes it — it loads the seller's real draft instead (A16.9's own `openDraft`).
+  startWizardPhotos: { type: String, default: '' },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

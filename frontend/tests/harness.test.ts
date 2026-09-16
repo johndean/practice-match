@@ -537,10 +537,12 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
       id: string; status: string; assets: { kind: string; name: string; id: string }[];
       photos: { id: string; name: string }[]; documents: unknown[];
     };
+    // Task P11 (A20.4): the design's own fallback tiles carry the same coordinate fields the
+    // adapter path does, fixed rather than derived (`src: null, hasSrc: false, noSrc: true`).
     expect(designWizardTiles()).toEqual([
-      { kind: 'Photo', name: 'Exterior.jpg' },
-      { kind: 'Photo', name: 'Lobby.jpg' },
-      { kind: 'Photo', name: 'Treatment.jpg' }
+      { kind: 'Photo', name: 'Exterior.jpg', src: null, hasSrc: false, noSrc: true },
+      { kind: 'Photo', name: 'Lobby.jpg', src: null, hasSrc: false, noSrc: true },
+      { kind: 'Photo', name: 'Treatment.jpg', src: null, hasSrc: false, noSrc: true }
     ]);
     expect(draft.id).toBe(WIZARD_LISTING_ID);
     expect(draft.assets.map((a) => [a.kind, a.name]))

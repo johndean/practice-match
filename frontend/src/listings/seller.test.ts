@@ -17,23 +17,6 @@ import stepFields from './step-fields.json';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: unknown } }
 
-/**
- * Keys `STEP_FIELDS` names that the DESIGN's own `state.w` does not carry yet (Task P10).
- *
- * `showIdentifiable` is the listing's one privacy switch, spec 2026-09-09 C.1: Task P10 gave the
- * API its single writer — `PATCH /api/seller/listings/{id}?step=7` through `columns_for` — and
- * Task P11 draws the control that puts the key in `w`. Between the two, `patch()` assigns
- * `body.showIdentifiable = undefined` and `JSON.stringify` drops it, so the adapter sends the
- * three keys `w` HAS. That is correct rather than lenient: the API reads a missing field as
- * "unchanged", and a `null` would be `400 showIdentifiable must be true or false.`
- *
- * It is a LIST rather than a loosened assertion so the gap stays visible and SELF-RETIRING: the
- * pin below also asserts every key here really is absent from `w`, so P11's own amendment turns
- * this file red until the entry is deleted. `src/logic.test.ts` carries the same list, for the
- * same two steps, against the design's own Continue.
- */
-const PENDING_W = ['showIdentifiable'];
-
 /** The network boundary and nothing else — `src/auth/api.test.ts`'s own stub, unchanged. */
 function stubFetch(...answers: Array<{ status: number; body?: unknown; text?: string }>): Call[] {
   const calls: Call[] = [];
@@ -57,7 +40,7 @@ function draft(over: Partial<Draft> = {}): Draft {
     name: null, type: null, est: null, ownership: null, city: null, zip: null,
     price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
     bldg: null, facilityType: null, facility: null,
-    anon: true, revBand: false, docsLocked: true,
+    anon: true, revBand: false, docsLocked: true, showIdentifiable: false,
     state: null, market: null, area: null,
     decline_reason: null, submitted_at: null, updated_at: '2026-09-08T10:00:00Z',
     assets: [], photos: [], documents: [],
@@ -158,12 +141,14 @@ describe('toWizardState', () => {
       name: 'ABC Animal Hospital', type: 'Mixed', est: 1998, ownership: 'Multi-doctor LLC',
       city: 'Bastrop', zip: '78602', price: 860_000, rev: 700_000, docs: 2, rooms: 4, sqft: 3000,
       hours: 'Mon-Fri', desc: 'Dentistry', bldg: 'Leased', facilityType: 'Medical park',
-      facility: 'Two surgical suites', anon: false, revBand: true, docsLocked: false, state: 'TX'
+      facility: 'Two surgical suites', anon: false, revBand: true, docsLocked: false,
+      showIdentifiable: true, state: 'TX'
     }))).toEqual({
       name: 'ABC Animal Hospital', type: 'Mixed', est: '1998', ownership: 'Multi-doctor LLC',
       city: 'Bastrop', zip: '78602', price: '860000', rev: '700000', docs: '2', rooms: '4', sqft: '3000',
       hours: 'Mon-Fri', desc: 'Dentistry', bldg: 'Leased', facilityType: 'Medical park',
-      facility: 'Two surgical suites', anon: false, revBand: true, docsLocked: false, state: 'TX'
+      facility: 'Two surgical suites', anon: false, revBand: true, docsLocked: false,
+      showIdentifiable: true, state: 'TX'
     });
   });
 
@@ -174,9 +159,19 @@ describe('toWizardState', () => {
     // where `columns_for` wants one of the enum's values: `400 type must be one of Small animal,
     // …` on the first step of the first listing. A null column is now OMITTED, so `Object.assign`
     // leaves the design's own "Small animal" / "Sole proprietor" / "Included" / "Standalone" in
-    // place, exactly as the prototype shows them. Only the three switches, which the API always
+    // place, exactly as the prototype shows them. Only the four switches, which the API always
     // answers, come through.
-    expect(toWizardState(draft())).toEqual({ anon: true, revBand: false, docsLocked: true });
+    expect(toWizardState(draft())).toEqual({ anon: true, revBand: false, docsLocked: true, showIdentifiable: false });
+  });
+
+  // Task P11 (spec C.1): `showIdentifiable` is STEP_FIELDS[7]'s fourth key (Task P10's writer)
+  // and `toWizardState` is the one place a draft's column becomes the wizard's own `w` key — this
+  // pins both halves of that seam explicitly, rather than only incidentally through the two cases
+  // above.
+  it('showIdentifiable is STEP_FIELDS[7]\'s fourth key, and toWizardState round-trips it either way', () => {
+    expect(STEP_FIELDS[7]).toContain('showIdentifiable');
+    expect(toWizardState(draft({ showIdentifiable: true })).showIdentifiable).toBe(true);
+    expect(toWizardState(draft({ showIdentifiable: false })).showIdentifiable).toBe(false);
   });
 
   it('keeps an empty string the seller really stored apart from a column that was never set', () => {
@@ -234,6 +229,24 @@ describe('the adapter', () => {
     });
   });
 
+  // Task P11 (spec C.9): every field the identifiability pipeline (Tasks P8/P9) writes per
+  // photograph carries through `get()` unchanged — one case per field, so a dropped one fails
+  // here rather than silently in the wizard tile that reads it.
+  it('get() carries every identifiability field a photograph tile has, one case per field', async () => {
+    stubFetch({ status: 200, body: draft({
+      photos: [{
+        id: 'p1', name: 'Front entrance', source: 'asset',
+        src: '/api/seller/listings/a3f1/photos/p1?v=abcdef012345', variant: 'display', state: 'review',
+        masks: [{ id: 'm1', box: [10, 20, 30, 40], source: 'auto' }], width: 1200, height: 900
+      }]
+    }) });
+    const [photo] = (await api().get('a3f1')).assets;
+    expect(photo).toMatchObject({
+      src: '/api/seller/listings/a3f1/photos/p1?v=abcdef012345', variant: 'display', state: 'review',
+      masks: [{ id: 'm1', box: [10, 20, 30, 40], source: 'auto' }], width: 1200, height: 900
+    });
+  });
+
   it('get() badges a document with its own uppercased extension (spec Q3)', async () => {
     stubFetch({ status: 200, body: draft({ documents: [
       { id: 'd1', kind: 'financials', name: 'P&L.csv', content_type: 'text/csv', byte_size: 1, url: '/x' },
@@ -268,13 +281,10 @@ describe('the adapter', () => {
       const calls = stubFetch({ status: 200, body: draft() });
       await api().patch('a3f1', Number(step), whole);
       expect(calls[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
-      const sendable = [...keys].filter((key) => !PENDING_W.includes(key)).sort();
+      const sendable = [...keys].sort();
       expect(Object.keys(JSON.parse(String(calls[0].init.body))).sort(), `step ${step}`).toEqual(sendable);
       vi.unstubAllGlobals();
     }
-    // ...and the gap `PENDING_W` names is still a gap: the moment the design's `w` carries one of
-    // those keys, this fails and the entry must go, which is what keeps the pin above TOTAL.
-    for (const key of PENDING_W) expect(Object.keys(whole), `${key} is in w now`).not.toContain(key);
     // `photos` — the design's own fake photograph counter — belongs to no step, and `state` is the
     // reviewer's (spec Q2). Both live in `w` and neither may ever be sent.
     expect(Object.values(STEP_FIELDS).flat()).not.toContain('photos');
