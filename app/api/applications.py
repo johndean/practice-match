@@ -122,11 +122,12 @@ class AnswerState(AuthError):
 
 
 class NotABuyer(AuthError):
-    """Spec §4: `seller.apply` belongs to the `buyer` role alone — selling starts by being an
-    approved buyer."""
+    """Spec §4: `seller.apply` belongs to the `buyer` role, and — since ruling D-C54, 2026-09-13,
+    the admin role is a superset of the whole matrix — to `admin` as well; selling starts by being
+    an approved buyer, or by holding the role that holds every permission a buyer does."""
 
     code = "FORBIDDEN"
-    message = "Only approved buyers may apply to sell."
+    message = "Only approved buyers, or admins, may apply to sell."
 
 
 class ApplicationIn(BaseModel):
@@ -191,9 +192,11 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                 raise Unauthenticated
             email, state = cast("str", row[0]), cast("str", row[1])
             # A buyer application opens at `verified` and moves the account to `pending`. A seller
-            # application is made from an account that is already `active` with the buyer role and
-            # leaves the account exactly where it is — moving it to `pending` would strip every
-            # role on the next request (`permissions.effective_roles`).
+            # application is made from an account that is already `active` and allowed
+            # `seller.apply` — the buyer role, or `admin`, which has held every permission the
+            # buyer role does since ruling D-C54 (2026-09-13) — and leaves the account exactly
+            # where it is: moving it to `pending` would strip every role on the next request
+            # (`permissions.effective_roles`).
             if body.kind == "buyer" and state not in BUYER_APPLY_STATES:
                 raise ApplicationState
             if body.kind == "seller" and not PM.allowed("seller.apply", principal):

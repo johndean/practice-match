@@ -80,6 +80,35 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/practice-match-deploy.XXXXXX")
 CLI_ERR=$(mktemp "${TMPDIR:-/tmp}/practice-match-deploy-err.XXXXXX")
 trap 'rm -rf "$TMP" "$CLI_ERR"' EXIT
 git -C "$SOURCE_DIR" archive --format=tar HEAD | tar -x -C "$TMP"
+
+# Apply .railwayignore to the ARCHIVE, before the upload rather than after it.
+#
+# ROOT CAUSE, measured 2026-09-16: `railway up` reached "Uploading..." and the request to
+# backboard.railway.com died with "operation timed out". Railway had already recorded a
+# deployment, so it sat INITIALIZING with no code to build and finally reported "Failed to
+# create code snapshot". Three deploys failed that way in one day, on a tree that is 42 MB
+# of which 22 MB is `docs/` and `tests/` -- paths this repository's own .railwayignore
+# already says must never ship. Uploading them and letting Railway discard them afterwards
+# spends half the upload's timeout budget on files the image cannot use.
+#
+# The file stays IN the archive, so Railway applies the same list to whatever is left and
+# the two can never disagree about it. Only plain entries are removed: a line naming an
+# absolute path or containing `..` is skipped rather than followed, because this runs `rm
+# -rf` and a deploy script is the wrong place to be clever about paths.
+if [[ -f "$TMP/.railwayignore" ]]; then
+  removed=0
+  while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+    pattern="${pattern%%#*}"; pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+    pattern="${pattern%"${pattern##*[![:space:]]}"}"
+    [[ -z "$pattern" ]] && continue
+    [[ "$pattern" == /* || "$pattern" == *..* || "$pattern" == ".railwayignore" ]] && continue
+    for victim in "$TMP"/$pattern; do
+      [[ -e "$victim" ]] || continue
+      case "$victim" in "$TMP"/*) rm -rf "$victim"; removed=$(( removed + 1 ));; esac
+    done
+  done < "$TMP/.railwayignore"
+  (( removed == 0 )) || echo "→ .railwayignore removed $removed path(s) from the upload before it left this machine"
+fi
 # The artefact's own commit, read back by /api/healthz in preference to COMMIT_SHA: a
 # variable can be set without the uploaded tree ever changing (that is exactly how P14
 # hid itself), a file inside the archive cannot.

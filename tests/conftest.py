@@ -316,6 +316,53 @@ def conn(scratch_dsn, monkeypatch):
         c.close()
 
 
+class RateLimitClock:
+    """A stand-in for the `time` module in whichever namespace the limiter reads its clock from.
+
+    Since amendment A-RL2 that namespace is REDIS's, not the app's: the limiter is one Lua script
+    and it takes `now` from the server's own `TIME` (`app/ratelimit.py`), so every api replica
+    scores against one clock and no process's skew can widen a window. The test double has a clock
+    of its own — `fakeredis.commands_mixins.server_mixin` reads `time.time()` for `TIME` — and that
+    is what this replaces, so the real `time.time` is left alone and psycopg2, Argon2id, the logger
+    and the session rows keep their real timestamps while a test places attempts wherever it wants
+    them relative to a window edge.
+    """
+
+    def __init__(self, at: float) -> None:
+        self.at = float(at)
+
+    def time(self) -> float:
+        return self.at
+
+    def move_to(self, at: float) -> None:
+        self.at = float(at)
+
+
+#: An epoch second that is an exact multiple of 900 (2 000 000 x 900) and of 3600 and 60 — so it is
+#: a FIXED window's own boundary for every sub-daily limit the app configures, which is the edge the
+#: straddle tests place attempts either side of.
+WINDOW_EDGE = 1_800_000_000.0
+
+
+@pytest.fixture
+def rate_limit_clock(monkeypatch):
+    """The rate limiter's clock, frozen on `WINDOW_EDGE` and movable by the test.
+
+    `app.ratelimit` is patched too WHERE IT HAS A CLOCK OF ITS OWN, which it does not since A-RL2 —
+    the term is what lets this same fixture drive a pre-A-RL2 checkout, which is how the
+    concurrency test was shown red on `bf730ef`.
+    """
+    from fakeredis.commands_mixins import server_mixin
+
+    import app.ratelimit
+
+    clock = RateLimitClock(WINDOW_EDGE)
+    monkeypatch.setattr(server_mixin, "time", clock)
+    if hasattr(app.ratelimit, "time"):  # pragma: no cover - only a pre-A-RL2 checkout has one
+        monkeypatch.setattr(app.ratelimit, "time", clock)
+    return clock
+
+
 @pytest.fixture
 def redis(monkeypatch):
     server = fakeredis.FakeServer()

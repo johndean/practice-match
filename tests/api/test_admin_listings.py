@@ -213,6 +213,181 @@ async def test_a_buyer_and_a_seller_cannot_read_the_queue(client: Any, conn: Any
         assert response.status_code == 403 and response.json()["error"]["code"] == "FORBIDDEN"
 
 
+# --- Task A39: the dates and the badge the Listings tab renders (D-C53, controller rulings 1, 2, 5) -
+
+async def test_the_queue_says_when_each_listing_last_moved_and_who_moved_it(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """Ruling 5. The tab's own sub-lines are "Published <date>", "Paused by seller <date>" and
+    "Unpublished by reviewer <date>", and until this task the payload carried neither date: only
+    `submitted_at`, which every row after the first decision is out of date about.
+
+    `listed_at` is the LISTING's own column (016, re-stamped at the first publish alone), and the
+    status change is the latest `audit_log` row whose `after.status` is the status the row is in
+    NOW — the `_COLUMNS` `decline_reason` subquery's own shape and its own index
+    (`audit_log_target_idx`). `actor_role` is what separates the seller's pause from the
+    reviewer's unpublish; it is the role list `app/auth/audit.py` records, served verbatim."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+
+    async def item() -> dict[str, Any]:
+        body = (await client.get("/api/admin/listings", headers=staff)).json()
+        return next(row for row in body["items"] if row["id"] == listing_id)
+
+    submitted = await item()
+    assert submitted["status"] == "in_review"
+    # The seller's own submit is the audit row that put it here, and the seller's own roles say so.
+    assert submitted["status_changed_by"] == "buyer,seller"
+    assert submitted["status_changed_at"] is not None
+    assert submitted["listed_at"] is not None
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide",
+                              json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                              headers=staff)).status_code == 200
+    published = await item()
+    assert published["status"] == "published"
+    assert published["status_changed_by"] == "staff"
+    with conn.cursor() as cur:
+        cur.execute("SELECT listed_at FROM listing WHERE id=%s", (listing_id,))
+        stamped = cur.fetchone()[0]
+    assert published["listed_at"] == stamped.isoformat()
+
+    # The reviewer's unpublish and the seller's own pause reach the SAME status by different doors,
+    # and `actor_role` is the only thing in the row that tells them apart.
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"},
+                              headers=staff)).status_code == 200
+    assert (await item())["status_changed_by"] == "staff"
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"},
+                              headers=staff)).status_code == 200
+    assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                              headers=signed)).status_code == 200
+    paused = await item()
+    assert paused["status"] == "paused"
+    assert paused["status_changed_by"] == "buyer,seller"
+
+
+async def test_a_listing_no_audit_row_has_ever_named_carries_nulls_rather_than_a_guess(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A draft has never been decided, so no `audit_log` row names `draft` as an `after.status` —
+    absent beats faked (D24), and the tab renders the submission line it already had."""
+    listing_id, _signed = await _draft(client, member)
+    staff = await _staff(client, member)
+    body = (await client.get("/api/admin/listings", headers=staff)).json()
+    row = next(item for item in body["items"] if item["id"] == listing_id)
+    assert row["status"] == "draft"
+    assert row["status_changed_at"] is None and row["status_changed_by"] is None
+    assert row["listed_at"] is not None     # 016's own NOT NULL DEFAULT now()
+
+
+async def test_the_queue_counts_what_the_tab_badges(client: Any, conn: Any, member: Any) -> None:
+    """Ruling 1: the Listings badge is the number of listings awaiting review, and it is SERVED
+    rather than hard-coded — `logic.js` carried the literal "3" (the design's own four rows have
+    three that are undecided), which is a number no database ever produced.
+
+    One grouped scan, the `admin_signups.COUNTS_SQL` pattern, so the badge and the total can never
+    disagree with each other. It counts the WHOLE table, never the page: the badge is what is
+    waiting, not what fits on one screen."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    draft = (await client.post("/api/seller/listings", headers=signed)).json()["id"]
+
+    body = (await client.get("/api/admin/listings", headers=staff)).json()
+    assert body["counts"] == {"in_review": 1, "total": 2}
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide",
+                              json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                              headers=staff)).status_code == 200
+    after = (await client.get("/api/admin/listings?limit=1", headers=staff)).json()
+    assert after["counts"] == {"in_review": 0, "total": 2}, "the badge counts the table, not the page"
+    assert len(after["items"]) == 1
+    assert draft in {row["id"] for row in (await client.get("/api/admin/listings", headers=staff)).json()["items"]}
+
+
+async def test_the_full_table_count_is_paid_once_per_traversal_and_not_once_per_page(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """Fix round 1, review Minor-1. `COUNTS_SQL` is an UNINDEXED `count(*)` over the whole `listing`
+    table, and `admin/listings.ts` walks up to `MAX_PAGES` pages per `list()` — so one Publish, which
+    re-reads the queue (A39.4), used to cost one full scan PER PAGE rather than one per refresh.
+
+    The badge is a fact about the table and the client reads it off the FIRST page (every later page
+    carried the same number), so a continuation request — one carrying a `cursor` — no longer pays
+    for it and no longer answers `counts` at all. What the client does with that is the mirror image:
+    the first page's `counts` is required, exactly as `items` is, and a continuation's absence is
+    fine (`admin/listings.ts`)."""
+    from app.api import admin_listings
+
+    scans: list[str] = []
+    real = admin_listings.queue_counts
+    monkeypatch.setattr(admin_listings, "queue_counts",
+                        lambda c: (scans.append("count"), real(c))[1])
+
+    _listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    # A second row, so there is a second PAGE to ask for at `limit=1`.
+    assert (await client.post("/api/seller/listings", headers=signed)).status_code == 201
+
+    first = (await client.get("/api/admin/listings?limit=1", headers=staff)).json()
+    assert first["counts"]["in_review"] >= 1 and first["next_cursor"] is not None
+    assert scans == ["count"], "the first page pays for the badge"
+
+    page2 = (await client.get(f"/api/admin/listings?limit=1&cursor={first['next_cursor']}", headers=staff)).json()
+    assert len(page2["items"]) == 1, "a continuation page still serves its rows"
+    assert "counts" not in page2, "and never re-counts a table the first page already counted"
+    assert scans == ["count"], "one scan for the whole traversal, not one per page"
+
+
+async def test_the_status_change_asks_the_audit_log_once_per_row_in_the_index_s_own_order(conn: Any) -> None:
+    """Fix round 1, review Minor-2, and the module's first query-plan pin.
+
+    `_STATUS_CHANGE` began as a faithful copy of `_COLUMNS`'s own `decline_reason` precedent: TWO
+    correlated subqueries with the same predicate, one for `at` and one for `actor_role`, so every
+    row cost twice the index probes it needs — and each probe SORTED, because it ordered by
+    `a.id DESC` while `audit_log_target_idx`'s trailing column is `at DESC`.
+
+    Both halves are pinned on the REAL plan of the REAL query, self-calibrating rather than
+    hand-counted: the status-change join must add exactly ONE audit_log access to the plan (it
+    added two), and the lateral's order must be PRESORTED by the index (it was a full sort).
+    `enable_seqscan` is off so the planner's choice is about the INDEX and not about a test table's
+    size.
+
+    Fix round 2, re-review Minor 3: that last sentence used to be false. The `conn` fixture is
+    AUTOCOMMIT, so `SET LOCAL` is outside a transaction block — Postgres answers
+    `WARNING: SET LOCAL can only be used in transaction blocks`, leaves the setting `on`, and
+    psycopg2 files the warning in `conn.notices` where `-W error` can never see it. The plain
+    session-level `SET` below really takes (the connection is to a per-test scratch database that
+    is dropped afterwards, so nothing outlives it), and the assertions read the setting back and
+    the notice log, so a silent no-op cannot come back."""
+    from app.api.admin_listings import _STATUS_CHANGE
+    from app.api.seller_listings import _COLUMNS
+
+    tail = " WHERE TRUE ORDER BY updated_at DESC, id DESC LIMIT 50"
+
+    del conn.notices[:]
+    with conn.cursor() as cur:
+        cur.execute("SET enable_seqscan = off")
+        cur.execute("SHOW enable_seqscan")
+        assert cur.fetchone()[0] == "off", "the planner is still free to choose a sequential scan"
+    assert conn.notices == [], f"the SET did not take: {conn.notices}"
+
+    def plan(sql: str) -> str:
+        with conn.cursor() as cur:
+            cur.execute("EXPLAIN " + sql)
+            return "\n".join(row[0] for row in cur.fetchall())
+
+    probes = "Index Scan using audit_log_target_idx"
+    without = plan(f"SELECT {_COLUMNS} FROM listing{tail}")
+    with_join = plan(f"SELECT {_COLUMNS}, listed_at, sc.at AS status_changed_at,"
+                     f" sc.actor_role AS status_changed_by FROM listing{_STATUS_CHANGE}{tail}")
+
+    assert with_join.count(probes) == without.count(probes) + 1, (
+        "the status change asks the audit log more than once per row:\n" + with_join)
+    assert "Presorted Key: a.at" in with_join, (
+        "audit_log_target_idx no longer supplies the lateral's order — it is sorting instead:\n" + with_join)
+
+
 async def test_publish_needs_state_and_market_on_the_first_publish_and_not_after(
     client: Any, conn: Any, member: Any
 ) -> None:

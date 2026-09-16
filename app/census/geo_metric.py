@@ -223,7 +223,7 @@ def _tract_households(cur: psycopg2.extensions.cursor, act: dict[str, str], cach
     """The ONE scan of `B11001_001E` at the tract, shared by the two layers built from it.
 
     `households` and `pet_households_est` are the same variable at the same geography -- pets is
-    `round(households x 0.57)` and has no source of its own -- and each builder ran this query in
+    `round(households x PET_RATE)` and has no source of its own -- and each builder ran this query in
     full, so a nightly made two passes over ~84,000 tract rows for a deterministic multiple of
     figures it had already read (review round 1, Minor 2). The cache lives for one
     `materialize_geo` call and is created by it, so nothing is held between runs and a changed
@@ -254,7 +254,9 @@ def _pets(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str
 
     MODELLED, and it says so in three places at once (§9): `is_derived` is true, the formula
     version is stamped, and `inputs.pet_incidence_rate` carries the rate the layer catalogue's
-    caveat names. It carries NO margin -- a rounded model output has no published one -- and it
+    caveat names -- the AVMA national incidence, whose whole provenance is `app.census.pet_rate`.
+    The stamp is what lets a row written before a re-citation be told from one written after it,
+    which is why the rate is written ONTO the row rather than looked up when it is read. It carries NO margin -- a rounded model output has no published one -- and it
     inherits the households row's own suppression as `input_suppressed`, which is
     `materialize.py`'s own idiom for the same estimate at the listing point."""
     out: list[_Row] = []

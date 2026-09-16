@@ -3,7 +3,7 @@
   "screens": {
     "mobile-list": "bd56ff94b87a93a102ea093ebacd14132534bf6efc5c2dcafeaa0514223272bb",
     "mobile-detail": "a049964b58762fd4c5b6afa01d2b60ec2d0efcb6d18c29b1d1a81c89f31c9c60",
-    "detail": "c641b766741e97e10eda05bc0378140a7e3c77d964bed275d790ad7bdd75a607",
+    "detail": "9739f027a525b0ad2b5d825ff0ffaf7ef99fd66c5f9069c8676ad0a3de61d8ff",
     "requests": "4d52c71b29eab83d58e23bfc5cdb7fc3d6a9f9eaea8b25f0a22f7207ef7966a8",
     "seller-dash": "1e07f15ee2e98894f000c3dbced0802c37b543be28517c4a35bc1dce62effb00",
     "wizard-step-1": "d583998ca533b3f72516415e58e68e0133b54791132f10e5e76e66d10f078210",
@@ -13,6 +13,6 @@
     "admin-users": "dd6fc739602e6d55399242d7a860207db53f01f6d7c90b5e43525884eb1f036f",
     "admin-listings": "f57aad4da81884e56eee68e47f27fb791d0b90c47719df6a4deb922747e76968",
     "admin-requests": "0f519db4c4fd80125d8e915186257ec4166a86b0a039ed0824c7e2210ccd6fde",
-    "admin-data-sources": "aa91568d7b91dba4b5b45798932b9f89b3356f51b4e4b1d7b7a9b287dee45fb9"
+    "admin-data-sources": "94c767ffd11252701e592ca1208c8b8b85677430eb8a07f1fdc7df40a4e26732"
   }
 }

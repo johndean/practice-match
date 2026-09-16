@@ -8,7 +8,8 @@ before assuming a field exists.
 
 This document is generated from, and kept honest against, the running code: `tests/api/
 test_contract_doc.py` fails if a route below stops matching `app.api.market`/`app.api.
-admin_data_sources`, or if this document stops naming the fixture field names the frontend reads.
+admin_data_sources`/`app.api.admin_settings`, or if this document stops naming the fixture field
+names the frontend reads.
 It does not fail if the *prose* goes stale, so treat the route list and JSON shapes as the source
 of truth and the surrounding sentences as commentary.
 
@@ -24,8 +25,10 @@ of truth and the surrounding sentences as commentary.
 | GET | `/api/listings/{listing_id}/market` | `market.read` |
 | GET | `/api/admin/data-sources` | `data_sources.read` (staff/admin) |
 | POST | `/api/admin/data-sources/{dataset_key}/license` | `licence.decide` (admin, re-authenticated within 10 minutes) |
+| GET | `/api/admin/settings` | `data_sources.read` (staff/admin) |
+| POST | `/api/admin/vintages/{dataset_key}/activate` | `engine.activate` (admin, re-authenticated within 10 minutes) |
 
-**Mounted only while `SITE_MODE=app`.** All eight routes live inside `app/main.py`'s `if
+**Mounted only while `SITE_MODE=app`.** All ten routes live inside `app/main.py`'s `if
 settings.site_mode == "app":` block, the same gate `admin_users_router`/`listings_router` sit
 behind. Production runs `coming_soon` until launch (`CLAUDE.md`), so on production today every one
 of these paths 404s through `not_found_router`, exactly like every other member or admin surface —
@@ -43,9 +46,11 @@ unguarded. `MARKET_DATA_PUBLIC` stays `false` in every environment today (John's
 (3)); `GET /api/config` publishes the flag's current value unconditionally so the frontend's own
 `can('market.read', …)` check can honour the same rule without a second, drifting copy of it.
 
-`/api/admin/*` above uses `data_sources.read` (staff or admin) for both routes, plus
-`licence.decide` (admin only, and in `permissions.REAUTH` — an `api_token` can never satisfy it)
-on `/license` alone.
+`/api/admin/*` above uses `data_sources.read` (staff or admin) for the two reads —
+`/data-sources` and `/settings` — plus one admin-only, re-authenticated permission on each write:
+`licence.decide` on `/license` and `engine.activate` on `/vintages/{dataset_key}/activate`. Both
+are in `permissions.REAUTH`, so an `api_token` can never satisfy either one, whatever role it
+carries (`deps.TokenCannotReauth`).
 
 ## `GET /api/layers`
 
@@ -61,7 +66,13 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
     "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5",
     "shading": { "summary_level": "140", "label": "Census tract" }, "state": "enabled",
-    "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
+    "is_derived": true, "caveat": "Derived estimate, not an observed count: local Census households × national AVMA pet-household incidence rate. The rate is 58.6% of United States households (American Veterinary Medical Association, 2025 Pet Ownership and Demographics Sourcebook, reference period 2025); it is a national incidence and does not establish this area's own pet-ownership rate. Licence: SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED.",
+    "provenance": { "source": "American Veterinary Medical Association", "source_dataset": "Pet Ownership and Demographics Sourcebook",
+      "source_edition": "2025", "reference_period": "2025", "incidence_rate": 0.586, "incidence_rate_display": "58.6%",
+      "rate_geography": "United States", "household_source": "U.S. Census Bureau, American Community Survey 5-Year Estimates",
+      "household_vintage": "2019–2023", "derivation": "local Census households × national AVMA pet-household incidence rate",
+      "status": "ESTIMATED", "methodology_version": "v1", "methodology_note": "…",
+      "licence_status": "SOURCE VERIFIED / LICENCE-REDISTRIBUTION UNRESOLVED" } },
   { "key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior",
     "vintage": "2014–2018 → 2019–2023", "geo_level": "place",
     "shading": { "summary_level": "160", "label": "Place (city/town)" },
@@ -77,7 +88,7 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
     "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
     "state": "enabled", "is_derived": false,
-    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography." },
+    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total." },
   { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
   { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
@@ -135,9 +146,16 @@ not done anywhere on this route.
 
 **`households` and `pets` shade at the tract, and `pets` is modelled.** `households` is
 `B11001_001E`, a published ACS estimate with a published margin, served where the ACS publishes
-it. `pets` is `households × 0.57`, a national placeholder incidence rate: its `/api/layers` entry
-carries `"is_derived": true` and a caveat naming the rate, its `geo_metric` rows carry
-`is_derived` and `formula_version`, and it is never presented as an observed count (spec §9).
+it. `pets` is `households × 0.586`, the AVMA 2025 *Pet Ownership and Demographics Sourcebook*'s
+national share of U.S. households owning at least one pet (`app/census/pet_rate.py`, which holds
+the whole provenance record and is the ONE place the rate is written down). Its `/api/layers`
+entry carries `"is_derived": true`, the caveat above and a `provenance` object; its `geo_metric`
+rows carry `is_derived`, `formula_version` and `inputs.pet_incidence_rate`; and it is never
+presented as an observed count (spec §9). **The rate is national.** Applying it to a local
+household count says what that area would hold if it behaved like the country; it does not
+establish that area's own pet-ownership rate, and the AVMA supplies this product with no tract,
+ZIP, county or metro pet-household count at all — that feed is `dataset_registry.pet_ownership`
+and it is `blocked`.
 
 One GeoJSON `FeatureCollection` with foreign members (RFC 7946 permits them; `L.geoJSON` ignores
 what it does not know):
@@ -286,6 +304,8 @@ screen is a different number every time the member pans.
       "state": "enabled",
       "count": 577, "with_value": 561, "suppressed": 12, "no_data": 4,
       "median": 92150.0, "quantiles": [48200.0, 67400.0, 92150.0, 121300.0, 158900.0],
+      "metro": { "value": 97638.0, "moe": 1163.0, "kind": "published",
+                 "basis": "Census published for the metro" },
       "value_vintage": "2019–2023", "source_dataset": "acs5" }
   ]
 }
@@ -300,6 +320,32 @@ five of its members — and **`median` is that array's own middle element**, rea
 measured a second time, so a card's value can never disagree with the bars drawn beside it. Both
 are `null` when `with_value` is `0`. The extremes are deliberately p10/p90 and not min/max: one
 outlying tract is not a class a summary should draw.
+
+**`metro` is the METRO'S OWN figure, beside the distribution rather than instead of it** (Task
+SNAP-METRO, 2026-09-14). `median` and `quantiles` describe the polygons the map shades and are
+untouched by it; `metro` is `{ "value", "moe", "kind", "basis" }` or `null`, and its vintage is
+the row's own `value_vintage`. Until it existed a client printed `median` — `percentile_cont(0.5)`
+over the metro's valued tracts, 94,801 on CBSA 12420 — where a member reads "the metro's figure",
+while the Census publishes 97,638 ± 1,163 for that same CBSA at the same release. Three arms:
+
+* `kind: "published"` — the Census's own estimate for the metro itself, `acs_measure` at summary
+  level `310` (`income` = `B19013_001E`, `households` = `B11001_001E`), with the margin the
+  Census published beside it. A row with **no** published margin, or one wide enough to fail the
+  same `high_moe` test the polygons are suppressed by, is served as `null`: a present estimate
+  with no margin is unmeasured, not certain.
+* `kind: "derived"` — computed here from a figure the Census did publish for the metro, and
+  carrying **no** `moe`, because neither derivation has one to publish: `pets` is the published
+  metro household count at the documented incidence rate, `growth` the difference of the two
+  published metro populations (`acs5` against `acs5_prior`, the formula `materialize.py` uses for
+  a place). Either is `null` when an input is missing.
+* `null` — `econ` and `competition` are Business Patterns, which publishes nothing at summary
+  level `310`. A **sum** over the metro's counties or ZIP areas is deliberately not substituted:
+  this route's population is the metro's *envelope*, which is the right population for a
+  distribution and the wrong one for a total, and ZIP Code Business Patterns withholds every
+  category under three establishments, so a ZCTA sum would be a floor of unknown depth.
+
+`basis` is a caption phrase and the Browse strip prints it verbatim, so it is drawn from the
+product's own closed caption vocabulary (D-C51) and never composed by a client.
 
 **The three counts partition the polygons**, and `count == with_value + suppressed + no_data`
 always: `count` is every polygon of that layer's `summary_level` whose geometry intersects the
@@ -356,7 +402,7 @@ requests. A client that needs a particular one of the two must select on `cbsa_g
   "communities": [
     { "listing_id": "…", "name": "Cedar Park city", "geo_precision": "rooftop",
       "location": "place_centroid", "lat": 30.55, "lng": -97.80,
-      "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 15732, "econ": 685000, "vets": 7,
+      "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 16174, "econ": 685000, "vets": 7,
       "competition": { "count": 7, "geo_level": "zcta", "zctas": 2, "per_10k_households": 2.54, "level": "High" },
       "suppressed": [] }
   ]
@@ -395,7 +441,7 @@ measurement, not a measurement itself (A-C15 (7)).
     "households":                { "…": "…" },
     "median_hh_income":          { "…": "…", "unit": "usd", "is_derived": true, "approximate": true },
     "population_growth_pct":     { "…": "…", "unit": "pct", "is_derived": true, "geo_level": "place", "inputs": {"acs5": "2019–2023", "acs5_prior": "2014–2018", "geo_level": "place"} },
-    "pet_households_est":        { "…": "…", "is_derived": true, "assumed_rate": 0.57 },
+    "pet_households_est":        { "…": "…", "is_derived": true, "assumed_rate": 0.586 },
     "establishments":            { "value": 7, "unit": "count", "source_dataset": "zbp", "vintage": "2022", "geo_level": "zcta" },
     "vets_per_10k_households":   { "…": "…", "unit": "ratio", "inputs": {"zbp": "2022", "geo_level": "zcta", "zctas": 2, "acs5": "2019–2023"} },
     "revenue_per_establishment": { "…": "…", "unit": "usd", "is_derived": true, "label": "Avg. payroll per practice", "source_dataset": "cbp", "geo_level": "county" },
@@ -511,11 +557,25 @@ POST /api/admin/data-sources/{dataset_key}/license
 → { "dataset_key": "…", "license_status": "…" }
 ```
 
-Only `status` is required — every other field `COALESCE`s onto what is already recorded, so
-blocking a source does not mean retyping its licence name and URL. `url`, if given, must be
-`https://` (`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what
-comes back, and clear text lets anything on the path rewrite the page that comparison relies on).
+Only `status` is required — `name` and `url` `COALESCE` onto what is already recorded, so blocking
+a source does not mean retyping its licence name and URL. `url`, if given, must be `https://`
+(`422 BAD_FIELD` otherwise — the drift sweep re-fetches it quarterly and hashes what comes back,
+and clear text lets anything on the path rewrite the page that comparison relies on).
 Unknown `dataset_key` is `404 NOT_FOUND`.
+
+`notes` is the operator's RATIONALE and is **not** written to `dataset_registry.notes` (A38 fix
+round 2, 2026-09-14): it reaches `audit_log.reason` and stops there — the licence ledger row this
+decision also writes records the URL and the fact of the decision, never the words (migration 020
+gives `license_audit_log` no note column), so `audit_log.reason` is the only place the rationale is.
+That column is rendered verbatim by the admin Data Sources tab inside the approved design's own
+row, and its contents are owned by migrations, which are held to a measured character cap
+(`app.census.registry.SOURCE_SUBLINE_CAP`). **`notes` is the OPERATOR's column and the admin
+tab's alone**: the member-facing `blocked_reason` above is a different column of the same table
+(migration 094), written for a member and never for an operator. They shared one column until then,
+which meant a geography note could be served as the reason a layer is blocked. For the same reason `name`, which IS rendered, is
+refused with `422 BAD_FIELD` above that cap — the message names the number — while its own field
+bound (`MAX_NAME`, 200) still applies; `notes` keeps its 4,000, because a rationale nobody renders
+is not bounded by a layout.
 
 **Two ledgers, and they record different things.** `audit_log` (`app.auth.audit`) records WHO
 changed the gate, from what to what, for the standing "who did this" trail every admin action
@@ -539,6 +599,82 @@ leaves the flag standing; only a decision made here clears it. Do not build a UI
 load-bearing (spec §12), and the point of holding it in the database is that a terms change is one
 `UPDATE`, not a redeploy.
 
+## `GET /api/admin/settings` and `POST /api/admin/vintages/{dataset_key}/activate`
+
+The Admin **Settings** tab's one read, and the one write it draws a button for. The sample below is
+the real answer, with the vintage list cut to two of the seventeen registered datasets:
+
+```json
+{
+  "market_data_public": {
+    "value": false,
+    "environment": "qa",
+    "set_in": "Railway environment variable MARKET_DATA_PUBLIC",
+    "writable": false
+  },
+  "vintages": [
+    { "dataset_key": "acs5", "display_name": "ACS 5-Year Detailed Tables",
+      "active_vintage": "2018\u20132022", "activated_at": "2026-09-14T15:55:49.108632+00:00",
+      "activated_by": "seed@example.org", "activation_note": null,
+      "loaded_vintage": "2019\u20132023", "last_load_finished_at": "2026-09-14T15:55:49.104415+00:00",
+      "activatable": true },
+    { "dataset_key": "cbp", "display_name": "County Business Patterns",
+      "active_vintage": null, "activated_at": null, "activated_by": null, "activation_note": null,
+      "loaded_vintage": null, "last_load_finished_at": null, "activatable": false }
+  ],
+  "signups": { "total": 2, "launch_mailed": 1, "not_mailed": 1,
+               "last_mailed_at": "2026-09-14T15:55:49.123342+00:00", "sendable": true }
+}
+```
+
+**`market_data_public` is read-only and says so** (`"writable": false`). It is a Railway
+environment variable, per service per environment; no route in this application has ever written
+it, and `scripts/verify-deploy.sh` refuses a production deploy where it is true. `set_in` is the
+constant `app.api.admin_settings.MARKET_FLAG_SOURCE`, so a console can state where the value lives
+rather than offering a control that cannot complete. `GET /api/config` publishes the same flag to
+anonymous callers; this row adds the environment it is set in and the fact that it is not writable
+here.
+
+**One row per registered dataset, not one "Census data vintage" row** (controller decision D11):
+each dataset carries its own active vintage, its own last load and its own activation. The list is
+ordered by `dataset_key` and carries every row `dataset_registry` holds, so a dataset nobody has
+loaded appears with nulls rather than being omitted. `activatable` is `true` exactly when the
+newest SUCCEEDED `ingest_run` names a vintage that is not the one already active — a hint for the
+screen and never the gate: the write below re-asks `app.census.vintage.qa` on the way in, so a
+stale tab cannot force an activation this flag would have hidden.
+
+**`signups` is the launch-mail row's counts, not its send.** `sendable` is `SITE_MODE=app`; the
+send itself is `POST /api/admin/signups/launch-mail` (`signups.notify`, admin-only,
+re-authenticated) and is not duplicated here.
+
+```
+POST /api/admin/vintages/{dataset_key}/activate
+{ "vintage": "2019–2023", "force"?: boolean, "note"?: string }
+→ { "dataset_key": "acs5", "vintage": "2019–2023", "prior_vintage": "2018–2022",
+    "rows": 10, "ratio": 1.0, "note": null }
+```
+
+This is `scripts/census_load.py activate` reached from a screen: the route delegates to
+`app.census.vintage.activate`, the CLI's own function, so there is ONE activation path and not
+two, with one QA gate rather than a second copy of it. `active_vintage` is the table the API reads
+— never `ingest_run` — so nothing a load wrote goes live until this route (or the CLI) flips it.
+
+Refusals carry the same `{"error": {"code", "message"}}` envelope as the rest of this document:
+
+| Code | Status | When |
+|---|---|---|
+| `BAD_DATASET` | 422 | `dataset_key` is not one of `app.census.vintage.TABLE_FOR`'s keys. Refused before anything is read. |
+| `NOTE_REQUIRED` | 422 | `force` is true and `note` is empty. A row-count override with no recorded why is exactly what the ratio guard exists to prevent. |
+| `ACTIVATION_REFUSED` | 409 | `app.census.vintage.activate` said no — the vintage's latest `ingest_run` did not succeed, or the row-count ratio against the active vintage is outside `[0.8, 1.25]` and `force` was not set. The message is that function's own. |
+| `REAUTH_REQUIRED` | 403 | An admin whose password was not confirmed in the last ten minutes. |
+| `REAUTH_TOKEN` | 403 | An `api_token`. It has no password to confirm, so this route is permanently out of its reach whatever role it carries. |
+
+`engine.activate` is in `permissions.AUDITED`: the handler writes one `audit_log` row naming the
+dataset, the vintage it replaced and the one it installed, with `force` and the operator's own
+`note`. A legacy operator bearer (`API_SECRET_KEY`) names no `account` row, so `active_vintage.
+activated_by` records the literal `"operator"` and the audit row's `actor_role` reads
+`legacy:operator`.
+
 ## Fixture → field mapping (`logic.js` → this API)
 
 The seven field names the design's own fixtures (`communities()`, `VETS`, `ECON_K`) already use,
@@ -551,7 +687,7 @@ only a new source for the same seven:
 | `hh` | `communities[].hh` | ACS households. |
 | `income` | `communities[].income` | ACS median household income. |
 | `growth` | `communities[].growth` | Derived: two ACS vintages compared. Vintage statement: `ACS 2014–2018 → 2019–2023`. Gated on `acs5_prior` (see the licence-gates table above), not merely on the `acs5` stamp the row carries. |
-| `pets` | `communities[].pets` | Derived: households × 0.57, a national placeholder rate — not a licensed pet-ownership figure (that dataset is `blocked`; see `CLAUDE.md`). |
+| `pets` | `communities[].pets` | Derived: households × 0.586, the AVMA 2025 Sourcebook's national incidence rate (`app/census/pet_rate.py`). Not an observed count and not a licensed per-geography pet-ownership figure — that feed is `pet_ownership` and stays `blocked`; see `CLAUDE.md`. |
 | `econ` | `communities[].econ` | Payroll per establishment in thousands of dollars (`CBP payroll ÷ establishments`), **county** level. The database column is historically named `revenue_per_establishment`, but the name is wrong; the figure is payroll, not revenue. |
 | `vets` | `communities[].vets` | The `establishments` figure: ZBP ZIP-code count aggregated to the community, or the labelled county-CBP fallback when ZBP has nothing usable. |
 
@@ -595,9 +731,10 @@ the data does not support.
 | `community_label` | `null` | The area figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
 | `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
-| `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
+| `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or the bare basis word `"approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare basis word `"approximate"` — ONE spelling on both arms, from `app.census.serve.APPROXIMATE_BASIS` (A34 fix round 1, D-C51), and the client puts its OWN fallback in front of it so the caption still names an area: `<fallback> · approximate`, the shape `<label> · approximate` has. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
 | `income_vs_us_pct` | e.g. `19.4`, `-13.7` | How far the served median sits above or below the US median household income, as a percentage, to one decimal. It is the pipeline's own `income_index_vs_us` (`(local − us) / us × 100`, spec §8), read from the SAME band the `income` figure came from and measured against `acs_measure` summary level 010's own `B19013_001E` at the listing's own ACS vintage — not a client-side ratio against a constant. `null` when the index is absent or suppressed, and `null` whenever `income` itself is `null`: the index qualifies the figure above it, and a bare percentage under no median is a ratio of a number the buyer cannot see. |
 | `income_approximate` | `true`, `false`, `null` | Whether the served median is an approximation rather than a published Census figure — the SAME `is_derived` guard `income_note` is composed from, served as the fact rather than only as the sentence, because the two surfaces that state it compose different copy: the detail card takes `income_note` whole (one sub-line, with the area named), the docked panel joins the word to `income_vs_us_pct` in its own. `null` — not `false` — where there is no median at all, because `false` asserts that a figure nobody has was published. |
+| `pet_rate` | e.g. `0.586`, `null` | The pet-ownership incidence rate this listing's own estimated-pet-household row was computed with — `market_metric.inputs.pet_incidence_rate`, the stamp the pipeline writes, read from the SAME band the `hh` figure came from. It is the ONE production rate (`app/census/pet_rate.py` holds its whole provenance: AVMA, 2025 *Pet Ownership and Demographics Sourcebook*, 58.6 % of United States households, reference period 2025) and it is served so that a client never has to keep a constant of its own. Read off the ROW and not off the module: a listing materialised before a re-citation reports the rate behind ITS figure. `null` where the listing has no pet row or the dataset behind it is not licence-cleared — and a client with no rate must show no estimated-pet-household figure, never one computed from a rate nobody recorded. |
 
 **When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
 is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is

@@ -65,7 +65,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
   // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
   // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
-  // the filter moved 28 of the 55 approved states and seven of the thirteen frozen hashes. The
+  // the filter moved 28 of the 56 approved states and seven of the thirteen frozen hashes. The
   // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
   // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
   // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
@@ -106,9 +106,36 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(typeof mob.closeSheet).toBe('function');
     expect(mob.sheetOpen).toBe(false);
     expect(typeof mob.layerLabel).toBe('string');
-    expect(Array.isArray(mob.basemaps)).toBe(true);
+    // `mob.basemaps` was C13's own row here and A49 removed it with the sheet's Basemap
+    // section (the imagery licence is unresolved); the A49 case below is what pins its absence.
     expect(mob).not.toHaveProperty('hasPeek');
     expect(mob).not.toHaveProperty('peek');
+  });
+
+  // A49 (controller ruling, 2026-09-15 — Task SATELLITE-GATE). The Satellite basemap control
+  // ships DISABLED until the imagery licence is signed. The approved Census & Market Data Source
+  // Specification says it twice: §2, "Rows marked Unresolved or Blocked must not ship", and §15,
+  // "Until answered, the Satellite toggle ships disabled" — and `dataset_registry`'s `imagery`
+  // row is `unresolved` today.
+  //
+  // The control was removed from the DESIGN rather than gated on a role, so the reference and the
+  // app lose it together (A6's launch-removal mechanism). `layer.satellite` is deliberately NOT
+  // the gate and is untouched in the matrix: it holds `buyer|seller|staff|admin`, exactly the set
+  // `page.browse` holds, so gating on it would have hidden the control from NOBODY — it is the
+  // POST-clearance role gate, waiting for the second conjunct the identity spec gives it
+  // ("satellite toggle (∧ cleared imagery/engine row)").
+  //
+  // What survives is `md.basemap`, because the map still has to be told which basemap to draw.
+  // Both WRITERS of `mdBasemap` are gone — `md.setBasemap` (the desktop mount's `on-basemap`)
+  // and `mob.basemaps` (the phone sheet's Basemap section) — so the state key has no writer left
+  // and `md.basemap` can only ever be "map". That is what makes an imagery tile unrequestable
+  // rather than merely unclicked, and it is pinned from the source side in
+  // `tests/census/test_design_satellite_gate.py`.
+  it('the design offers no way to reach the satellite basemap while the imagery licence is unresolved (A49)', () => {
+    const v = c.renderVals();
+    expect(v.md, 'the desktop mount can still hand MarketMapView an onBasemap').not.toHaveProperty('setBasemap');
+    expect(v.mob, 'the phone sheet still renders its Basemap section').not.toHaveProperty('basemaps');
+    expect(v.md.basemap, 'the map is drawn on something other than the gray canvas').toBe('map');
   });
 
   // A2 (spec D17, John: "resolve this"). Root cause: the mobile results card's `open` set
@@ -150,9 +177,14 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(md).not.toHaveProperty('fillRows');
     expect(md).not.toHaveProperty('overlayRows');
     // …and nothing the family did not name went with them: the compact control V3 made
-    // canonical, and the legend the design still draws, are untouched.
+    // canonical is untouched.
     expect(md).toHaveProperty('layerChoices');
-    expect(md).toHaveProperty('legend');
+    // A34.11 (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13) then took `md.legend` under this
+    // same dead-code rule: it was a SECOND and different legend — `VALUE_LAYERS.buckets` class
+    // labels rather than `AREA_LAYERS`' and no No-data row — computed beside the `active` block
+    // the card actually renders from, and no template on either target read it.
+    expect(md, 'A34.11 removed the unread second legend; the card renders from `active`').not.toHaveProperty('legend');
+    expect(md).toHaveProperty('active');
     // A28.4: the two drive-band flags leave the defaults and the four LIVE members stay, with
     // their values. Read through `symbols` — `SYMBOL_KEYS.filter((k) => layers[k] && ...)` — which
     // is what actually consumes them, so all three of `pets: false`, `households: false` and
@@ -3501,8 +3533,18 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
       expect(typeof comm[k], `communities().${k} for a listing with figures`).toBe('number');
     }
-    // The design's own arithmetic, unchanged: pets is 57 % of households, econ is thousands.
-    expect(comm.pets).toBe(Math.round(comm.hh * 0.57));
+    // The design's own arithmetic: pets is `households x the rate`, econ is thousands. A50 (Task
+    // PET-RATE-PROVENANCE, 2026-09-15) moved the rate to the AVMA 2025 Sourcebook's 58.6 % and
+    // took the literal out of this case: the expected value is read from the design's OWN
+    // declaration — `communities()`'s demoted `petRateFixture`, which answers on the reference
+    // path where there is no adapter and no served rate — so a re-citation moves this case with
+    // the design rather than leaving a number nobody can trace, which is the defect A50 removes.
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, 'communities() no longer declares `const petRateFixture = …;` on one line').toBeTruthy();
+    expect(comm.pets).toBe(Math.round(comm.hh * Number(declared![1])));
+    // …and the demoted constant is NOT the retired 0.57: John's ruling of 2026-09-15 is that the
+    // historical rate is kept as provenance and never as an active multiplier, on any path.
+    expect(Number(declared![1])).toBe(0.586);
   });
 
   // ---- F-2/F-3/F-8, the panel's Insights tab -----------------------------------------------
@@ -3512,7 +3554,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     without([p], () => {
       expect(panelFor(p).overviewTiles).toEqual([
         { v: undefined, k: 'Population', sub: undefined },
-        { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+        { v: undefined, k: 'Households', sub: 'Total \u00b7 ACS 5-year' },
         { v: undefined, k: 'Median Income', sub: undefined },
         { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
       ]);
@@ -3613,8 +3655,11 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         ...panel.oppTiles.map((t: any) => t.label),
         panel.compEstab, panel.compPer10k, panel.compLevel, panel.score, panel.scoreLabel
       ].filter((x: unknown) => x !== undefined && x !== '');
-      // Two static sub-lines survive: they describe the SOURCE, not a figure.
-      expect(interpolated).toEqual(['ACS 5-year', 'derived estimate']);
+      // Two static sub-lines survive: they describe the STATISTIC and the SOURCE, not a figure.
+      // A34.5 (ruling D-C51) gave the Households tile its own statistic word: "ACS 5-year" named
+      // neither statistic nor geography and was true of all four "Households" figures Browse can
+      // show at once (audit R32, collision C3).
+      expect(interpolated).toEqual(['Total \u00b7 ACS 5-year', 'derived estimate']);
     });
   });
 
@@ -3674,7 +3719,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
       // The VALUE is the ring's population and is untouched: D-C48 labels the sub-line, it
       // changes no figure. And the three tiles the heading sub-line DOES describe keep theirs.
       expect(panelFor(p).overviewTiles[0].v).toBe(value);
-      expect(panelFor(p).overviewTiles[1].sub).toBe('ACS 5-year');
+      expect(panelFor(p).overviewTiles[1].sub).toBe('Total \u00b7 ACS 5-year');
       expect(panelFor(p).overviewTiles[3].sub).toBe('derived estimate');
     } finally { delete (p as any).growthScope; }
   });
@@ -3697,14 +3742,16 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const before = c.detail();
     expect(before.demo[0].sub).toBe('Community, 2023');
     expect(before.demo[3].sub).toBe('In the community');
-    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
+    // A34.10 (ruling D-C51, audit R47/collision C11): the paragraph claimed the ring for all
+    // four figures while the Growth tile beside it names a city. It names the exception now.
+    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself. Population growth is measured for the city or county named on its own tile.');
 
     (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
       const after = c.detail();
       expect(after.demo[0].sub).toBe('Within about 5 miles of the practice');
       expect(after.demo[3].sub).toBe('Within about 5 miles of the practice');
-      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself.');
+      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself. Population growth is measured for the city or county named on its own tile.');
       // The Census attribution itself is legally load-bearing and is not part of this sentence.
       expect(after.demoScope).not.toContain('Census');
     } finally { delete (p as any).communityLabel; }
@@ -3830,7 +3877,10 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     const md = c.renderVals().md;
     expect(md.stripMode).toBe(`AREA · ${AUSTIN} metro`);
     expect(md.hasStripModeSub).toBe(true);
-    expect(md.stripModeSub).toBe('Census areas across the metro, as the map shades them');
+    // A31.14e (SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the AREA
+    // headline is the Census's own PUBLISHED metro figure wherever the Census publishes one, so
+    // the Census areas describe the BARS and the sub-line names both halves.
+    expect(md.stripModeSub).toBe('The metro\u2019s own figures, with the Census areas the map shades beneath them');
     // Every card names the MAP's geography, which is what it now measures — the interim
     // per-listing basis (A24.53's `stripBasis`) is gone with the figures it described.
     const income = md.stripCards.filter((x: { title: string }) => x.title === 'Median household income')[0];
@@ -3847,10 +3897,13 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: null });
     const growth = c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
     expect(growth.src).toBe('U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
-    // …the LEGEND takes the same composition, which is where the vaguer wording also stood.
+    // …the LEGEND takes the DATASET, and its own `geoLine` carries the geography beside it:
+    // A34.4 (ruling D-C51, audit R7-R12) stopped the card printing one fact twice, which is the
+    // rule A24.44-A24.57 established and this one surface never followed.
     c.setState({ mdValue: 'growth' });
     expect(c.renderVals().md.active.sourceLine)
-      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023 \u00b7 Place (city/town)');
+      .toBe('Source: U.S. Census ACS population estimates, 2015\u20132023');
+    expect(c.renderVals().md.active.geoLine).toBe('Place (city/town)');
     // …and LOCATION mode carries the dataset alone, as the other five do (A31.12).
     c.setState({ mdValue: 'income', mdSel: austin()[0].id });
     expect(c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0].src)
@@ -4331,7 +4384,7 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     const panel = c.marketPanel(sel, null, [], AUSTIN);
     expect(panel.overviewTiles).toEqual([
       { v: undefined, k: 'Population', sub: undefined },
-      { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+      { v: undefined, k: 'Households', sub: 'Total \u00b7 ACS 5-year' },
       { v: undefined, k: 'Median Income', sub: undefined },
       { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
     ]);
@@ -5235,10 +5288,11 @@ describe('A24 — real boundary polygons', () => {
     expect(bare.src).toBe('U.S. Census ACS 5-year estimates (2023)');
     expect(bare.valueNote).toBe('community level');
 
-    // The LEGEND still names the map's own geography — that is what it describes, and it has not
-    // moved: one string per fact, composed for the surface that prints it.
+    // The LEGEND names the map's own geography — on its own `geoLine`, ONCE. A34.4 (ruling
+    // D-C51) took it out of the source sentence beside it: the card printed one fact twice.
     c.state.mdValue = 'households';
-    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023)');
+    expect(c.marketVals(P).active.geoLine).toBe('Census tract');
   });
 
   // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
@@ -5343,7 +5397,11 @@ describe('A24 — real boundary polygons', () => {
     expect(tip).toContain('authoritative geography');
     // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
     const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
-    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    // A50.4: the sentence names the figure's two sources rather than a bare rate — the Census
+    // supplies the households and the AVMA the incidence, and a caption naming only one of them
+    // is what John's §5 forbids. "Not an observed count." is carried forward byte for byte.
+    expect(pets).toContain('Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count.');
+    expect(pets, 'the retired rate is never printed again').not.toContain('0.57');
     expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
   });
 
@@ -6049,10 +6107,15 @@ describe('A33.2 — the margin caveat counts the bands', () => {
 describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
   const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
   const ROWS = [['a listing row'], ['another']];
+  // A39 (D-C53): `list()` answers a PAGE — the rows the table renders and the number its tab
+  // badges — because both come from one request and neither may ever be shown beside the other's
+  // answer. `onDecision` is the seam a decision re-reads the queue through (A39.4).
+  const PAGE = { rows: ROWS, counts: { in_review: 2 } };
   const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
-  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(ROWS)) => {
+  const adminListings = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE)) => {
     const calls: string[] = [];
-    return { calls, list: () => { calls.push('list()'); return answer(); } };
+    const adapter: any = { calls, list: () => { calls.push('list()'); return answer(); }, onDecision: (fn: () => unknown) => { adapter.decided = fn; } };
+    return adapter;
   };
   const auth = (me: unknown) => ({ signIn: () => Promise.resolve(me), signOut: () => Promise.resolve({ status: 'signed_out' }) });
 
@@ -6146,6 +6209,93 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
   // was true only for an account that may open the screen: the refusal arm returned `undefined`, so
   // `await` on the sign-in of a buyer resolved to it and any `.then` on the loader itself threw.
   // Both arms settle now.
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Important 3. A36 wired the Users tab and gained NONE of the equivalents
+  // this block already has for `adminListings` — nothing at the logic level pinned A36.1's rows
+  // ternary, A36.3's badge ternary, or the reload callback A36.2 hands the adapter. `src/logic.js`
+  // is excluded from the coverage gate (`vite.config.ts`), so the 100 % run could not force them.
+  // One case per seam, in the suite that owns the file.
+  // -----------------------------------------------------------------------------------------
+  const USER_ROWS = [['an account row'], ['another']];
+  const adminUsers = (answer: () => Promise<unknown> = () => Promise.resolve({ rows: USER_ROWS, counts: { open: 7, total: 40 } })) => {
+    const calls: string[] = [];
+    const reloads: (() => void)[] = [];
+    return { calls, reloads, list: (reload: () => void) => { calls.push('list()'); reloads.push(reload); return answer(); } };
+  };
+  const usersTab = (c2: any) => {
+    c2.setState({ adminTab: 'users' });
+    const vals = c2.adminVals();
+    return { rows: vals.rows.map((r: any) => r.cells), tab: vals.tabs[0] };
+  };
+
+  it('A36.1: with an adapter that answered, the Users tab renders THOSE accounts and not the design\'s four', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(adapter.calls).toEqual(['list()']);
+    expect(c2.state.adminUserRows).toEqual(USER_ROWS);
+    expect(usersTab(c2).rows, 'the design\'s own Priya/Marcus/Cho/Mendes must not reach a reviewer').toEqual(USER_ROWS);
+  });
+
+  it('A36.1: a refusal leaves the Users tab EMPTY rather than back on the design\'s fixture rows', async () => {
+    const adapter = adminUsers(() => Promise.reject(new Error('403')));
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(c2.state.adminUserRows).toEqual([]);
+    expect(c2.state.adminUserCounts, 'and the badge claims nothing either').toBeNull();
+    const { rows, tab } = usersTab(c2);
+    expect(rows).toEqual([]);
+    // A36.4/A36.5: no count, no pill — an empty count painted an empty blue lozenge.
+    expect(tab).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A36.1/A36.3: with NO adapter the design\'s own four rows and its literal badge stand', () => {
+    const c2: any = new Component({ me: { ...STAFF }, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    const { rows, tab } = usersTab(c2);
+    expect(c2.state.adminUserRows).toBeUndefined();
+    expect(rows).toHaveLength(4);
+    // The design's literal "3" IS its own open queue — two Pending plus one Needs review.
+    expect(tab).toMatchObject({ count: '3', hasCount: true });
+  });
+
+  it('A36.3: the badge is the SERVED open count, whatever the design\'s literal says', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+    expect(usersTab(c2).tab).toMatchObject({ count: '7', hasCount: true });
+
+    // And a server that answered no count at all unmounts the pill rather than printing a zero:
+    // "nobody said" and "none are waiting" are different sentences (A36.4).
+    const quiet: any = new Component({ me: { ...STAFF }, adminUsers: adminUsers(() => Promise.resolve({ rows: [], counts: null })), perms: perms(['page.admin']) });
+    await quiet.loadAdmin();
+    expect(usersTab(quiet).tab).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A36.2: the adapter is handed a reload that re-enters loadAdmin, which is the seam a decision uses', async () => {
+    const adapter = adminUsers();
+    const c2: any = new Component({ me: { ...STAFF }, adminUsers: adapter, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+    expect(adapter.reloads).toHaveLength(1);
+
+    // What a decision does when it is done: call it. The queue is read again.
+    adapter.reloads[0]();
+    await Promise.resolve();
+    expect(adapter.calls, 'a decision must leave the reviewer looking at the queue they changed').toEqual(['list()', 'list()']);
+  });
+
+  it('A36.2: the Users load carries its own rejection arm, so one tab failing does not empty the other', async () => {
+    const listings = adminListings();
+    const users = adminUsers(() => Promise.reject(new Error('500')));
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: listings, adminUsers: users, perms: perms(['page.admin']) });
+    await c2.loadAdmin();
+
+    expect(c2.state.adminUserRows).toEqual([]);
+    expect(c2.state.adminListingRows, 'the Listings tab answered, and keeps its rows').toEqual(ROWS);
+  });
+
   it('A40.3 always answers a settled promise, for every account and every host', async () => {
     const allowed: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
     const refused: any = new Component({ adminListings: adminListings(), perms: perms(['page.browse']) });
@@ -6155,5 +6305,727 @@ describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A
       expect(typeof answer?.then, `${name}: loadAdmin must answer a thenable`).toBe('function');
       await expect(answer).resolves.toBeInstanceOf(Array);
     }
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A39 (Task A39, D-C53, 2026-09-13): the badge is the database's, and a decision refreshes the
+  // table it was taken on. Before this the tab read "Listings 3" on every database in the world —
+  // `logic.js`'s own string literal, which is the number the design's four fixture rows happen to
+  // have — and a Publish left the In-review pill on screen until the reviewer reloaded the page.
+  // ---------------------------------------------------------------------------------------
+  const tabCount = (c2: any) => c2.adminVals().tabs.find((t: any) => t.label === 'Listings');
+
+  it('A39.1/A39.2: the Listings badge is the count the queue served, not the design\'s literal', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 2 });
+    expect(tabCount(c2)).toMatchObject({ count: '2', hasCount: true });
+  });
+
+  it('A39.3a/A39.3b: no count, no pill — an empty blue lozenge is not a number', () => {
+    // Between arrival and the first answer there is no count, and the design paints the badge
+    // unconditionally; `hasCount` is what unmounts it (`sc-if`), in `cell()`'s own `!!` idiom.
+    const c2: any = new Component({ adminListings: adminListings(), perms: perms(['page.admin']) });
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.2: a refusal clears the badge with the rows — a count over an empty table is a lie', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(() => Promise.reject(new Error('403'))), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(c2.state.adminListingRows).toEqual([]);
+    expect(c2.state.adminListingCounts).toBeNull();
+    expect(tabCount(c2)).toMatchObject({ count: '', hasCount: false });
+  });
+
+  it('A39.1: with no adapter the design\'s own literal stands — the reference and the preview', () => {
+    const c2: any = new Component({});
+    expect(tabCount(c2)).toMatchObject({ count: '3', hasCount: true });
+    // ...and the other three tabs are untouched by this family, on every host.
+    expect(c2.adminVals().tabs.map((t: any) => [t.label, t.count]))
+      .toEqual([['Users', '3'], ['Listings', '3'], ['Requests', '2'], ['Data Sources', '2']]);
+  });
+
+  it('A39.4: a decision the API accepted re-reads the queue through loadAdmin, with no reload', async () => {
+    const adapter = adminListings();
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(adapter.calls).toEqual(['list()']);
+
+    // What `admin/listings.ts` calls after a 2xx — the adapter never writes state itself.
+    await adapter.decided();
+    expect(adapter.calls, 'the decision re-lists through the ONE loader').toEqual(['list()', 'list()']);
+  });
+
+  it('A39.4 arms nothing for an adapter that predates it, and the guard is the METHOD', () => {
+    const old: any = { list: () => Promise.resolve(PAGE) };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: old, perms: perms(['page.admin']) });
+    expect(() => c2.componentDidMount()).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Important-1 (controller ruling, 2026-09-14): EACH TAB OWNS ITS OWN STATE KEY.
+  // A39 first wrote `adminCounts`, described as "one object the other three tabs put their own
+  // badge in beside this one" — a convention `setState` cannot honour (it merges TOP-LEVEL keys,
+  // so two `loads.push` arms writing one object in the same `Promise.all` clobber each other, last
+  // writer wins, and a badge blanks at random) and one no sibling follows: `feat/admin-users`
+  // already writes `adminUserCounts.open` and `feat/admin-data-sources` a scalar `adminDataCount`.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.1/A39.2: the Listings count lives under its OWN key, so a sibling tab cannot clobber it', async () => {
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adminListings(), perms: perms(['page.admin']) });
+    c2.componentDidMount();
+    await Promise.resolve();
+    expect(c2.state.adminListingCounts, 'the key names the tab it belongs to').toEqual({ in_review: 2 });
+    expect(c2.state.adminCounts, 'and the shared object the comment described is gone').toBeUndefined();
+
+    // FIX ROUND 2, Minor 2: this used to write `adminUserCounts` and assert the listings count
+    // survived — which NO `setState` implementation could break, so it held under the retracted
+    // shared-object design too and pinned nothing. The write below is the HAZARD itself: a sibling
+    // loader putting its own badge in the one shared `adminCounts` object the first draft
+    // described, in the same `Promise.all`, with `setState`'s top-level merge replacing it whole.
+    // With each tab on its own key the Listings badge cannot see it; with one shared object it
+    // read `String(undefined)`.
+    c2.setState({ adminCounts: { open: 4, total: 9 } });
+    expect(c2.state.adminListingCounts, 'the sibling wrote the shared key and this one survived').toEqual({ in_review: 2 });
+    expect(tabCount(c2), 'and the badge still reads the count its own tab loaded').toMatchObject({ count: '2', hasCount: true });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Fix round 1, Minor-3: two reloads in flight, and the LATER one is the one that counts.
+  // A39.4 re-reads on every decision, so a reviewer who presses Publish on two rows inside one
+  // round trip has two `loadAdmin` calls outstanding; whichever ANSWER arrives last used to win,
+  // and the network does not promise that is the later question. A24.21's own idiom: read a token
+  // once when the load starts, re-check it on arrival, and let a superseded answer go.
+  // ---------------------------------------------------------------------------------------
+
+  it('A39.5: a superseded load is discarded — the last question asked is the one answered', async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminListingRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], counts: { in_review: 1 } });
+    await older;
+    expect(c2.state.adminListingRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
+  });
+
+  it('A39.5: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter: any = {
+      list: () => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], counts: { in_review: 9 } })),
+      onDecision: () => {}
+    };
+    const c2: any = new Component({ me: { ...STAFF }, adminListings: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminListingRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminListingCounts).toEqual({ in_review: 9 });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A38.2's arm of the SAME function, given the same token at the merge of `origin/main`
+  // (2026-09-15). A39.5 put a request token on the Listings arm; the Data Sources arm was
+  // written on `feat/admin-data-sources` before A39 existed and had none — so after the merge
+  // one function held two loaders, one of which let a superseded answer go and one of which
+  // painted it, with the token already declared one line above the arm that ignored it. Two
+  // `loadAdmin` calls in flight is the ordinary case here and not an exotic one:
+  // `componentDidMount` makes the first (A40.4) and the header nav's own door makes another
+  // (A40.6), with A39.4's `onDecision` on top of both.
+  // ---------------------------------------------------------------------------------------
+  const PAGE_DATA = { rows: [['a registry row']], count: 2 };
+  const adminDataSources = (answer: () => Promise<unknown> = () => Promise.resolve(PAGE_DATA)) => ({ list: answer });
+
+  it("A38.2: the Data Sources arm discards a superseded ANSWER, on A39.5's own token", async () => {
+    let settleFirst: (page: unknown) => void = () => {};
+    const first = new Promise((resolve) => { settleFirst = resolve; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();      // in flight, unresolved
+    await c2.loadAdmin();              // asked later, answered first
+    expect(c2.state.adminDataRows).toEqual([['second']]);
+
+    settleFirst({ rows: [['first']], count: 1 });
+    await older;
+    expect(c2.state.adminDataRows, 'the stale answer never lands').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
+  it('A38.2: and a superseded REFUSAL cannot empty the table the later load filled', async () => {
+    let rejectFirst: (why: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    let call = 0;
+    const adapter = adminDataSources(() => (call++ === 0 ? first : Promise.resolve({ rows: [['second']], count: 9 })));
+    const c2: any = new Component({ me: { ...STAFF }, adminDataSources: adapter, perms: perms(['page.admin']) });
+    const older = c2.loadAdmin();
+    await c2.loadAdmin();
+    rejectFirst(new Error('403'));
+    await older;
+    expect(c2.state.adminDataRows, 'the rejection arm is token-checked too').toEqual([['second']]);
+    expect(c2.state.adminDataCount).toBe(9);
+  });
+
+});
+
+// -------------------------------------------------------------------------------------------
+// Task ONE-VOCABULARY — GATE 2 of ruling D-C51 (John, 2026-09-13): "WE MUST COMMUNICATE THE
+// EXACT DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING
+// DIFFERENT THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY
+// ARE SAME." Family A34; the specification is `one-vocabulary-audit.md` — 47 figures, 11
+// collisions, §3.1 the closed word list and §3.2 the per-row proposals.
+//
+// THE GRAMMAR (§3.1, ratified as the brief's ruling 1): the TITLE carries the statistic, the
+// caption is `<geography> · <basis>`, and a basis appears only where the figure is not the
+// Census's own published estimate for that exact area. The geography words are a CLOSED list.
+//
+// THE TWO ASSERTIONS. Closure — no caption may name a geography the product has not ruled, which
+// is what stops a seventh word like "market level" being added later. Correctness — the
+// geography a caption names is the geography that figure is ACTUALLY measured at, which is the
+// ruling itself: a ring caption over a city figure is two different measurements labelled the
+// same. `growth` (place or county) and `econ` (county) are the two that are never the ring, and
+// they are the pair every fix round on this surface has been about (D-C48, A31.12).
+//
+// WHAT THIS GATE OWNS AND WHAT IT DOES NOT, stated as it is CODED (review Minor 9, 2026-09-13 —
+// the first draft described a narrower exemption than the code had).
+//
+//   * THE CLOSURE (`every geography a catalogue caption names…`) walks the ` · `-joined segments
+//     of the captions the design composes FROM ITS OWN CATALOGUE: the map tooltip's source line,
+//     the legend card's source line and the snapshot strip's `src`. Every segment after the first
+//     must be a phrase from §3.1's list. `valueNote` is NOT walked by it, on EITHER arm — not the
+//     served-label arm and not the fallback — because a served `communityLabel` or `growthScope`
+//     is a proper name the server chooses ("Dallas", "Orange County") and no closed list can
+//     enumerate one. What the LOCATION case below asserts instead is the thing that can be
+//     asserted: the caption CONTAINS the geography that figure is measured at, and every §3.1
+//     phrase it names is that one. A word appended to a correct phrase would pass, and that is a
+//     known width, not an oversight.
+//   * THE PROSE CHECK (`no surface qualifies a figure with a geography outside the list`) is the
+//     fix-round-1 widening (Important 2): the econ tooltip's MARGIN sentence read "…, county
+//     level." beside a source line saying "· County" — one tooltip, two vocabularies. Prose
+//     cannot be closed the way a ` · `-joined caption can, so this half is honestly a BLACKLIST of
+//     the two shapes the audit actually found — `<word> level` and a bare "the community" used as
+//     a geography — run over every tooltip's whole text and every caption on every surface. A
+//     brand-new noun would slip it; "market level", "community level" and "county level" cannot.
+//   * `stripCards`' `locBasis` FALLBACK still reads "community level" where the API serves no
+//     `communityLabel` at all — the reference path and every approved state — and it is ruled
+//     exempt from the closure: the brief's ruling 1 refuses that phrase `(where the API serves a
+//     basis)`, and this is the arm where it does not. It is exempt from the PROSE check too, by
+//     the same ruling, and the check states that exemption in one place rather than two.
+// -------------------------------------------------------------------------------------------
+/** The design's own title per layer, read once so the snapshot case below can pair a card with
+ *  the layer it belongs to without re-typing six strings. Declared BEFORE the describe that uses
+ *  it (review Minor 11): hoisting made the tail work, and a dangling tail on a 6,300-line file
+ *  reads as an accident. */
+const LAYER_TITLE: Record<string, string> = {
+  income: 'Median household income', pets: 'Pet ownership (estimated)',
+  competition: 'Veterinary competition', growth: 'Population growth',
+  households: 'Households', econ: 'Average practice payroll'
+};
+
+describe('A34 — one vocabulary: every figure names its own geography, from one closed list (D-C51)', () => {
+  const AUSTIN = 'Austin, TX';
+  const LAYERS = ['income', 'pets', 'competition', 'growth', 'households', 'econ'] as const;
+  const RING = 'Within about 5 miles of the practice';
+  const SCOPE = 'Dallas';
+
+  /** Audit §3.1, verbatim — the ONLY phrases a caption may use for a geography. */
+  const GEOGRAPHY = [
+    'Census tract', 'Census tracts',
+    'Place (city/town)', 'places',
+    'County', 'counties',
+    'ZIP Code Tabulation Area', 'ZIP areas',
+    RING,
+    'surrounding city or county', 'surrounding county',
+    'across the metro',
+    'vs US'
+  ];
+
+  /** The geography the MAP draws each layer at (`app/api/market.SHADING`, pinned across the wire
+   *  by `tests/census/test_design_shading_labels.py`). */
+  const MAP_GEOGRAPHY: Record<string, string> = {
+    income: 'Census tract', pets: 'Census tract', households: 'Census tract',
+    growth: 'Place (city/town)', econ: 'County', competition: 'ZIP Code Tabulation Area'
+  };
+
+  /** The geography each figure is measured at for ONE SELECTED PRACTICE (`app/census/serve.py`:
+   *  the area group comes from the catchment band, growth is place-or-county and payroll is the
+   *  county CBP row everywhere and always). */
+  const PRACTICE_GEOGRAPHY: Record<string, string> = {
+    income: RING, pets: RING, households: RING, competition: RING,
+    growth: SCOPE, econ: 'surrounding county'
+  };
+
+  const segments = (caption: string) => caption.replace(/^Source: /, '').split(' · ');
+  /** Every ruled geography phrase a caption names, longest first so "Census tracts" is not read
+   *  as "Census tract" plus a stray letter. */
+  const named = (caption: string) => GEOGRAPHY.slice()
+    .sort((a, b) => b.length - a.length)
+    .filter((g) => { const m = caption.includes(g); if (m) caption = caption.split(g).join(''); return m; });
+
+  const browse = (layer: string, sel: string | null) =>
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: sel, mdValue: layer });
+
+  /** The map tooltip's own source line — the last <div> `areaTip` writes. */
+  const tipSource = (layer: string): string => {
+    const tip: string = c.areaTip({ name: 'n', value: 1, moe: null, suppressed: false }, layer, true);
+    const line = /margin-top:5px">([^<]*)<\/div>/.exec(tip);
+    expect(line, `${layer}: areaTip no longer ends in a source line`).toBeTruthy();
+    return line![1];
+  };
+
+  /** The selected-practice fixture, carrying the three fields the API serves for D-C38. */
+  function withServedPractice<T>(run: (id: string) => T): T {
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    Object.assign(p, { communityLabel: RING, growthScope: SCOPE, incomeNote: `${RING} · approximate`, incomeApproximate: true });
+    try { return run(p.id as string); } finally {
+      for (const k of ['communityLabel', 'growthScope', 'incomeNote', 'incomeApproximate']) delete p[k];
+    }
+  }
+
+  it('every geography a catalogue caption names is one of the closed list (the closure)', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      const captions: Array<[string, string]> = [['map tooltip', tipSource(layer)]];
+      if (md.active.sourceLine) captions.push(['legend card', md.active.sourceLine]);
+      for (const card of md.stripCards) captions.push([`snapshot AREA/${card.title}`, card.src]);
+      for (const [surface, caption] of captions) {
+        for (const seg of segments(caption).slice(1)) {
+          expect(GEOGRAPHY, `${surface} (${layer}): "${seg}" is not a geography word this product has ruled — the caption reads "${caption}"`)
+            .toContain(seg);
+        }
+      }
+    }
+  });
+
+  /** The tooltip's whole rendered text — every line `areaTip` writes, tags stripped. */
+  const tipText = (layer: string): string => {
+    const tip: string = c.areaTip({ name: 'n', value: 1, moe: null, suppressed: false }, layer, true);
+    return tip.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+
+  /** The two shapes the audit found a geography written in OUTSIDE §3.1's list, as patterns.
+   *  `<word> level` catches "market level", "community level" and "county level" and deliberately
+   *  does NOT catch the hyphenated "ZIP-level" in `THRESHOLD_RULE`, which is the Census's own
+   *  description of its own publication rule and names no area this product measures at. */
+  const UNRULED: Array<[RegExp, string]> = [
+    [/\b[a-z]+\s+level\b/, 'a "<word> level" geography — the shape "market level" and "county level" are written in'],
+    [/\bthe community\b/, 'the word "community" used as a geography — the shape A33.3 removed from the drawer rows']
+  ];
+
+  it('no surface qualifies a figure with a geography outside the list (the prose check)', () => {
+    // Fix round 1, Important 2. A34.2 gave `econ` a `dataset:` so its SOURCE line reads
+    // "· County", and its MARGIN sentence directly above went on reading "…, county level." —
+    // one tooltip, two vocabularies for one geography, which is the collision (C5) this family
+    // exists to close. The check walks every tooltip whole, and every caption on every surface
+    // beside it, because prose is where the second vocabulary survived.
+    const strings: Array<[string, string]> = [];
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      strings.push([`map tooltip (${layer})`, tipText(layer)]);
+      strings.push([`legend card (${layer})`, `${md.active.sourceLine} ${md.active.geoLine}`]);
+      for (const row of md.layerChoices) strings.push([`layers drawer/${row.title}`, row.sub]);
+      for (const card of md.stripCards) strings.push([`snapshot AREA/${card.title}`, `${card.valueNote ?? ''} ${card.src}`]);
+    }
+    withServedPractice((id) => {
+      for (const layer of LAYERS) {
+        browse(layer, id);
+        const md = c.marketVals(P);
+        // `valueNote` on BOTH arms here — the served-label arm, and (below) the fallback, which
+        // is ruled exempt and is the ONE place "community level" may still stand.
+        for (const card of md.stripCards) strings.push([`snapshot LOCATION/${card.title}`, `${card.valueNote ?? ''} ${card.src}`]);
+        for (const t of md.panel.overviewTiles) strings.push([`panel tile/${t.k}`, String(t.sub ?? '')]);
+        strings.push(['panel scope', md.panel.overviewScope]);
+      }
+      c.setState({ screen: 'detail', detailId: id });
+      const d = c.detail();
+      for (const tile of d.demo) strings.push([`detail tile/${tile.k}`, String(tile.sub ?? '')]);
+      strings.push(['detail scope paragraph', d.demoScope]);
+    });
+    for (const [surface, text] of strings) {
+      for (const [pattern, what] of UNRULED) {
+        const hit = pattern.exec(text);
+        expect(hit, `${surface} names ${what}: "${hit?.[0]}" in "${text}"`).toBeNull();
+      }
+    }
+  });
+
+  it('…and the ONE exemption is the fallback the brief ruled, and only it', () => {
+    // The brief's ruling 1 refuses "community level" as a geography word `(where the API serves a
+    // basis)`. Where the API serves NO `communityLabel`, `locBasis` is the design's own wording,
+    // the reference path and every approved state; replacing it is a ruled string §3.2 proposes
+    // for no row. Asserted rather than assumed, so that if it ever IS ruled the exemption is
+    // removed here and not merely left standing.
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    browse('income', p.id as string);
+    const notes = c.marketVals(P).stripCards.map((card: { valueNote?: string }) => card.valueNote);
+    expect(notes.filter((n: string) => n === 'community level').length,
+      'the no-label fallback is not "community level" any more, so the exemption above is stale').toBe(4);
+  });
+
+  it('a catalogue caption names the geography that layer is DRAWN at, and no other', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const md = c.marketVals(P);
+      expect(named(tipSource(layer)), `the map tooltip for ${layer} does not name ${MAP_GEOGRAPHY[layer]}`)
+        .toEqual([MAP_GEOGRAPHY[layer]]);
+      expect(md.active.geoLine, `the legend's geo line for ${layer}`).toBe(MAP_GEOGRAPHY[layer]);
+    }
+  });
+
+  it('the legend card names its geography ONCE — the source line no longer repeats the geo line', () => {
+    for (const layer of LAYERS) {
+      browse(layer, null);
+      const active = c.marketVals(P).active;
+      expect(active.sourceLine, `${layer}: the legend prints "${active.geoLine}" twice — on its own geo line and again inside its source line`)
+        .not.toContain(active.geoLine);
+    }
+  });
+
+  it('with a practice selected every snapshot card names THAT figure\'s own geography', () => {
+    withServedPractice((id) => {
+      for (const layer of LAYERS) {
+        browse(layer, id);
+        for (const card of c.marketVals(P).stripCards) {
+          const key = LAYERS.filter((k) => LAYER_TITLE[k] === card.title)[0];
+          expect(key, `no layer answers to the card titled "${card.title}"`).toBeTruthy();
+          const own = PRACTICE_GEOGRAPHY[key];
+          expect(card.valueNote, `the "${card.title}" card is captioned "${card.valueNote}" for a figure measured at ${own}`)
+            .toContain(own);
+          for (const other of named(card.valueNote)) {
+            expect(other, `the "${card.title}" card names ${other}, which is not where its number comes from`).toBe(own);
+          }
+          // …and the source line carries the DATASET alone: the geography is stated once
+          // (A24.44-A24.57's one-string-per-fact rule, applied by A31.12 to this mode).
+          expect(named(card.src), `the "${card.title}" card names its geography twice`).toEqual([]);
+        }
+      }
+    });
+  });
+
+  it('a served income note with no area of its own is given one — on both surfaces (A34.16/A34.17)', () => {
+    // Fix round 1, Important 3. `app/census/serve.py` serves `income_note` on two arms: with a
+    // band label it is `<label> · approximate`, and without one it is the basis word ALONE
+    // (`income_note_for`, pinned across the wire by
+    // `tests/census/test_design_shading_labels.py`). The design rendered whatever arrived, so the
+    // second arm produced a caption reading exactly "approximate" — a basis with NO geography,
+    // which is the defect class this ruling exists to remove. The client composes what the server
+    // cannot: its own fallback goes in front.
+    const p = (P as unknown as Record<string, unknown>[])
+      .filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    const incomeCard = () => c.marketVals(P).stripCards
+      .filter((x: { title: string }) => x.title === 'Median household income')[0].valueNote;
+    const incomeTile = () => c.detail().demo.filter((t: { k: string }) => t.k === 'Median income')[0].sub;
+
+    // ARM 1 — the note carries its own area: rendered whole, exactly as A31.12c/A27.1 have it.
+    Object.assign(p, { incomeNote: `${RING} · approximate` });
+    try {
+      browse('income', p.id as string);
+      expect(incomeCard()).toBe(`${RING} · approximate`);
+      c.setState({ screen: 'detail', detailId: p.id });
+      expect(incomeTile()).toBe(`${RING} · approximate`);
+    } finally { delete p.incomeNote; }
+
+    // ARM 2 — the note is the basis word alone: each surface puts its OWN fallback in front, so
+    // the caption names an area (or, on the detail card, the design's own vintage — A27.1's
+    // ruling, recorded and not widened here) and the basis keeps one spelling.
+    Object.assign(p, { incomeNote: 'approximate' });
+    try {
+      browse('income', p.id as string);
+      expect(incomeCard(), 'the strip rendered a basis word with nothing in front of it').toBe('community level · approximate');
+      c.setState({ screen: 'detail', detailId: p.id });
+      expect(incomeTile(), 'the detail tile rendered a basis word with nothing in front of it').toBe('Household, 2023 · approximate');
+    } finally { delete p.incomeNote; }
+
+    // ARM 3 — no note at all: the design's own fallbacks, byte for byte. This is the reference
+    // path and every approved state, and it is why no baseline moves for A34.16/A34.17.
+    browse('income', p.id as string);
+    expect(incomeCard()).toBe('community level');
+    c.setState({ screen: 'detail', detailId: p.id });
+    expect(incomeTile()).toBe('Household, 2023');
+  });
+
+  it('the panel Households tile names the statistic its number is, not only its dataset', () => {
+    withServedPractice((id) => {
+      browse('income', id);
+      const tile = c.marketVals(P).panel.overviewTiles.filter((t: { k: string }) => t.k === 'Households')[0];
+      expect(tile.sub).toBe('Total · ACS 5-year');
+    });
+  });
+
+  it('the detail card\'s scope paragraph no longer claims the ring for the growth figure beside it', () => {
+    c.setState({ auth: true, screen: 'detail', detailId: 'p1' });
+    expect(c.detail().demoScope, 'the paragraph claims every figure is the area\'s while its own Growth tile names a city')
+      .toContain('Population growth is measured for the city or county named on its own tile.');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task ADMIN-SUPERSET fix round 1 (review Important-1, chained on A16.9, ruling D-C54, John,
+// 2026-09-13, verbatim: "as logged in VIN FOUNDATION ADMIN i can no longer access nor see MY
+// REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i need to see it all!!!").
+//
+// D-C54 made `admin` a superset of the whole permission matrix — the FIRST commit of this task —
+// so an admin-only account may now file `seller.apply` and reach `page.seller` and CREATE a
+// listing. But `componentDidMount`'s own seller-listing bootstrap gate was a SECOND, unrelated
+// copy of the matrix, written before D-C54 existed: `(me.roles || []).indexOf("seller") > -1`, a
+// literal role-string test nothing in D-C54 touched. An admin-only account could create a listing
+// and then never see it again — a reload's `componentDidMount` asked the account's ROLE STRINGS,
+// which is empty for an account whose only grant is `admin`, and `myListings` stayed unset.
+//
+// A16.23 replaces the literal check with `this.props.perms.allowed("page.seller")` — the GENERATED
+// matrix, through the same `perms` adapter A40.3 already reads, and the same permission the
+// router's own `go('seller')` guard asks. These cases are RED against the pre-fix line (reverted
+// locally and re-proved failing before this file was written) and green against the fix.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — an admin-only account reaches its own listings on boot (A16.23, D-C54)', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const ADMIN_ONLY = { email: 'admin@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin'] };
+  const SELLER = { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] };
+  const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
+  const listings = (rows: unknown[] = []) => {
+    const calls: string[] = [];
+    return { calls, list: () => { calls.push('list()'); return Promise.resolve(rows); } };
+  };
+
+  it('an admin-only account whose matrix grants page.seller loads its own listings on boot', async () => {
+    const api = listings([{ id: 'x1', name: 'An admin-created listing' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api, perms: perms(['page.seller']) });
+    c2.componentDidMount();
+    expect(api.calls, 'the PERMISSION gates the load, not the literal role string').toEqual(['list()']);
+    await flush();
+    expect(c2.state.myListings).toEqual([{ id: 'x1', name: 'An admin-created listing' }]);
+  });
+
+  it('a seller account is unaffected — the same permission, asked the same way', async () => {
+    const api = listings([{ id: 's1' }]);
+    const c2: any = new Component({ me: { ...SELLER }, listings: api, perms: perms(['page.seller']) });
+    c2.componentDidMount();
+    expect(api.calls).toEqual(['list()']);
+    await flush();
+    expect(c2.state.myListings).toEqual([{ id: 's1' }]);
+  });
+
+  it('an account whose matrix does NOT grant page.seller loads nothing, admin roles included', async () => {
+    const api = listings([{ id: 'x1' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api, perms: perms(['page.browse']) });
+    c2.componentDidMount();
+    expect(api.calls, 'the API would refuse it; the client does not ask').toEqual([]);
+    await flush();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+
+  it('with no perms adapter the load never fires — the reference and the Claude Design preview', async () => {
+    const api = listings([{ id: 'x1' }]);
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, listings: api });
+    c2.componentDidMount();
+    expect(api.calls, 'this.props.perms is undefined off the app, and the guard fails closed').toEqual([]);
+    await flush();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+
+  it('with no listings adapter at all, nothing is asked regardless of perms — the reference again', () => {
+    const c2: any = new Component({ me: { ...ADMIN_ONLY }, perms: perms(['page.seller']) });
+    expect(() => c2.componentDidMount()).not.toThrow();
+    expect(c2.state.myListings).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A48 — TASK COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14). The stakeholder asked what
+// area the veterinary-competition number describes, and the product answered nowhere: the
+// "What this means" card said "nearby", the map drew an unlabelled ring, and the selected
+// practice's figure carried the ring caption with no word about how it is derived. D-C57: every
+// surface that shows the figure or its area names it, in D-C51's vocabulary.
+// ---------------------------------------------------------------------------------------
+describe('A48 — the competition figure names its area, its universe and its floor (D-C57)', () => {
+  const AUSTIN = 'Austin, TX';
+  const ZIP = 'ZIP Code Tabulation Area';
+  const UNIVERSE = 'The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure.';
+
+  const browse = (layer: string, sel: string | null) =>
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSel: sel, mdValue: layer });
+
+  it('A48.1 — the "What this means" card names the area it shades and the universe it counts', () => {
+    browse('competition', null);
+    expect(c.marketVals(P).active.means).toBe(
+      'Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. '
+      + UNIVERSE
+      + ' They say nothing about size, quality or overlap in services.'
+    );
+  });
+
+  it('…and it names ITS OWN geography and no other layer\'s (the copy-paste catch)', () => {
+    browse('competition', null);
+    const means: string = c.marketVals(P).active.means;
+    expect(means, 'the competition card no longer names the ZIP area it shades').toContain(ZIP);
+    for (const other of ['Census tract', 'Place (city/town)', 'County']) {
+      expect(means, `the competition card names ${other}, which is not the geography it shades`).not.toContain(other);
+    }
+  });
+
+  it('…and the other five layers\' prose is byte-identical to what it was', () => {
+    // The ruling reached ONE layer's `means`. Pinned as literals, because the whole point of a
+    // characterisation case is that a later edit to the shared `LAYER_META` object cannot move a
+    // neighbour in silence — which is exactly what it caught when A50 landed beside A48.
+    //
+    // `pets` MOVED, under its own ruling and not this one (A50.3, Task PET-RATE-PROVENANCE, John
+    // 2026-09-15). Its prose said the figure is "a modelled estimate … not a measured figure" and
+    // never said modelled FROM WHAT or BY WHOM; his §5 requires the product to say that the
+    // household count is Census ACS, the incidence is the AVMA's, and the national rate does not
+    // establish the local one. The literal is updated rather than the layer dropped from this
+    // table: dropping it would retire the guard on the one layer that has since proved it works.
+    const UNCHANGED: Record<string, string> = {
+      income: 'Higher-income areas may support stronger demand, but income alone does not indicate practice performance.',
+      pets: "Census household counts for the area multiplied by the American Veterinary Medical Association's national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",
+      growth: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
+      households: 'The count of occupied housing units in each community — the denominator behind most other figures here.',
+      econ: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures."
+    };
+    for (const [layer, text] of Object.entries(UNCHANGED)) {
+      browse(layer, null);
+      expect(c.marketVals(P).active.means, `${layer}'s prose moved and this ruling did not touch it`).toBe(text);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the METRO's own figure where the Census
+// publishes one (ruling D-C50's own deferral, the ONE-VOCABULARY audit's collision C2).
+//
+// Measured on QA, the income card read "$95K · median of 541 Census tracts" — `percentile_cont`
+// over the metro's valued tracts, 94,801 on CBSA 12420 — while the Census publishes 97,638 ±
+// 1,163 for that same CBSA at the same release. Two "metro" numbers, one metro, and the one the
+// member could check was the one the screen did not show.
+describe('the Market snapshot AREA card prefers the metro’s own published figure (A31.14)', () => {
+  const AUSTIN = 'Austin, TX';
+  const adapter = () => ({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+  const QUANTILES = [48200, 67400, 92150, 121300, 158900];
+  const row = (metro: unknown) => ({
+    income: {
+      layer: 'income', geo_label: 'Census tract', with_value: 541,
+      median: 94801, quantiles: QUANTILES, metro
+    }
+  });
+  const card = (c: any, title = 'Median household income') =>
+    c.renderVals().md.stripCards.filter((x: { title: string }) => x.title === title)[0];
+  // The design's own `LAYER_META[k].dataset`, read through the design rather than retyped, so the
+  // assertions below cannot drift from the string the card actually composes.
+  const LAYER_DATASET = { income: 'U.S. Census ACS 5-year estimates (2023)' };
+
+  it('the published metro figure is the headline and its own caption is the one the route sent', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    const income = card(c);
+    expect(income.value, 'the headline is the tract median, not the published metro figure').toBe(c.fmtMetric('income', 97638));
+    expect(income.value).not.toBe(c.fmtMetric('income', 94801));
+    expect(income.valueNote).toBe('Census published for the metro');
+    // IMPORTANT-2 (review 1, 2026-09-14). The card names ONE geography and it is the metro's:
+    // the note carries it and the source line carries the DATASET ALONE, which is A31.12b's own
+    // rule for a caller with no geography to name and exactly what LOCATION mode already does.
+    // Before this the card read "$98K · Census published for the metro" over "U.S. Census ACS
+    // 5-year estimates (2023) · Census tract" — two geographies, the more source-like of them
+    // attached to the figure it does not describe, which is the D-C51 defect this family exists
+    // to remove, one line down from where it removed it.
+    expect(income.src, 'the source line still names the TRACT beneath a metro figure').toBe(LAYER_DATASET.income);
+    expect(income.src).not.toContain('Census tract');
+    // The BARS are untouched: they are the polygons the map shades, which is the shape this
+    // figure sits in, and they are the whole reason the distribution is still fetched.
+    expect(income.bars).toHaveLength(5);
+    expect(income.bars.map((b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1]))
+      .toEqual(QUANTILES.map((v) => c.bucket('income', v, true).color));
+  });
+
+  it('a derived metro figure carries the route’s own word for it, not the published one', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: row({ value: 806400, moe: null, kind: 'derived', basis: 'derived estimate for the metro' })
+    });
+    expect(card(c).valueNote, 'the design composed a caption of its own').toBe('derived estimate for the metro');
+  });
+
+  it('no metro figure keeps A31.12’s "median of N Census tracts" caption, byte for byte', () => {
+    // `econ` and `competition` are Business Patterns, which publishes nothing at summary level
+    // 310, so those two cards live on this arm for ever — and so does every fixture path.
+    const c: any = new Component(adapter());
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdSummary: row(null) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+    // The DERIVED path is byte-identical: the figure IS the metro's tracts, so the source line
+    // names them exactly as it did before this family existed (A31.12's own output).
+    expect(card(c).src).toBe(`${LAYER_DATASET.income} · Census tract`);
+    // …and a metro object whose own value is null is the same absence, not a headline of nothing.
+    c.setState({ mdSummary: row({ value: null, moe: null, kind: 'published', basis: 'Census published for the metro' }) });
+    expect(card(c).value).toBe(c.fmtMetric('income', 94801));
+    expect(card(c).valueNote).toBe('median of 541 Census tracts');
+  });
+
+  it('a card with no figure at all still carries NO caption — A31.12’s rule survives', () => {
+    const c: any = new Component(adapter());
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { income: { layer: 'income', geo_label: 'Census tract', with_value: 0, median: null, quantiles: null, metro: null } }
+    });
+    expect(card(c).value).toBeUndefined();
+    expect(card(c).valueNote).toBeUndefined();
+  });
+
+  it('LOCATION mode is untouched: the practice’s own figure, never the metro’s', () => {
+    // The ternary's LOCATION arm never read this endpoint and must not start: a metro median is
+    // not a statement about the practice a member has just clicked.
+    const c: any = new Component(adapter());
+    const p = (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published')[0];
+    c.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: p.id,
+      mdSummary: row({ value: 97638, moe: 1163, kind: 'published', basis: 'Census published for the metro' })
+    });
+    expect(card(c).value).not.toBe(c.fmtMetric('income', 97638));
+    expect(card(c).valueNote).not.toBe('Census published for the metro');
+  });
+
+  it('the reference path — no adapter — never sees a metro figure and never can', () => {
+    // `summarySet()` is the design's own answer to the endpoint and it computes no `metro` key,
+    // so the reference, the Claude Design preview and every approved state stay on A31.12's
+    // caption whatever this family does.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    for (const layer of Object.keys(c.summarySet())) {
+      expect(c.summarySet()[layer].metro, `summarySet() invented a metro figure for ${layer}`).toBeUndefined();
+    }
+    for (const s of c.renderVals().md.stripCards) {
+      if (s.valueNote !== undefined) expect(s.valueNote).toMatch(/^median of /);
+    }
+  });
+
+  it('the AREA mode sub-line says what a metro figure is (A31.14e)', () => {
+    // A31.7's own sentence, one of the three prose strings this family corrects. The two
+    // FOOTNOTES (A31.14c, A31.14d) are template text and are asserted where template text is
+    // asserted — `tests/design-amendments.test.ts`'s own footnote case — not here.
+    const c: any = new Component({});
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    expect(c.renderVals().md.stripModeSub)
+      .toBe('The metro’s own figures, with the Census areas the map shades beneath them');
   });
 });

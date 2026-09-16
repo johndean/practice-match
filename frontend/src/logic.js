@@ -110,7 +110,7 @@ const VALUE_LAYERS = {
   growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["Declining", "0–5%", "5–15%", "> 15%"], stops: [0, 5, 15] },
   households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–45K", "> 45K"], stops: [10000, 25000, 45000] },
   econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
-  competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
+  competition: { label: "Veterinary Establishments (ZBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
 };
 
 // Rates and medians belong to the area → choropleth fill (one at a time: two
@@ -142,7 +142,13 @@ const NO_DATA_LABEL = "No data";
 // classes what the community cards carry (a city's households); these class what the map
 // paints (a tract's). Measured over every US tract and every US ZIP area, not over Austin:
 // households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times
-// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The
+// the AVMA national pet-ownership rate — 618 / 847 / 1,112 at 0.586, where 0.57 gave
+// 601 / 824 / 1,081, both rounding to the same legend-readable breaks below. The pets
+// layer is round(households x rate) over exactly the tracts households serves, so it is a
+// monotone transform and its quantiles are the households quantiles through the rate:
+// the table is RE-DERIVED from that one measurement rather than re-measured, and
+// `tests/census/test_pet_rate.py` pins the identity with the measuring script's own
+// quantile. Competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The
 // design's own breaks put 100.0 % of tracts and 73.1 % of ZIP areas into ONE class.
 // Income, growth and payroll are scale-invariant and are deliberately absent.
 const AREA_LAYERS = {
@@ -158,25 +164,16 @@ const BAND_WORDS = { 2: "two", 3: "three", 4: "four", 5: "five" };
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
 const SYMBOL_KEYS = ["pets", "households", "competition"];
-const SYMBOL_STYLE = {
-  pets: { color: "rgba(232,147,49,.85)", label: "Est. pet households" },
-  households: { color: "rgba(31,111,168,.85)", label: "Households" },
-  competition: { color: "rgba(120,86,190,.85)", label: "Vet establishments" }
-};
-
-// Graduated-size key. Pixel values mirror the renderer's 11 + t·22 sizing at t = 0, .5, 1.
-const SYMBOL_SCALE = {
-  pets: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "40K+" }],
-  households: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "45K+" }],
-  competition: [{ px: 6, label: "2" }, { px: 9, label: "8" }, { px: 13, label: "14+" }]
-};
-
 // A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
 // whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
 // by its caller - the map's own geography for the legend and the tip, the map's community
-// notes, and the snapshot strip's AREA mode, which measures those same polygons. A layer
-// that names no geography (`econ`, `pets`) keeps its own `source` sentence, which is true on
-// every surface, and this returns it unchanged.
+// notes, and the snapshot strip's AREA mode wherever the card's own headline IS those
+// polygons. A31.14f: where the route served the METRO's own figure the card's note carries
+// its geography, so the strip hands this line nothing and it prints the dataset alone,
+// exactly as LOCATION mode does.
+//
+// A34 (D-C51): all six layers declare a `dataset:` now, so the `source` arm below is the
+// guard for a key `LAYER_META` does not hold and nothing else - "" beats "undefined · X".
 //
 // A31.12b (fix round 1): a caller with NO geography to name gets the dataset alone. The
 // strip's LOCATION mode is one - the card's own note carries the geography there, and one
@@ -203,8 +200,8 @@ const LAYER_META = {
     title: "Pet ownership (estimated)",
     sub: "Estimated pet households by Census tract · derived from ACS households",
     updated: "Updated: derived Jan 2025 from ACS 2023",
-    source: "Derived estimate from ACS household counts (2023) · not an observed count",
-    means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
+    dataset: "ACS household counts (2023) × the AVMA 2025 national pet-ownership rate",
+    means: "Census household counts for the area multiplied by the American Veterinary Medical Association's national pet-ownership rate (2025 Pet Ownership and Demographics Sourcebook). A modelled estimate, not a measured figure: the Census counts households and does not count pet households, and a national rate does not establish how many households here keep a pet.",
     why: "Pet-household concentration is a rough proxy for the size of the potential client base near a practice."
   },
   competition: {
@@ -212,7 +209,7 @@ const LAYER_META = {
     sub: "Veterinary establishments by ZIP Code Tabulation Area · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
     dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
-    means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
+    means: "Establishment counts show how many veterinary businesses operate in each ZIP Code Tabulation Area. The Census counts business locations with paid employees, so a practice with no paid staff is not in this figure. They say nothing about size, quality or overlap in services.",
     why: "Competitive density helps you judge whether a market is underserved or already crowded."
   },
   growth: {
@@ -235,7 +232,7 @@ const LAYER_META = {
     title: "Average practice payroll",
     sub: "Average payroll per practice by county · derived from CBP payroll ÷ establishments",
     updated: "Updated: derived from CBP 2023 (Nov 2024)",
-    source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",
+    dataset: "Derived from Census CBP payroll and establishment counts (2023)",
     means: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures.",
     why: "Typical employer scale hints at the staffing model a market supports, which is context for a practice's own numbers."
   }
@@ -415,9 +412,10 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
-    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();
+    if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     this.loadAdmin();
+    if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());
     this.loadAreas(this.state.market);
     this.loadSummary(this.state.market);
     if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));
@@ -654,11 +652,11 @@ class Component extends DCLogic {
       : (layer === "growth"
           ? "Derived from two ACS 5-year periods. No combined margin of error is published."
           : layer === "econ"
-            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
+            ? "Payroll per establishment (NAICS 541940), for the surrounding county. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
             : layer === "competition"
               ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
               : layer === "pets"
-                ? "Modelled estimate: households × 0.57. Not an observed count."
+                ? "Modelled estimate: Census households × the AVMA national pet-ownership rate. Not an observed count."
                 : "");
     return '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
       '<div style="font-size:12.5px;font-weight:800;color:#003a70">' + p.name + "</div>" +
@@ -671,13 +669,24 @@ class Component extends DCLogic {
 
   communities() {
     const market = this.state.market || "Austin, TX";
+    // THE DESIGN'S OWN FIXTURE ARITHMETIC, and not a production rate. A pet-household figure
+    // is `households x a national pet-ownership incidence rate`; that rate belongs to the
+    // API — `app/census/pet_rate.py` is the one place it is written down, with its whole
+    // provenance, and `GET /api/listings` serves the rate each listing's own figure was
+    // actually computed with. This constant exists so the REFERENCE, which has no API and no
+    // served rate, can still draw the design's own fixtures, and it is read nowhere else.
+    const petRateFixture = 0.586;
     return P.filter((p) => p.market === market && p.status === "published").map((p) => {
       const hh = p.hh != null ? num(p.hh) : undefined;
+      // A16.1's rule in A33.1c's shape: gated on ADAPTER PRESENCE, never on data. With the
+      // Browse adapter the rate is the SERVED one or the figure is absent — a pet-household
+      // count computed from a rate nobody recorded is what this seam exists to remove.
+      const petRate = this.props.market ? p.petRate : petRateFixture;
       return {
         id: p.id, name: p.area, lat: p.lat, lng: p.lng,
         pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
         growth: p.growth != null ? num(p.growth) : undefined,
-        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
+        pets: (hh !== undefined && petRate != null) ? Math.round(hh * petRate) : undefined,
         econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
         vets: VETS[p.id]
       };
@@ -721,7 +730,6 @@ class Component extends DCLogic {
     const sel = s.mdSel ? P.filter((x) => x.id === s.mdSel)[0] : null;
     const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
     const ramp = (k) => pal[k] || BRAND_RAMP;
-    const tightColumn = !!s.mdStrip;
     const activeSymbols = SYMBOL_KEYS.filter(
       (k) => k !== valueLayer && layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
     );
@@ -772,13 +780,12 @@ class Component extends DCLogic {
       // is the selected practice's own community. Both words are never shown at once.
       stripMode: sel ? "LOCATION · " + this.practiceName(sel) : "AREA · " + market + " metro",
       hasStripModeSub: sel ? !!sel.communityLabel : true,
-      stripModeSub: sel ? (sel.communityLabel || "") : "Census areas across the metro, as the map shades them",
+      stripModeSub: sel ? (sel.communityLabel || "") : "The metro’s own figures, with the Census areas the map shades beneath them",
       toggleStrip: () => this.setState({ mdStrip: !s.mdStrip }),
       stripToggleLabel: s.mdStrip ? "Collapse" : "Expand all six layers",
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
         (s.mdStrip ? "0deg" : "-90deg") + "); transition: transform 150ms var(--easing-out);",
       basemap: s.mdBasemap || "map",
-      setBasemap: (k) => this.setState({ mdBasemap: k }),
       railStyle: (() => {
         const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
         // Panel open on a narrow viewport: the detail replaces the list rather than
@@ -802,9 +809,7 @@ class Component extends DCLogic {
           vals[k] = { t: b.t, color: b.color, label: this.fmtMetric(k, raw) };
         });
         return {
-          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals,
-          metricName: valueLayer ? LAYER_META[valueLayer].title : "",
-          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""
+          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals
         };
       }),
       practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({
@@ -818,10 +823,9 @@ class Component extends DCLogic {
       active: (() => {
         const meta = LAYER_META[valueLayer] || {};
         const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;
-        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";
+        const mapSource = valueLayer ? metaSource(valueLayer, "") : "";
         return {
           title: meta.title || "No layer active",
-          sub: meta.sub || "Choose a layer to shade the map",
           sourceLine: mapSource ? "Source: " + mapSource : "",
           sourceShort: mapSource ? "Source: " + mapSource.split(" · ")[0] : "",
           updatedLine: meta.updated || "",
@@ -1000,42 +1004,12 @@ class Component extends DCLogic {
       selectArea: (name) => this.setState({ mdArea: name }),
       snapshotCount: "6 indicators · Census-sourced",
       symbols: activeSymbols,
-      symbolColors: SYMBOL_KEYS.reduce((o, k) => { o[k] = ramp(k)[3]; return o; }, {}),
       hiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].filter((k) => off[k]).length,
       hasHiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].some((k) => off[k]),
       // Legend yields before the controls panel does: below a short map column the symbol
       // rows fold away and the key shows the fill ramp only.
       legendBoxStyle: "flex: 0 1 auto; width: 276px; pointer-events: auto; overflow: hidden; padding: 10px 12px 11px; " +
         "background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,58,112,.16);",
-      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus
-      // a hue + graduated-size row for each active count layer.
-      hasLegend: !!valueLayer || activeSymbols.length > 0,
-      legend: {
-        hasFill: !!valueLayer,
-        title: valueLayer ? VALUE_LAYERS[valueLayer].label : "",
-        swatches: valueLayer
-          ? ramp(valueLayer).map((c, i) => ({
-              style: "flex: 1; height: 10px; background: " + c + ";",
-              label: VALUE_LAYERS[valueLayer].buckets[i]
-            }))
-          : [],
-        hasSymbols: activeSymbols.length > 0 && !tightColumn,
-        symbolWrapStyle: "margin-top: " + (valueLayer ? "10px" : "0") +
-          "; padding-top: " + (valueLayer ? "9px" : "0") +
-          "; border-top: " + (valueLayer ? "1px solid #e6e6e6" : "0") + ";",
-        symbols: activeSymbols.map((k) => {
-          const hue = ramp(k)[3];
-          return {
-            label: SYMBOL_STYLE[k].label,
-            swatchStyle: "flex: none; width: 10px; height: 10px; border-radius: 999px; background: " + hue + ";",
-            sizes: SYMBOL_SCALE[k].map((row) => ({
-              label: row.label,
-              dotStyle: "display: block; width: " + row.px + "px; height: " + row.px +
-                "px; border-radius: 999px; background: " + hue + "; opacity: .85;"
-            }))
-          };
-        })
-      },
       mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),
       mdSubline: market + " metro · within 20 miles",
       mdResults: list.map((p) => {
@@ -1122,7 +1096,15 @@ class Component extends DCLogic {
           const sum = summary[k];
           // The selected practice's own figure, through the design's own two field aliases.
           const own = (sel && selComm) ? (k === "households" ? selComm.hh : k === "competition" ? selComm.vets : selComm[k]) : undefined;
-          const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);
+          // A31.14 (SNAP-METRO): in AREA mode the headline is the METRO's own figure where
+          // the route serves one - the Census publishes a metro median household income and
+          // a metro household total at summary level 310, and this card printed the median
+          // of the metro's TRACTS instead (94,801 against a published 97,638 on CBSA 12420).
+          // The distribution below is untouched: the bars are the polygons the map shades,
+          // which is the SHAPE this figure sits in, and `median` answers wherever the Census
+          // publishes nothing for the metro at all.
+          const metro = (sum && sum.metro && sum.metro.value != null) ? sum.metro : null;
+          const shown = sel ? (own != null ? num(own) : undefined) : (metro ? num(metro.value) : ((sum && sum.median != null) ? num(sum.median) : undefined));
           // The metro's shape, as five bars, classed on the MAP's OWN breaks - `bucket`'s
           // third argument, which is what the choropleth asks for (A24.25). These are the
           // map's polygons, so they take the map's classes: the strip and the legend then
@@ -1158,18 +1140,31 @@ class Component extends DCLogic {
             valueNote: sel
               ? (k === "growth" ? (sel.growthScope || "surrounding city or county")
                 : k === "econ" ? "surrounding county"
-                : k === "income" ? (sel.incomeNote || locBasis) : locBasis)
+                : k === "income" ? (sel.incomeNote ? (sel.incomeNote.indexOf(" · ") > -1 ? sel.incomeNote : locBasis + " · " + sel.incomeNote) : locBasis) : locBasis)
               // In AREA mode the caption states exactly what the number IS. Not "metro
               // median": the Census PUBLISHES a metro median (summary level 310) and this
               // is the median OF the metro's valued areas, which is a different figure -
               // measured on CBSA 12420, 94,801 against the published 97,638. And a card
               // with no figure carries NO caption: absent beats faked, for a caption as
               // much as for a value.
+              // A31.14 (SNAP-METRO): where the route served the metro's own figure, the
+              // caption is the one IT composed - it is the side that knows whether the
+              // Census published this figure for this area or whether this pipeline derived
+              // it from one that was published. A word invented here would be a second copy
+              // of that judgement, which is how a geography the server never served reached
+              // the screen before (A34/D-C51). Both phrases it can send are in that
+              // ruling's own closed list.
+              : metro ? metro.basis
               : ((sum && sum.with_value) ? "median of " + Math.round(sum.with_value).toLocaleString() + " " + (AREA_PLURAL[sum.geo_label] || sum.geo_label) : undefined),
             // ONE STRING PER FACT (A24.44-A24.57). The note above carries the geography, so
             // this line carries the DATASET alone in LOCATION mode - measured, the basis
             // printed ten times on one strip before this, four cards printing it twice.
-            src: metaSource(k, sel ? "" : (AREA_LABEL[k] || "")),
+            // A31.14f (review 1, Important-2): …and a card whose headline is the METRO's own
+            // figure has no geography left to give this line either - A31.14b's note carries
+            // it, and printing `· Census tract` under it would put a SECOND geography on the
+            // card, attached to the figure it does not describe. Same term, same reason, one
+            // fact per string; the derived path keeps the tract line, which is its own.
+            src: metaSource(k, (sel || metro) ? "" : (AREA_LABEL[k] || "")),
             bars: dist.map((b) => ({
               style: "flex: 1; height: " + Math.max(4, Math.round(6 + b.t * 24)) +
                 "px; border-radius: 2px 2px 0 0; background: " + b.color + ";" +
@@ -1392,7 +1387,7 @@ class Component extends DCLogic {
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
         { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " · " + sel.growthScope : "")) : undefined },
-        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
+        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "Total · ACS 5-year" },
         { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : (sel.incomeApproximate ? "approximate" : undefined) },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
@@ -1486,16 +1481,19 @@ class Component extends DCLogic {
   // reload. Guarded on the PERMISSION -- asked of the generated matrix through the `perms`
   // adapter, never a role list written here (`can()` answers the account STATE too, so the
   // `me.state === "active"` term A17.2 carried is not restated) -- and on each adapter's
-  // presence. One tab, one
-  // line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add theirs below, and each
-  // carries its own rejection arm, so a refusal leaves a tab EMPTY rather than back on the
-  // design's fixtures (A16.17's discipline, A17.1's rule for the render path).
+  // presence. One tab, one line: A36 (Users), A37 (Requests) and A38 (Data Sources) each add
+  // theirs below, and each carries its own rejection arm, so a refusal leaves a tab EMPTY
+  // rather than back on the design's fixtures (A16.17's discipline, A17.1's rule for the
+  // render path).
   loadAdmin() {
     // Fails closed: no `perms` to ask, no load. Both arms answer a promise, so every caller
     // -- A40.5's `signIn` among them -- can await a settled screen whoever is signed in.
     if (!this.props.perms || !this.props.perms.allowed("page.admin")) return Promise.resolve([]);
     const loads = [];
-    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] })));
+    const token = this._adminLoad = (this._adminLoad || 0) + 1;
+    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
+    if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));
+    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));
     return Promise.all(loads);
   }
 
@@ -1555,17 +1553,6 @@ class Component extends DCLogic {
       resizeKey: s.screen + s.viewport + (s.mobSheet ? "-sheet" : "") + (s.mobileTab || ""),
       rowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; font-size: 13.5px; font-weight: 500; color: var(--vf-navy); background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
       datasetRowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
-      basemaps: [
-        { key: "map", label: "Map" },
-        { key: "satellite", label: "Satellite" }
-      ].map((b) => ({
-        label: b.label,
-        go: () => this.setState({ mdBasemap: b.key }),
-        style: "flex: 1; height: 46px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-white)" : "var(--vf-navy)") + "; background: " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--vf-white)") + "; border: 1px solid " +
-          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--border-subtle)") + ";"
-      })),
       toggle: [
         { key: "list", label: "List" },
         { key: "map", label: "Map" }
@@ -1612,12 +1599,12 @@ class Component extends DCLogic {
         columns: ["Applicant", "Affiliation and intent", "Status", "Decision"],
         grid: "1.1fr 1.5fr .7fr 1fr",
         footnote: "Approval is a human decision. VIN membership is recorded but does not by itself grant access — the eligibility rule is an open question for the VIN Foundation. Revoking access hides all listings from that member immediately.",
-        rows: [
+        rows: s.adminUserRows !== undefined ? s.adminUserRows : (this.props.adminUsers ? [] : [
           [cell("Dr. Priya Raghavan", "Texas A&M, 2016 · TX license"), cell("Associate, two-doctor practice", "\u201CLooking to buy within 18 months in Central Texas.\u201D"), cell(null, null, "Pending", "warn"), cell(null, null, null, null, [A("Approve", "primary"), A("Decline", "danger")])],
           [cell("Dr. Marcus Bell", "Colorado State, 2009 · TX, NM licenses"), cell("Owner, one practice", "\u201CSelling in 2027; want to see what listings look like.\u201D"), cell(null, null, "Pending", "warn"), cell(null, null, null, null, [A("Approve", "primary"), A("Decline", "danger")])],
           [cell("Dr. Alan Cho", "Ohio State, 2004 · TX license"), cell("Regional medical director, 14-hospital group", "Affiliation flagged: employer appears to be a consolidator."), cell(null, null, "Needs review", "bad"), cell(null, null, null, null, [A("Request info"), A("Decline", "danger")])],
           [cell("Dr. Rachel Mendes", "Texas A&M, 2014 · TX license"), cell("Relief veterinarian · StartUp Club", "Approved August 12 by staff reviewer K. Alvarez."), cell(null, null, "Approved", "ok"), cell(null, null, null, null, [A("Suspend"), A("Revoke", "danger")])]
-        ]
+        ])
       },
       listings: {
         columns: ["Listing", "Seller and figures", "Status", "Action"],
@@ -1646,25 +1633,25 @@ class Component extends DCLogic {
         columns: ["Dataset", "Source and license", "Status", "Action"],
         grid: "1.1fr 1.6fr .8fr .8fr",
         footnote: "No dataset reaches production until its license is recorded here. Anything marked unresolved is excluded from listings and from the map until the VIN Foundation clears it.",
-        rows: [
+        rows: s.adminDataRows !== undefined ? s.adminDataRows : (this.props.adminDataSources ? [] : [
           [cell("Population, households, median income", "Refreshed annually"), cell("U.S. Census Bureau — ACS 5-year estimates", "Public domain. Attribution requested. Ingested via the Census API."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
           [cell("Base map and tiles", "Live tiles"), cell("OpenStreetMap contributors", "Open Database License. Attribution required and displayed on the map."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
           [cell("Address to coordinates", "On listing creation"), cell("Census Geocoder", "Public domain. No commercial restriction identified."), cell(null, null, "Cleared", "ok"), cell(null, null, null, null, [A("View terms")])],
-          [cell("Pet ownership estimates", "Last checked June 2026"), cell("Industry survey (commercial)", "License unresolved — redistribution terms unclear. Excluded from listings pending review."), cell(null, null, "Unresolved", "bad"), cell(null, null, null, null, [A("Assign review", "primary")])],
-          [cell("Veterinary practice locations", "Prior VetVision work"), cell("Mixed provenance", "Collection method not documented. Not ingested; needs a documented source before any competition view is built."), cell(null, null, "Blocked", "bad"), cell(null, null, null, null, [A("Open question")])]
-        ]
+          [cell("Pet ownership estimates", "Last checked June 2026"), cell("Industry survey (commercial)", "License unresolved — redistribution terms unclear. Excluded from listings pending review."), cell(null, null, "Unresolved", "bad"), cell(null)],
+          [cell("Veterinary practice locations", "Prior VetVision work"), cell("Mixed provenance", "Collection method not documented. Not ingested; needs a documented source before any competition view is built."), cell(null, null, "Blocked", "bad"), cell(null)]
+        ])
       }
     };
 
     const set = sets[tab] || sets.users;
     return {
       tabs: [
-        { key: "users", label: "Users", count: "3" },
-        { key: "listings", label: "Listings", count: "3" },
+        { key: "users", label: "Users", count: s.adminUserCounts ? String(s.adminUserCounts.open) : (this.props.adminUsers ? "" : "3") },
+        { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },
         { key: "activity", label: "Requests", count: "2" },
-        { key: "data", label: "Data Sources", count: "2" }
+        { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }
       ].map((t) => ({
-        label: t.label, count: t.count,
+        label: t.label, count: t.count, hasCount: !!t.count,
         go: () => this.setState({ adminTab: t.key }),
         style: "font-family: var(--rf-display); display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; letter-spacing: .02em; padding: 12px 18px; border: 0; border-radius: 8px 8px 0 0; cursor: pointer; color: " +
           (tab === t.key ? "var(--color-navy)" : "#494949") + "; background: " + (tab === t.key ? "var(--color-white)" : "transparent") + ";",
@@ -1865,11 +1852,11 @@ class Component extends DCLogic {
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
       hasDemo: p.id !== "p8" && p.pop != null,
       noDemo: p.id === "p8" || p.pop == null,
-      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
+      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself. Population growth is measured for the city or county named on its own tile.",
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
         { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },
-        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },
+        { k: "Median income", v: p.income, sub: p.incomeNote ? (p.incomeNote.indexOf(" · ") > -1 ? p.incomeNote : "Household, 2023 · " + p.incomeNote) : "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [

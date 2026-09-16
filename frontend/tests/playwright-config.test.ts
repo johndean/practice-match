@@ -509,3 +509,53 @@ describe('smoke.spec.ts measures the first map paint against firstMapPaintBudget
     ).toContain('firstMapPaintBudgetMs(');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// PW_OUTPUT_DIR (Task HOUSEKEEPING-C item 11, REL-0123 concern 3). Playwright CLEARS its output
+// directory at the start of EVERY run, so a second run deletes the first one's screenshots — the
+// 0.1.23 release agent lost the buyer pair to the staff run and spent a third sign-in out of a
+// budget of two re-taking them. The option is read from the environment so each persona check
+// gets its own directory; UNSET must stay `undefined`, which is what keeps every local and CI run
+// on Playwright's own default.
+// ---------------------------------------------------------------------------------------
+describe('the run-scoped output directory', () => {
+  const src = readFileSync(CONFIG, 'utf8');
+
+  it('reads PW_OUTPUT_DIR, resolved against the CWD, and defaults to undefined', () => {
+    const code = withoutComments(src);
+    expect(code).toContain("outputDir: process.env.PW_OUTPUT_DIR ? resolve(process.env.PW_OUTPUT_DIR) : undefined,");
+    expect(code, 'a relative outputDir would resolve against the config dir, not the operator\'s CWD')
+      .toContain("import { resolve } from 'node:path';");
+  });
+
+  it('the runbook tells an operator to use it, with a directory per run', () => {
+    const runbook = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'docs', 'RUNBOOK-identity.md'), 'utf8');
+    expect(runbook, 'RUNBOOK-identity.md §12 does not name PW_OUTPUT_DIR').toContain('PW_OUTPUT_DIR');
+    // Whitespace-normalised: the runbook wraps its bullets, so the sentence spans two lines.
+    const flowed = runbook.replace(/\s+/g, ' ');
+    expect(flowed, 'the runbook does not say WHY a directory per run is needed')
+      .toContain('clears its output directory at the start of every run');
+    expect(flowed).toContain('PW_OUTPUT_DIR=../screenshots/qa-<version>-<persona>');
+  });
+
+  // Review, HOUSEKEEPING-C fix round 1, Minor-3: the runbook (and the config's own comment) both
+  // claimed PW_OUTPUT_DIR carries the persona-session memo out of harm's way along with the
+  // screenshots — it does not. `MEMO_FILE` (harness.ts) is hard-anchored to
+  // `test-results/.persona-sessions.json` and never moves whatever this variable is set to; a run
+  // with PW_OUTPUT_DIR set merely stops Playwright's own wipe from LANDING on `test-results/` at
+  // all, which is not the same claim, and the memo's actual staleness handling — `global-setup.ts`
+  // clearing it on a run-stamp mismatch — is a mechanism neither doc named.
+  it('does not claim PW_OUTPUT_DIR protects the persona memo, and names what actually does', () => {
+    const runbook = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'docs', 'RUNBOOK-identity.md'), 'utf8');
+    const flowed = runbook.replace(/\s+/g, ' ');
+    expect(flowed, 'RUNBOOK-identity.md §12 still claims PW_OUTPUT_DIR carries the persona memo along with the screenshots')
+      .not.toMatch(/persona memo (with|along)/);
+    expect(flowed, 'RUNBOOK-identity.md §12 does not say the memo file never moves').toContain('never moves');
+    expect(flowed, 'RUNBOOK-identity.md §12 does not name global-setup.ts as the memo\'s own staleness handling').toContain('global-setup.ts');
+    const comments = src.slice(0, src.indexOf('outputDir:'));
+    expect(comments, 'playwright.config.ts still claims PW_OUTPUT_DIR carries the persona memo along with the screenshots')
+      .not.toMatch(/persona memo (with|along)/);
+    expect(comments, 'playwright.config.ts does not say MEMO_FILE never moves').toContain('never moves');
+  });
+});
+

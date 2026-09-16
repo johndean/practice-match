@@ -304,6 +304,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     income_note = None
     income_vs_us_pct = None
     income_approximate = None
+    pet_rate = None
     if community is not None:
         pop = community.get("pop")
         growth = community.get("growth")
@@ -316,6 +317,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         income_note = community.get("income_note")
         income_vs_us_pct = community.get("income_vs_us_pct")
         income_approximate = community.get("income_approximate")
+        pet_rate = community.get("pet_rate")
 
     return {
         "id": listing_id,
@@ -357,6 +359,12 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # panel is not reading the end of the detail card's sentence.
         "income_vs_us_pct": income_vs_us_pct,
         "income_approximate": income_approximate,
+        # Task PET-RATE-PROVENANCE (John, 2026-09-15): the pet-ownership incidence rate this
+        # listing's own estimated-pet-household row was computed with. Not a figure — the one
+        # input the design needs so it can stop keeping a second, unexplained copy of the
+        # constant. `null` where the listing has no pet row, and the design then shows no such
+        # figure at all rather than inventing one from a rate nobody recorded.
+        "pet_rate": pet_rate,
         # GEO-WIRE (4): how precisely this listing's point is known — 'rooftop', 'tract', 'zcta',
         # 'place', 'county' (`migrations/061`'s own CHECK), or `null` where it has never been
         # geocoded. The contract's copy rule keys on exactly this ("`geo_precision != \"rooftop\"`

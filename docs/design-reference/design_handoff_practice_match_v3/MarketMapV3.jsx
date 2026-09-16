@@ -280,6 +280,20 @@ function MarketMapV3(props) {
     map.setView(center, zoom, { animate: true });
   }, [center && center[0], center && center[1], zoom, recenterKey, status]);
 
+  // A51 (John, 2026-09-16). Drives the map DIRECTLY, as its two neighbours do and as V2's
+  // own Recenter button did (MarketMap.jsx:236): no state is written, so the selected practice
+  // stays selected and its docked panel stays open. A selected practice centres the map on its
+  // OWN point at the current zoom; nothing selected restores the metro's centre and zoom.
+  // `Number.isFinite`, not `!= null` (A25.1): an undisclosed location is served lat/lng null
+  // and a NaN would pass the looser test, and a missing point omits rather than fabricating.
+  const recenterView = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const sel = practices.filter((p) => p.id === activeId)[0];
+    if (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) map.setView([sel.lat, sel.lng], map.getZoom(), { animate: true });
+    else if (center) map.setView(center, zoom, { animate: true });
+  };
+
   const stackBtn = {
     width: "34px", height: "32px", display: "grid", placeItems: "center", padding: 0,
     background: "none", border: 0, cursor: "pointer",
@@ -350,6 +364,16 @@ function MarketMapV3(props) {
                 "aria-label": "Zoom in"
               },
               "+"
+            ),
+            React.createElement("span", { style: { width: "1px", background: "#e6e6e6" } }),
+            React.createElement(
+              "button",
+              {
+                style: Object.assign({}, stackBtn, { flex: 1, width: "auto" }),
+                onClick: () => recenterView(),
+                "aria-label": "Recenter"
+              },
+              React.createElement("img", { src: "assets/icons/sub-recenter-disc.svg", alt: "", width: 15, height: 15, style: ctrlIcon })
             ),
             React.createElement("span", { style: { width: "1px", background: "#e6e6e6" } }),
             React.createElement(

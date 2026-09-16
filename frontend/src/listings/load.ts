@@ -98,6 +98,14 @@ export interface ApiListing {
   // sub-line names it. `null` where the geography has no name to give, and the design's own
   // "Since <year>" then stands.
   growth_scope: string | null;
+  // Task PET-RATE-PROVENANCE (John, 2026-09-15): the pet-ownership incidence rate this listing's
+  // own estimated-pet-household row was computed with — `market_metric.inputs.pet_incidence_rate`,
+  // read from the same band the `hh` figure came from. Not a figure: the one INPUT the design
+  // needs so it can derive the estimate from the rate the pipeline actually used rather than from
+  // a constant of its own. OPTIONAL because a server predating this task does not send it, and
+  // because the D6 design-fixture stub has nothing to say. `null` where the listing has no pet
+  // row — and a client with no rate shows no estimated-pet-household figure at all.
+  pet_rate?: number | null;
   // D-C38: the median-income tile's whole sub-line, when that median is an approximation rather
   // than a published Census figure — a catchment median is a household-weighted median of the
   // tract medians inside the ring. Composed server-side because the tile has ONE sub-line and it
@@ -160,6 +168,10 @@ export interface Practice {
   // `sel.incomeApproximate` is falsey — which is what keeps every approved state on its pixels.
   incomeVsUs?: number;
   incomeApproximate?: boolean;
+  // Task PET-RATE-PROVENANCE: the same absence rule again. The design's own fixtures carry no
+  // key, so `this.props.market ? p.petRate : <the design's demoted fixture constant>` falls to
+  // the constant on the reference path and every approved state keeps its pixels.
+  petRate?: number;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -229,6 +241,10 @@ export function toPractice(row: ApiListing): Practice {
   // median) and a `false` flag (a published median, which is a statement the payload makes).
   if (row.income_vs_us_pct != null) p.incomeVsUs = row.income_vs_us_pct;
   if (row.income_approximate != null) p.incomeApproximate = row.income_approximate;
+  // Task PET-RATE-PROVENANCE: `!= null` again, and load-bearing for the A33.1 reason — a
+  // truthiness test would drop a rate of 0, which is a rate the payload stated rather than one
+  // it withheld. The two are different answers and the design branches on the difference.
+  if (row.pet_rate != null) p.petRate = row.pet_rate;
   return p;
 }
 

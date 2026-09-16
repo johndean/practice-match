@@ -23,6 +23,7 @@ from httpx import ASGITransport
 from app.api import admin_data_sources
 from app.auth import deps
 from app.census import gate, license
+from app.census.registry import DRIFT_CLAUSE, SOURCE_SUBLINE_CAP
 from app.config import settings
 from app.db import sync_dsn
 from app.main import create_app
@@ -92,7 +93,12 @@ async def test_staff_may_read_it_too_and_the_list_is_ordered_by_key(client, memb
     r = await client.get(PATH, headers=auth_headers(cookies, hdr))
     assert r.status_code == 200
     keys = [row["dataset_key"] for row in r.json()]
-    assert keys == sorted(keys) and len(keys) == 17
+    # 20 since two branches each added rows: A38 registered the two Esri basemaps the product
+    # actually loads (controller ruling 17), and Task PET-RATE-PROVENANCE (2026-09-15, ruling 4)
+    # gave the cited AVMA national statistic its own row -- it is USED and its redistribution
+    # right is unresolved, a different status from the blocked per-geography feed it used to
+    # share a row with. Derived at the merge: 17 + 2 + 1.
+    assert keys == sorted(keys) and len(keys) == 20
 
 
 async def test_every_row_carries_its_attribution_and_agrees_with_the_licence_gate(client, conn, redis, member):
@@ -207,27 +213,31 @@ async def test_license_decision_updates_registry_and_logs(client, member):
     # from the last 10 minutes or the answer is `403 REAUTH_REQUIRED`.
     _account_id, headers = await _admin(client, member)
     r = await client.post(f"{PATH}/imagery/license", headers=headers,
-                          json={"status": "cleared", "name": "Esri Imagery — commercial web display",
+                          json={"status": "cleared", "name": "Esri Master Agreement",
                                 "url": "https://example.test/terms", "notes": "signed 2026-09-05"})
     assert r.status_code == 200 and r.json()["license_status"] == "cleared"
     r2 = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "maybe"})
     assert r2.status_code == 422
 
 
-async def test_the_decision_records_the_operators_url_and_note_in_the_licence_ledger(client, conn, member):
+async def test_the_decision_records_the_operators_url_in_the_licence_ledger_and_the_note_in_the_audit_trail(client, conn, member):
     """`license_audit_log` is the licence LEDGER (distinct from the security audit trail): a human
     decision goes in beside the quarterly machine checks, with `changed = false` — a decision is
     not evidence that the terms moved."""
     _account_id, headers = await _admin(client, member)
     r = await client.post(f"{PATH}/imagery/license", headers=headers,
-                          json={"status": "cleared", "name": "Esri Imagery — commercial web display",
+                          json={"status": "cleared", "name": "Esri Master Agreement",
                                 "url": "https://example.test/terms", "notes": "signed 2026-09-05"})
     assert r.status_code == 200
     with conn.cursor() as cur:
         cur.execute("""SELECT license_status, license_name, license_url, notes, drift_flagged, last_verified_at IS NOT NULL
                          FROM dataset_registry WHERE dataset_key = 'imagery'""")
-        assert cur.fetchone() == ("cleared", "Esri Imagery — commercial web display", "https://example.test/terms",
-                                  "signed 2026-09-05", False, True)
+        # `notes` is the row's OWN seeded note, untouched: the decision's rationale goes to the
+        # audit trail (`audit_log.reason`, and only there — `license_audit_log` has no note column)
+        # and never into the column the tab renders
+        # (A38 fix round 2, review F3 — a re-ruling of brief item I7).
+        assert cur.fetchone() == ("cleared", "Esri Master Agreement", "https://example.test/terms",
+                                  "Off until a written licence names commercial web display.", False, True)
         cur.execute("SELECT url, content_sha256, http_status, changed FROM license_audit_log WHERE dataset_key = 'imagery'")
         assert cur.fetchall() == [("https://example.test/terms", None, None, False)]
 
@@ -516,17 +526,113 @@ async def test_the_stored_licence_url_is_pydantics_canonical_form(client, conn, 
         assert cur.fetchall() == [(stored,)]
 
 
-@pytest.mark.parametrize(("field", "limit"), [("name", 200), ("notes", 4_000)])
+@pytest.mark.parametrize(("field", "limit"), [("notes", 4_000)])
 async def test_the_free_text_bounds_bite_exactly_at_their_limit(client, member, field, limit):
-    """A-C9 (8) / review I7. `notes` reaches `audit_log.reason`, a table whose triggers refuse
-    DELETE, so the bound is not decoration — and a bound nothing exercises is a claim, not a
-    limit. Asserted on both sides of it."""
-    assert {"name": admin_data_sources.MAX_NAME, "notes": admin_data_sources.MAX_NOTES}[field] == limit
+    """A-C9 (8) / review I7, RE-RULED by A38 fix round 2 (review F3) and narrowed by fix round 3.
+
+    `notes` reaches `audit_log.reason`, a table whose triggers refuse DELETE, so the bound is not
+    decoration — and a bound nothing exercises is a claim, not a limit. Asserted on both sides of
+    it. It keeps its 4,000 because the rationale is no longer written into the column the Data
+    Sources tab renders.
+
+    `name` is no longer parametrised HERE: it is rendered, and its operative bound is not a length
+    of its own but the COMPOSED sub-line a decision would leave, which depends on the row's own
+    note — so it is driven against a real row, on both sides of that bound and with `MAX_NAME`
+    asserted beside it, in
+    `test_a_decision_that_would_overflow_the_tab_is_refused_on_the_COMPOSED_sub_line`."""
+    assert {"notes": admin_data_sources.MAX_NOTES}[field] == limit
     _account_id, headers = await _admin(client, member)
     ok = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * limit})
     assert ok.status_code == 200, ok.text
     over = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * (limit + 1)})
     assert over.status_code == 422
+
+
+async def test_a_decision_that_would_overflow_the_tab_is_refused_on_the_COMPOSED_sub_line(client, conn, member):
+    """A38 fix round 3, re-review Important 1.
+
+    `SOURCE_SUBLINE_CAP` is a cap on the COMPOSED sub-line — `license_name or "Licence not
+    recorded" · notes · Terms drift flagged` — and fix round 2's guard measured one of its three
+    parts, so a name well under 115 still overflowed the row. The reviewer drove this branch's OWN
+    fixture through it: `"Esri Imagery — commercial web display"` (37 characters) on `imagery`
+    composed to 150 against that row's then 88-character note — thirty-five over — and returned 200
+    with every pin green. The row is already
+    locked for the write, so the composition is read there and refused there.
+
+    Measured per-row headroom for a licence name today: `osm_tiles` 11, `zbp` and `fsq_os_places`
+    14, `imagery` 24, `esri_tiles` 25, `aies` 26, `esri_imagery` 27 — and clearing the two Esri rows
+    is this route's first real use (admin spec §4), so the refusal has to be legible: it names the
+    cap AND the length the decision would have composed."""
+    _account_id, headers = await _admin(client, member)
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'imagery'")
+        NOTE_IMAGERY = cur.fetchone()[0]
+    over = await client.post(f"{PATH}/imagery/license", headers=headers,
+                             json={"status": "cleared", "name": "Esri Imagery — commercial web display",
+                                   "url": "https://example.test/terms"})
+    assert over.status_code == 422, over.text
+    body = over.json()["error"]
+    assert body["code"] == "BAD_FIELD"
+    composed = len("Esri Imagery — commercial web display") + 3 + len(NOTE_IMAGERY) + len(DRIFT_CLAUSE)
+    assert str(SOURCE_SUBLINE_CAP) in body["message"] and str(composed) in body["message"], body["message"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_name FROM dataset_registry WHERE dataset_key = 'imagery'")
+        assert cur.fetchone()[0] is None, "a refused decision wrote the name anyway"
+
+    # The row's own room, and BOTH sides of it — a refusal that is a bound, not a wall. `imagery`
+    # composes `<name> · <note>`, and it carries no `license_url` until a decision gives it one,
+    # which is why the name is sized against the sweep's drift clause too: a name that fits only
+    # until the terms page moves does not fit. 093 shortened this row's note FOR this — an
+    # 88-character note left it unable to record a terms URL at all.
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'imagery'")
+        note = cur.fetchone()[0]
+    room = SOURCE_SUBLINE_CAP - len(note) - 3 - len(DRIFT_CLAUSE)
+    assert room > 20, "093 left this row too little room to record a licence at all"
+    just_over = await client.post(f"{PATH}/imagery/license", headers=headers,
+                                  json={"status": "cleared", "name": "E" * (room + 1), "url": "https://example.test/terms"})
+    assert just_over.status_code == 422, just_over.text
+    ok = await client.post(f"{PATH}/imagery/license", headers=headers,
+                           json={"status": "cleared", "name": "E" * room, "url": "https://example.test/terms"})
+    assert ok.status_code == 200, ok.text
+
+    # The field's own bound is still there and still bites, one door earlier (pydantic's own 422):
+    # the composed cap is the stricter of the two, never a replacement for it.
+    assert admin_data_sources.MAX_NAME == 200 and SOURCE_SUBLINE_CAP < admin_data_sources.MAX_NAME
+    too_long = await client.post(f"{PATH}/imagery/license", headers=headers,
+                                 json={"status": "cleared", "name": "x" * (admin_data_sources.MAX_NAME + 1)})
+    assert too_long.status_code == 422
+
+
+async def test_a_legally_allow_listed_row_is_not_refused_for_the_overflow_it_is_exempt_for(client, member):
+    """`practice_locations` and `google_places_aggregate` are over the cap BY RULING (their notes
+    carry legal citations that are never shortened to fit a layout), so a composed check that did
+    not skip them would make those two rows undecidable — the one thing this route exists for."""
+    _account_id, headers = await _admin(client, member)
+    r = await client.post(f"{PATH}/practice_locations/license", headers=headers,
+                          json={"status": "blocked", "name": "Mixed provenance — not licensed"})
+    assert r.status_code == 200, r.text
+
+
+async def test_a_licence_name_over_the_measured_cap_is_refused_with_the_cap_named(client, conn, member):
+    """Review F3: the ONE runtime writer of a column the tab renders verbatim, closed at the door.
+
+    `tests/census/test_registry.py` pins every MIGRATED note against the measured cap, but it reads
+    a migrated test database — a write through this route was structurally invisible to it, and
+    `MAX_NAME` alone (200) is nearly twice the cap. The refusal names the number so an operator can
+    act on it, and the row is left exactly as it was."""
+    _account_id, headers = await _admin(client, member)
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_name, license_status FROM dataset_registry WHERE dataset_key = 'imagery'")
+        before = cur.fetchone()
+    over = await client.post(f"{PATH}/imagery/license", headers=headers,
+                             json={"status": "cleared", "name": "x" * (SOURCE_SUBLINE_CAP + 1)})
+    assert over.status_code == 422
+    body = over.json()["error"]
+    assert body["code"] == "BAD_FIELD" and str(SOURCE_SUBLINE_CAP) in body["message"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_name, license_status FROM dataset_registry WHERE dataset_key = 'imagery'")
+        assert cur.fetchone() == before, "a refused decision changed the row"
 
 
 # --- wiring -------------------------------------------------------------------------------------

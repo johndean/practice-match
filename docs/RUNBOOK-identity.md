@@ -16,7 +16,7 @@ is the plan they were built from. `tests/test_docs.py::test_identity_runbook_end
 | | |
 |---|---|
 | **Host** | QA `https://qa.foundation.vin` · production `https://foundation.vin`. Everything below is rehearsed on QA first. |
-| **Who** | `staff` reviews and decides; `admin` also grants roles and mints tokens (`app/auth/permissions.py` is the matrix — `GET /api/admin/permissions` prints the copy the server is actually running). |
+| **Who** | `staff` reviews and decides; `admin` also grants roles and mints tokens (`app/auth/permissions.py` is the matrix — `GET /api/admin/permissions` prints the copy the server is actually running). **The `admin` role holds EVERY permission in that matrix, the buyer's and the seller's included (ruling D-C54, 2026-09-13)** — it is built as a superset in one statement at the foot of `permissions.py`, so a permission added later cannot forget it; `staff` is not widened, and re-auth still gates the six step-up actions for an admin like anybody else. |
 | **Re-auth** | Revoke, role grants and token minting need a password confirmation from the last 10 minutes: `POST /api/auth/reauth` with `{"password": "…"}`, then the action. Past `deps.REAUTH_WINDOW` (10 min) the answer is `403 REAUTH_REQUIRED` — re-confirm and repeat. |
 | **CSRF** | Every state change made with a session cookie must send `X-CSRF-Token` equal to the `pm_csrf` cookie and an `Origin` of the site, or the answer is `403 CSRF` / `403 ORIGIN`. Bearer (`api_token`) callers send neither. |
 | **Tokens** | An `api_token` can never re-authenticate (`403 REAUTH_TOKEN`) and can never manage tokens (`403 TOKEN_SCOPE`), whatever role it carries — so Revoke, grants and minting are always a human with a session. See [DEPLOY.md → Automation tokens](../DEPLOY.md#automation-tokens). |
@@ -111,6 +111,25 @@ A seller application is made from an account that is already `active`: approving
 `POST /api/admin/users/{account_id}/grants` with `{"role": "staff", "grant": true, "reason": "…"}`.
 `admin` only, in re-auth, audited with the roles before and after. Roles: `buyer`, `seller`, `staff`,
 `admin`.
+
+**The `admin` role holds every permission in the matrix, the buyer's and the seller's included**
+(ruling D-C54, 2026-09-13) — so an account granted `admin` alone opens Browse, My Requests, List a
+Practice and the Admin screens, and granting it the other three buys it nothing.
+`staff` is a reviewer and not a superset: it holds neither `page.seller` nor `request.read_own`.
+
+Two consequences of the superset, recorded rather than surprised at later (Task ADMIN-SUPERSET fix
+round 1, review Informational 1/2): an `api_token` minted for the `admin` role now also carries the
+six member actions the superset added, exactly as a human admin's session does — the two refusals a
+token meets whatever role it carries are unchanged by this ruling: `tokens.manage` (`TOKEN_DENIED`),
+and every step-up action (`REAUTH`: `engine.activate`, `licence.decide`, `roles.grant`,
+`signups.notify`, `tokens.manage`, `users.revoke`), which a token has no password to
+re-authenticate with — so an automation token that only ever needed `page.admin`-family permissions
+is, from this release on, also able to reach `/api/seller/*`; and an admin who acts as a
+seller leaves no `roles.grant` audit row the way a deliberate self-grant of `seller` would have,
+because none is needed — and the trace is on the listing side rather than the identity side: the
+listing's own `seller_id`, and the `listing.*` rows its own routes write, of which `listing.edit`
+lands only where an edit re-enters review from `paused` or `published` (creating a listing and
+editing a draft write none).
 
 Two floors under removals: an `admin` grant is never removed from its own holder, and never when it
 is the last live one — `roles.grant` is admin-only, so zero admins is a state with no way back short
@@ -216,7 +235,7 @@ request path talks to Resend, so a missing email is one of five things — check
 
    | Template | How to cause it again |
    |---|---|
-   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup` — or, if they are already signed in on the unverified account, presses **Send it again** on the "Check your email" card, which is `POST /api/auth/verify/resend` (session-authenticated, `unverified` only, A-S4.1) and needs no password. Either way, while the account is still `unverified` a fresh 24 h `verify` token is issued and `verify_email` queued again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`, SHARED by both routes — they count into one bucket keyed on the address): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a fixed 24 h bucket, not a rolling one, so it clears at the boundary and `Retry-After` reports the whole 24 h as an upper bound rather than the real wait. There is no operator override, and the bucket is keyed on the address, so nothing done on another one shortens it. |
+   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup` — or, if they are already signed in on the unverified account, presses **Send it again** on the "Check your email" card, which is `POST /api/auth/verify/resend` (session-authenticated, `unverified` only, A-S4.1) and needs no password. Either way, while the account is still `unverified` a fresh 24 h `verify` token is issued and `verify_email` queued again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`, SHARED by both routes — they count into one counter keyed on the address): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a sliding 24 hours, so the first of the three attempts falls out of it 24 h after it was made, and `Retry-After` reports exactly that wait (A-RL2) rather than the whole 24 h. There is no operator override, and the counter is keyed on the address, so nothing done on another one shortens it. |
    | `password_reset` | The person uses **Forgot password** — `POST /api/auth/password/forgot` — which always issues a fresh 1 h token and retires the previous one. Works from `verified` and `active` only. |
    | `account_exists` | Nothing to do: it is a notice to the address's owner that somebody tried to sign up as them, not something they act on. |
    | `application_received`, `application_info_requested` | The applicant re-submits: `POST /api/applications/{application_id}/answer` from `needs_review`, or a fresh `POST /api/applications` after a decline. |
@@ -260,22 +279,41 @@ which looks exactly like "the link doesn't work".
 
 ## 9. A locked-out member
 
-Sign-in counts **failures only** (`app/auth/limits.py`), so a busy day cannot lock anyone out:
+Sign-in counts **failures only** (`app/auth/limits.py`), so a busy day cannot lock anyone out.
+Every window below is **sliding**: the count is the attempts inside the last N minutes, wherever
+they fall on the clock, so ten failures two seconds apart lock the address whether or not they
+straddle a quarter-hour (Task RATE-LIMIT-WINDOW and spec amendment A-RL1; before those, the count
+was bucketed by the clock, and nine failures just before a quarter-hour boundary plus one just after
+counted as one).
 
-| Bucket | Limit | Window |
+| Counter | Limit | Sliding window |
 |---|---|---|
 | failures per address (`SIGNIN_EMAIL`) | 10 | 15 min |
 | requests per client IP (`SIGNIN_IP`) | 30 | 15 min |
-| sign-ups per IP / per address | 5 / 3 | 1 h / 24 h |
-| password-reset requests per address / per IP (`FORGOT_EMAIL`, `FORGOT_IP`) | 3 / 10 | 1 h |
+| sign-ups per IP / per address (`SIGNUP_IP`, `SIGNUP_EMAIL`) | 5 / 3 | 1 h / 24 h |
+| password-reset requests per address / per IP (`FORGOT_EMAIL`, `FORGOT_IP`) | 3 / 10 | 1 h / 1 h |
 | verify + reset token attempts per IP (`TOKEN_IP`) | 30 | 1 h |
 
 * A successful sign-in clears the address's failure count. **A lockout therefore expires on its
   own, within 15 minutes** — that is the answer nine times in ten, and there is no unlock endpoint.
+  It expires 15 minutes after the OLDEST of the ten failures, so in practice sooner than that.
 * A fifth failure writes `signin.failure_burst` to the audit trail. Several of those against one
   address from different IPs is worth a look; one is somebody's caps lock.
-* Both refusals answer `429` with `Retry-After` set to the whole window (an upper bound — the bucket
-  rolls over sooner).
+* **A refused attempt is not counted** (A-RL2), so somebody knocking at a locked address cannot
+  hold the lock open: the fifteen minutes always run from the OLDEST of the ten failures. What the
+  counter holds is attempts that reached the password check, and a correct password empties it.
+* **The clock is Redis's own**, read inside the limiter's script (`app/ratelimit.py`), not any
+  api process's. However many api replicas run, they score against one clock, so no machine's
+  clock skew can widen or shorten a window.
+* **A deploy that changes the counter's key resets every counter once** — the sliding-window
+  release (Task RATE-LIMIT-WINDOW) did, and any future one that renames the key will. Somebody
+  locked out at that moment gets a fresh ten, and somebody's lockout in progress is lifted, once;
+  the old keys expire on their own within their longest window (24 h). Deploy at a quiet hour if
+  that matters.
+* Both refusals answer `429` with `Retry-After` set to the REAL wait — the moment the oldest
+  attempt still inside the window leaves it (amendment A-RL2). It was the whole window before, an
+  honest upper bound that could be wrong by up to a whole window; it is never more than the window
+  and never less than one second.
 * **A correct password that still fails** is the interesting case: `suspended` and `revoked`
   accounts get the same generic `401` as a wrong password, and write `signin.refused_state`. Check
   the audit trail and the account's state before believing a password report.
@@ -306,9 +344,10 @@ While it is mismatched the webhook answers `401`, so bounces are not recorded �
 
 ## 11. Test and QA accounts
 
-`scripts/seed_persona.py` seeds the ten accounts the visual suite and a QA click-through need — three
-members (`buyer@`, `seller@`, `design@practice-match.test`, all "Dr. Rachel Mendes of the StartUp
-Club", differing only in grants), three applicants (`pending@`, `needs-review@`,
+`scripts/seed_persona.py` seeds the eleven accounts the visual suite and a QA click-through need — four
+members (`buyer@`, `seller@`, `design@`, `admin@practice-match.test`, all "Dr. Rachel Mendes of the
+StartUp Club", differing only in grants — `admin@` holds `admin` and nothing else, the shape ruling
+D-C54 exists for), three applicants (`pending@`, `needs-review@`,
 `declined@practice-match.test`, one per gate state — only `needs-review@` and `declined@` carry a
 real application row; `pending@` has none) and four identity-screen accounts (`unverified@`,
 `verify-me@`, `verified@`, `invited@practice-match.test`) covering the two states the
@@ -388,10 +427,23 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
   (`frontend/tests/global-setup.ts`) and the run never starts. When it DOES run, the seed itself
   prints the target database name and host, never the DSN (`[seed_persona] target database <db> on
   <host>`, `scripts/seed_persona.py`).
-* QA's real sign-in rate limit stays real: fifteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per SLIDING
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
-  budget: 7 + 2 + 4 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
-  quarter-hour boundary and re-run — never loosen the limit to make it pass.
+  budget: 7 + 2 + 4 + 2 + 1), so budget **one run per window**. A `429` mid-run means wait fifteen
+  minutes from the run's LAST sign-in and re-run — the sliding window holds every sign-in for a
+  full 900 s after it, so counting from the FIRST one is a lower bound and not the guarantee the
+  old quarter-hour boundary was. Never loosen the limit to make it pass.
+* **Give every persona check its own `PW_OUTPUT_DIR`.** Playwright clears its output directory at
+  the start of every run, so a second run deletes the first one's screenshots and traces — which
+  cost the 0.1.23 release agent a third sign-in out of a budget of two, just to re-take two images.
+  Prefix the command with `PW_OUTPUT_DIR=../screenshots/qa-<version>-<persona>` (resolved against
+  the CWD, which is `frontend/` above) and nothing a run produced is lost to the next one.
+  `screenshots/` and `qa-*.png` are ignored by git (`tests/test_repo_hygiene.py`); move what you
+  are keeping into the workspace rather than committing it. This is NOT what keeps the
+  persona-session memo (`frontend/test-results/.persona-sessions.json`) safe across runs — that
+  file is hard-anchored and never moves, whatever `PW_OUTPUT_DIR` is set to; setting the variable
+  only stops Playwright's own wipe from landing on `test-results/` at all. The memo's own
+  staleness is `frontend/tests/global-setup.ts`'s job, which clears it on a run-stamp mismatch.
 * Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
   `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
   same fixtures and addresses.

@@ -85,30 +85,38 @@ export type Action = 'publish' | 'decline' | 'unpublish';
 /** `admin_listings.decide_listing` refuses `decline` with `NOTE_REQUIRED` when the reason is blank. */
 export const NOTE_REQUIRED: readonly Action[] = ["decline"];
 
-// The WIRED buttons the approved design shows, per status — a legal SUBSET of `DECISIONS`, not
-// all of it: the API also allows `publish` from `declined` and `paused`, which the design's own
-// In review / Published rows do not offer. A status with no entry here offers no WIRED button.
-export const ACTIONS: Record<string, Action[]> = { "in_review": ["publish", "decline"], "published": ["unpublish"] };
+// The buttons the tab offers, per status — every one of them a decision `DECISIONS` really allows
+// (`tests/test_docs.py::test_the_admin_listings_table_matches_the_api` pins that both ways).
+//
+// A39, ruling 3 (D-C53): `publish` has ALWAYS been legal from `declined` and `paused`, and the
+// tab's own footnote promises that unpublishing is "immediate and reversible" — a promise nothing
+// on the screen could keep, because the design pictures no button on either row. The design's own
+// primary Publish button appears there now; no new control is composed, and nothing else moves.
+// A status with no entry here offers no button at all.
+export const ACTIONS: Record<string, Action[]> = { "in_review": ["publish", "decline"], "published": ["unpublish"], "paused": ["publish"], "declined": ["publish"] };
 
 const LABEL: Record<Action, string> = { publish: 'Publish', decline: 'Reject', unpublish: 'Unpublish' };
 const TONE: Partial<Record<Action, string>> = { publish: 'primary', decline: 'danger' };
 
-// The design's own REMAINING buttons, per status — no `app/api/admin_listings.py` decision backs
-// either, so both stay the design's own no-op (A-SL33 (3), fix round 1 on the SL8 review's
-// Important finding: dropping them changed what the approved table renders — the brief's own
-// words are "wired… where a decision exists and left as the design's no-op where it does not",
-// and no controller amendment authorised narrowing that to "wired or absent"). Kept OUT of
-// `ACTIONS`/`Action` — and so out of the `NOTE_REQUIRED`/`DECISIONS` drift pin above — because
-// neither names a decision to check against; `listings.test.ts`'s own pin instead compares the
-// COMBINED label set, per status, against `adminVals()`'s own rows directly, so a future edit
-// cannot quietly drop either one without a design amendment.
-const NO_OP_LABELS: Record<string, readonly string[]> = { "published": ["Edit"], "paused": ["Contact seller"] };
-const noOp = (label: string): ActionButton => A(label, undefined, () => Promise.resolve());
+// GONE, by ruling 4 (D-C53, 2026-09-13), which SUPERSEDES A-SL33 (3): "Edit" (on the design's
+// Published row) and "Contact seller" (on its Paused row) were kept here as the design's own
+// inert buttons, on the reasoning that dropping them changed what the approved table renders.
+// John's standing rule for this surface is now the other way round — "every action renders only
+// if it calls a working route with a real status transition and an audit row; a button that does
+// nothing is removed" — and neither has a route, a transition or an audit row: the admin field
+// editor and member-to-member messaging are spec items, not omissions this tab can paper over
+// with a control that answers a click by doing nothing. The REFERENCE and the frozen
+// `admin-listings` capture are untouched: both render the design's own fixture rows through
+// `DesignListingRow`, which copies every label and style verbatim and never consults this module's
+// tables (see that interface's note), so no approved state moves.
 
-// `[label, tone]` for the three of `STATUSES` the design's own rows picture (its In review,
-// Published and Paused rows); `draft`, `withdrawn` and `declined` have no ruled label, so they
-// show the state key, muted — absent beats faked, `toListingRows`'s own fallback below.
-export const PILLS: Record<string, [string, string]> = { "in_review": ["In review", "warn"], "published": ["Published", "ok"], "paused": ["Paused", "info"] };
+// `[label, tone]` per `listing.status`, all six of them (A39, ruling 5). The design pictures three
+// — In review, Published and Paused — and `draft`, `withdrawn` and `declined` used to render the
+// COLUMN's own key, muted, so a reviewer read `withdrawn` where every other row read English.
+// John ruled the three words and the mute tone, which is the tone `cell()` itself gives a pill it
+// has no tone for. `toListingRows`'s `??` fallback below still stands for a seventh value nobody
+// has added here yet.
+export const PILLS: Record<string, [string, string]> = { "in_review": ["In review", "warn"], "published": ["Published", "ok"], "paused": ["Paused", "info"], "draft": ["Draft", "mute"], "withdrawn": ["Withdrawn", "mute"], "declined": ["Declined", "mute"] };
 
 /** The design's own bldg wording (logic.js's fixture rows), by the WIZARD's word — which is what
  *  `serialise_draft` answers `bldg` as (`BLDG_OUT`), never the column's own "Separate". */
@@ -130,13 +138,57 @@ function formatDate(iso: string): string {
 /**
  * One row of `GET /api/admin/listings`'s `items`, narrowed to what the table reads. The payload
  * carries the seller's whole draft (`app/api/seller_listings.py::serialise_draft`) plus
- * `seller_id`/`seller_name`; a structural interface means the real item is assignable without
- * restating it.
+ * `seller_id`/`seller_name` and — since A39 — `listed_at` and the latest status change; a
+ * structural interface means the real item is assignable without restating it.
  */
 export interface ListingItem {
   id: string; status: string; name: string | null; type: string | null; city: string | null;
   price: number | null; rev: number | null; docs: number | null; bldg: string | null;
   state: string | null; seller_name: string | null; submitted_at: string | null;
+  /** Stamped at the FIRST publish and never again (`admin_listings.decide_listing`), so it is the
+   *  date a buyer has seen — never `updated_at`, which a re-save moves. */
+  listed_at: string | null;
+  /** The latest `audit_log` row that put this listing in the status it is in now: when, and the
+   *  actor's own `actor_role`. Both null where no decision has ever named this status. */
+  status_changed_at: string | null;
+  status_changed_by: string | null;
+  /** The words of the latest decline (`serialise_draft`, A-SL19 (9), Info-3). */
+  decline_reason: string | null;
+}
+
+/** Whether the audit row's `actor_role` reads as the LISTING'S OWN SELLER rather than a reviewer.
+ *
+ *  Two doors reach `paused` — the seller's `POST /api/seller/listings/{id}/status` and the
+ *  reviewer's `unpublish` — and ruling 5 names `actor_role` as what tells them apart. It is the
+ *  comma-joined role list `app/auth/audit.py` writes, prefixed `token:` for a CI token and written
+ *  `legacy:operator` for the operator secret, which holds no account at all.
+ *
+ *  THE ONE CASE IT CANNOT SETTLE, recorded rather than hidden: an account that holds `seller` AND
+ *  `staff` (John's own all-roles persona does) pausing its own listing is written exactly as a
+ *  reviewer unpublishing somebody else's, and this reads it as the reviewer. The unambiguous
+ *  discriminator is the audit ACTION, which names the route the decision came through; the ruling
+ *  names the role, so the role is what this reads. */
+function bySeller(actorRole: string | null): boolean {
+  const held = (actorRole ?? '').replace(/^token:/, '').split(',');
+  return held.includes('seller') && !held.includes('staff') && !held.includes('admin');
+}
+
+/** The "Listing" cell's own sub-line: what last happened to this listing, in the design's own
+ *  words (A39, ruling 5). Every row used to read "Submitted <date>" — the only date the payload
+ *  carried — so a listing published in March and one paused yesterday both reported the day their
+ *  seller pressed Submit, and the design's own "Published August 24" and "Paused by seller
+ *  August 12" had no producer at all. Null where the date behind a line is absent: absent beats
+ *  faked (D24), and an undated row keeps the design's own empty sub-line. */
+function statusLine(item: ListingItem): string | null {
+  if (item.status === 'published') return item.listed_at === null ? null : `Published ${formatDate(item.listed_at)}`;
+  if (item.status === 'paused') {
+    return item.status_changed_at === null ? null
+      : `${bySeller(item.status_changed_by) ? 'Paused by seller' : 'Unpublished by reviewer'} ${formatDate(item.status_changed_at)}`;
+  }
+  // The declined row's own line is the REASON, which is the one thing its seller is owed and the
+  // one thing the reviewer needs to see beside the pill.
+  if (item.status === 'declined' && item.decline_reason !== null) return item.decline_reason;
+  return item.submitted_at === null ? null : `Submitted ${formatDate(item.submitted_at)}`;
 }
 
 /**
@@ -188,7 +240,17 @@ function decision(item: ListingItem, action: Action, ui: ListingsUi): () => Prom
       // Cancelled: a first publish needs both, so there is nothing to send yet.
       if (fields === null) return;
     }
-    await ui.decide(item, action, note, fields);
+    // Fix round 2, on the gap the re-review recorded as pre-existing (older than A39, untouched by
+    // fix round 1, which handled the 409 the server ANSWERS). This promise is handed to the
+    // design's own `onClick`, which does not await it, so a REJECTION — `fetch` throwing on an
+    // offline browser or a DNS failure, never an HTTP status — was an unhandled rejection and the
+    // reviewer watched the button do nothing at all. A request that never arrived is told in the
+    // same place and the same words a refusal with no readable body is: `windowUi.decide` owns
+    // every message the server DID send, so this catch never speaks over one — by the time it
+    // runs, `decide` has either alerted and returned or thrown before it could.
+    await ui.decide(item, action, note, fields).catch(() => {
+      window.alert(`That listing could not be ${action === 'decline' ? 'reject' : action}ed.`);
+    });
   };
 }
 
@@ -211,19 +273,50 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
       ];
     }
     const [pill, tone] = PILLS[item.status] ?? [item.status, 'mute'];
-    const title = item.city ? `${item.type || 'Small animal'} practice — ${item.city}` : 'Untitled listing';
+    // Fix round 1 (D-C53's "zero-fake data", the review's §7 first item): this read
+    // `${item.type || 'Small animal'} practice — ${item.city}`, so a listing whose `type` column
+    // is null was printed as a Small animal practice — a clinical category no seller had chosen
+    // and no column held, invented by the mapping on the one tab whose ruling forbids exactly
+    // that. The honest copy was already in this expression: "Untitled listing", what the seller's
+    // own dashboard shows a row that has nothing to name itself by.
+    const label = item.city && item.type ? `${item.type} practice — ${item.city}` : null;
+    // D-C53, John's ruling of 2026-09-16: "the admin listings rows should name their practice".
+    // Measured on QA 0.1.25 with the staff persona, this table labelled every row by type and city
+    // and that label was shared by more than one row six times over — SEVEN rows all read "Small
+    // animal practice — Dallas" — while the queue served a practice `name` on 30 of its 32 rows
+    // and rendered it on none. A reviewer about to press Unpublish was telling those seven apart
+    // by asking price and date, which is not an identity, and a label that cannot identify its own
+    // row falls short of "everything must be surfaced and wired to UX".
+    //
+    // Nothing is DISCLOSED by this that the reviewer was not already holding: `list_all` builds
+    // every item from `serialise_draft` — the OWNER's own truth, every column unblanked — and the
+    // buyer contract's blanking (`app/api/listings.py::serialise`, which swaps an undisclosed name
+    // for `anonymised_name`) is a different serialiser on a different route. `anon` is the SELLER's
+    // switch over what BUYERS see ("Keep practice name and address hidden until I approve a buyer",
+    // logic.js's step 7; "Sellers control what buyers can see", A10.2), and the VIN Foundation
+    // admin is the party Rev 3's own disclosure request makes the OVERRIDER of it.
+    //
+    // The composed label is not discarded — type and city are how a reviewer SCANS, the name is
+    // how they IDENTIFY — so it joins the status line beneath the title in the design's own ` · `
+    // idiom, the join the figures cell beside it already uses, and leads it so the scan target
+    // keeps a fixed left edge down the column. Where `name` is null every string below is what it
+    // was byte for byte, which is the ruling's own floor: two of the thirty-two rows are in that
+    // state, and the `Untitled listing` fallback under them is fix round 1's own correction of a
+    // fabricated clinical category, weakened by nothing here.
+    const title = item.name || label || 'Untitled listing';
+    const listing = [item.name ? label : null, statusLine(item)]
+      .filter((part): part is string => part !== null).join(' · ');
     const figures: string[] = [item.price != null ? `${money(item.price)} asking` : 'Asking price not set'];
     if (item.rev != null) figures.push(`${money(item.rev)} revenue`);
     if (item.docs != null) figures.push(`${item.docs} ${item.docs === 1 ? 'doctor' : 'doctors'}`);
     if (item.bldg) figures.push(BLDG_SUB[item.bldg] ?? item.bldg.toLowerCase());
-    // Wired first, then the design's own no-ops — exactly the order its own fixture rows show
-    // them in ("Unpublish", "Edit"; "Contact seller" alone). Neither list existing is "no button".
-    const actions = [
-      ...(ACTIONS[item.status] ?? []).map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))),
-      ...(NO_OP_LABELS[item.status] ?? []).map(noOp)
-    ];
+    // The design's own words, from its own Paused row — and true of all five unpublished statuses:
+    // `GET /api/listings` serves `status = 'published'` alone, and the footnote above the table has
+    // always said so while the rows said it on one status out of six.
+    if (item.status !== 'published') figures.push('hidden from search');
+    const actions = (ACTIONS[item.status] ?? []).map((action) => A(LABEL[action], TONE[action], decision(item, action, ui)));
     return [
-      cell(title, item.submitted_at ? `Submitted ${formatDate(item.submitted_at)}` : null),
+      cell(title, listing),
       cell(item.seller_name, figures.join(' · ')),
       cell(null, null, pill, tone),
       cell(null, null, null, null, actions.length ? actions : null)
@@ -237,7 +330,13 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 20;
 
-interface QueuePage { items?: unknown; next_cursor?: string | null }
+/** One page of `GET /api/admin/listings` as it arrives. `counts` is the whole TABLE's, beside
+ *  `items` rather than inside them (`admin_signups`'s own envelope) — and it arrives on the FIRST
+ *  page ONLY (fix round 1, M-1): it is an unindexed `count(*)`, it cannot change between pages of
+ *  one traversal, and `list_all` stops computing it for any request carrying a `cursor`. A
+ *  continuation page therefore OMITS the key rather than sending a null, which is why the field is
+ *  optional here and why `list()` asks for it on page 0 alone. */
+interface QueueBody { items?: unknown; next_cursor?: string | null; counts?: { in_review?: unknown } }
 
 async function send(method: string, path: string, body?: unknown): Promise<Response> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -249,9 +348,28 @@ async function send(method: string, path: string, body?: unknown): Promise<Respo
   return res;
 }
 
+/** What one read of the queue answers: the rows the design's own table renders, and the number its
+ *  tab badges.
+ *
+ *  Fix round 1 (review Important-1, controller ruling of 2026-09-14): this said the count was
+ *  "keyed by the TAB the number belongs to, because `s.adminCounts` is one object the other three
+ *  tabs put their own badge in beside this one". That convention is retracted, and it was never
+ *  honourable: `setState` merges TOP-LEVEL keys, so two `loads.push` arms writing one shared
+ *  object inside the same `Promise.all` clobber each other — last writer wins and one tab's badge
+ *  blanks at random — and the siblings had already gone their own way (`adminUserCounts.open` on
+ *  the Users branch, a scalar `adminDataCount` on Data Sources). EACH TAB OWNS ITS OWN STATE KEY:
+ *  this one's is `adminListingCounts` (A39.2), and the member is named for what the number IS,
+ *  because the key already says which tab it belongs to. */
+export interface QueuePage { rows: Cell[][]; counts: { in_review: number } }
+
 /** What `logic.js` sees as `this.props.adminListings`. */
 export interface AdminListingsAdapter {
-  list(): Promise<Cell[][]>;
+  list(): Promise<QueuePage>;
+  /** Register what to do when a decision the API ACCEPTED lands (A39, ruling 2). The adapter does
+   *  not write state: it says a decision landed, and the host re-reads the queue through its own
+   *  one loader — `loadAdmin` (A40.3), which calls `list()` above — so the rows, the pills, the
+   *  buttons and the badge all settle by the single path that ever writes them. */
+  onDecision(reload: () => unknown): void;
 }
 
 /**
@@ -261,7 +379,7 @@ export interface AdminListingsAdapter {
  * `wizErr`-shaped surface of its own to render one into and D24's ask is the real data, not a new
  * error banner.
  */
-function windowUi(): ListingsUi {
+function windowUi(decided: () => Promise<void>): ListingsUi {
   return {
     // `decision()`'s only call is guarded by `NOTE_REQUIRED.includes(action)`, and `NOTE_REQUIRED`
     // is `["decline"]` alone (D24), so `action` here is always `'decline'` — no ternary, unlike
@@ -274,42 +392,73 @@ function windowUi(): ListingsUi {
       if (market === null) return null;
       return { state, market };
     },
-    // No reload after a successful decide: `admin/users.ts`'s own `decision()` — the pattern this
-    // mirrors — does not refresh its table either, because neither Users nor Listings has been
-    // wired to a live component before this task. Recorded rather than built past scope: a
-    // reviewer sees the queue settle on the next full load, exactly as today's Admin tabs do.
+    // A39, ruling 2: THE TABLE REFRESHES. This used to end here, with the decided draft the route
+    // answers thrown away and a note recording that as deliberate scope — so the pill, the buttons
+    // and the badge all stood until the reviewer reloaded the page, which is what made a reviewer
+    // press Publish a second time on a listing that was already published.
     decide: async (item, action, note, fields) => {
       const res = await send('POST', `/listings/${item.id}/decide`, { action, reason: note, ...(fields ?? {}) });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
         // SL9: was `'rejected'` here, doubling the suffix below into "rejecteded" — the ternary
         // gives the ROOT VERB the trailing "ed" attaches to (`publish`/`unpublish` already are one).
         window.alert(body?.error?.message ?? `That listing could not be ${action === 'decline' ? 'reject' : action}ed.`);
+        // Fix round 1, Important-2. The DECISION did not land, and for most refusals that is the
+        // end of it — a `422 NOTE_REQUIRED` means the reviewer left the reason blank and the
+        // listing is exactly where this row says it is. `STATE` is the exception and the reason
+        // this line exists: `decide_listing` answers it (409) precisely when the listing is NOT in
+        // the state this row was drawn from, which means ANOTHER reviewer has already moved it and
+        // the screen is now wrong — the pill still reads "In review", the Publish button is still
+        // offered, and it can be pressed again for ever. That is the pre-A39 condition reached by
+        // a second door, so the row the alert just contradicted is re-read, through the same one
+        // loader a successful decision goes through. Keyed on the SERVER's own code, never on
+        // "any refusal": a blanket reload would spend a request to learn nothing.
+        if (body?.error?.code === 'STATE') await decided();
+        return;
       }
+      await decided();
     }
   };
 }
 
 export function makeAdminListingsAdapter(): AdminListingsAdapter {
+  // Whoever is rendering this queue, or nobody — the reference passes no adapter at all, and a
+  // unit test may call `list()` with no host behind it. A decision still lands either way; what a
+  // registered host buys is the table settling without a reload.
+  let reload: (() => unknown) | null = null;
   return {
     list: async () => {
-      const ui = windowUi();
+      const ui = windowUi(async () => { if (reload !== null) await reload(); });
       // Real production rows are `ListingItem`-shaped; the pixel oracle's harness answers this
       // very endpoint with `DesignListingRow`-shaped ones instead (the module note explains why).
       // `toListingRows` reads either.
       const items: (ListingItem | DesignListingRow)[] = [];
       let cursor: string | null = null;
+      // The badge comes off the FIRST page and only the first (fix round 1, review Minor-1): it is
+      // a fact about the whole table, an unindexed `count(*)` to compute, and it does not change
+      // between pages of one traversal — so the route stops paying for it on a continuation
+      // request and this stops asking for one. The loop always makes at least one request, so
+      // there is no "no page at all" to answer for.
+      let badge = 0;
       for (let page = 0; page < MAX_PAGES; page++) {
         const query = `/listings?limit=${PAGE_LIMIT}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
         const res = await send('GET', query);
         if (!res.ok) throw new Error('the review queue could not be read');
-        const body = (await res.json()) as QueuePage;
+        const body = (await res.json()) as QueueBody;
         if (!Array.isArray(body.items)) throw new Error('the review queue answered no items');
+        // Refused rather than defaulted, for `items`' own reason: a badge that quietly reads 0 is
+        // indistinguishable from "no listing is waiting for a reviewer". Asked of the first page
+        // alone — a later page that carried one would be answering a question nobody asked.
+        if (page === 0) {
+          if (typeof body.counts?.in_review !== 'number') throw new Error('the review queue answered no counts');
+          badge = body.counts.in_review;
+        }
         items.push(...(body.items as (ListingItem | DesignListingRow)[]));
         cursor = body.next_cursor ?? null;
         if (cursor === null) break;
       }
-      return toListingRows(items, ui);
-    }
+      return { rows: toListingRows(items, ui), counts: { in_review: badge } };
+    },
+    onDecision: (fn) => { reload = fn; }
   };
 }

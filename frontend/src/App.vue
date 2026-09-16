@@ -386,7 +386,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
 
             
             <div class="rf-scroll" style="position: absolute; left: 16px; top: 16px; bottom: 72px; z-index: 600; width: 300px; min-height: 0; overflow-y: auto; overflow-x: visible; padding-right: 2px;">
@@ -488,7 +488,7 @@
                             <span style="display: inline-flex; align-items: center; gap: 5px;"><span :style="v.md?.compareKeyA"></span><span v-if="__s(v.md?.compareLabelA) !== null" class="sc-interp">{{ __s(v.md?.compareLabelA) }}</span></span>
                             <span style="display: inline-flex; align-items: center; gap: 5px;"><span :style="v.md?.compareKeyB"></span><span v-if="__s(v.md?.compareLabelB) !== null" class="sc-interp">{{ __s(v.md?.compareLabelB) }}</span></span>
                           </div>
-                          <div style="margin-top: 8px; font-size: 10px; line-height: 1.5; color: #767676;">Each bar is coloured by the class it falls in, using that layer's own scale — the top bar matches the shading on the map.</div>
+                          <div style="margin-top: 8px; font-size: 10px; line-height: 1.5; color: #767676;">Each bar is one listing's own figure for the area within about 5 miles of it, coloured on that layer's community scale.</div>
                         </div>
                       </template>
                     </div>
@@ -730,6 +730,9 @@
                   </div>
 
                   <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Competitive Landscape</div>
+                  <template v-if="v.md?.panel?.hasOverviewScope">
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.panel?.overviewScope) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewScope) }}</span></div>
+                  </template>
                   <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 9px;">
                     <div style="display: flex; gap: 8px; align-items: center; padding: 10px; border: 1px solid #e6e6e6; border-radius: 6px;">
                       <img src="/assets/icons/sub-info.svg" alt width="15" height="15" style="flex: none; opacity: .7;">
@@ -784,7 +787,7 @@
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <template v-if="v.md?.panel?.hasDemo">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census’s own published figure for the metro where it publishes one, and otherwise is built from the metro’s own Census areas. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification. Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s. A practice’s competition figure apportions each ZIP area’s published count to the part of that ZIP within about 5 miles of the practice. A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.</p>
                   </template>
                 </div>
               </template>
@@ -841,7 +844,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Three kinds of figure appear here and they measure different things. A Census tract figure is the Census’s own published estimate for that one tract. A practice’s figure is derived from the tracts within about 5 miles of it. A metro figure is the Census’s own published figure for the metro where it publishes one, and otherwise is built from the metro’s own Census areas, as the card says. In AREA mode each card is that metro figure and its own caption says which of the two it is, with the bars beneath it the distribution across the metro’s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract. A practice’s competition figure apportions each ZIP area’s published count to the part of that ZIP within about 5 miles of the practice. A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.</p>
             </div>
           </template>
 
@@ -1347,7 +1350,7 @@
             <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Access, listings, activity and the data the platform depends on.</p>
             <div style="display: flex; gap: 4px; margin-top: 26px;">
               <template v-for="(t, $index) in __arr(v.admin?.tabs)" :key="$index">
-                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></button>
+                <button @click="t?.go" :style="t?.style"><span v-if="__s(t?.label) !== null" class="sc-interp">{{ __s(t?.label) }}</span><template v-if="t?.hasCount"><span :style="t?.countStyle"><span v-if="__s(t?.count) !== null" class="sc-interp">{{ __s(t?.count) }}</span></span></template></button>
               </template>
             </div>
           </div>
@@ -1588,14 +1591,6 @@
                     </div>
                   </div>
 
-                  <div style="border-top: 1px solid var(--rf-line); padding-top: 16px;">
-                    <div style="font-size: 9.5px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: var(--vf-accent);">Basemap</div>
-                    <div style="display: flex; gap: 8px; margin-top: 9px;">
-                      <template v-for="(b, $index) in __arr(v.mob?.basemaps)" :key="$index">
-                        <button @click="b?.go" :style="b?.style"><span v-if="__s(b?.label) !== null" class="sc-interp">{{ __s(b?.label) }}</span></button>
-                      </template>
-                    </div>
-                  </div>
                 </div>
 
                 <div style="flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--rf-line);">
@@ -1681,7 +1676,9 @@ import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
+import { makeAdminDataSourcesAdapter } from './admin/data_sources';
 import { makeAdminListingsAdapter } from './admin/listings';
+import { makeAdminUsersAdapter } from './admin/users';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
 import { makePermsAdapter } from './auth/perms';
@@ -1780,6 +1777,34 @@ const props = defineProps({
   // in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
   adminListings: { type: Object, default: () => makeAdminListingsAdapter() },
+  // A36: the real /api/admin/users client, as the prototype's `adminUsers` adapter — the seam
+  // `adminVals()`'s Users tab reads its rows and its badge through, and the seam every staff
+  // decision on that table reaches `POST /api/admin/users/{id}/decide` by (Task A36, D-C53:
+  // "all the admin tabs must be factual and fully functional, zero-gaps, zero-fake data"). The
+  // reference and the Claude Design preview pass nothing and keep the design's fixture path,
+  // which is what keeps the two targets on the same pixels. Nothing in the template reads
+  // `adminUsers`; only `logic.js` does.
+  //
+  // `src/admin/users.ts`, not an object literal here, for the reason `adminListings` records:
+  // this file is copied verbatim into App.vue and sits outside the coverage gate, so the logic
+  // lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminUsers: { type: Object, default: () => makeAdminUsersAdapter() },
+  // A38: the real /api/admin/data-sources client, as the prototype's `adminDataSources` adapter
+  // — the seam `adminVals()`'s Data Sources tab and its badge read through (Task A38, D-C53).
+  // The tab is the platform's LEGAL gate (CLAUDE.md: "Blocked datasets never ship … The admin
+  // Data Sources tab shows this gate; keep it"), and it had been showing five literal rows, two
+  // of them false about the running product. With this present the tab renders the registry the
+  // API answered or NO rows, and the badge is the count that came back with them; the reference
+  // and the Claude Design preview pass nothing and keep the design's fixture path, which is what
+  // keeps the two targets on the same pixels. Nothing in the template reads `adminDataSources`;
+  // only `logic.js` does.
+  //
+  // `src/admin/data_sources.ts`, not an object literal here, for the reason `adminListings`
+  // records: this file is copied verbatim into App.vue and sits outside the coverage gate, so the
+  // logic lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminDataSources: { type: Object, default: () => makeAdminDataSourcesAdapter() },
   // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
   // design's own script branches on. With it present the Browse map draws the polygons the API
   // answered or NONE at all, whatever it answered; with no adapter — the reference server and

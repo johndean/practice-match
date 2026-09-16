@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 import yaml
 
+from app.census import registry as PM_REGISTRY
 from app.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,7 +46,7 @@ REQUIRED_CI_COMMANDS = (
     # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
     # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
     # a new module there means editing the workflow AND this string, always both.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/prove_offline_engines.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -553,6 +554,22 @@ def test_deploy_md_documents_the_expect_sha_semantics():
         assert wrong not in lowered, f"DEPLOY.md repeats the wrong EXPECT_SHA semantics: {wrong!r}"
 
 
+def test_deploy_md_says_expect_sha_is_the_short_sha():
+    """REL-0123 concern 4 (2026-09-13). `EXPECT_SHA` is compared VERBATIM against the
+    `commit_sha` /api/healthz reports, which is `/app/BUILD_SHA` — the `git rev-parse --short
+    HEAD` `scripts/deploy.sh` stamps into the archive. So the 40-character form every `git log`
+    and every GitHub URL hands an operator is REJECTED as a stale container: a correct deploy
+    fails its own verification with `commit_sha is '087acc1', expected '087acc1c0f...'`. The
+    release agent hit it and the runbook said nothing, so it says it here."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "SHORT sha" in text, "DEPLOY.md does not say EXPECT_SHA is the short sha"
+    # The rule is stated where EXPECT_SHA is defined, not in some distant paragraph.
+    block = text[text.index("**`EXPECT_SHA`**"):]
+    block = block[: block.index("**`EXPECT_VERSION`**")]
+    assert "SHORT sha" in block, "the short-sha rule is not in the EXPECT_SHA paragraph"
+    assert "40-character" in block, "the form that is rejected is not named"
+
+
 def test_deploy_md_documents_the_coming_soon_verify_output():
     """verify-deploy.sh is site-mode aware (Task 11f): production's coming-soon shell and
     /api/interest probe replace the SPA fallback check, and the runbook must say so."""
@@ -745,6 +762,28 @@ def test_claude_md_local_backend_gate_is_the_one_ci_runs():
     for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
         assert "--cov-fail-under=100" in text, doc
         assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
+
+    # The docstring above promises "the one CI runs verbatim", and until 2026-09-16 this test
+    # checked only the pytest substring -- so `ruff check app tests scripts` and both `mypy`
+    # steps ran in CI and appeared nowhere in the loop John types. An implementer paid a red
+    # run for it. Every `poetry run` step of the backend job must now be in Common operations.
+    backend = re.search(r"\n  backend:.*?(?=\n  [a-z-]+:|\Z)", workflow, re.DOTALL)
+    assert backend, "quality.yml has no backend job"
+    # A step CI runs only on a pull request is not part of the loop a developer types, so the
+    # filter is the step's own `if:` and never a name this test hard-codes.
+    blocks = [b for b in re.split(r"\n(?=      - )", backend.group(0)) if "run:" in b and "if:" not in b]
+    steps = [
+        m.group(1).strip()
+        for b in blocks
+        for m in re.finditer(r"^\s*-?\s*run: (poetry run .+)$", b, re.MULTILINE)
+    ]
+    assert len(steps) >= 5, f"the backend job should run several poetry steps, found {len(steps)}"
+    ops = claude.split("## Common operations", 1)[1]
+    missing = [s for s in steps if s not in ops]
+    assert not missing, (
+        "CLAUDE.md's Common operations is weaker than CI's backend job; these steps run in CI "
+        "and are not in the loop John types:\n  " + "\n  ".join(missing)
+    )
 
 
 def test_quality_policy_records_the_timing_split_as_a_dated_note():
@@ -1000,7 +1039,9 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 10, f"expected the ten harness personas as one line each, read {sorted(found)}"
+    # Eleven since ruling D-C54 (2026-09-13) added `admin@practice-match.test`, the account whose
+    # only grant is `admin`.
+    assert len(found) == 11, f"expected the eleven harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -1098,8 +1139,9 @@ def _users_ts_literal(name: str) -> object:
         reason = str(exc)
     pytest.fail(
         f"frontend/src/admin/users.ts: {name} is no longer DOUBLE-QUOTED JSON on a single line, "
-        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS "
-        f"and PILLS is written that way for exactly that reason; the file says so beside them. "
+        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS, "
+        f"PILLS and ROLE_LABELS is written that way for exactly that reason; the file says so "
+        f"beside them. "
         f"Got: {match.group(1)[:120]}"
     )
 
@@ -1114,7 +1156,42 @@ def test_the_admin_users_tables_match_the_api():
     have rendered its raw key. The design deliberately offers a SUBSET of the transitions (the
     API also allows `revoke` from five other states), so what is pinned is that the subset is
     legal — not that it is complete."""
-    from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+    from app.api.admin_users import (
+        ACCOUNT_STATES,
+        APPLICATION_ACTIONS,
+        DECIDABLE_STATES,
+        NOTE_REQUIRED,
+        OPEN_STATUSES,
+        TRANSITIONS,
+    )
+    from app.auth.labels import role_label
+
+    # Task A36: the tab names an account's VIN Foundation role under the applicant's name, and the
+    # product already has ONE place that turns a role into words — the label the header prints over
+    # this very screen. Pinned by asking `role_label` itself rather than by restating its strings,
+    # so a change to the vocabulary fails here instead of leaving two spellings of one role live at
+    # once. `affiliation=None`, because the tab states the affiliation in its own column.
+    labels = cast("dict[str, str]", _users_ts_literal("ROLE_LABELS"))
+    assert labels == {role: role_label(frozenset({role}), None) for role in labels}
+    assert sorted(labels) == ["admin", "staff"], (
+        "the Admin Users table labels exactly the two VIN Foundation roles; a buyer's or a "
+        "seller's standing is what the Status pill says"
+    )
+
+    # Fix round 2, re-review Minor 2. The two tables that decide WHICH FACT a row is about were
+    # mirrored client-side by hand, and the round's own claim — that the badge and the rows cannot
+    # disagree about what "open" means — was held by nothing. A third waiting status, or a widened
+    # state machine, must fail on both sides at once.
+    assert _users_ts_literal("OPEN_STATUSES") == list(OPEN_STATUSES)
+    assert _users_ts_literal("DECIDABLE_STATES") == list(DECIDABLE_STATES)
+    # And `DECIDABLE_STATES` is not a third list to keep by hand either: it is exactly the states
+    # the API accepts an APPLICATION action from — `TRANSITIONS`' union over `APPLICATION_ACTIONS`,
+    # plus the `active` a seller application is decided from and to (`_seller_decision`).
+    from_application_actions = set().union(*(TRANSITIONS[a][0] for a in APPLICATION_ACTIONS))
+    assert set(DECIDABLE_STATES) == from_application_actions | {"active"}, (
+        "DECIDABLE_STATES must be the states a staff decision on an APPLICATION is legal from; "
+        "outside it an open application is stale and the tab renders the account's own treatment"
+    )
 
     assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
     assert sorted(cast("dict[str, object]", _users_ts_literal("PILLS"))) == sorted(ACCOUNT_STATES)
@@ -1153,18 +1230,200 @@ def test_the_admin_listings_table_matches_the_api():
     offered from a status `DECISIONS` refuses would take a 409 the same way; and a
     `listing.status` the API can report with no pill would render its raw key.
 
-    The design deliberately offers a legal SUBSET of `DECISIONS` (its Paused row's "Contact
-    seller" is not wired, and the API also allows `publish` from `declined`/`paused`, which the
-    design's own In review row does not offer) and pictures only three of the six real statuses
-    (A-SL24 (4)) — what is pinned is that the subset is legal, not that it is complete."""
+    Task A39 (D-C53, 2026-09-13) turns the PILLS half into a TWO-WAY pin. It used to be `<=`,
+    because the design pictures only three of the six real statuses and `draft`, `withdrawn` and
+    `declined` rendered the column's own key, muted (A-SL24 (4)) — John ruled the three words, so
+    every `listing.status` the API can report now has a label and no raw key can reach the table.
+    A seventh status added to the column must be given one here before it ships; the `??` fallback
+    in `toListingRows` is left for a status that is not `listing.status`'s at all, which is exactly
+    what the design's own oracle-only "Flagged" row is.
+
+    `ACTIONS` stays a legal SUBSET: A39 adds the design's own primary Publish to the `paused` and
+    `declined` rows (ruling 3 — `DECISIONS` has always allowed it and the tab's footnote promises
+    "reversible"), and what is pinned is that every button offered is legal from the status it is
+    offered on, not that every legal decision is offered somewhere."""
     from app.api.admin_listings import DECISIONS, NOTE_REQUIRED, STATUSES
 
     assert _listings_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
-    assert set(cast("dict[str, object]", _listings_ts_literal("PILLS"))) <= set(STATUSES)
+    pills = set(cast("dict[str, object]", _listings_ts_literal("PILLS")))
+    assert pills <= set(STATUSES), f"the Admin Listings table labels {sorted(pills - set(STATUSES))!r}, which listing.status cannot hold"
+    assert set(STATUSES) <= pills, f"the Admin Listings table has no ruled label for {sorted(set(STATUSES) - pills)!r}, so the raw key would render"
     for status, offered in cast("dict[str, list[str]]", _listings_ts_literal("ACTIONS")).items():
         for action in offered:
             assert action in DECISIONS, f"the Admin Listings table offers {action!r}, which app/api/admin_listings.py has no decision for"
             assert status in DECISIONS[action][0], f"the Admin Listings table offers {action!r} from {status!r}, which the API refuses"
+
+
+def _data_sources_ts_literal(name: str) -> object:
+    """`frontend/src/admin/data_sources.ts`'s one exported JSON literal — the same
+    single-line-double-quoted-JSON convention `_users_ts_literal` and `_listings_ts_literal` read,
+    applied to Task A38's own table."""
+    source = (ROOT / "frontend" / "src" / "admin" / "data_sources.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/data_sources.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. It is written as double-quoted JSON on ONE line for "
+        f"exactly that reason; the file says so beside it."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/data_sources.ts: {name} is no longer DOUBLE-QUOTED JSON on a single "
+        f"line, so this cross-language pin cannot read it ({reason}). Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_data_sources_table_matches_the_registry():
+    """Task A38. Unlike the Users and Listings tabs, whose tables picture a legal SUBSET of the
+    API's states, `dataset_registry.license_status` has exactly THREE values — its own CHECK
+    constraint says so — and the approved design draws exactly three pills. So this pin is an
+    EQUALITY in both directions: a fourth licence state added to the column with no pill would
+    render its raw key on the tab that carries the platform's legal gate, and a pill the column
+    cannot produce would be a status nothing can ever reach.
+
+    The constraint is read out of `migrations/017_census_registry.sql` rather than restated here —
+    an applied migration is immutable, so it is the durable statement of what the column allows."""
+    sql = (ROOT / "migrations" / "017_census_registry.sql").read_text()
+    match = re.search(r"license_status text NOT NULL CHECK \(license_status IN \(([^)]*)\)\)", sql)
+    assert match, "migrations/017_census_registry.sql no longer states license_status's CHECK constraint"
+    allowed = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert allowed == {"cleared", "unresolved", "blocked"}, allowed
+    assert set(cast("dict[str, object]", _data_sources_ts_literal("PILLS"))) == allowed
+
+
+def test_the_placeholder_vintages_are_one_table_on_both_sides():
+    """A38 fix round 2, review F10. `dataset_registry.vintage` is NOT NULL, so the column holds
+    `n/a` for a blocked dataset, `live` for a tile service and `Current_Current` — the Census
+    Geocoder's own benchmark identifier — for the geocoder. None of them is a vintage anyone
+    declared, and fix round 1 printed every one of them under the label "Declared vintage".
+
+    The renderer decides what to suppress and the pytest pin decides what to measure, so the two
+    read ONE table: a value added on one side and not the other would put a placeholder back on
+    the tab with the pin still green. Same convention as `PILLS`: single-line double-quoted JSON
+    in the TypeScript, parsed here."""
+    ts = cast("list[str]", _data_sources_ts_literal("PLACEHOLDER_VINTAGES"))
+    assert sorted(ts) == sorted(PM_REGISTRY.PLACEHOLDER_VINTAGES), (
+        "frontend/src/admin/data_sources.ts and app/census/registry.py disagree about which "
+        f"vintage values are placeholders: {sorted(set(ts) ^ set(PM_REGISTRY.PLACEHOLDER_VINTAGES))}"
+    )
+
+
+ESRI_REGISTRY_MIGRATION = "092_esri_basemap_registry.sql"
+# The two layers the Browse map actually loads, by the `BASEMAPS` key that configures each and the
+# `dataset_registry.dataset_key` that records it (controller ruling 17, 2026-09-13).
+ESRI_LAYERS = {"map": "esri_tiles", "satellite": "esri_imagery"}
+
+
+def _sql_literals(tuple_text: str) -> list[str | None]:
+    """One `VALUES (...)` tuple split into its literals, quote-aware.
+
+    A38 fix round 1 (review M2): the pin below used to ask whether the credit appeared ANYWHERE in
+    the row's text, which a row carrying it in `license_name` and something else entirely in
+    `attribution_text` satisfies — reproduced, and it passed. Attribution is legally load-bearing,
+    so the pin has to read the COLUMN. `notes` carries commas, parentheses and doubled quotes, so
+    splitting on `,` is not enough: this walks the tuple, tracks whether it is inside a quoted
+    literal, and treats `''` as an escaped quote rather than as a close."""
+    out: list[str | None] = []
+    buf: list[str] = []
+    quoted = False
+    in_quote = False
+    i = 0
+    while i < len(tuple_text):
+        c = tuple_text[i]
+        if in_quote:
+            if c == "'" and tuple_text[i + 1 : i + 2] == "'":
+                buf.append("'")
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+                i += 1
+                continue
+            buf.append(c)
+        elif c == "'":
+            in_quote, quoted = True, True
+        elif c == ",":
+            out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+            buf, quoted = [], False
+        else:
+            buf.append(c)
+        i += 1
+    out.append("".join(buf).strip() if quoted else (None if "".join(buf).strip().upper() == "NULL" else "".join(buf).strip()))
+    return out
+
+
+def _insert_row(sql: str, key: str) -> dict[str, str | None]:
+    """The named `dataset_registry` INSERT row of a migration, as {column: value}.
+
+    The column list is read out of the migration itself rather than restated, so a column added
+    between two others cannot silently shift what this pin compares."""
+    columns = re.search(r"INSERT INTO dataset_registry\s*\n?\s*\(([^)]*)\)\s*VALUES", sql)
+    assert columns, "the migration does not name its dataset_registry columns"
+    names = [c.strip() for c in columns.group(1).split(",")]
+    start = sql.index(f"('{key}',")
+    depth, i, in_quote = 0, start, False
+    while i < len(sql):
+        c = sql[i]
+        if in_quote:
+            if c == "'" and sql[i + 1 : i + 2] == "'":
+                i += 2
+                continue
+            if c == "'":
+                in_quote = False
+        elif c == "'":
+            in_quote = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    values = _sql_literals(sql[start + 1 : i])
+    assert len(values) == len(names), f"{key}: {len(values)} values for {len(names)} columns"
+    return dict(zip(names, values, strict=True))
+
+
+def test_the_esri_registry_rows_carry_the_attribution_the_map_actually_draws():
+    """Task A38 / controller ruling 17. Attribution is LEGALLY load-bearing (Census spec §12;
+    CLAUDE.md "Attribution stays visible on every map"), and it is now stated in two places: the
+    string `frontend/src/lib/leaflet.js` hands Leaflet, which is what a member sees in the map's
+    own footer, and `dataset_registry.attribution_text`, which is what the admin Data Sources tab
+    prints verbatim. Two copies of a legal string drift, and the drift is silent: A35.7 corrected
+    the satellite credit from "Imagery © Esri, Maxar, Earthstar Geographics" to the service's own
+    current `copyrightText` on 2026-09-13, and nothing outside that one file would have noticed if
+    the registry had been seeded with the stale one.
+
+    So the two are pinned against each other BY VALUE, on the COLUMN: the migration's tuple is split
+    positionally against the column list it declares, and `attribution_text` must equal the string
+    its own layer draws, character for character. Fix round 1 (review M2): the first version asked
+    whether the credit appeared anywhere in the row's text, which a row carrying the right credit in
+    `license_name` and `'© OpenStreetMap contributors'` in `attribution_text` passed — the reviewer
+    reproduced exactly that. Read out of the migration's text rather than the database, so it holds
+    on a checkout with no Postgres — the schema drift tests' own rule."""
+    migration = (ROOT / "migrations" / ESRI_REGISTRY_MIGRATION).read_text()
+    leaflet = (ROOT / "frontend" / "src" / "lib" / "leaflet.js").read_text()
+    for basemap, dataset_key in ESRI_LAYERS.items():
+        # The first `attribution:` after the layer's own key. NOT "everything up to the next `}`":
+        # each layer's `url` carries Leaflet's own `{z}/{y}/{x}` template, so the first brace in the
+        # block belongs to the URL (this test's first draft read exactly that and found nothing).
+        drawn = re.search(rf"{basemap}: \{{.*?attribution: \"(.*?)\"", leaflet, re.DOTALL)
+        assert drawn, f"frontend/src/lib/leaflet.js declares no attribution for BASEMAPS.{basemap}"
+        # leaflet.js escapes the © as \u00a9; the SQL carries the character itself.
+        text = drawn.group(1).replace("\\u00a9", "\u00a9")
+        assert f"('{dataset_key}'," in migration, f"{ESRI_REGISTRY_MIGRATION} registers no {dataset_key} row"
+        row = _insert_row(migration, dataset_key)
+        assert row["attribution_text"] == text, (
+            f"{dataset_key}'s attribution_text is {row['attribution_text']!r}, not the string "
+            f"BASEMAPS.{basemap} actually draws ({text!r}). One of the two has moved; a credit must "
+            "never change in one place only."
+        )
+        assert row["license_status"] == "unresolved", (
+            f"{dataset_key} is no longer registered as unresolved. Clearing a basemap licence is "
+            "the VIN Foundation's decision under the Census plan's one basemap decision record."
+        )
 
 
 # --- Task I9a: the identity wave's operator documentation -----------------------------------------
@@ -1271,6 +1530,31 @@ def test_deploy_md_documents_the_resend_dns_records():
     assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
 
 
+def test_the_identity_runbook_states_the_admin_superset_rule():
+    """Ruling D-C54 (John, 2026-09-13): the `admin` role holds EVERY permission in the matrix.
+
+    The operator page is where the matrix is described to a human — `§0`'s "Who" row and `§4 Roles`
+    — and until this ruling both described `admin` as `staff` plus a few administrative extras,
+    which is exactly the belief that let the six member actions stay off it. Pinned against the
+    MATRIX itself and not only as prose: the sentence has to stay true, so if a future row ever
+    drops `admin`, this fails beside `tests/auth/test_matrix.py` rather than leaving the runbook
+    quietly lying to whoever is holding the pager.
+
+    `staff` is deliberately not widened, and the runbook has to say so too — "an admin is a
+    superset" read as "a privileged role is a superset" is the misreading that would put
+    `page.seller` on a reviewer."""
+    from app.auth import permissions as PM
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    sentence = "The `admin` role holds every permission in the matrix, the buyer's and the seller's included"
+    assert sentence in text, f"docs/RUNBOOK-identity.md does not state ruling D-C54: {sentence!r}"
+    assert "D-C54" in text, "the ruling is stated but not named, so nobody can find what decided it"
+    assert "`staff` is a reviewer and not a superset" in text, "the runbook must say the ruling names ONE role"
+    # ...and the sentence is true of the matrix the server is running.
+    assert [perm for perm, holders in PM.MATRIX.items() if "admin" not in holders] == []
+    assert "page.seller" not in PM.permissions_of(frozenset({"staff"}))
+
+
 def _runbook_decision_table() -> dict[str, dict[str, str]]:
     """`docs/RUNBOOK-identity.md` §3's decision table, keyed by action.
 
@@ -1337,6 +1621,297 @@ def test_the_identity_spec_states_the_unverified_re_issue_rule():
         "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
     )
     assert "amended 2026-09-07" in default, "the amendment is undated"
+
+
+def test_the_identity_spec_permission_matrix_admin_column_matches_matrix_py():
+    """Task ADMIN-SUPERSET fix round 1, review Important-2. Spec §4's own table — "Source of
+    truth: `app/auth/permissions.py`" — is the most detailed WRITTEN description of the matrix, and
+    ruling D-C54 (the admin role is a superset of every permission) landed in the code, in
+    `docs/RUNBOOK-identity.md` and in this file's own test suite without reaching this table: the
+    `admin` column still printed `—` for `request.create`/`request.read_own`, `seller.apply` and
+    `page.seller`/`listing.manage_own`/`request.answer_own` — the exact six actions D-C54 widened —
+    so the spec contradicted the runbook sentence this same branch had just added.
+
+    Derived from the live `MATRIX` rather than hand-checked row by row, so a permission the matrix
+    changes tomorrow fails here too instead of leaving this table quietly wrong again."""
+    from app.auth import permissions as PM
+
+    spec_path = ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md"
+    spec = spec_path.read_text()
+    assert "## 4. Permission matrix" in spec, "spec §4 'Permission matrix' section is missing or retitled"
+    section = spec.split("## 4. Permission matrix", 1)[1].split("\n## ", 1)[0]
+
+    rows = [line for line in section.splitlines() if line.startswith("| `")]
+    assert len(rows) >= 15, f"spec §4's permission-matrix table reads as only {len(rows)} rows — the table may have reshaped"
+
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        assert len(cells) == 8, f"a §4 row does not have the header's 8 columns: {row!r}"
+        perm_ids = re.findall(r"`([\w.]+)`", cells[0])
+        assert perm_ids, f"a §4 row's first cell names no backtick permission id: {row!r}"
+        admin_cell = cells[-1]
+        assert admin_cell in ("✅", "—"), f"a §4 row's admin cell is neither ✅ nor —: {admin_cell!r}"
+
+        holds_admin = []
+        for perm in perm_ids:
+            assert perm in PM.MATRIX, f"spec §4 names {perm!r}, which app/auth/permissions.py's MATRIX does not declare"
+            holds_admin.append("admin" in PM.MATRIX[perm])
+        assert len(set(holds_admin)) == 1, f"a §4 row names permissions that disagree about admin: {row!r}"
+
+        want = "✅" if holds_admin[0] else "—"
+        assert admin_cell == want, (
+            f"spec §4's admin column for {perm_ids} reads {admin_cell!r}; app/auth/permissions.py's "
+            f"MATRIX says it should read {want!r} (ruling D-C54, 2026-09-13)"
+        )
+
+    assert "D-C54, 2026-09-13" in section, "spec §4 does not date the admin-column correction to ruling D-C54"
+
+
+# --- Task SUPERSET-MINORS: D-C54's two accepted consequences, one fact in both documents ---------
+#
+# Fix round 1 (review Minors 1-5). The two sentences are still one fact in two documents, but the
+# pin no longer only compares the documents to each other: the token sentence is COMPOSED from the
+# constants it describes and the route family it names is checked against the app's own router
+# table, so a document and the code cannot drift apart in unison (Minor 5, the gap Minors 2 and 3
+# were the live instance of).
+#
+# Fix round 2 (re-review Minors 1-5). BOTH sentences are composed now, and neither types a number:
+# the member-action COUNT is derived from the matrix (re-review Minor 4), the `REAUTH` list is one
+# helper the §4 addendum and the spec's own §3 Automation-tokens paragraph share (re-review Minor
+# 1), and the audit sentence states the CONDITION under which the row it names is written, checked
+# against the routes themselves by
+# `tests/api/test_seller_listings.py::test_the_identity_documents_audit_sentence_is_what_the_seller_routes_write`
+# (re-review Minors 2 and 3, the controller's promoted ruling: an operator acts on this sentence).
+
+
+def reauth_actions() -> str:
+    """`REAUTH`'s own membership, spelled the way both identity paragraphs spell it.
+
+    Re-review Minor 1: the spec said the set two ways — §3's parenthetical listed FIVE human
+    phrases ("Revoke, licence decisions, engine activation, role grants, token creation") while §4's
+    addendum, composed from `PM.REAUTH`, listed six; `signups.notify` joined `REAUTH` at `0ebba68`
+    and §3 never followed. One helper, so the two paragraphs cannot count differently again."""
+    from app.auth import permissions as PM
+
+    return ", ".join(f"`{perm}`" for perm in sorted(PM.REAUTH))
+
+
+def member_actions() -> frozenset[str]:
+    """The permissions D-C54 added to `admin`: what a buyer or a seller holds and a reviewer does not.
+
+    Re-review Minor 4: the count was the one clause of the composed token sentence still TYPED, so a
+    seventh buyer/seller-only row would leave both identity documents saying "six" with the pin
+    green — the `_ADMIN` union at `app/auth/permissions.py` gives admin a new row automatically and
+    `tests/auth/test_matrix.py`'s superset assertion would not notice a stale word."""
+    from app.auth import permissions as PM
+
+    return PM.permissions_of(frozenset({"buyer", "seller"})) - PM.permissions_of(frozenset({"staff"}))
+
+
+def d_c54_audit_consequence() -> str:
+    """D-C54's audit-breadcrumb consequence, composed from the routes' own constants.
+
+    Re-review Minors 2 and 3, promoted by the controller because an operator ACTS on this sentence.
+    It used to read "an admin who acts as a seller (creating or editing a listing) … the only trace
+    an admin used member powers is the listing's own `listing.edit` audit trail", which is false for
+    the common case: `app/api/seller_listings.py`'s `create` writes NO audit row at all, and
+    `patch_step` writes `EDIT_ACTION` only inside `if re_entering:` — that is, only where the edit
+    moves a listing in `EDIT_REENTERS_REVIEW` back to `in_review`. An operator grepping `audit_log`
+    for `listing.edit` after reading runbook §4 would have found nothing for an admin who created a
+    listing and filled in its draft, and concluded no member powers were used.
+
+    Composed from `EDIT_ACTION` and `sorted(EDIT_REENTERS_REVIEW)` so the clause moves with the
+    condition rather than with the action's NAME alone — the name is what fix round 1 pinned, and a
+    name pin stays green while the sentence around it goes false."""
+    from app.api.seller_listings import EDIT_ACTION, EDIT_REENTERS_REVIEW
+
+    states = " or ".join(f"`{state}`" for state in sorted(EDIT_REENTERS_REVIEW))
+    return (
+        "an admin who acts as a seller leaves no `roles.grant` audit row the way a deliberate "
+        "self-grant of `seller` would have, because none is needed — and the trace is on the "
+        "listing side rather than the identity side: the listing's own `seller_id`, and the "
+        f"`listing.*` rows its own routes write, of which `{EDIT_ACTION}` lands only where an edit "
+        f"re-enters review from {states} (creating a listing and editing a draft write none)"
+    )
+
+
+def d_c54_token_consequence() -> str:
+    """D-C54's `api_token` consequence, composed from the two constants it describes.
+
+    Review Minors 2 and 3. The sentence this replaces said "`TOKEN_DENIED` (`tokens.manage`) is the
+    only thing an `api_token` is refused regardless of role", which is false about the code —
+    `app/auth/deps.py`'s `require` ALSO refuses a token principal of any role every `PM.REAUTH`
+    permission with `TokenCannotReauth`, and `deps.py`'s own comment says "The two things an
+    `api_token` can never do, whatever role it carries", as does the same spec's §3 Automation-tokens
+    paragraph ("two exceptions"). It also promised a `/api/requests/*` family that no router serves:
+    the three `request.*` rows gate PAGES, and `tests/auth/test_permissions.py` records that those
+    routes "do not exist until I4-I6".
+
+    Composing it from `PM.REAUTH` and `PM.TOKEN_DENIED` rather than typing it is what keeps it true:
+    add a permission to either constant and the expected sentence changes, so the pin below names
+    the stale one in both documents instead of going on comparing two copies of a wrong statement to
+    each other."""
+    from app.auth import permissions as PM
+
+    denied = ", ".join(f"`{perm}`" for perm in sorted(PM.TOKEN_DENIED))
+    count = NUMBER_WORDS[len(member_actions())].lower()
+    return (
+        f"an `api_token` minted for the `admin` role now also carries the {count} member actions "
+        "the superset added, exactly as a human admin's session does — the two refusals a token "
+        f"meets whatever role it carries are unchanged by this ruling: {denied} (`TOKEN_DENIED`), "
+        f"and every step-up action (`REAUTH`: {reauth_actions()}), which a token has no password "
+        "to re-authenticate with — so an automation token that only ever needed `page.admin`-family "
+        "permissions is, from this release on, also able to reach `/api/seller/*`"
+    )
+
+
+def _one_paragraph(section: str, opening: str, where: str) -> str:
+    """The one blank-line-delimited markdown paragraph in `section` that begins with `opening`.
+
+    Review Minor 4: the date and ruling-citation assertions used to read the whole §4 SECTION, where
+    "ruling D-C54, 2026-09-13" already appears in prose that predates the addendum — so they could
+    not fail for the paragraph they claimed to pin. Slicing the paragraph is also what scopes the
+    two sentences themselves: it keeps the section check (the paragraph has to be found inside §4)
+    and adds "…and in this paragraph, not merely somewhere in the section"."""
+    blocks = [block for block in section.split("\n\n") if block.lstrip().startswith(opening)]
+    assert len(blocks) == 1, f"{where}: expected exactly one paragraph opening {opening!r}, found {len(blocks)}"
+    return blocks[0]
+
+
+def test_the_two_accepted_d_c54_consequences_are_stated_in_both_identity_documents():
+    """Task SUPERSET-MINORS, re-review Minors 1 and 3 (the hotfix's two Informationals).
+
+    Ruling D-C54 made `admin` a superset, and two consequences were ACCEPTED rather than fixed: an
+    `api_token` minted for `admin` now reaches `/api/seller/*` too, and an admin who acts as a
+    seller leaves no `roles.grant` breadcrumb because none is needed. The hotfix's fix round wrote
+    both into `docs/RUNBOOK-identity.md` §4 only — the ruling named the identity SPEC, which is
+    where a decision lives, and which carried neither — so a reader following the release note to
+    the spec found nothing and could conclude neither had been considered. And the runbook's own
+    paragraph was pinned by nothing: the runbook test above asserts the superset sentence and the
+    `staff` sentence and stops there, so the consequences could be deleted or drift silently — the
+    class of drift that let `frontend/tests/targets.ts` read "fifteen" for a release.
+
+    So both documents carry the SAME two statements, and this is the one place that says so —
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document`'s arrangement, for the
+    same reason: two copies of one fact drift apart unless something compares them. Whitespace is
+    collapsed before comparing, because the two documents soft-wrap the same sentence at different
+    points.
+
+    Fix round 1 adds the half that arrangement cannot give on its own (review Minor 5): the token
+    sentence is composed from `PM.REAUTH`/`PM.TOKEN_DENIED`, the audit sentence has to name
+    `seller_listings.EDIT_ACTION`, and every `/api/…*` family the sentence promises is checked
+    against the app's own router table — so a change to a constant, an audit action or a route
+    prefix fails HERE, beside the sentence that has to be rewritten, instead of leaving two
+    identity documents lying in unison."""
+    from app.main import app
+    from tests.conftest import walk_routes
+
+    token_consequence = d_c54_token_consequence()
+    audit_consequence = d_c54_audit_consequence()
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+
+    assert "## 4. Roles" in runbook, "docs/RUNBOOK-identity.md §4 'Roles' is missing or retitled"
+    assert "## 4. Permission matrix" in spec, "spec §4 'Permission matrix' section is missing or retitled"
+    runbook_section = runbook.split("## 4. Roles", 1)[1].split("\n## ", 1)[0]
+    spec_section = spec.split("## 4. Permission matrix", 1)[1].split("\n## ", 1)[0]
+
+    runbook_name, spec_name = "docs/RUNBOOK-identity.md §4", "the identity spec §4"
+    runbook_paragraph = _one_paragraph(runbook_section, "Two consequences of the superset", runbook_name)
+    spec_paragraph = _one_paragraph(spec_section, "**§4 addendum", spec_name)
+
+    for name, paragraph in ((runbook_name, runbook_paragraph), (spec_name, spec_paragraph)):
+        flat = _collapse_whitespace(paragraph)
+        assert token_consequence in flat, (
+            f"{name}'s consequences paragraph does not state D-C54's accepted api_token consequence "
+            "in the words app/auth/permissions.py's REAUTH/TOKEN_DENIED compose (hotfix review "
+            f"Informational 1): {token_consequence!r}"
+        )
+        assert audit_consequence in flat, (
+            f"{name}'s consequences paragraph does not state D-C54's accepted audit-breadcrumb "
+            "consequence (hotfix review Informational 2)"
+        )
+        assert "Task ADMIN-SUPERSET fix round 1, review Informational 1/2" in flat, (
+            f"{name}'s consequences paragraph does not say which review accepted them"
+        )
+
+    # Scoped to the addendum itself, never to the section around it (Minor 4): spec §4's own
+    # admin-column note already reads "(ruling D-C54, 2026-09-13, John: …)". Matched on the
+    # COLLAPSED paragraph like every assertion above it (re-review Minor 5): the header sentence is
+    # 100 characters wide in a file soft-wrapped at 100, so a legitimate re-wrap that moves one line
+    # break used to fail this gate with the words unchanged.
+    for token in ("ruling D-C54", "2026-09-13"):
+        assert token in _collapse_whitespace(spec_paragraph), (
+            f"the spec's §4 addendum does not carry {token!r}"
+        )
+
+    # ...and every route family it promises is one the app actually serves (Minor 3): the sentence
+    # this replaces named `/api/requests/*`, which no router has ever mounted.
+    templates = {path for _method, path, _route in walk_routes(app.routes)}
+    families = re.findall(r"`(/api/[^`*]*)\*`", token_consequence)
+    assert families, "the api_token consequence names no route family at all"
+    for family in families:
+        assert any(path.startswith(family) for path in templates), (
+            f"the api_token consequence promises {family}* , which app.main serves no route under"
+        )
+
+
+def test_the_identity_spec_names_one_reauth_refusal_set_in_section_3_and_section_4():
+    """Re-review Minor 1. §3's Automation-tokens paragraph said a token "never satisfies a re-auth
+    gate (Revoke, licence decisions, engine activation, role grants, token creation)" — FIVE items —
+    while the §4 addendum, composed from `PM.REAUTH`, lists six: `signups.notify` joined `REAUTH` at
+    `0ebba68` (Task I5d.1) and §3's parenthetical never followed.
+
+    An automation author reads §3, concludes an admin `api_token` can drive
+    `POST /api/admin/signups/*/notify`, and meets 403 `REAUTH_TOKEN` — contradicted by the same
+    document forty lines below. Both paragraphs now spell the set through one helper, so they cannot
+    count differently again; the human phrases stay beside it, which is what §3 is for."""
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    paragraph = _collapse_whitespace(_one_paragraph(spec, "**Automation tokens", "the identity spec §3"))
+    assert f"`REAUTH`: {reauth_actions()}" in paragraph, (
+        "the identity spec's Automation-tokens paragraph does not name the re-auth refusal set the "
+        f"way app/auth/permissions.py's REAUTH composes it: `REAUTH`: {reauth_actions()}"
+    )
+
+
+APPLICATIONS_PRE_D_C54_SELLER_RULE = "already `active` with the buyer role"
+
+# Review Minor 1: the citation is INSIDE the pinned clause. It used to be a separate module-wide
+# `"D-C54" in prose`, which the `NotABuyer` docstring 72 lines above satisfied on its own, so the
+# comment could lose its citation with the test still green and its failure message still claiming
+# otherwise.
+APPLICATIONS_RULED_SELLER_RULE = (
+    "already `active` and allowed `seller.apply` — the buyer role, or `admin`, which has held every "
+    "permission the buyer role does since ruling D-C54 (2026-09-13)"
+)
+
+
+def test_the_seller_application_comment_states_the_ruled_rule_and_not_the_pre_d_c54_one():
+    """Task SUPERSET-MINORS, re-review Minor 2. `app/api/applications.py`'s `seller.apply` branch
+    carried a THIRD copy of the pre-D-C54 rule — "A seller application is made from an account that
+    is already `active` with the buyer role" — one line above the `NotABuyer` docstring the hotfix
+    had already corrected for the same reason. Since ruling D-C54 (2026-09-13) that branch refuses
+    on the PERMISSION (`PM.allowed("seller.apply", principal)`), which `admin` holds too, so the
+    comment stated a rule the code beneath it no longer applies and the next reader of this handler
+    would have learned the wrong one.
+
+    A grep rather than a behaviour: the behaviour is pinned already (`tests/auth/test_matrix.py`
+    proves `admin` holds every permission, `tests/api/test_applications.py` exercises the branch).
+    What drifted is the prose, so the prose is what this watches — the arrangement
+    `test_persona_password_keychain_storage_is_one_fact_in_every_document` uses, old phrase absent
+    and new phrase present, so neither half can come back alone. Comment markers are stripped and
+    whitespace collapsed before comparing, because a soft-wrapped comment carries a `#` into the
+    middle of its own sentence."""
+    source = (ROOT / "app" / "api" / "applications.py").read_text()
+    prose = _collapse_whitespace(re.sub(r"(?m)^\s*#\s?", "", source))
+    assert APPLICATIONS_PRE_D_C54_SELLER_RULE not in prose, (
+        "app/api/applications.py still states the pre-D-C54 seller-application rule "
+        f"({APPLICATIONS_PRE_D_C54_SELLER_RULE!r}) — `admin` holds `seller.apply` too since 2026-09-13"
+    )
+    assert APPLICATIONS_RULED_SELLER_RULE in prose, (
+        "app/api/applications.py does not state the ruled seller-application rule, citation and all "
+        f"({APPLICATIONS_RULED_SELLER_RULE!r})"
+    )
 
 
 def test_deploy_md_documents_how_to_seed_qa():
@@ -1650,7 +2225,7 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
@@ -1669,7 +2244,9 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     A18 (2026-09-09) made sixteen families and the tuple stopped at "Fifteen", so the assertion
     below failed on its own vocabulary before it ever compared CLAUDE.md — the tuple runs to
     "Twenty" now, which covers A19 (seventeen) and the seller branch's reserved A16/A17 (nineteen
-    after that merge)."""
+    after that merge). It runs to "Forty-two" since A51 (2026-09-16) made forty-one families on `main`: the
+    discriminator case below asks for `family_count + 1` as well, so the tuple has to carry one
+    word more than the ledger currently needs."""
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = re.findall(r"id: 'A(\d+)", ts)
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
@@ -1806,6 +2383,94 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     )
 
 
+def test_the_runbook_limiter_table_states_the_constants_and_says_sliding():
+    """Task RATE-LIMIT-WINDOW. §9's table is the page an operator reads when somebody cannot sign
+    in, and until this pin NOTHING watched it: the limits were transcribed by hand from
+    `app/auth/limits.py`, and the WINDOW semantics were stated in prose three sections apart — §8
+    said "a fixed 24 h bucket" (§8, not §7: the `verify_email` row lives under "I never got the
+    email"), §9 said the counter "rolls over", §12 said to wait for the quarter-hour boundary — all three of them descriptions of a mechanism, and all three wrong the
+    moment the mechanism changed.
+
+    So two things are pinned. The numbers, against the module the server actually runs, which is
+    what stops a row drifting the way the QA parity budget did. And the WORD: every one of these
+    is a sliding window now, and an operator told to wait for a boundary that does not exist has
+    been given an instruction that cannot be followed."""
+    from app.auth import limits as L
+
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = text.split("## 9. A locked-out member")[1].split("\n## ")[0]
+
+    assert "sliding" in section.lower(), (
+        "docs/RUNBOOK-identity.md §9 no longer tells an operator the windows are sliding"
+    )
+    assert "| Counter | Limit | Sliding window |" in section, "§9's limiter table lost its header"
+
+    # EXACTLY, and positionally (fix round 1, Minor 1). This compared `str(limit) in cell`, so a
+    # row could overstate a limit TENFOLD and pass — `"10" in "100"` — and a constant could shrink
+    # under it, `"3" in "5 / 3"`. `TOKEN_IP` tightened 30 -> 3 passed EVERY test in the suite,
+    # because `"3" in "30"` and nothing else named it. Each row now names its own constants and
+    # each cell is split on ` / ` and compared with `==` against the module, position by position.
+    rows = [r for r in re.findall(r"^\| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|$", section, re.MULTILINE)
+            if "`" in r[0]]  # the header and the `|---|` rule name no constant
+    assert len(rows) == 5, f"§9's limiter table has {len(rows)} data rows"
+    windows = {900: "15 min", 3600: "1 h", 86_400: "24 h"}
+    named = {name for label, _, _ in rows for name in re.findall(r"`([A-Z_]+)`", label)}
+    expected = {"SIGNIN_EMAIL", "SIGNIN_IP", "SIGNUP_IP", "SIGNUP_EMAIL",
+                "FORGOT_EMAIL", "FORGOT_IP", "TOKEN_IP"}
+    assert named == expected, f"§9's table names {sorted(named)}; the sign-in limits are {sorted(expected)}"
+
+    for label, limit_cell, window_cell in rows:
+        constants = re.findall(r"`([A-Z_]+)`", label)
+        limit_parts = [c.strip() for c in limit_cell.split("/")]
+        window_parts = [c.strip() for c in window_cell.split("/")]
+        assert len(limit_parts) == len(window_parts) == len(constants), (
+            f"§9's {label!r} row names {len(constants)} constants but {len(limit_parts)} limits "
+            f"and {len(window_parts)} windows — every cell must carry one value per constant"
+        )
+        for i, constant in enumerate(constants):
+            limit, window_s = getattr(L, constant)
+            assert limit_parts[i] == str(limit), (
+                f"§9's {label!r} row states {constant} as {limit_parts[i]!r}; "
+                f"app/auth/limits.py says {limit}"
+            )
+            assert window_parts[i] == windows[window_s], (
+                f"§9's {label!r} row states {constant}'s window as {window_parts[i]!r}; "
+                f"app/auth/limits.py says {window_s} s ({windows[window_s]})"
+            )
+
+    # And the three sentences elsewhere in the page that described the OLD mechanism.
+    for gone in ("fixed 24 h bucket", "the bucket\n  rolls over sooner", "per FIXED"):
+        assert gone not in text, f"docs/RUNBOOK-identity.md still describes a fixed window: {gone!r}"
+
+    # Controller amendment A-RL1 (2026-09-14). The SPEC is where the mechanism is contracted, and it
+    # said the opposite of the code for as long as the code was wrong: §3's endpoint row states the
+    # limits as a RATE ("10 failures/email/15 min") while §3's Rate limits paragraph named the
+    # mechanism "Redis fixed windows", which is what `app/ratelimit.py`'s own docstring cited as
+    # acceptance of the 2x-limit overshoot a boundary allows. Both documents are pinned together
+    # here, on the one word, so neither can drift back on its own.
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    rate_limits = next((line for line in spec.splitlines() if line.startswith("**Rate limits.**")), None)
+    assert rate_limits is not None, "the identity spec no longer carries a **Rate limits.** paragraph"
+    assert "sliding" in rate_limits.lower(), (
+        f"the identity spec's Rate limits paragraph does not name the mechanism as sliding: {rate_limits!r}"
+    )
+    assert "A-RL1" in rate_limits, "the amendment that corrected that sentence is not named on it"
+    # The LIMITS sentence (§3's endpoint row) is the contract and is deliberately NOT touched by the
+    # amendment, so it is pinned as still stating the same two numbers this table transcribes.
+    assert "Lockout 10 failures/email/15 min and 30/IP/15 min" in spec, (
+        "the identity spec no longer states the sign-in lockout as 10/email and 30/IP per 15 minutes"
+    )
+
+    # The four corrected places — the spec's paragraph and the runbook's three — all say "sliding",
+    # and neither document describes a fixed window anywhere.
+    for label, body, places in (("the identity spec", spec, 1), ("docs/RUNBOOK-identity.md", text, 4)):
+        assert len(re.findall(r"sliding", body, re.IGNORECASE)) >= places, (
+            f"{label} names the sliding window fewer than {places} time(s)"
+        )
+        stale = re.findall(r"fixed[ -]window|fixed calendar window|fixed \d+ ?h bucket", body, re.IGNORECASE)
+        assert stale == [], f"{label} still describes a fixed window: {stale}"
+
+
 def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
     as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
@@ -1824,7 +2489,7 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     assert harness_match, f"could not read the traced sign-in count out of: {budget_line!r}"
 
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
-    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per FIXED", runbook)
+    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per SLIDING", runbook)
     assert runbook_match, "docs/RUNBOOK-identity.md no longer states the QA parity sign-in budget this way"
 
     assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (
@@ -1862,6 +2527,21 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     assert sum(harness_terms) == stated, (
         f"frontend/tests/harness.ts says {harness_match.group(1)!r} but its own trace "
         f"({' + '.join(map(str, harness_terms))}) adds up to {sum(harness_terms)}"
+    )
+
+    # Task ADMIN-SUPERSET fix round 1 (review Minor 1). A THIRD copy of the same claim,
+    # `frontend/tests/targets.ts`'s own comment on why `reset_rate_limits.py` runs before every
+    # local suite — it cites this exact arithmetic ("the arithmetic is in `harness.ts`'s
+    # `personaSessionMemos` docstring") and is pinned nowhere, so it kept reading "fifteen
+    # sign-ins" after D-C54's `adminOnly` persona moved the traced number to sixteen. The runbook
+    # and the harness were caught by the two assertions above; this is the one the controller
+    # named that was not.
+    targets = (ROOT / "frontend" / "tests" / "targets.ts").read_text()
+    targets_match = re.search(r"spends (\w+) sign-ins", targets)
+    assert targets_match, "frontend/tests/targets.ts no longer states 'spends N sign-ins'"
+    assert word_to_number[targets_match.group(1).lower()] == stated, (
+        f"frontend/tests/targets.ts says it spends {targets_match.group(1)!r} sign-ins; "
+        f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
     )
 
 
@@ -1937,12 +2617,14 @@ def test_runbook_qa_parity_command_pins_the_playwright_config_flag():
     assert "cd frontend" in section_12, "docs/RUNBOOK-identity.md §12's command no longer cds into frontend/ first"
 
 
-def test_deploy_md_says_ten_test_accounts():
+def test_deploy_md_says_eleven_test_accounts():
     """Final-review docs-drift sweep, item 11. `DEPLOY.md`'s QA persona accounts bullet said "the
     six `.test` accounts" — stale since Task S3/S7 grew the seed to ten (three members, three
-    applicants, four identity-screen accounts)."""
+    applicants, four identity-screen accounts). Renamed from "...says_ten_..." under ruling D-C54
+    (2026-09-13), which grew the seed to eleven: a fourth member, `admin@practice-match.test`,
+    holding `admin` alone — the shape `design@`'s four roles cannot express."""
     text = (ROOT / "DEPLOY.md").read_text()
-    assert "seeds the ten `.test` accounts" in text, "DEPLOY.md does not say the seed produces ten accounts"
+    assert "seeds the eleven `.test` accounts" in text, "DEPLOY.md does not say the seed produces eleven accounts"
     assert "the six `.test` accounts" not in text
 
 
@@ -2938,3 +3620,73 @@ def test_claude_md_amendment_paragraph_states_the_amend_guard_vocabulary():
     guard = (ROOT / "frontend" / "tests" / "amend-guard.ts").read_text()
     for word in ("consumes", "supersedes", "superseded\\s+by"):
         assert re.search(word, guard), f"amend-guard.ts does not read the {word} token"
+
+
+# ---------------------------------------------------------------------------------------------
+# Task ONE-VOCABULARY fix round 1, Important 1 (review of 9d16baf, 2026-09-13). A34's paragraph was
+# inserted in front of a standing sentence — "None of `baseline-manifest.json`'s thirteen frozen
+# hashes moves." — that belonged to A33's block, where it was true. A34.10 re-pinned `detail` under
+# D-C51, so the source-of-truth document asserted, in consecutive sentences, that one hash moved
+# and that none did. Both byte-identical copies carried it.
+#
+# The claim is worth pinning rather than merely correcting: the frozen manifest is the within-
+# worktree leak detector, and a document that says "none moves" while one has been re-pinned is
+# exactly how the next re-pin goes unremarked. So CLAUDE.md must state the CURRENT truth — twelve
+# unmoved, `detail` re-pinned under a named ruling — and must not carry the superseded absolute.
+# ---------------------------------------------------------------------------------------------
+FROZEN_HASH_SENTENCE = (
+    "Twelve of `baseline-manifest.json`'s thirteen frozen hashes are unmoved; `detail` was "
+    "re-pinned under D-C51 (A34, 2026-09-13), the A18 mechanism."
+)
+SUPERSEDED_FROZEN_HASH_SENTENCE = "None of `baseline-manifest.json`'s thirteen frozen hashes moves."
+
+
+def test_claude_md_states_the_frozen_hashes_truthfully_in_both_copies():
+    """One `detail` re-pin has happened; the paragraph may not also claim none has.
+
+    The absolute is checked as ABSENT as well as the replacement PRESENT: correcting one copy and
+    leaving the other is the exact shape of drift `tests/test_docs.py` exists to catch, and the two
+    copies are required to be byte-identical elsewhere in this file."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A34\*\*", line)]
+    assert copies, "CLAUDE.md carries no A34 paragraph at all"
+    for i, copy in enumerate(copies, start=1):
+        assert FROZEN_HASH_SENTENCE in copy, (
+            f"copy {i} of {len(copies)} does not state which frozen hashes are unmoved and which "
+            f"was re-pinned; expected: {FROZEN_HASH_SENTENCE!r}"
+        )
+        assert SUPERSEDED_FROZEN_HASH_SENTENCE not in copy, (
+            f"copy {i} of {len(copies)} still carries the superseded absolute "
+            f"{SUPERSEDED_FROZEN_HASH_SENTENCE!r} — A34.10 re-pinned `detail`, so it is false"
+        )
+    # …and the manifest really does hold thirteen rows, so the sentence's own arithmetic is checked
+    # against the file rather than against itself.
+    manifest = json.loads((ROOT / "frontend" / "tests" / "baseline-manifest.json").read_text())
+    assert len(manifest["screens"]) == 13, (
+        f"the manifest holds {len(manifest['screens'])} frozen screens; CLAUDE.md's sentence says "
+        "twelve unmoved plus one re-pinned"
+    )
+    assert "detail" in manifest["screens"], "the manifest has no `detail` row for the sentence to name"
+
+
+def test_no_source_comment_names_a_test_file_that_does_not_exist():
+    """A38 fix round 3: `app/api/market.py` and `migrations/094_registry_blocked_reason.sql` both
+    named `tests/api/test_market_layers.py` as the gate that holds them apart, and no such file
+    has ever existed — the pins are `tests/census/test_market_api.py`'s. A comment that names the
+    gate is how the next reader finds out whether a rule is enforced, so one naming a file that is
+    not there is worse than no comment at all: it reads as "this is pinned" and nothing is.
+
+    Scoped to `tests/**.py` paths cited anywhere in `app/`, `scripts/` and `migrations/`, because
+    that is the class of citation this repository actually makes and the one that went wrong. A
+    path inside a string literal is caught too, deliberately: the question is whether the file
+    exists, not where the reference sits."""
+    cited = re.compile(r"\btests/[\w/]+\.py\b")
+    missing = []
+    for root in ("app", "scripts", "migrations"):
+        for path in sorted((ROOT / root).rglob("*")):
+            if path.suffix not in {".py", ".sql"} or not path.is_file():
+                continue
+            for name in sorted(set(cited.findall(path.read_text(encoding="utf-8")))):
+                if not (ROOT / name).exists():
+                    missing.append(f"{path.relative_to(ROOT)} names {name}, which does not exist")
+    assert missing == [], "\n".join(missing)

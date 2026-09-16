@@ -196,6 +196,304 @@ async def test_admin_users_paginates_by_cursor_and_filters_by_kind(client, conn,
     assert bad.status_code == 422 and bad.json()["error"]["code"] == "BAD_CURSOR"
 
 
+async def test_the_list_carries_the_provenance_and_the_open_queue_count_the_users_tab_prints(client, conn, member):
+    """Task A36: the Admin Users tab prints two facts `GET /api/admin/users` did not serve.
+
+    The design's own approved row reads "Approved August 12 by staff reviewer K. Alvarez." —
+    a DATE and a NAME — and `LIST_SQL` selected neither: `application.decided_at` was never in
+    the select list and `decided_by` is an account id, so the only honest rendering was silence.
+    The design's Users tab badge is the literal "3", which equals its own open queue (two Pending
+    plus one Needs review), and the endpoint served no count at all, so an adapter had nothing to
+    put in the pill (`admin_signups.list_signups` has served its own `counts` beside `items`
+    since I5d — this is that pattern, narrowed to the one number the tab shows).
+
+    And the roles half of John's binding condition (2026-09-06) has the same shape of gap: every
+    grant already carries `granted_by`, which is a uuid nobody can read, so the tab could say a
+    staff account was granted BY somebody and not who."""
+    decided, _ = await _applicant(client, member, email="decided@example.org")
+    still_open, _ = await _applicant(client, member, email="still-open@example.org")
+    _admin, cookies, hdr = member(("admin",), email="decider@example.org")
+
+    approve = await client.post(f"/api/admin/users/{decided}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "approve", "note": ""})
+    assert approve.status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    listed = {item["account_id"]: item for item in body["items"]}
+    approved = listed[str(decided)]
+    assert approved["state"] == "active" and approved["application_status"] == "approved"
+    # The date the decision was actually stamped, and the decider's own display name — the two
+    # halves of the design's provenance sentence.
+    assert approved["decided_at"] and approved["decided_at"] == approved["decided_at"].strip()
+    assert approved["decided_by_name"] == "Dr. Rachel Mendes"
+    # An undecided application has no provenance, and says so with a null rather than a date.
+    assert listed[str(still_open)]["decided_at"] is None
+    assert listed[str(still_open)]["decided_by_name"] is None
+    # The grant the approval wrote names the admin who made it, not only their uuid.
+    grant = approved["grants"][0]
+    assert grant["role"] == "buyer" and grant["granted_by"] == str(_admin)
+    assert grant["granted_by_name"] == "Dr. Rachel Mendes"
+
+    # The badge: accounts awaiting a decision, over the whole table — three accounts exist, one of
+    # them still open.
+    assert body["counts"] == {"open": 1, "total": 3}
+
+
+async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(client, conn, member):
+    """The badge counts the QUEUE, not the page: `state=`, `kind=` and `role=` narrow `items`, and
+    a reviewer who filters to one account must not see the tab claim there is one account waiting.
+
+    `needs_review` counts with `pending` — `OPEN_STATUSES` is the one definition of "awaiting a
+    decision" this module already decides `decide`'s own application lookup with."""
+    pending, _ = await _applicant(client, member, email="open-pending@example.org")
+    needs_review, _ = await _applicant(client, member, email="open-needs-review@example.org")
+    _seller, scookies, shdr = member(("buyer",), email="open-seller@example.org")
+    await client.post("/api/applications", headers=auth_headers(scookies, shdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    _admin, cookies, hdr = member(("admin",), email="counter@example.org")
+    assert (await client.post(f"/api/admin/users/{needs_review}/decide", headers=auth_headers(cookies, hdr),
+                              json={"action": "request_info", "note": "Which hospital?"})).status_code == 200
+
+    every = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    assert {i["state"] for i in every["items"]} >= {"pending", "needs_review"}
+    # THREE, not two (fix round 1, review Important 1): `open-seller@example.org` is an `active`
+    # account carrying a pending SELLER application, and the tab shows that row with the applicant's
+    # own buttons, so the badge counts it. Before the ruling the count read `account.state` alone
+    # and called this queue two deep while three rows were waiting.
+    assert every["counts"] == {"open": 3, "total": 4}
+    for query in ("?state=pending", "?kind=seller", "?role=admin", "?limit=1"):
+        narrowed = (await client.get(f"/api/admin/users{query}", headers=auth_headers(cookies))).json()
+        assert narrowed["counts"] == every["counts"], query
+    assert str(pending) in {i["account_id"] for i in every["items"]}
+
+
+async def test_an_open_seller_application_on_an_active_account_is_in_the_open_queue_count(client, conn, member):
+    """Fix round 1, review Important 1 (the controller's ruling on it, 2026-09-13).
+
+    A seller applies from an account that is ALREADY `active` — `POST /api/applications` says so
+    outright ("moving it to `pending` would strip every role on the next request") — so the row the
+    Users tab shows has `state: "active"` and `application_status: "pending"` at once, and
+    `decide` accepts `approve`, `decline` and `request_info` on it. The badge read `account.state`
+    alone, so the one row a reviewer most needs to see was not in the number that tells them to
+    look: the tab said the queue was EMPTY while holding a seller applicant with three live
+    buttons. `open` is the queue the tab RENDERS as open — an account with an application awaiting
+    a decision, whatever its own state.
+
+    `total` is unchanged and still counts ACCOUNTS: it is the size of the table, not of the queue.
+    """
+    seller, scookies, shdr = member(("buyer",), email="seller-applicant@example.org")
+    _admin, cookies, hdr = member(("admin",), email="counts-admin@example.org")
+
+    before = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    assert before["counts"] == {"open": 0, "total": 2}
+
+    assert (await client.post("/api/applications", headers=auth_headers(scookies, shdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(seller))
+    # The row this count is about: an ACTIVE account whose application is open.
+    assert row["state"] == "active" and row["kind"] == "seller" and row["application_status"] == "pending"
+    assert body["counts"] == {"open": 1, "total": 2}
+
+    # And the API really does accept a decision on it, which is why it belongs in the queue.
+    decided = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "request_info", "note": "Which hospital is this?"})
+    assert decided.status_code == 200
+    after = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    # Still open — `needs_review` is the other half of `OPEN_STATUSES`, and the account is still
+    # `active`, so this is the same row counted through its application for the second time.
+    assert after["counts"]["open"] == 1
+
+
+async def test_an_open_queue_account_with_no_application_row_is_still_counted(client, conn, member):
+    """The other side of the same ruling, and it is not hypothetical: `scripts/seed_persona.py`
+    seeds `pending@practice-match.test` in state `pending` with NO `application` row at all (only
+    the `needs_review` persona gets one written), so this account shape is live on QA.
+
+    The tab gives such a row the applicant treatment through the account state — that is what "and
+    on the account state only when no application is open" means — so the badge counts it too.
+    Counting open APPLICATIONS alone would have moved Important 1's defect one row over: a Pending
+    pill with three live buttons, over a badge that does not know it is there."""
+    aid, _cookies, _hdr = member((), state="pending", email="no-application-row@example.org")
+    _admin, cookies, _hdr2 = member(("admin",), email="no-row-admin@example.org")
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(aid))
+    assert row["state"] == "pending" and row["application_status"] is None
+    assert body["counts"] == {"open": 1, "total": 2}
+
+
+async def test_the_badge_count_is_asked_for_once_per_tab_load_and_never_once_per_page(client, conn, member, monkeypatch):
+    """Fix round 1, review Minor 1. The count is a full scan of `account`; the list is a keyset
+    page. `admin/users.ts` walks up to `MAX_PAGES` pages and keeps the FIRST page's counts, so a
+    server that answers the grouped scan on every page charges a large queue up to twenty scans
+    for one tab load and throws nineteen of the answers away.
+
+    A page that carries a `cursor` is by definition not the first, so it serves `counts: null` and
+    runs no count at all — the shape `countsOf` answers `null` for, which fix round 2 made true
+    rather than merely claimed (`null` passed its `!== undefined` test and `null.open` threw; only
+    call order kept it unreached, and `users.test.ts` now pins this exact body).
+
+    Counted, not reasoned: a cursor proxy records every statement the route executes, and the
+    assertion is on how many of them are the count."""
+    from app.api import admin_users as A
+
+    for n in range(3):
+        await _applicant(client, member, email=f"page-{n}@example.org")
+    _admin, cookies, _hdr = member(("admin",), email="paging-admin@example.org")
+
+    counted: list[str] = []
+    real_conn = A.sync_conn
+
+    class CountingCursor:
+        """A pass-through proxy; psycopg2's own cursor is a C object with no settable methods."""
+
+        def __init__(self, cur: Any) -> None:
+            self._cur = cur
+
+        def execute(self, sql: Any, params: Any = None) -> Any:
+            if "count(*)" in str(sql):
+                counted.append(str(sql))
+            return self._cur.execute(sql, params)
+
+        def __enter__(self) -> Any:
+            self._cur.__enter__()
+            return self
+
+        def __exit__(self, *exc: object) -> Any:
+            return self._cur.__exit__(*exc)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._cur, name)
+
+    class CountingConn:
+        def __init__(self, c: Any) -> None:
+            self._c = c
+
+        def cursor(self, *a: Any, **kw: Any) -> CountingCursor:
+            return CountingCursor(self._c.cursor(*a, **kw))
+
+        def __enter__(self) -> Any:
+            return self._c.__enter__()
+
+        def __exit__(self, *exc: object) -> Any:
+            return self._c.__exit__(*exc)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._c, name)
+
+    monkeypatch.setattr(A, "sync_conn", lambda *a, **kw: CountingConn(real_conn(*a, **kw)))
+
+    first = (await client.get("/api/admin/users?limit=1", headers=auth_headers(cookies))).json()
+    assert len(counted) == 1, f"the first page runs the grouped count exactly once, not {len(counted)}"
+    assert first["counts"]["open"] == 3 and first["next_cursor"]
+
+    second = (await client.get(f"/api/admin/users?limit=1&cursor={first['next_cursor']}",
+                               headers=auth_headers(cookies))).json()
+
+    assert len(counted) == 1, "a cursored page must not pay for the count the caller already has"
+    assert second["counts"] is None and second["items"]
+
+
+async def test_a_declined_seller_application_is_served_as_declined_on_an_account_still_active(client, conn, member):
+    """Fix round 2, re-review Important 1 — the row the Users tab printed as an APPROVAL.
+
+    A seller application is decided from `active` TO `active`, and a decline stamps
+    `status='declined'`, `decided_by` and `decided_at=now()` on the application row. `LIST_SQL`
+    serves the LATEST application's status, date and decider, so the served row is `state: active`
+    AND `application_status: declined` with a full decision stamp — every term the design's one
+    approved sentence was gated on, and none of them about an approval. The tab printed "Approved
+    <the decline date> by staff reviewer <the colleague who declined it>."
+
+    This pins the PAYLOAD, so the frontend case that stops printing it is anchored to a row the
+    API really serves rather than to a hand-written fixture."""
+    _sid, scookies, shdr = member(("staff",), email="decline-staff@example.org")
+    bid, bcookies, bhdr = member(("buyer",), email="declined-seller@example.org")
+    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+    assert (await client.post(f"/api/admin/users/{bid}/decide", headers=auth_headers(scookies, shdr),
+                              json={"action": "decline", "note": "Ownership unclear"})).status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(bid))
+    assert row["state"] == "active" and row["kind"] == "seller"
+    assert row["application_status"] == "declined"
+    # The stamp a decline leaves, which is what the sentence was composed from.
+    assert row["decided_at"] is not None and row["decided_by_name"] == "Dr. Rachel Mendes"
+    # And a closed application is not in the queue.
+    assert body["counts"]["open"] == 0
+
+
+async def test_a_suspended_or_revoked_account_is_not_decidable_and_is_not_in_the_open_queue(client, conn, member):
+    """Fix round 2, re-review Important 2 — the controller's ruling, narrowing fix round 1's union.
+
+    `suspend` and `revoke` are ACCOUNT actions: neither is in `APPLICATION_ACTIONS`, so `decide`
+    never closes the open application row, and `api/applications.py` says so in its own words. An
+    account suspended (or revoked) while holding an open application therefore arrives
+    `state: suspended` WITH `application_status: pending`, and keyed on the application alone the
+    tab offered Approve / Decline / Request info — each refused 409 STATE — hid Reinstate, the one
+    action the API accepts, and counted the row open for ever on a revoke.
+
+    So the open application governs the row only where `decide` will act on it. This pins that set
+    from the API's own side: every action the tab offers such a row is ACCEPTED, and the badge
+    counts only rows it renders as decidable."""
+    _sid, scookies, shdr = member(("staff",), email="suspend-staff@example.org")
+    seller, bcookies, bhdr = member(("buyer",), email="suspended-applicant@example.org")
+    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
+                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+
+    open_queue = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    assert open_queue["counts"]["open"] == 1, "the active seller applicant IS decidable"
+
+    assert (await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                              json={"action": "suspend", "note": "Under investigation"})).status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(seller))
+    # The stale open row is still there — `suspend` is not an application action and closes nothing.
+    assert row["state"] == "suspended" and row["application_status"] == "pending"
+    assert body["counts"]["open"] == 0, "a suspended account is not waiting on a reviewer's decision"
+
+    # Every application action the tab USED to offer this row is refused; the one it hid is taken.
+    from app.api.admin_users import APPLICATION_ACTIONS
+
+    for action in APPLICATION_ACTIONS:
+        refused = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                                    json={"action": action, "note": "n"})
+        assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE", action
+    reinstated = await client.post(f"/api/admin/users/{seller}/decide", headers=auth_headers(scookies, shdr),
+                                   json={"action": "reinstate", "note": ""})
+    assert reinstated.status_code == 200
+
+
+async def test_the_open_queue_count_reads_the_same_application_row_the_list_shows(client, conn, member):
+    """Fix round 2, re-review Minor 3. The count and the row agreed only while at most one
+    application per account was open — an invariant `api/applications.py` enforces and the SCHEMA
+    does not, so a seed script or direct SQL could break it and leave the badge counting a row the
+    table renders as closed.
+
+    Rather than make the database hold the invariant (a partial unique index, which would have to
+    be true of every row already applied on QA and production before it could be added), the count
+    now reads the SAME `ORDER BY submitted_at DESC, id DESC LIMIT 1` lateral `LIST_SQL` does. The
+    two cannot disagree about which application a row is about, whatever the table holds."""
+    aid, _c, _h = member(("buyer",), email="two-applications@example.org")
+    _admin, cookies, _hdr = member(("admin",), email="latest-row-admin@example.org")
+    older, newer = "00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2"
+    with conn.cursor() as cur:
+        # Outside the API on purpose: this is the shape the invariant forbids and the schema allows.
+        cur.execute("""INSERT INTO application (id, account_id, kind, fields, status, submitted_at)
+                       VALUES (%s,%s,'buyer',%s,'pending', now() - interval '2 days'),
+                              (%s,%s,'seller',%s,'approved', now() - interval '1 day')""",
+                    (older, aid, json.dumps(FIELDS), newer, aid, json.dumps(SELLER_FIELDS)))
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(aid))
+    # The list shows the LATEST application, which is closed...
+    assert row["application_status"] == "approved"
+    # ...so the badge must not call the same row open on the strength of the older one.
+    assert body["counts"]["open"] == 0
+
+
 async def test_the_detail_view_carries_applications_grants_and_refuses_an_unknown_account(client, conn, member):
     aid, _ = await _applicant(client, member, email="detail@example.org")
     _admin, cookies, _hdr = member(("admin",), email="detail-admin@example.org")
@@ -440,8 +738,11 @@ def test_bootstrap_admin_is_idempotent_refuses_production_without_the_flag_and_i
     assert _run_cli(bootstrap_admin, ["--email", "founder@example.org", "--production"]).startswith(settings.link_base_url)
 
 
-def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_shows(conn, monkeypatch):
-    """A-I8.2 / D-I8-8: the visual oracle's personas.
+def test_seed_persona_seeds_the_three_oracle_personas_whose_labels_the_design_shows(conn, monkeypatch):
+    """A-I8.2 / D-I8-8: the visual oracle's personas. Renamed from "...the_two_..." under ruling
+    D-C54 (2026-09-13), which added `admin@practice-match.test` to `ORACLE_PERSONAS` beside
+    `buyer@` and `seller@` — the account whose only grant is `admin`, the shape `design@`'s four
+    roles cannot express.
 
     Once `logic.js` renders `/api/me`'s computed `role` (A5.4), the account menu shows the truth —
     so the account the screenshots are taken as decides what the design's own header must say. The
@@ -453,7 +754,7 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
     `design@` (all four roles) the four Admin states — those nine show their own account's label,
     which is why their baselines move once and are re-frozen (D-I8-8).
 
-    All three carry the SAME display name and affiliation, so `name` and `initials` are constant
+    All four carry the SAME display name and affiliation, so `name` and `initials` are constant
     across the whole suite and only `role` varies with what the account may actually open."""
     from app.auth import passwords as P
     from app.auth.labels import initials, role_label
@@ -466,6 +767,10 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
     expected = {
         "buyer@practice-match.test": ("buyer",),
         "seller@practice-match.test": ("buyer", "seller"),
+        # Ruling D-C54 (2026-09-13): the fourth member, whose ONLY grant is `admin`. Its computed
+        # label is `design@`'s own — `role_label` reads the grants it knows about and one `admin`
+        # is enough for it — which is part of why the defect hid behind a header that looked right.
+        "admin@practice-match.test": ("admin",),
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
     }
     with conn.cursor() as cur:
@@ -487,6 +792,7 @@ def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_show
             assert expected_label == {
                 "buyer@practice-match.test": "Approved buyer · StartUp Club",
                 "seller@practice-match.test": "Approved buyer and seller · StartUp Club",
+                "admin@practice-match.test": "VIN Foundation admin · StartUp Club",
                 seed_persona.PERSONA_EMAIL: "VIN Foundation admin · StartUp Club",
             }[email], (email, expected_label)
 

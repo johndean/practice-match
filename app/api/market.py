@@ -80,8 +80,10 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census import pet_rate as PR
 from app.census.bands import HOUSEHOLDS_STOPS, INCOME_STOPS, band_ambiguous
 from app.census.geo_metric import GEO_VERSION_KEY
+from app.census.materialize import _suppression
 from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
 from app.tasks.celery_app import celery_app
@@ -272,6 +274,50 @@ SUMMARY_FRACTIONS: tuple[float, ...] = (0.1, 0.25, 0.5, 0.75, 0.9)
 #: Which of them IS the median, read out of the same array rather than measured again.
 SUMMARY_MEDIAN_AT = 2
 SUMMARY_TTL = 86400
+# Task SNAP-METRO (2026-09-14, family A31.14; ruling D-C50's own deferral, recorded in the
+# ONE-VOCABULARY audit as collision C2). The AREA card printed `median` -- `percentile_cont(0.5)`
+# over the metro's valued TRACTS, 94,801 on CBSA 12420 -- under a caption the member reads as the
+# metro's figure, while the Census PUBLISHES a metro median household income for that same CBSA:
+# `acs_measure` summary level 310, B19013_001E = 97,638 +/- 1,163 at the 2019-2023 release the
+# 94,801 is itself built from. Two "metro" numbers, one metro, and the one the member could check
+# was the one the screen did not show.
+#
+# So the route serves the Census's OWN figure where the Census publishes one, beside the
+# distribution rather than instead of it: `median` and `quantiles` are untouched (the bars ARE the
+# tract distribution and that is the shape the card draws), and `metro` is the headline.
+#
+#: The variable the Census publishes at summary level 310 for a layer whose figure IS an ACS
+#: variable. `app/census/acs.py`'s `GEOGRAPHIES` has loaded level 310 nationwide since the first
+#: ACS run, so this reads rows that are already there rather than asking for a new load.
+METRO_VARIABLE: dict[str, str] = {"income": "B19013_001E", "households": "B11001_001E"}
+#: The population variable the growth rate is a difference of, at both ACS periods.
+METRO_POPULATION = "B01003_001E"
+#: The caption's BASIS half, which the design PRINTS verbatim (amendment A31.14b) -- so a word
+#: invented here would be a new geography or basis phrase on the screen with no design file
+#: changed. Both are drawn from the ONE-VOCABULARY audit's own closed word list (§3.1): the
+#: statistic is carried by the card's title, the geography is "the metro", and the basis is
+#: `Census published` where the Census published this exact figure for this exact area and
+#: `derived estimate` where this pipeline computed it from one that the Census did publish.
+#: `tests/census/test_summary.py::test_the_metro_basis_phrases_are_drawn_from_the_designs_own_closed_word_list`
+#: is the pin.
+METRO_BASIS: dict[str, str] = {
+    "published": "Census published for the metro",
+    "derived": "derived estimate for the metro",
+}
+# One indexed read for every metro figure in the body: `acs_measure`'s primary key is
+# (geo_id, summary_level, vintage, variable) and this query fixes the first two and lists the
+# other two, so the planner descends `acs_measure_pkey` rather than scanning the table
+# (`tests/perf/test_query_plans.py::test_hot_query_uses_an_index[metro_acs]`).
+#
+# The CASTs are the module's own rule, not decoration: `_BOUNDARY_SQL`'s comment records what an
+# UNTYPED bound parameter does inside this stack, and a bare `ANY(:variables)` gives asyncpg no
+# element type to encode a Python list with.
+_METRO_ACS_SQL = """
+SELECT variable, vintage, estimate, moe FROM acs_measure
+ WHERE geo_id = :cbsa AND summary_level = '310'
+   AND variable = ANY(CAST(:variables AS text[])) AND vintage = ANY(CAST(:vintages AS text[]))
+"""
+
 #: Every dataset whose ACTIVE VINTAGE the summary's cache key has to span. One body carries six
 #: layers stamped with four datasets, so a key naming only the ACS vintage would go on serving a
 #: stale ZIP Business Patterns card for a day after that dataset's own vintage was activated.
@@ -306,19 +352,45 @@ THRESHOLD_RULE = (
     "establishments, though they are counted in its all-industry total."
 )
 
+# Task PET-RATE-PROVENANCE (John, 2026-09-15). The pets layer's caveat, COMPOSED from
+# `app.census.pet_rate` rather than typed, so the served sentence and the provenance record can
+# never disagree about the rate, the edition or the licence. It carries John's §5 disclosure in
+# full: the households are Census, the incidence is AVMA, the product of the two is an estimate
+# and not an observed count, and a national rate does not establish a local one. It no longer
+# says "placeholder" -- the rate is the approved AVMA figure now, and the word was the old
+# provenance defect written into the copy.
+PETS_CAVEAT = (
+    f"Derived estimate, not an observed count: {PR.DERIVATION}. "
+    f"The rate is {PR.INCIDENCE_RATE_DISPLAY} of {PR.RATE_GEOGRAPHY} households "
+    f"({PR.SOURCE}, {PR.SOURCE_EDITION} {PR.SOURCE_DATASET}, reference period "
+    f"{PR.REFERENCE_PERIOD}); it is a national incidence and does not establish this area's own "
+    f"pet-ownership rate. Licence: {PR.LICENCE_STATUS}."
+)
+
+# The UNIVERSE ZIP Code Business Patterns counts, stated once and read in two places: this
+# catalogue's `competition` caveat, which an integrator reads, and -- word for word -- the design's
+# "What this means" card, which a buyer reads (amendment A48.1, D-C57). ZBP counts business
+# LOCATIONS WITH PAID EMPLOYEES, so a practice run by its owner alone is not in the figure at all;
+# that was stated nowhere in the product until 2026-09-14. It is constant for every listing in the
+# country, which is why it is a caveat sentence and not a served field (spec §7).
+EMPLOYER_UNIVERSE = (
+    "The Census counts business locations with paid employees, so a practice with "
+    "no paid staff is not in this figure."
+)
+
 # The nine approved layers (Census spec §2 table + the layer-rendering contract). Labels are the
 # design's; sources/vintages/state come from the registry at request time, never hard-coded.
 LAYERS: list[dict[str, Any]] = [
     {"key": "income", "label": "Median Household Income", "dataset_key": "acs5", "metric": "median_hh_income", "is_derived": False, "caveat": None},
     {"key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "metric": "pet_households_est", "is_derived": True,
-     "caveat": f"Derived estimate: households \u00d7 {M.PET_RATE} (national placeholder rate until a licensed regional rate is cleared)."},
+     "caveat": PETS_CAVEAT},
     {"key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior", "metric": "population_growth_pct", "is_derived": True, "geo_level": "place",
      "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP."},
     {"key": "households", "label": "Households", "dataset_key": "acs5", "metric": "households", "is_derived": False, "caveat": None},
     {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
-     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + THRESHOLD_RULE},
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + EMPLOYER_UNIVERSE + " " + THRESHOLD_RULE},
     {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
     {"key": "drive_10", "label": "5\u201310 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
     {"key": "drive_20", "label": "10\u201320 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},
@@ -386,7 +458,15 @@ def _layer_state(reg: dict[str, dict[str, Any]], dataset_key: str | None) -> tup
     state = _STATE_FOR[row["license_status"]]
     if state != "blocked":
         return state, None
-    return state, row["notes"] or DEFAULT_BLOCKED_REASON
+    # `blocked_reason`, NOT `notes` (A38 fix round 3, re-review Important 2, migration 094). They
+    # are two sentences with two audiences: `notes` is the OPERATOR's column, printed verbatim on
+    # the admin Data Sources tab and bounded by that tab's measured layout cap, while this is the
+    # MEMBER's — the reason a layer is missing, served from here to `GET /api/layers`, the panel
+    # payload and the boundaries payload. They shared one column until 094, and three of the four
+    # datasets `LAYERS` gates carry a seeded GEOGRAPHY note that would have been served as the
+    # reason for a licence block. `tests/census/test_market_api.py`'s
+    # `test_the_member_s_blocked_reason_is_never_the_operator_s_note` pins the two apart.
+    return state, row["blocked_reason"] or DEFAULT_BLOCKED_REASON
 
 
 def _cleared(reg: dict[str, dict[str, Any]], dataset_key: str) -> bool:
@@ -396,6 +476,68 @@ def _cleared(reg: dict[str, dict[str, Any]], dataset_key: str) -> bool:
     not carry — so `reg[dataset_key]` is indexed directly rather than defended against a `KeyError`
     the schema's own foreign key already rules out."""
     return bool(reg[dataset_key]["license_status"] == "cleared")
+
+
+def _metro_figure(layer: str, measures: dict[tuple[str, str], tuple[float, float | None]],
+                  acs: str | None, prior: str | None) -> dict[str, Any] | None:
+    """The metro's OWN figure for one layer, or `None` where there is not one (Task SNAP-METRO).
+
+    THREE ARMS, and the third one is the honest absence:
+
+      * `income` and `households` ARE ACS variables, so the Census publishes each of them for the
+        metro itself at summary level 310 and this serves that estimate with the margin the
+        Census published beside it. `kind: "published"`.
+      * `pets` and `growth` are not published for anything: `pets` is a published household count
+        at the design's own documented rate and `growth` is the difference of two published
+        METRO populations, both through `app.census.metrics` and never a second spelling of
+        either formula. `kind: "derived"`, and NO margin -- a rounded model output and a
+        difference of two ACS periods each have none to publish (`geo_metric._pets`/`_growth`'
+        own rule). GROWTH'S KIND IS MEASURED, not inherited from the brief, which asked for
+        `"published"` (review 1, Important-1): `acs_measure` carries `B01003_001E` at level 310
+        for BOTH ACS periods and carries no growth RATE at any level, so the GEOGRAPHY is the
+        metro's own and the STATISTIC is this pipeline's -- which is `derived`, and calling it
+        published would be the label the bullet below refuses for `econ`.
+      * `econ` and `competition` are Business Patterns, which publishes nothing at summary level
+        310, so they answer `None` and the card keeps the median of its own counties or ZIP
+        areas. **CONTROLLER RULING, 2026-09-14 (review 1, Important-1): serving NULL here is
+        RIGHT and the brief's own sentence asking for an AGGREGATE was wrong** -- the Census
+        publishes no metro-level average practice payroll and no metro establishment count at
+        NAICS 541940, so an aggregate would be a derived number wearing a published label, which
+        is the one thing D-C51 forbids. Two further facts stand behind it and are recorded rather
+        than lost: this route's population is the metro's ENVELOPE (`_SUMMARY_SQL`'s
+        `ST_Intersects`), the right population for a DISTRIBUTION and the wrong one for a total
+        -- it takes in counties and ZIP areas outside the metro -- and ZIP Code Business Patterns
+        withholds every category under three establishments, so a ZCTA sum is a floor of unknown
+        depth (393 of Dallas's 535 ZIP areas, measured in A24 fix round 1).
+
+    `_suppression` is the one decision about a margin ON THE PUBLISHED ARM, imported here exactly
+    as `app/census/geo_metric.py` imports it: a present estimate with no published margin is
+    unmeasured rather than certain, and a margin wide enough to fail `high_moe` hides the figure,
+    so the metro headline cannot claim a confidence the tract layer beneath it would refuse. The
+    DERIVED arm does not go through it and must not (review 1, Minor-5): a difference of two ACS
+    periods has no published combined margin at all, and `materialize.py` computes a place's
+    growth from the estimates alone for exactly that reason (`geo_metric._growth`'s own comment,
+    D-NS17) -- running a marginless figure through `_suppression` would withhold every one."""
+    variable = METRO_VARIABLE.get("households" if layer == "pets" else layer)
+    if variable is not None and acs is not None:
+        found = measures.get((variable, acs))
+        if found is None or _suppression(found[0], found[1])[0]:
+            return None
+        value, moe = found
+        if layer == "pets":
+            # `pet_households_est` answers `None` only for a `None` household count, and the guard
+            # above has already returned for a missing or suppressed row — so the cast states what
+            # the types cannot, rather than a branch no fixture and no database can reach.
+            return {"value": float(cast("int", M.pet_households_est(value))), "moe": None,
+                    "kind": "derived", "basis": METRO_BASIS["derived"]}
+        return {"value": value, "moe": moe, "kind": "published", "basis": METRO_BASIS["published"]}
+    if layer == "growth" and acs is not None and prior is not None:
+        now, before = measures.get((METRO_POPULATION, acs)), measures.get((METRO_POPULATION, prior))
+        rate = M.population_growth_pct(None if now is None else now[0], None if before is None else before[0])
+        return None if rate is None else {
+            "value": rate, "moe": None, "kind": "derived", "basis": METRO_BASIS["derived"],
+        }
+    return None
 
 
 @router.get("/layers", dependencies=[Depends(REQUIRE_MARKET_READ)])
@@ -417,6 +559,12 @@ async def layers() -> Response:
             "shading": SHADING.get(layer["key"]),
             "state": state, "is_derived": layer["is_derived"], "caveat": layer["caveat"],
         }
+        # Task PET-RATE-PROVENANCE: the pets layer is the one figure in this catalogue whose
+        # rate comes from OUTSIDE the Census, so it is the one that has to say where. The record
+        # is composed at request time because two of its fields are not `pet_rate`'s to state --
+        # the ACS release THIS database serves and the formula version the pipeline stamps.
+        if layer["key"] == "pets":
+            entry["provenance"] = PR.provenance(household_vintage=act.get("acs5"), methodology_version=M.FORMULA_VERSION)
         if blocked_reason is not None:
             entry["blocked_reason"] = blocked_reason
         out.append(entry)
@@ -764,6 +912,27 @@ async def summary(cbsa: str) -> Response:
             "WHERE geo_id = :cbsa AND summary_level = '310' AND vintage = :gv"), {"cbsa": cbsa, "gv": geo_vintage})).first()
         if metro is None:
             return _error("NOT_FOUND", "No such metro.", 404)
+        # Task SNAP-METRO: every published metro figure in the body, in ONE indexed read, before
+        # the per-layer loop — four rows at most, and the same two ACS vintages the loop's own
+        # figures are stamped with, so a cache key that already spans them spans these too. A
+        # database with NO activated ACS vintage at all sends an empty array here and matches
+        # nothing -- measured through the real asyncpg engine, `vintages=[]` gives 0 rows and no
+        # encoding error, the `CAST(... AS text[])` supplying the element type -- which is the
+        # same answer a guard would have given at the cost of a branch no TEST can reach (the
+        # STATE is reachable; its coverage is not -- review 1, Minor-4). `_metro_figure` returns
+        # `None` on that path anyway.
+        vintages = [v for v in (act.get("acs5"), act.get("acs5_prior")) if v is not None]
+        published: dict[tuple[str, str], tuple[float, float | None]] = {}
+        for m in (await conn.execute(text(_METRO_ACS_SQL), {
+            "cbsa": cbsa, "variables": [*METRO_VARIABLE.values(), METRO_POPULATION],
+            "vintages": vintages,
+        })).mappings().all():
+            # `acs_measure.estimate` is nullable and `acs._num` writes NULL for a value the Census
+            # published as a non-number, so an absent figure is skipped rather than coerced: a
+            # `float(None)` here would take the whole route down for one metro.
+            if m["estimate"] is not None:
+                published[(m["variable"], m["vintage"])] = (
+                    float(m["estimate"]), None if m["moe"] is None else float(m["moe"]))
         used: set[str] = set()
         layers: list[dict[str, Any]] = []
         for layer, shading in SHADING.items():
@@ -783,6 +952,11 @@ async def summary(cbsa: str) -> Response:
                 # route's own rule, for the same reason).
                 "count": 0, "with_value": 0, "suppressed": 0, "no_data": 0,
                 "median": None, "quantiles": None,
+                # Task SNAP-METRO: the metro's OWN figure, beside the distribution rather than
+                # instead of it. `None` here is the layer-is-off case as well as the
+                # nothing-published case — an uncleared dataset puts nothing of itself on the
+                # wire, and that is one rule with no per-figure exception.
+                "metro": None,
                 "value_vintage": act.get(source), "source_dataset": source,
             }
             if blocked_reason is not None:
@@ -791,6 +965,7 @@ async def summary(cbsa: str) -> Response:
                 used.add(source)
                 if metric_key == "population_growth_pct":
                     used.add("acs5_prior")
+                row["metro"] = _metro_figure(layer, published, act.get("acs5"), act.get("acs5_prior"))
                 stat = (await conn.execute(text(_SUMMARY_SQL), {
                     "metric": metric_key, "value_vintage": act.get(source),
                     "level": shading["summary_level"], "geo_vintage": geo_vintage,

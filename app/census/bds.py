@@ -36,6 +36,13 @@ def load(conn: psycopg2.extensions.connection, client_factory: Callable[[Dataset
     with ingest.run(conn, "bds", str(year)) as run, client_factory(ds) as client:
         for st in states:
             rows = client.fetch_table(VARS, f"state:{st}", VARS, None, {"YEAR": str(year), "NAICS": "54"})
+            if rows is None:
+                # Task CENSUS-204, defect 1: "no data for this request" (HTTP 204, zero-byte
+                # body). Measured on the live API 2026-09-14: BDS **2024** answers this way while
+                # 2021-2023 serve cleanly, so an unpublished year -- or one state within a
+                # published year -- arrives here and is recorded and skipped, never raised.
+                run.notes.append(f"bds: no data for state {st} in {year}; skipped")
+                continue
             with conn.cursor() as cur:
                 cur.executemany(UPSERT, [(r["state"], str(year), _int(r.get("FIRM")), _int(r.get("ESTABS_ENTRY")), run.id) for r in rows])
             run.rows += len(rows)

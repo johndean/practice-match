@@ -9,9 +9,14 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
+from app.census.pet_rate import INCIDENCE_RATE
+
 Z90: float = 1.645
 CV_THRESHOLD: float = 0.30
-PET_RATE: float = 0.57  # documented national placeholder until a licensed regional rate is cleared (§8)
+# THE ONE PRODUCTION RATE, defined once in `app.census.pet_rate` with the provenance that
+# makes it a citation rather than a literal (Task PET-RATE-PROVENANCE, John 2026-09-15).
+# Re-exported under the name four call sites already read; a BINDING, never a second copy.
+PET_RATE: float = INCIDENCE_RATE
 FORMULA_VERSION: str = "v1"
 COMPETITION_LEVELS: tuple[tuple[float, str], ...] = ((1.4, "Low"), (2.2, "Moderate"))  # per 10k households; else "High" — the approved design's thresholds
 
@@ -111,8 +116,12 @@ def weighted_median(parts: Iterable[tuple[float | None, float | None]]) -> float
 
 
 def pet_households_est(hh: float | None) -> int | None:
-    """Estimated pet-owning households at the national placeholder incidence rate `PET_RATE`
-    (§8). `None` when households is missing."""
+    """Estimated pet-owning households: local Census households at the national AVMA incidence
+    rate `PET_RATE` (§8; `app.census.pet_rate` carries the provenance). DERIVED, never observed --
+    the households are a Census estimate for a real area and the rate is a national survey
+    figure, so the product of the two is what that area would hold if it behaved like the
+    country. `None` when households is missing, which is the only honest answer with no base to
+    multiply."""
     return None if hh is None else round(float(hh) * PET_RATE)
 
 

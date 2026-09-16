@@ -84,6 +84,11 @@ def load(conn: psycopg2.extensions.connection, client_factory: Callable[[Dataset
         for code in (*NAICS, TOTAL_NAICS):
             requested = NAICS_ALIASES.get((param, code), code)
             rows = client.fetch_table(VARS, "zip code:*", VARS, None, {param: requested})
+            if rows is None:
+                # Task CENSUS-204, defect 1: "no data for this request" (HTTP 204, zero-byte
+                # body), recorded on the run and skipped rather than failing the whole load.
+                run.notes.append(f"zbp: no data for NAICS {code}; skipped")
+                continue
             payload = [(r["ZIPCODE"], ds.vintage, code, _int(r.get("ESTAB")), run.id) for r in rows if r["ZIPCODE"] in zctas]
             with conn.cursor() as cur:
                 cur.executemany(UPSERT, payload)

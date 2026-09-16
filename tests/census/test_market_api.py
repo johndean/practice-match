@@ -37,6 +37,8 @@ from httpx import ASGITransport
 from app.api import market
 from app.cache import sync_redis
 from app.census import gate, materialize
+from app.census import metrics as M
+from app.census import pet_rate as PR
 from app.config import settings
 from app.main import create_app
 from app.tasks.celery_app import celery_app
@@ -103,7 +105,17 @@ async def test_layers_come_from_the_registry_with_three_valued_state_and_caveats
     assert layers["income"]["source_label"].startswith("Source: U.S. Census Bureau, American Community Survey")
     assert layers["income"]["state"] == "enabled"
     assert layers["competition"]["dataset_key"] == "zbp" and "proxy" in layers["competition"]["caveat"] and layers["competition"]["geo_level"] == "zcta"
-    assert layers["pets"]["is_derived"] is True and "0.57" in layers["pets"]["caveat"]
+    # Task PET-RATE-PROVENANCE: the pets caveat is composed from `app.census.pet_rate`, so it is
+    # asserted against that module rather than against a rate re-typed here, and the layer now
+    # carries the whole provenance record beside it. The two fields `pet_rate` must NOT state
+    # are checked against what THIS database actually serves.
+    assert layers["pets"]["is_derived"] is True and layers["pets"]["caveat"] == market.PETS_CAVEAT
+    prov = layers["pets"]["provenance"]
+    assert prov["incidence_rate"] == PR.INCIDENCE_RATE and prov["source_edition"] == PR.SOURCE_EDITION
+    assert prov["household_vintage"] == layers["pets"]["vintage"] and prov["methodology_version"] == M.FORMULA_VERSION
+    assert prov["status"] == "ESTIMATED"
+    # Only the one layer whose rate comes from outside the Census says where it comes from.
+    assert [k for k, l in layers.items() if "provenance" in l] == ["pets"]
     assert layers["growth"]["vintage"] == "2014\u20132018 \u2192 2019\u20132023" and layers["growth"]["geo_level"] == "place"
     assert "approximation" in layers["drive_10"]["caveat"]
     # Never a bare boolean anywhere in the payload -- three-valued or nothing.
@@ -119,10 +131,39 @@ async def test_layers_come_from_the_registry_with_three_valued_state_and_caveats
     assert layers["competition"]["state"] == "disabled" and "blocked_reason" not in layers["competition"]
 
     with conn.cursor() as cur:
-        cur.execute("UPDATE dataset_registry SET license_status='blocked', notes='Counsel declined the terms.' WHERE dataset_key='zbp'")
+        cur.execute("UPDATE dataset_registry SET license_status='blocked', blocked_reason='Counsel declined the terms.' WHERE dataset_key='zbp'")
     gate.invalidate(sync_redis(), "zbp")
     layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
     assert layers["competition"]["state"] == "blocked" and layers["competition"]["blocked_reason"] == "Counsel declined the terms."
+
+
+async def test_the_member_s_blocked_reason_is_never_the_operator_s_note(client, conn, materialized, H):
+    """A38 fix round 3, re-review Important 2 (migration 094). `dataset_registry.notes` had two
+    readers and only one of them was written down: the admin Data Sources tab prints it verbatim
+    into the design's Source sub-line (bounded by a measured layout cap, owned by migrations), and
+    `_layer_state` served the SAME string to members as the reason a layer is blocked.
+
+    Three of the four datasets `LAYERS` gates carry a seeded GEOGRAPHY note -- `zbp`'s is "D11 /
+    A-C6: ZIP counts come from CBP's zip geography; ZIPs treated as ZCTAs" -- which is not a reason
+    for a licence block in anybody's words. This drives exactly that: an operator's note on a
+    blocked row, and a member who is told the member's sentence instead."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes, blocked_reason FROM dataset_registry WHERE dataset_key='zbp'")
+        note, reason = cur.fetchone()
+    assert note and reason and note != reason, "094 did not give zbp a member's sentence of its own"
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert layers["competition"]["blocked_reason"] == reason
+    assert layers["competition"]["blocked_reason"] != note
+
+    # And a row with no member's sentence says the default rather than the operator's note.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET blocked_reason=NULL WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert layers["competition"]["blocked_reason"] == market.DEFAULT_BLOCKED_REASON
 
 
 async def test_markets_lists_cbsas_with_published_listings(client, materialized, H):
@@ -263,7 +304,10 @@ async def test_communities_default_to_place_band_with_fixture_fields_and_competi
     assert body["band"] == "place" and body["vintage"] == "2019\u20132023"
     c = body["communities"][0]
     assert c["name"] == "Cedar Park city" and c["pop"] == 81900 and c["hh"] == 27600 and c["income"] == 118400
-    assert c["growth"] == pytest.approx(14.2, abs=0.01) and c["pets"] == 15732 and c["econ"] == pytest.approx(143850 * 1000 / 210)
+    # Task PET-RATE-PROVENANCE: the pets figure is COMPUTED from the one rate rather than pinned
+    # as a literal -- 27,600 households at the AVMA 2025 Sourcebook's 0.586 -- so this case moves
+    # with a re-citation instead of pinning a product nobody can trace back to a source.
+    assert c["growth"] == pytest.approx(14.2, abs=0.01) and c["pets"] == M.pet_households_est(27600) and c["econ"] == pytest.approx(143850 * 1000 / 210)
     # `vets`/`competition.count` come from PostGIS's own ellipsoidal-geography area, which is not
     # exact integration: the two seeded ZCTAs each overlap the place at ~0.999808, not precisely
     # 1.0, even though the boundaries share the identical coordinate on that edge — a real database's

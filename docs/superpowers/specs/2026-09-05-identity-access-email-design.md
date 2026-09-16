@@ -64,11 +64,11 @@ Retention: declined applications and their PII purged 12 months after decision (
 
 **CSRF and origin.** POST/PATCH/DELETE from a cookie session require `X-CSRF-Token == pm_csrf` **and** an `Origin`/`Referer` on the site's host; bearer `api_token` callers are exempt. No endpoint changes state on GET (router-walk test).
 
-**Automation tokens (amended 2026-09-07 — John: "Admin and Staff must be handled in Wave 2a"; tokens "must include Staff/Admin tokens").** `api_token` created by an admin (`tokens.manage`) for a named purpose (`k6-qa`, `e2e-qa`, `deploy-verify`), carrying **any one of the four roles — `buyer`, `seller`, `staff` or `admin`**; the minter must hold the role being granted (no escalation — clarified 2026-09-07: "holds" is the permission-subset rule, not a `role_grant` row: a minter may mint a token for role R only when every administrative permission R carries is already theirs, so an admin mints any of the four roles and nobody mints a token that administers more than they do), the creation is a re-authenticated, audited action (`tokens.create` records the role), hashed at rest, ≤ 90 days, revocable; `Authorization: Bearer pm_<id>.<secret>`. A token principal holds its role's permissions with two exceptions, because a token has no session to re-authenticate: it never satisfies a re-auth gate (Revoke, licence decisions, engine activation, role grants, token creation) and it never holds `tokens.manage` — a leaked admin token cannot mint tokens or revoke people. They replace `API_SECRET_KEY`/`auth_stub.py`, which are deleted once CI secrets are switched (one-release overlap in which `require(perm)` accepts either).
+**Automation tokens (amended 2026-09-07 — John: "Admin and Staff must be handled in Wave 2a"; tokens "must include Staff/Admin tokens").** `api_token` created by an admin (`tokens.manage`) for a named purpose (`k6-qa`, `e2e-qa`, `deploy-verify`), carrying **any one of the four roles — `buyer`, `seller`, `staff` or `admin`**; the minter must hold the role being granted (no escalation — clarified 2026-09-07: "holds" is the permission-subset rule, not a `role_grant` row: a minter may mint a token for role R only when every administrative permission R carries is already theirs, so an admin mints any of the four roles and nobody mints a token that administers more than they do), the creation is a re-authenticated, audited action (`tokens.create` records the role), hashed at rest, ≤ 90 days, revocable; `Authorization: Bearer pm_<id>.<secret>`. A token principal holds its role's permissions with two exceptions, because a token has no session to re-authenticate: it never satisfies a re-auth gate (`REAUTH`: `engine.activate`, `licence.decide`, `roles.grant`, `signups.notify`, `tokens.manage`, `users.revoke`) and it never holds `tokens.manage` — a leaked admin token cannot mint tokens or revoke people. They replace `API_SECRET_KEY`/`auth_stub.py`, which are deleted once CI secrets are switched (one-release overlap in which `require(perm)` accepts either).
 
 **Defaults confirmed by John (2026-09-07: "I AGREE with your decision").** (1) Task I4: a duplicate sign-up sends the `account_exists` e-mail (equal work on both paths) — **amended 2026-09-07 (I9a review, Important; queued for John as a default):** that holds for an address whose owner has proved they hold it (`verified` and beyond), and for an address that is still `unverified` the sign-up **re-issues a fresh 24 h verification link** and sends `verify_email` again instead. Same 202, same body, still one outbox row on every path, and the password is never changed. The re-issue exists because nothing else could produce a working link: there is no re-send endpoint, `password/forgot` excludes `unverified` deliberately (a reset link would be a way to take over an address whose owner has never proved they hold it) and no staff action verifies an address, so an expired link — or one the QA `EMAIL_ALLOWLIST` suppressed — was unrecoverable; the sign-in routes are switched off while production runs in Coming Soon mode; staff and admin receive `signin_new_device` on a sign-in from a new device; the sign-up budget is 300 ms p95, the same as sign-in. (2) Task I6: when an outbox row ends `failed` or `suppressed` its stored `params` are emptied (PII), so Admin shows address, template, status and error but not the body; retries follow this spec's ladder (1 min, 10 min, 1 h, 6 h, then `failed`); the application-status e-mails carry the design's gate-screen sentences verbatim. (3) Task I5b: removing a `staff` or `admin` grant revokes, in the same transaction and audited (`tokens.revoke`, reason `grant_removed`), every live `api_token` that account minted whose role it may no longer mint; a mint locks the minter's own account row so it cannot race a demotion.
 
-**Rate limits.** Redis fixed windows keyed by (route, email) and (route, first `X-Forwarded-For` hop as set by Railway's proxy); constants in `app/auth/limits.py`; responses carry `Retry-After`.
+**Rate limits.** Redis sliding windows (one sorted set of attempt timestamps per scope and subject; amendment A-RL1, 2026-09-14, Task RATE-LIMIT-WINDOW), counted by ONE atomic check-and-reserve script per attempt — the slot is taken before the credential is checked, a refused attempt is never recorded, and the score is Redis's own clock (amendment A-RL2, 2026-09-14) — keyed by (route, email) and (route, first `X-Forwarded-For` hop as set by Railway's proxy); constants in `app/auth/limits.py`; responses carry `Retry-After`.
 
 **Headers on every response.** `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, plus the Map-engines per-page CSP on the shell.
 
@@ -86,9 +86,9 @@ Roles: `anonymous · applicant · buyer · seller · staff · admin`. `anonymous
 | `market.read` | `/browse?tab=market`, `/api/layers`, `/api/markets*`, `/api/listings/{id}/market`, `/api/map-config` | flag | — | ✅ | ✅ | ✅ | ✅ |
 | `layer.google_live` | Google live layers + `/api/listings/{id}/competition/live` (∧ licence ∧ engine) | — | — | ✅ | ✅ | ✅ | ✅ |
 | `layer.satellite` | satellite toggle (∧ cleared imagery/engine row) | — | — | ✅ | ✅ | ✅ | ✅ |
-| `request.create` · `request.read_own` | `/requests`; express interest; own threads (2b) | — | — | ✅ | ✅ | — | — |
-| `seller.apply` | file the seller application | — | — | ✅ | — | — | — |
-| `page.seller` · `listing.manage_own` · `request.answer_own` | `/seller`, wizard, own listings, answer own requests (2b) | — | — | — | ✅ | — | — |
+| `request.create` · `request.read_own` | `/requests`; express interest; own threads (2b) | — | — | ✅ | ✅ | — | ✅ |
+| `seller.apply` | file the seller application | — | — | ✅ | — | — | ✅ |
+| `page.seller` · `listing.manage_own` · `request.answer_own` | `/seller`, wizard, own listings, answer own requests (2b) | — | — | — | ✅ | — | ✅ |
 | `page.admin` · `users.review` · `users.view_detail` | `/admin?tab=users`; list applications/members (`users.review`, not audited); **view an application's detail** (`users.view_detail`, audited — split 2026-09-08 after the I5 review so that polling the list does not write an audit row per call) | — | — | — | — | ✅ | ✅ |
 | `users.decide` | Approve · Decline · Request info · Suspend · Revoke (re-auth for Revoke) | — | — | — | — | ✅ | ✅ |
 | `listing.review` · `listing.publish` | `/admin?tab=listings`; publish/unpublish/flag (2b) | — | — | — | — | ✅ | ✅ |
@@ -99,6 +99,31 @@ Roles: `anonymous · applicant · buyer · seller · staff · admin`. `anonymous
 | `roles.grant` | grant/revoke staff, admin; grant seller outside an application (re-auth) | — | — | — | — | — | ✅ |
 | `tokens.manage` | create/revoke `api_token`s | — | — | — | — | — | ✅ |
 | `audit.read` · `permissions.read` | `/admin?tab=permissions`, `GET /api/admin/audit`, `GET /api/admin/permissions` | — | — | — | — | ✅ | ✅ |
+
+The `admin` column above is a superset of every other column (ruling D-C54, 2026-09-13, John:
+"as logged in VIN FOUNDATION ADMIN i can no longer access nor see MY REQUEST and LIST A PRACTICE
+- this is not right as SUPERADMIN JOHN DEAN i need to see it all!!!"): `request.create`,
+`request.read_own`, `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`
+read `✅` for `admin` above where this table used to print `—` — the six actions the buyer/seller
+columns alone carried until an account holding `admin` alone was refused "My Requests" and "List a
+Practice". Built structurally in `app/auth/permissions.py`, so a permission this table gains later
+cannot be drawn with a stale `—` in this column.
+
+**§4 addendum (2026-09-13, ruling D-C54).** Two consequences of the superset, accepted rather than
+fixed (Task ADMIN-SUPERSET fix round 1, review Informational 1/2) and written here in the same words
+as `docs/RUNBOOK-identity.md` §4, which is the operator-facing twin of this section: an `api_token`
+minted for the `admin` role now also carries the six member actions the superset added, exactly as a
+human admin's session does — the two refusals a token meets whatever role it carries are unchanged
+by this ruling: `tokens.manage` (`TOKEN_DENIED`), and every step-up action (`REAUTH`:
+`engine.activate`, `licence.decide`, `roles.grant`, `signups.notify`, `tokens.manage`,
+`users.revoke`), which a token has no password to re-authenticate with — so an automation token that
+only ever needed `page.admin`-family permissions is, from this release on, also able to reach
+`/api/seller/*`; and an admin who acts as a seller leaves no `roles.grant` audit row the way a
+deliberate self-grant of `seller` would have, because none is needed — and the trace is on the
+listing side rather than the identity side: the listing's own `seller_id`, and the `listing.*` rows
+its own routes write, of which `listing.edit` lands only where an edit re-enters review from
+`paused` or `published` (creating a listing and editing a draft write none). Neither is a new route
+reachable from a session: both follow from the `admin` column above.
 
 **Scope predicates** ride with `*_own` permissions (`listing.seller_id = me`, `request.buyer_id = me`) and live in the same module; `users.review` never returns hashes; `abuse.investigate` is the only path to message bodies.
 

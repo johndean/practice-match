@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, allowAnonymousBootRefusal, allowsAnonymousBootRefusal, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { designAdminDataSourceRows, designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminUserCounts, designAdminUserRows, designAdminUsersBody } from './design-admin-users.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
-import { P } from '../src/logic.js';
+import { Component, P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 import { readFileSync } from 'node:fs';
@@ -264,6 +266,23 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
     expect(body.items).toHaveLength((P as unknown as unknown[]).length);
     expect(body.next_cursor, 'the stub is one page — a cursor would send load.ts round again').toBeNull();
   });
+
+  // A50 (Task PET-RATE-PROVENANCE, 2026-09-15) — the same rule A33.1c's `income_vs_us_pct` row
+  // states, for the same reason. With the Browse adapter present the design derives its
+  // pet-household figure from the SERVED rate or shows no figure at all, and the app under test
+  // always has that adapter while the reference never does. An oracle that answered `pet_rate:
+  // null` would make the app render no estimated-pet-household figure over a reference that
+  // renders one, and every Browse state that carries that card would diverge for a reason about
+  // the harness rather than about the design. So it answers with the DESIGN'S OWN rate — read out
+  // of `communities()`'s own declaration, not typed here, so a re-citation moves the oracle with
+  // the design instead of leaving the two quietly disagreeing.
+  it("answers with the design's own pet rate on every row, read from the design's own declaration", () => {
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    const declared = /const petRateFixture = ([\d.]+);/.exec(String(Component.prototype.communities));
+    expect(declared, "communities() no longer declares `const petRateFixture = …;` on one line").toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThan(0);
+    expect(body.items.every((r) => r.pet_rate === Number(declared![1]))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------------------
@@ -423,11 +442,11 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(submitStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
   });
 
-  it('names both collections on the local app origin, on the port the run uses', () => {
+  it('names all four collections on the local app origin, on the port the run uses', () => {
     expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings']);
+      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users', 'http://localhost:5473/api/admin/data-sources']);
     expect(collectionStubUrls({} as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings']);
+      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users', 'http://localhost:5173/api/admin/data-sources']);
   });
 
   it('serves every design seller fixture as one complete page (A-SL23 (2))', () => {
@@ -454,6 +473,49 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(body.items).toHaveLength(5);
     expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
     expect(collectionStubBody('http://localhost:5473/api/admin/listings')).toBe(designAdminListingsBody());
+  });
+
+  it('serves the whole design registry as the bare array the route really answers (Task A38)', () => {
+    // `list_data_sources` returns a LIST, not an `{items, next_cursor}` envelope — no pagination,
+    // the whole registry in one body — so the oracle answers in that shape and the adapter's own
+    // `Array.isArray` guard is exercised by the frozen capture rather than only by a unit test.
+    const rows = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/data-sources')) as unknown[];
+    expect(Array.isArray(rows), 'the registry route answers a bare array').toBe(true);
+    expect(rows).toEqual(designAdminDataSourceRows());
+    expect(rows).toHaveLength(5);
+    expect(collectionStubBody('http://localhost:5473/api/admin/data-sources')).toBe(designAdminDataSourcesBody());
+  });
+
+  it('speaks dataset_registry\'s own licence vocabulary, so the badge is one rule (Task A38)', () => {
+    // The design prints exactly the three words the column's CHECK constraint allows, so the
+    // fixture's `license_status` is its own pill lower-cased and `notCleared` counts it exactly as
+    // it counts a real row. Two of the five are not cleared — the design's own literal badge "2".
+    const rows = designAdminDataSourceRows() as { license_status: string; actions: { label: string }[] }[];
+    expect(rows.map((r) => r.license_status))
+      .toEqual(['cleared', 'cleared', 'cleared', 'unresolved', 'blocked']);
+    expect(rows.filter((r) => r.license_status !== 'cleared')).toHaveLength(2);
+    // Controller ruling 18: the two unbacked buttons left the design (A38.4/A38.5), so exactly the
+    // three rows with a recorded terms page carry an action.
+    expect(rows.map((r) => r.actions.map((a) => a.label)))
+      .toEqual([['View terms'], ['View terms'], ['View terms'], [], []]);
+  });
+
+  it('serves every design Users fixture, and the badge the design shows, as one page (Task A36)', () => {
+    // `admin-users` is the second frozen Admin capture to be answered through the SUCCESS path.
+    // Two of these four rows are unreachable from a real payload — Cho's "Request info" from
+    // `needs_review`, which `TRANSITIONS` refuses, and Mendes's Revoke, which the live table does
+    // not render until a step-up dialog exists — which is the `DesignUserRow` arm's whole reason,
+    // exactly as the "Flagged" row is `DesignListingRow`'s.
+    const body = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/users')) as
+      { items: unknown[]; next_cursor: string | null; counts: { open: number; total: number } };
+    expect(body.items).toEqual(designAdminUserRows());
+    expect(body.items).toHaveLength(4);
+    expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
+    // The design's own literal badge, read off its own tab rather than written here: three of its
+    // four rows are undecided, which is what the API counts as the open queue.
+    expect(body.counts).toEqual(designAdminUserCounts());
+    expect(body.counts).toEqual({ open: 3, total: 4 });
+    expect(collectionStubBody('http://localhost:5473/api/admin/users')).toBe(designAdminUsersBody());
   });
 
   it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {
@@ -581,8 +643,10 @@ describe('firstMapPaintBudgetMs (controller ruling 2026-09-08 — the QA proof m
 // browser: which target a page is on, what URL the reference needs, and what the app needs.
 // ---------------------------------------------------------------------------------------
 describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
-  it('are the ten accounts scripts/seed_persona.py writes', () => {
-    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe']);
+  it('are the eleven accounts scripts/seed_persona.py writes', () => {
+    // `adminOnly` joins them under ruling D-C54 (John, 2026-09-13): the account holding `admin`
+    // and nothing else, which `design@`'s four roles cannot express.
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'adminOnly', 'pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe']);
   });
 
   it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
@@ -602,9 +666,14 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     expect(PERSONAS.buyer.role).toBe('Approved buyer · StartUp Club');
     expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
     expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
+    // D-C54: `admin@` computes the SAME label as `design@` — `labels.role_label` reads the grants
+    // it knows about and one `admin` is enough for it. The two accounts differ only in the matrix,
+    // which is exactly why a header-shaped test could never have found the defect.
+    expect(PERSONAS.adminOnly.role).toBe('VIN Foundation admin · StartUp Club');
+    expect(PERSONAS.adminOnly.roles, 'one grant, and it is the whole account').toEqual(['admin']);
     // One name and one set of initials across the whole suite: only `role` varies with what the
     // account may actually open.
-    for (const key of ['design', 'buyer', 'seller'] as const) {
+    for (const key of ['design', 'buyer', 'seller', 'adminOnly'] as const) {
       expect(PERSONAS[key].name).toBe('Dr. Rachel Mendes');
       expect(PERSONAS[key].initials).toBe('RM');
       expect(PERSONAS[key].state).toBe('active');
@@ -642,7 +711,7 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     }
   });
 
-  it('memoise one session EACH, so ten personas spend at most ten of SIGNIN_IP\'s thirty attempts', () => {
+  it('memoise one session EACH, so eleven personas spend at most eleven of SIGNIN_IP\'s thirty attempts', () => {
     expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
     expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
   });
@@ -1414,5 +1483,89 @@ describe('the boundary stub refuses the boxes the real route refuses', () => {
     const m = /`MAX_BBOX_DEG = ([\d.]+)`/.exec(doc);
     expect(m, 'the contract document no longer states MAX_BBOX_DEG').not.toBeNull();
     expect(MAX_BBOX_DEG).toBe(Number(m![1]));
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The anonymous boot's own refusal, LIVE only (Task HOUSEKEEPING-C item 9, REL-0123 concern 2).
+//
+// `signin-form.spec.ts` could not run against `PW_APP_URL` at all: the tests load `/` anonymously,
+// the boot asks `GET /api/listings`, a real deployment answers 401, and `prepare()`'s console gate
+// threw at 1.3 s before a key was typed. The DECISION is `listingsStubUrl`'s, read once — where
+// the D6 stub is armed there is no real 401 and no allowance either — so these cases drive the
+// same function the live run does, from both environments, without setting `PW_APP_URL` for real.
+// ---------------------------------------------------------------------------------------
+describe('allowAnonymousBootRefusal — the live boot\'s ONE request, ONE status, and nothing else', () => {
+  const page = () => ({ url: () => `${appOrigin()}/` }) as unknown as Page;
+  const line = (status: number) => `Failed to load resource: the server responded with a status of ${status} ()`;
+  const live = { ...process.env, PW_APP_URL: 'https://qa.foundation.vin' };
+  // The anonymous boot's own request — the one URL the allowance may narrow to (review, HOUSEKEEPING-C
+  // fix round 1, Important-3). `matchesListings`'s own idiom: the bare path or the same path with a
+  // query, never a prefix, so a real server route under it is never swept in by accident.
+  const listingsUrl = (env: NodeJS.ProcessEnv) => new URL('/api/listings', appOrigin(env)).href;
+
+  it('is a NO-OP wherever the D6 stub answers, so local and CI keep the gate they have', () => {
+    const p = page();
+    const localEnv = { ...process.env, PW_APP_URL: undefined } as NodeJS.ProcessEnv;
+    allowAnonymousBootRefusal(p, localEnv);
+    expect(listingsStubUrl(localEnv)).not.toBeNull();
+    expect(allowsAnonymousBootRefusal(p, line(401), listingsUrl(localEnv)), 'a 401 still fails the test locally').toBe(false);
+  });
+
+  it('tolerates the boot\'s 401 on a LIVE target, on the page that armed it and no other', () => {
+    const armed = page();
+    const other = page();
+    allowAnonymousBootRefusal(armed, live);
+    expect(allowsAnonymousBootRefusal(armed, line(401), listingsUrl(live))).toBe(true);
+    expect(allowsAnonymousBootRefusal(armed, line(401), listingsUrl(live)), 'standing, not one-shot: a boot happens on every anonymous load').toBe(true);
+    expect(allowsAnonymousBootRefusal(other, line(401), listingsUrl(live)), 'armed per page, never run-wide').toBe(false);
+  });
+
+  it('tolerates 401 and NOTHING else — a 500 from the boot\'s own request is still a failure', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(500), listingsUrl(live))).toBe(false);
+    expect(allowsAnonymousBootRefusal(p, line(403), listingsUrl(live))).toBe(false);
+    expect(allowsAnonymousBootRefusal(p, 'pageerror: TypeError: something failed', listingsUrl(live))).toBe(false);
+  });
+
+  // Important-3 (review, HOUSEKEEPING-C fix round 1): the old shape matched on status ALONE, so a
+  // 401 from ANY request — not just the anonymous boot's own `GET /api/listings` — was tolerated for
+  // the whole life of the page. Narrowed to that one request: a 401 from a DIFFERENT route (a real
+  // refusal this gate exists to catch) still fails.
+  it('tolerates the boot\'s 401 from ITS OWN request only — a 401 from a different route still fails', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(401), listingsUrl(live))).toBe(true);
+    expect(
+      allowsAnonymousBootRefusal(p, line(401), new URL('/api/admin/listings', appOrigin(live)).href),
+      'a 401 from a different route is not the anonymous boot\'s own refusal'
+    ).toBe(false);
+    expect(
+      allowsAnonymousBootRefusal(p, line(401), new URL('/api/markets', appOrigin(live)).href),
+      'a 401 from a different route is not the anonymous boot\'s own refusal'
+    ).toBe(false);
+  });
+
+  it('matches the listings collection with a query string too, same as the D6 stub does', () => {
+    const p = page();
+    allowAnonymousBootRefusal(p, live);
+    expect(allowsAnonymousBootRefusal(p, line(401), `${listingsUrl(live)}?state=TX`)).toBe(true);
+  });
+
+  // An exemption nothing reads is not an exemption. `guard()` takes a real `Page`, so the wiring
+  // is pinned in the source the way `playwright-config.test.ts` pins the config's own lines.
+  it('guard() consults it, in the console handler, after the expectApiStatus armings, with the message\'s own location', () => {
+    const src = readFileSync(join(HERE, 'harness.ts'), 'utf8');
+    const handler = src.slice(src.indexOf("page.on('console'"), src.indexOf('export async function prepare'));
+    expect(handler).toContain('if (consumeExpectedApiFailure(page, m.text())) return;');
+    expect(handler).toContain('if (allowsAnonymousBootRefusal(page, m.text(), m.location().url)) return;');
+    expect(handler.indexOf('allowsAnonymousBootRefusal')).toBeGreaterThan(handler.indexOf('consumeExpectedApiFailure'));
+  });
+
+  it('is armed by every signin-form test that loads the gate anonymously', () => {
+    const spec = readFileSync(join(HERE, 'signin-form.spec.ts'), 'utf8');
+    expect(spec.split('await prepare(page);').length - 1, 'the prepare() calls this allowance pairs with').toBe(3);
+    expect(spec.split('allowAnonymousBootRefusal(page);').length - 1, 'one arming per prepare()').toBe(3);
   });
 });

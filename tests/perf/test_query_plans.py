@@ -31,8 +31,11 @@ from app.api.admin_signups import COUNTS_SQL as SIGNUPS_COUNTS_SQL
 from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
+from app.api.admin_users import COUNTS_SQL as USERS_COUNTS_SQL
+from app.api.admin_users import DECIDABLE_STATES as USERS_DECIDABLE_STATES
 from app.api.admin_users import LIST_SQL, MAX_LIST
-from app.api.market import _SUMMARY_SQL, SUMMARY_FRACTIONS
+from app.api.admin_users import OPEN_STATUSES as USERS_OPEN_STATUSES
+from app.api.market import _METRO_ACS_SQL, _SUMMARY_SQL, METRO_POPULATION, METRO_VARIABLE, SUMMARY_FRACTIONS
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
 from app.census.catchment import SQL as CATCHMENT_SQL
@@ -95,10 +98,28 @@ def _pyformat(sql: str) -> str:
 _SUMMARY_METRIC = "median_hh_income"
 _SUMMARY_VALUE_VINTAGE = "2019\u20132023"
 
+# Task SNAP-METRO: the metro whose published figures `PLANS["metro_acs"]` explains for, and the
+# prior ACS period growth's own difference reaches back to. Shared with `_seed_metro_acs` so the
+# seed and the plan cannot drift apart, as `_CATCHMENT_LISTING_ID` is.
+_METRO_CBSA = "12420"
+_METRO_PRIOR_VINTAGE = "2014\u20132018"
+
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
         {"state": "pending", "kind": None, "role": None, "cursor_at": None, "cursor_id": None, "limit": MAX_LIST + 1},
+    ),
+    # Task A36: the SECOND query `GET /api/admin/users` runs on a tab load — the count that answers
+    # the Users tab's badge (fix round 1, review Minor 1: on the FIRST page only, never once per
+    # page of a paging client). No `INDEXES` claim and the same two exemptions `signups_counts`
+    # carries below, for the same reason: a full, ungated aggregate over the whole `account` table
+    # is CORRECTLY an `Aggregate` over a `Seq Scan`, there being no covering index on `state` to
+    # choose and no reason to add one. It is here so the query's SHAPE is pinned and visible beside
+    # the list query it ships with — fix round 1 widened it with the semi-join on `application`
+    # that counts a seller applying from an `active` account.
+    "users_counts": (
+        "EXPLAIN (FORMAT JSON) " + USERS_COUNTS_SQL,
+        {"open": list(USERS_OPEN_STATUSES), "decidable": list(USERS_DECIDABLE_STATES)},
     ),
     "session_lookup": (
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",
@@ -210,6 +231,16 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
          # planner's choice is the one it would make on a real metro.
          "w": -98.0, "s": 30.4, "e": -97.7, "n": 30.7},
     ),
+    # Task SNAP-METRO (2026-09-14): the metro's own published figures, read once per cache miss
+    # from `acs_measure` — a table the nationwide ACS load fills with one row per geography per
+    # variable, so a sequential scan here would be a whole-country scan on every miss. The query
+    # fixes the first two columns of `acs_measure_pkey` (geo_id, summary_level, vintage, variable)
+    # and lists the other two, which is exactly what that index is for.
+    "metro_acs": (
+        "EXPLAIN (FORMAT JSON) " + _pyformat(_METRO_ACS_SQL),
+        {"cbsa": _METRO_CBSA, "variables": [*METRO_VARIABLE.values(), METRO_POPULATION],
+         "vintages": [_SUMMARY_VALUE_VINTAGE, _METRO_PRIOR_VINTAGE]},
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -248,6 +279,12 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # pins — `_SUMMARY_SQL` drives off that predicate, and the whole reason the envelope is
     # transformed into 4269 instead of the column out of it is to keep this index usable.
     "summary": ("geo_area_geom_gix",),
+    # migrations/019_census_measures.sql: `acs_measure`'s PRIMARY KEY is
+    # (geo_id, summary_level, vintage, variable), and `_METRO_ACS_SQL` fixes the first two and
+    # lists the last two — the one index it can be right to use. NOT `acs_measure_var_idx`
+    # (variable, vintage), which would bitmap every geography in the country carrying that
+    # variable and then filter for one metro.
+    "metro_acs": ("acs_measure_pkey",),
 }
 
 
@@ -456,6 +493,32 @@ def _seed_summary_geo(conn: Any) -> None:
         cur.execute("ANALYZE geo_metric")
 
 
+def _seed_metro_acs(conn: Any) -> None:
+    """One `ingest_run` and 60,000 `acs_measure` rows — the shape a nationwide ACS load leaves:
+    ~10,000 geographies at two vintages across three variables, plus the four rows the target
+    metro itself carries. Without the volume every plan here is a sequential scan of a handful of
+    rows and the index assertion is a coin toss, which is the "row counts are part of the gate"
+    rule `_seed_admin_queue` documents; with it, a plan that stopped descending
+    `acs_measure_pkey` would be scanning the whole country on every cache miss."""
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO ingest_run (dataset_key, vintage, started_at, status) "
+                    "VALUES ('acs5', %s, now(), 'succeeded') RETURNING id", (_SUMMARY_VALUE_VINTAGE,))
+        run = cur.fetchone()[0]
+        cur.execute("""INSERT INTO acs_measure (geo_id, summary_level, vintage, variable, estimate, moe, ingest_run_id)
+                       SELECT 'plan-metro-'||i, '310', v.vintage, x.variable,
+                              10000 + (random() * 90000)::numeric, 500, %s
+                         FROM generate_series(1, 10000) i,
+                              (VALUES (%s),(%s)) AS v(vintage),
+                              (VALUES ('B19013_001E'),('B11001_001E'),('B01003_001E')) AS x(variable)""",
+                    (run, _SUMMARY_VALUE_VINTAGE, _METRO_PRIOR_VINTAGE))
+        cur.execute("""INSERT INTO acs_measure (geo_id, summary_level, vintage, variable, estimate, moe, ingest_run_id)
+                       SELECT %s, '310', v.vintage, x.variable, 97638, 1163, %s
+                         FROM (VALUES (%s),(%s)) AS v(vintage),
+                              (VALUES ('B19013_001E'),('B11001_001E'),('B01003_001E')) AS x(variable)""",
+                    (_METRO_CBSA, run, _SUMMARY_VALUE_VINTAGE, _METRO_PRIOR_VINTAGE))
+        cur.execute("ANALYZE acs_measure")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
                         "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics,
                         "community_rows": _seed_community_rows, "scope_names": _seed_scope_names,
@@ -463,7 +526,8 @@ SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed
                         # for its own plan and which are exactly what this one needs — "row counts
                         # are part of the gate", and a handful of rows would make the planner's
                         # choice a coin toss.
-                        "precisions": _seed_scope_names, "summary": _seed_summary_geo}
+                        "precisions": _seed_scope_names, "summary": _seed_summary_geo,
+                        "metro_acs": _seed_metro_acs}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
@@ -500,8 +564,8 @@ def test_hot_query_uses_an_index(conn, name):
     # assertions below — a full, ungated `GROUP BY` over the whole table has no index to use BY
     # DESIGN (there is no covering index on `(source, consent_version, launch_mailed_at)`), so a
     # `HashAggregate` over a `Seq Scan` is the correct plan, not a regression to catch.
-    assert any("Index" in t for t in types) or name == "signups_counts", types
-    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts"), types   # the registry is ~20 rows; a seq scan there is fine
+    assert any("Index" in t for t in types) or name in ("signups_counts", "users_counts"), types
+    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts", "users_counts"), types   # the registry is ~20 rows; a seq scan there is fine
 
 
 def test_both_scope_name_branches_descend_geo_area_s_primary_key(conn):

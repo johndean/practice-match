@@ -140,9 +140,12 @@ def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
 
     The comparison is over `ADMINISTRATIVE` and not over the whole permission set because the
     matrix is not a ladder: `buyer`/`seller` carry `request.create`, `request.read_own`,
-    `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`, which NO
-    administrator holds — a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify`
-    tokens the spec names. A buyer token is not more powerful than the admin who minted it."""
+    `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`, which `staff`
+    does not hold — a plain subset test would refuse a staff minter the `k6-qa`/`e2e-qa`/
+    `deploy-verify` tokens the spec names. A buyer token is not more powerful than the member who
+    minted it. (Ruling D-C54, 2026-09-13, made `admin` a superset, so an admin minter would now
+    pass a plain subset test too; `ADMINISTRATIVE` is still what this rule is ABOUT, and still what
+    would hold if `tokens.manage` ever widened to `staff`.)"""
     # L3: the expected set spelled out, not the implementation's own expression restated (which
     # would have been true of any matrix). Nineteen rows today — every one of them staff/admin only.
     assert PM.ADMINISTRATIVE == frozenset({
@@ -176,11 +179,16 @@ REAUTH_OUTSIDE_THE_SWEEP = {
     # (app/api/admin_users.py). Driven over HTTP, as a token and as a session, by
     # tests/api/test_admin_users.py::test_an_api_token_never_satisfies_a_reauth_gate.
     "users.revoke": "in-handler guard",
-    # No route mounts this yet — it arrives with the Map-engines sub-project, and the rows above
-    # will pick it up on the commit that adds it. (`licence.decide` left this list in Census Task
-    # A9: `POST /api/admin/data-sources/{dataset_key}/license` carries it as a route-level guard,
-    # so the sweep sees it — A-C0 ¶3.)
-    "engine.activate": "no route yet",
+    # `engine.activate` LEFT this list on 2026-09-14, Task 1 of the admin control surface:
+    # `POST /api/admin/vintages/{dataset_key}/activate` (`app/api/admin_settings.py`) carries it as
+    # a module-level route guard, so the sweep sees it — exactly as `licence.decide` left the list
+    # in Census Task A9 when `POST /api/admin/data-sources/{dataset_key}/license` landed (A-C0 ¶3).
+    # It is the mechanism this dict's own header promises ("an entry that gains a route ... fails
+    # here instead of quietly leaving the sweep") working as written: the assertion below went RED
+    # on the commit that mounted the route, and the entry is removed rather than the assertion
+    # widened. The route the older Map-engines plan sketched for it
+    # (`POST /api/admin/data-sources/{key}/activate`) is superseded by decision D2 of
+    # `docs/superpowers/plans/2026-09-14-admin-control-surface.md`; nothing else here moves.
 }
 
 
@@ -193,3 +201,58 @@ def test_every_reauth_permission_is_either_swept_or_listed_with_its_reason(dist)
     assert PM.REAUTH - swept == set(REAUTH_OUTSIDE_THE_SWEEP), (
         "a REAUTH permission is neither swept by the generated rows nor listed above with its reason")
     assert "tokens.manage" in swept and "roles.grant" in swept
+
+
+# --- ruling D-C54, 2026-09-13 (John, verbatim): "as logged in VIN FOUNDATION ADMIN i can no
+# longer access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN
+# i need to see it all!!!" ---
+
+
+def test_the_admin_role_holds_every_permission_in_the_matrix():
+    """D-C54: `admin` is a SUPERSET of the matrix, not a peer of `staff` with a few extras.
+
+    Six rows gave their action to buyers/sellers only — `listing.manage_own`, `page.seller`,
+    `request.answer_own`, `request.create`, `request.read_own`, `seller.apply` — so an account
+    holding `admin` ALONE was refused "My Requests" (`request.read_own`) and "List a Practice"
+    (`page.seller`). Task ADMIN-GATE (D-C53) made the route guard run on the header-nav path, which
+    is what exposed it: before that the nav bypassed the guard and the refusal was invisible.
+
+    Asserted over the WHOLE matrix rather than over the six, because the ruling is a rule and not a
+    patch: a permission added tomorrow must carry `admin` too, and this is what says so. The
+    superset is built structurally in `permissions.py` for the same reason.
+
+    `staff` is deliberately untouched — the ruling names `admin` and nothing else — so the staff
+    pins below are asserted in the same breath, where a superset applied to the wrong role would
+    show up.
+    """
+    missing = sorted(perm for perm, holders in PM.MATRIX.items() if "admin" not in holders)
+    assert missing == [], f"D-C54: the admin role does not hold {missing}"
+    assert PM.permissions_of(frozenset({"admin"})) == frozenset(PM.MATRIX)
+    # ...and `staff` is NOT a superset: the six member actions stay off it, which is what makes
+    # the assertion above a statement about `admin` rather than about every role.
+    for perm in ("listing.manage_own", "page.seller", "request.answer_own", "request.create", "request.read_own", "seller.apply"):
+        assert "staff" not in PM.MATRIX[perm], perm
+    assert PM.MATRIX["seller.apply"] == frozenset({"buyer", "admin"})
+    assert PM.MATRIX["page.seller"] == frozenset({"seller", "admin"})
+    # The ruling changes the matrix and nothing beside it: the step-up list and the token subtraction
+    # are what they were.
+    assert PM.REAUTH == frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke", "signups.notify"})
+    assert PM.TOKEN_DENIED == frozenset({"tokens.manage"})
+
+
+def test_an_admin_only_account_reaches_the_two_screens_john_was_locked_out_of():
+    """The defect as John met it, at the level the answer is actually decided: `allowed()` for an
+    account whose ONLY grant is `admin`. The seeded design persona holds all four roles, which is
+    why every test in the suite passed while his own account could not open either screen."""
+    admin = S.Principal(uuid4(), "active", frozenset({"admin"}), None, "session", "h")
+    assert PM.allowed("request.read_own", admin) is True      # "My Requests"
+    assert PM.allowed("page.seller", admin) is True           # "List a Practice"
+    assert PM.allowed("request.create", admin) is True
+    assert PM.allowed("listing.manage_own", admin) is True
+    assert PM.allowed("request.answer_own", admin) is True
+    assert PM.allowed("seller.apply", admin) is True
+    # A staff-only account is unchanged by the ruling, and a suspended admin is still an applicant.
+    staff = S.Principal(uuid4(), "active", frozenset({"staff"}), None, "session", "h")
+    assert PM.allowed("page.seller", staff) is False and PM.allowed("request.read_own", staff) is False
+    suspended = S.Principal(uuid4(), "suspended", frozenset({"admin"}), None, "session", "h")
+    assert PM.allowed("page.seller", suspended) is False and PM.allowed("page.admin", suspended) is False

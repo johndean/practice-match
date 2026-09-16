@@ -33,6 +33,30 @@ describe('App.vue is generated from the design', () => {
     expect(declared).toContain('layerPalette');
     for (const p of declared) expect(setup, `app.setup.js does not declare the design prop "${p}"`).toMatch(new RegExp(`\\b${p}\\s*:`));
   });
+
+  // The OTHER direction, which the parity gate above deliberately does not cover and which a
+  // merge silently broke on 2026-09-15: an APP-ONLY adapter prop. `logic.js` branches on
+  // `this.props.<adapter>` — A16.1's idiom, "with an adapter present the screen renders what the
+  // API answered or NOTHING; with none, the design's own fixtures" — and those props carry no
+  // `data-props` entry by design, so nothing above can see them. `app.setup.js` is HAND-MAINTAINED
+  // (convert-dc.mjs reads it and copies it into App.vue verbatim), so resolving a merge conflict
+  // by taking one side of that file drops the other side's adapter, `this.props.X` becomes
+  // undefined, and the screen falls back to the design's fixture rows WITHOUT FAILING ANYTHING:
+  // the ternary's other arm is a legitimate state, the one the reference renders. That is how the
+  // legally load-bearing Data Sources tab went back to showing five literal rows — caught by an
+  // e2e, four gates too late.
+  it('app.setup.js declares every adapter prop logic.js branches on — a dropped one silently restores the design\'s fixtures', () => {
+    const logic = readFileSync(join(ROOT, 'src/logic.js'), 'utf8');
+    const setup = readFileSync(join(ROOT, 'src/app.setup.js'), 'utf8');
+    const read = [...new Set([...logic.matchAll(/this\.props\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))].sort();
+    // Every one of them, prototype props included: `app.setup.js` declares those too (the gate
+    // above is what requires it), so one list covers both kinds and neither can be dropped.
+    expect(read.length, 'logic.js reads no props at all — this pin measures nothing').toBeGreaterThan(5);
+    for (const name of read) {
+      expect(setup, `logic.js branches on this.props.${name} and app.setup.js declares no such prop`)
+        .toMatch(new RegExp(`^\\s*${name}\\s*:`, 'm'));
+    }
+  });
 });
 
 // logic.js is NOT written by gen:app — it is the design file's own <script data-dc-script>
@@ -203,12 +227,23 @@ describe('the docked panel and the detail card say which area their figures desc
     // …and it is above the tiles it describes, not appended after the section.
     expect(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
       .toBeLessThan(insights.indexOf('v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)"'));
-    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Three
-    // times in the file and only three: `md.panel.place`, A27.7's own, and A31.10's snapshot-strip
-    // mode sub-line, which is composed from the SAME declaration for the same reason (Task SNAP).
-    // The count is what keeps that true: a fourth occurrence is either another composition — which
-    // belongs in this list — or a style someone typed by hand.
-    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(3);
+    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. FOUR
+    // times in the file and only four: `md.panel.place`, A27.7's own, A31.10's snapshot-strip mode
+    // sub-line (composed from the SAME declaration for the same reason, Task SNAP) and A34.6's
+    // Competitive Landscape sub-line (Task ONE-VOCABULARY, ruling D-C51 — that block sat under no
+    // scope line at all, so its three ring figures were captioned by the grid's line above them,
+    // audit R35–R37/collision C8). The count is what keeps that true: a fifth occurrence is either
+    // another composition — which belongs in this list — or a style someone typed by hand.
+    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(4);
+
+    // A34.6 — the same sub-line under the Competitive Landscape heading, element for element and
+    // gated the same way, so a listing with no served label renders no element in either place.
+    expect((insights.match(/\{\{ __s\(v\.md\?\.panel\?\.overviewScope\) \}\}/g) ?? []).length,
+      'the Competitive Landscape block does not carry the scope sub-line the overview grid does').toBe(2);
+    expect(insights.indexOf('Competitive Landscape'))
+      .toBeLessThan(insights.lastIndexOf('{{ __s(v.md?.panel?.overviewScope) }}'));
+    expect(insights.lastIndexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
+      .toBeLessThan(insights.indexOf('Veterinary Establishments'));
   });
 
   // ---------------------------------------------------------------------------------------

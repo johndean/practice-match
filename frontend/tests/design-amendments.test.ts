@@ -1,12 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
-import { citationFindings, ruledTextFindings } from './amend-guard';
-
-/** The measured distinctiveness threshold: a cited line's matching piece may occur at most this
- *  many times in the amended design. Re-derived by the case that pins the whole table. */
-const DISTINCTIVENESS_K = 4;
+import { DISTINCTIVENESS_K, citationFindings, commentCitations, entriesFor, outputOf, ruledTextFindings } from './amend-guard';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -217,6 +214,12 @@ describe('local design amendments (spec D15)', () => {
     // photographs only, routed by source through the adapter's overloaded `describe`) and one
     // template literal (the one `onClick` the script literal needs).
     'A16.21', 'A16.22',
+    // A16.23 (Task ADMIN-SUPERSET fix round 1, review Important-1, D-C54): the bootstrap's own
+    // seller-listing gate was a second, unrelated copy of the permission matrix — a literal role
+    // string, `(me.roles || []).indexOf("seller") > -1` — never asked to agree with D-C54's
+    // superset rule. Rewritten to `this.props.perms.allowed("page.seller")`, the same permission
+    // the router's own guard reads. Consumes A16.9.
+    'A16.23',
     // A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule:
     // "every Admin tab must show real database data, never dummy rows"). A17.1 is A16.1's own
     // shape applied to the review queue; A17.2 is A16.9's, one line after A16.11b's.
@@ -401,6 +404,82 @@ describe('local design amendments (spec D15)', () => {
     // CHAINED: A16.17's `reloadListings`, A17.2's own `componentDidMount` load, A5.1's fulfilled
     // `signIn` arm and A26.9a's `go` guard.
     'A40.3', 'A40.4', 'A40.5', 'A40.6',
+    // A34 — ONE VOCABULARY (Task ONE-VOCABULARY, ruling D-C51, 2026-09-13): every figure's
+    // caption names its statistic, geography and basis in ONE vocabulary, and no two figures of
+    // different measure read alike. Appended last, as every family is, and it has to be: seven of
+    // the fourteen are CHAINED — A34.3 on A31.12b, A34.4 on A24.52, A34.5 on A21.2d, A34.7 on
+    // A21.4d, A34.8 on A31.11, A34.10 on A21.5b and A34.14 on A24.50 — and A34.14 also reads the
+    // object literal A34.13 has just shortened, which orders the two deletions.
+    'A34.1', 'A34.2', 'A34.3', 'A34.4', 'A34.5', 'A34.6', 'A34.7', 'A34.8', 'A34.9', 'A34.10',
+    'A34.11', 'A34.12', 'A34.13', 'A34.14',
+    // Fix round 1 (the review of 3ee9a59..9d16baf, 2026-09-13). A34.15 takes the econ tooltip's
+    // margin sentence into the vocabulary (Important 2), A34.16/A34.17 give the served
+    // `income_note` an area on BOTH of the server's arms (Important 3), and A34.18–A34.22 delete
+    // the five orphans A34.11's own deletion left and the controller then ruled out (Important 4,
+    // ruling (a)) — `md.symbols` deliberately NOT among them, it has a reader.
+    'A34.15', 'A34.16', 'A34.17', 'A34.18', 'A34.19', 'A34.20', 'A34.21', 'A34.22',
+    // A34.23 — the data-sources audit's own finding: the competition layer's VALUE_LAYERS label
+    // named CBP for a fill served from ZBP, the second copy of the fact A24.34 corrected on
+    // `LAYER_META`. Pinned across the wire from `app.api.market.BOUNDARY_METRIC`.
+    'A34.23',
+    // A38 (Task A38, D-C53) — the Data Sources tab reads the dataset registry. The two
+    // REMOVALS run FIRST inside the family: A38.1's own `replace` re-introduces all five
+    // fixture rows, so taking a button out afterwards would be an entry eating text an
+    // earlier entry had just put there (AMEND-GUARD's LINE tier). A38.1 is CHAINED on both
+    // and A38.2 on A40.3's `loadAdmin` body, which is why the family is appended after A40 —
+    // and BEFORE A39, whose A39.2/A39.5 rewrite the same `adminListings` line A38.2 anchors on.
+    // A38.3a and A38.3b are RETIRED, not missing: A39.3b and A39.3a are the same two edits and
+    // reached main first, and the two pairs cannot coexist (see `design-amendments.ts`). Their
+    // ids may not be reused.
+    'A38.4', 'A38.5', 'A38.1', 'A38.2', 'A38.3c',
+    // A39 (Task A39, D-C53, 2026-09-13) — the Listings tab's badge is the API's count, the tab
+    // refreshes when a decision lands, and the badge pill is unmounted until a count arrives.
+    // Applied after A40 though it is numerically before it: A39.2 rewrites A40.3's own
+    // `adminListings` line and A39.4 reads A40.4's, which is A24's own precedent for a family
+    // whose id is lower than the one it chains on.
+    'A39.1', 'A39.2', 'A39.3a', 'A39.3b', 'A39.4',
+    // Fix round 1 (review Minor-3, 2026-09-14): A39.5 is CHAINED on A39.2 and consumes it.
+    'A39.5',
+    // A36 -- the Admin Users tab (Task A36, D-C53). Appended last, as every family is.
+    // A36.2 is CHAINED on A39.5's own `adminListings` line (A39.2 and then A39.5 rewrote
+    // the line it was first written against); the other two edit pristine lines.
+    //
+    // A36.4 and A36.5 are RETIRED and their ids may not be reused (the A40.1/A40.2
+    // precedent): they were the SAME two edits as A39.3a and A39.3b -- `hasCount` on the
+    // shared tab strip and the `sc-if` on the shared count pill, which serve all four tabs
+    // -- written by two families at once. A39's shipped first (0.1.25) and are kept.
+    'A36.1', 'A36.2', 'A36.3',
+    // A48 — COMP-LABELS (John's rulings D-C55–D-C58, 2026-09-14): the stakeholder asked what area
+    // the veterinary-competition number describes and the product named it nowhere. D-C57 — every
+    // surface showing the figure or its area names it, in D-C51's vocabulary. Appended last, as
+    // every family is: A48.5 reads A34.7's output and A48.6 A34.8's, so each runs after the entry
+    // whose text its `find` takes; A48.1 alone takes a pristine line.
+    'A48.1', 'A48.5', 'A48.6',
+    // A49 — the Satellite basemap control ships DISABLED until the imagery licence is signed
+    // (Task SATELLITE-GATE, controller ruling 2026-09-15). The two MOUNTS that hand a surface
+    // the control, and the two render values each leaves orphaned. `MarketMapV3.jsx` is not
+    // edited: its block is already guarded on `onBasemap &&`, so A49 never meets A35 there.
+    'A49.1', 'A49.2', 'A49.3', 'A49.4',
+    // A31.14 — SNAP-METRO (2026-09-14): the AREA headline is the Census's own PUBLISHED metro
+    // figure where the Census publishes one (summary level 310), and the tract distribution is
+    // the shape beneath it. Appended after A34 because A31.14c and A31.14d take the definition
+    // sentence A34.8 and A34.7 wrote into the two footnotes.
+    'A31.14a', 'A31.14b', 'A31.14c', 'A31.14d', 'A31.14e',
+    // A31.14f/A31.14g — fix round 1 (review 1's Important-2, 2026-09-14): a card whose headline
+    // is the METRO's own figure names ONE geography, on its note, and its source line carries the
+    // dataset alone — and `metaSource`'s own head comment says so.
+    'A31.14f', 'A31.14g',
+    // A50 -- the pet-household rate is the AVMA's, dated, current and centralised (Task
+    // PET-RATE-PROVENANCE, John 2026-09-15). Appended last, as every family is. Three are
+    // CHAINED: A50.1 on A24.25's derivation comment, A50.2 on A34.1's `dataset:` line and
+    // A50.4 on A24.30b's tooltip sentence; A50.6 rewrites A21.1c's own `pets:` line.
+    'A50.1', 'A50.2', 'A50.3', 'A50.4', 'A50.5', 'A50.6',
+    // A51 — the recenter button in the map's own control stack (Task MAP-RECENTER, John's
+    // request of 2026-09-16). Both entries are `file: 'jsx'` and neither is chained: each `find`
+    // occurs exactly once in the pristine twin, and no earlier entry introduced either line.
+    // A50 was `feat/pet-rate-provenance`'s and is above this block since that branch merged
+    // (Task RELEASE-0126, 2026-09-15).
+    'A51.1', 'A51.2',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -432,7 +511,10 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;');
     expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
     // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
-    expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
+    // A50.4 (Task PET-RATE-PROVENANCE, 2026-09-15) replaced the bare `0.57` with the two
+    // sources the figure actually has; "Not an observed count." is carried forward, and it is
+    // the half of the sentence §9 is about.
+    expect(amended).toContain('"Modelled estimate: Census households \u00d7 the AVMA national pet-ownership rate. Not an observed count."');
     // §15: a competition count never reaches the screen bare — it names what it counts and the
     // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
     expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
@@ -466,7 +548,12 @@ describe('local design amendments (spec D15)', () => {
     // gone under the bundle's own dead-code rule (A31.9).
     // …and A31.12 (fix round 1, 2026-09-13) takes the basis OFF the LOCATION arm: the card's
     // own note carries the geography there, so the source line carries the dataset alone.
-    expect(amended).toContain("            src: metaSource(k, sel ? \"\" : (AREA_LABEL[k] || \"\")),");
+    // A31.14f (SNAP-METRO fix round 1, review 1's Important-2, 2026-09-14) spells the same term
+    // for a served METRO figure, for the same reason: its geography is on the card's own note,
+    // so printing the map's would put a SECOND geography on the card, attached to the figure it
+    // does not describe. The derived path — no `metro` — keeps the map's geography, which IS
+    // what it measures.
+    expect(amended).toContain("            src: metaSource(k, (sel || metro) ? \"\" : (AREA_LABEL[k] || \"\")),");
     expect(amended, 'metaSource still glues a separator onto an empty basis')
       .toContain('  return basis ? m.dataset + " \u00b7 " + basis : m.dataset;');
     expect(amended, 'the interim per-listing basis survived A31.8').not.toContain('stripBasis');
@@ -516,7 +603,21 @@ describe('local design amendments (spec D15)', () => {
     // so "Figures describe the area around each practice" became false by this release's own act
     // (the A27.5 rule). The paragraph states both modes now, and A24.20's growth caveat still
     // stands beside them byte for byte, because growth is measured at place or county in either.
-    expect(footnote).toContain('In AREA mode each card is the median across the metro\u2019s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice\u2019s own community figure.');
+    // A34.8 (Task ONE-VOCABULARY, ruling D-C51) revises the SECOND half of that sentence and
+    // nothing else: the growth and payroll cards contradict "that practice's own community
+    // figure" on their own captions since A31.12 gave them "surrounding city or county" and
+    // "surrounding county", so the clause says what is true of all six. The AREA clause is
+    // carried forward byte for byte, and A34.8's own three-kinds paragraph sits in front of it.
+    // A31.14c (Task SNAP-METRO, 2026-09-14) then SUPERSEDES A34.8's own definition sentence and
+    // the AREA clause beside it: from here the AREA headline is the Census's own PUBLISHED metro
+    // figure wherever the Census publishes one, so "each card is the median across the metro's
+    // Census tracts…" describes the BARS and not the figure above them. The LOCATION half of that
+    // sentence is carried forward byte for byte, and so are the two sentences below.
+    expect(footnote).toContain('A metro figure is the Census\u2019s own published figure for the metro where it publishes one, and otherwise is built from the metro\u2019s own Census areas, as the card says.');
+    expect(footnote).toContain('with the bars beneath it the distribution across the metro\u2019s Census tracts, places, counties or ZIP areas; with a practice selected each card is that practice\u2019s own figure, captioned with the geography it is measured for.');
+    expect(footnote, 'A34.8\'s superseded definition sentence survives in the footnote')
+      .not.toContain('A metro figure is the median across every area of that kind in the metro.');
+    expect(footnote, 'the three kinds of figure are no longer distinguished on the strip').toContain('Three kinds of figure appear here and they measure different things.');
     expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
     // …and the sentence A31.11 retired is gone from the product, not merely joined by a newer one.
     expect(footnote, 'the superseded per-practice sentence survives in the footnote').not.toContain('not the practice itself');
@@ -591,7 +692,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(327);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(387);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1314,6 +1415,26 @@ describe('local design amendments (spec D15)', () => {
   // A6/A7 block appended after everything. The set case below could not see it, and the file is
   // read by people. The order that matters is the order the edits are APPLIED, which is also the
   // order the ids are pinned in above.
+  // A38 fix round 1 (review M1): the seven A38 rows were appended after a BLANK line, which ends a
+  // GitHub-flavoured Markdown table — so they rendered as literal `| A38.4 | … |` text in the one
+  // file CLAUDE.md calls the per-amendment record, and nothing could see it: every other ledger
+  // case here matches rows by their `| A<id> |` prefix, which a broken table satisfies exactly as
+  // well as a live one. The table is ONE table from its delimiter row to the last amendment, and
+  // the file ends with a newline like every other text file in the repository.
+  it('LOCAL_AMENDMENTS.md is one unbroken table, so every row renders as a row', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const lines = md.split('\n');
+    const delimiter = lines.findIndex((l) => /^\|-{3}\|/.test(l));
+    expect(delimiter, 'the ledger has no `|---|---|---|---|` delimiter row').toBeGreaterThan(0);
+    const last = lines.map((l) => /^\|\s*A[\w.]+\s*\|/.test(l)).lastIndexOf(true);
+    const broken = lines.slice(delimiter + 1, last + 1)
+      .map((l, i) => [delimiter + 2 + i, l] as const)
+      .filter(([, l]) => !/^\|/.test(l));
+    expect(broken, 'a line inside the table does not start a table row, which ends the table there')
+      .toEqual([]);
+    expect(md.endsWith('\n'), 'LOCAL_AMENDMENTS.md does not end with a newline').toBe(true);
+  });
+
   it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);
@@ -1361,21 +1482,16 @@ describe('local design amendments (spec D15)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
     const list = amendments();
-    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
-    /** What stands at this amendment's site in the amended file: its own `replace`, or — when a
-     *  later amendment's `find` swallowed that `replace` whole — whatever superseded it. */
-    const outputOf = (a: Amendment): string[] => {
-      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
-      return later ? outputOf(later) : trimmed(a.replace);
-    };
     // H3 (controller, 2026-09-11): every citation is checked and every stale one collected, so a
-    // single run names all of them rather than throwing on the first.
+    // single run names all of them rather than throwing on the first. `entriesFor`/`outputOf` are
+    // the gate's own (amend-guard.ts, review HOUSEKEEPING-C fix round 1, Important-4) — this case
+    // no longer keeps its own copy of "what stands at an amendment's site today".
     const { findings, checked } = citationFindings({
       rows: md.split('\n'),
       lines: design.split('\n'),
       outputFor: (id) => {
-        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-        return own.length === 0 ? null : own.flatMap(outputOf);
+        const own = entriesFor(id, list);
+        return own.length === 0 ? null : own.flatMap((a) => outputOf(a, list));
       },
       occurrences: (piece) => design.split(piece).length - 1,
       // MEASURED, not chosen — the case below re-derives the whole table on every run.
@@ -1386,46 +1502,74 @@ describe('local design amendments (spec D15)', () => {
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(200);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // The OTHER place a line number could go stale (Task HOUSEKEEPING-C item 4, ADMIN-GATE's
+  // concern 5). The case above reads `LOCAL_AMENDMENTS.md`'s rows; nothing read the `V3:<line>`
+  // references that had accumulated in THIS file's own doc comments, and measured on 2026-09-13
+  // there were 58 of them and not one resolved — thirty landed on a blank line or a bare closing
+  // brace. They are gone, and this is the rule that keeps them gone: a line number belongs in a
+  // row, where the gate follows it and `npm run remap:citations` re-takes it; the engine's prose
+  // names the entry or the thing instead, neither of which can go stale.
+  // ---------------------------------------------------------------------------------------
+  it('design-amendments.ts names no design LINE in its own prose', () => {
+    const src = readFileSync(fileURLToPath(new URL('design-amendments.ts', import.meta.url)), 'utf8');
+    expect(
+      commentCitations(src),
+      'cite the line in your LOCAL_AMENDMENTS.md row (the gate follows it there); in this file name the entry id or the element'
+    ).toEqual([]);
+    // Not vacuous: the scanner must still be finding this file's comments at all, and it must
+    // still be skipping the one V3 reference that is DESIGN BYTES — the design's own comment on
+    // the filter chevron, carried inside an amendment's `replace`.
+    expect(commentCitations(`${src}\n// V3:1`)).toEqual([`${src.split('\n').length + 1}: V3:1`]);
+    expect(src).toContain("draw its own arrow (V3:382\\'s own trio)");
+  });
+
   // K is a property of THIS ledger, not a constant, so it is re-derived rather than asserted from
-  // a comment: the case runs the same rule at every threshold below the shipped one and pins how
-  // many correct citations each would reject. Run it alone with
+  // a comment: the case runs the same rule at every threshold up to the shipped one and reads the
+  // answer off the measurement. Run it alone with
   //   npx vitest run tests/design-amendments.test.ts -t "the distinctiveness threshold"
-  // The residue below 4 is text the design genuinely repeats. RE-MEASURED after A33 (fix round 2,
-  // 2026-09-13): the family's insertions moved every line below V3:1892, so 132 citations were
-  // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-  // left — which is why the residue FELL from {1: 28, 2: 7, 3: 4} to {1: 21, 2: 4, 3: 2} without
-  // any threshold being relaxed. What is left at 3 is A26.10 and A26.11, the two filter popover
-  // panels whose `panelStyle` string A26.16 unified, so the design carries it four times.
+  // The residue below K is text the design genuinely repeats — at the time of writing, A26.10 and
+  // A26.11, the two filter popover panels whose `panelStyle` string A26.16 unified, so the design
+  // carries it four times.
+  //
+  // THE TABLE IS NO LONGER PINNED (Task HOUSEKEEPING-C item 8, 2026-09-13). It was
+  // `{ 1: …, 2: …, 3: …, 4: 0 }`, and the exact counts move whenever ANY branch adds a row or
+  // shifts a line: SCREEN-LABELS round 2 re-took that literal three times in one day, and each
+  // re-take is a merge conflict on a file three branches are editing at once. Worse, a conflict
+  // resolved by taking one side's numbers says nothing about the merged ledger, so the pin was
+  // costing more than it guarded. What it was really there to prove is the PROPERTY in this
+  // case's own name — K accepts every correct citation and K‑1 does not — and that is what is
+  // asserted now, with the measured distribution PRINTED so a reviewer still sees the shape of
+  // the residue without a literal that has to be merged.
   it('the distinctiveness threshold is the smallest that accepts every correct citation', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     const design = readFileSync(AMENDED, 'utf8');
     const list = amendments();
-    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
-    const outputOf = (a: Amendment): string[] => {
-      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
-      return later ? outputOf(later) : trimmed(a.replace);
-    };
+    // The gate's own `entriesFor`/`outputOf` (amend-guard.ts) — no second copy here either.
     const staleAt = (k: number) => citationFindings({
       rows: md.split('\n'),
       lines: design.split('\n'),
       outputFor: (id) => {
-        const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
-        return own.length === 0 ? null : own.flatMap(outputOf);
+        const own = entriesFor(id, list);
+        return own.length === 0 ? null : own.flatMap((a) => outputOf(a, list));
       },
       occurrences: (piece) => design.split(piece).length - 1,
       maxOccurrences: k,
     }).findings.filter((f) => f.includes('is stale')).length;
-    // RE-TAKEN whenever the ledger grows — this is a measurement of THIS ledger, not a
-    // constant. Task ADMIN-GATE (2026-09-13) added four rows and moved it from
-    // { 1: 28, 2: 7, 3: 4, 4: 0 } to { 1: 29, 2: 8, 3: 4, 4: 0 }: A40.4's own output is the line
-    // `this.loadAdmin();`, which A40.6 also writes inside its own line, so that citation is
-    // distinctive at 2 and not at 1. Task SCREEN-LABELS (A33, 2026-09-13) moves it again, and
-    // DOWNWARD: its insertions shifted every design line below V3:1892, so 136 citations were
-    // re-mapped and several landed on lines carrying MORE distinctive output than the ones they
-    // left. What the case asserts is unchanged and is the whole point: 4 accepts every citation,
-    // and 3 does not, so 4 is the smallest threshold that can ship.
-    expect({ 1: staleAt(1), 2: staleAt(2), 3: staleAt(3), 4: staleAt(4) }).toEqual({ 1: 22, 2: 5, 3: 2, 4: 0 });
-    expect(DISTINCTIVENESS_K, 'the shipped threshold is not the smallest that accepts every citation').toBe(4);
+    // The measurement, printed rather than pinned: a reviewer reads the residue off the run.
+    const distribution = Object.fromEntries(
+      Array.from({ length: DISTINCTIVENESS_K }, (_, i) => [i + 1, staleAt(i + 1)])
+    );
+    console.log(`distinctiveness residue by threshold: ${JSON.stringify(distribution)}`);
+    // THE PROPERTY, both halves. K accepts every correct citation…
+    expect(staleAt(DISTINCTIVENESS_K), `K=${DISTINCTIVENESS_K} rejects a correct citation`).toBe(0);
+    // …and nothing smaller does, so K is the SMALLEST that can ship. No guard is needed for a
+    // hypothetical K of 1: `maxOccurrences: 0` makes no piece distinctive at all, so every
+    // citation is rejected and the clause holds, which is the right answer for that K.
+    expect(
+      staleAt(DISTINCTIVENESS_K - 1),
+      `K=${DISTINCTIVENESS_K - 1} also accepts every citation, so the shipped K is not the smallest`
+    ).toBeGreaterThan(0);
   });
 
   // ---------------------------------------------------------------------------------------
@@ -1502,7 +1646,9 @@ describe('local design amendments (spec D15)', () => {
     // changes file still fails here.
     expect(amendmentsFor('jsx').map((a) => a.id)).toEqual([
       'A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12',
-      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7'
+      'A35.1', 'A35.2', 'A35.3', 'A35.4', 'A35.5', 'A35.6', 'A35.7',
+      // A51 (Task MAP-RECENTER, John, 2026-09-16) — the recenter button in the control stack.
+      'A51.1', 'A51.2'
     ]);
   });
 
@@ -1638,6 +1784,68 @@ describe('local design amendments (spec D15)', () => {
       + '\n'
       + '    // A footer card is the SOURCE switch for its dataset: off means the dataset\n'
     );
+  });
+
+  it('A48.5/A48.6 append the SAME two competition sentences to both footnotes, and rewrite neither', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const APPORTION = 'A practice\u2019s competition figure apportions each ZIP area\u2019s published count to the part of that ZIP within about 5 miles of the practice.';
+    const FLOOR = 'A ZIP whose count the Census withheld adds nothing to it, so the figure is a floor rather than an exact count.';
+    // Rule 3 (spec §2): the same figure appears on both surfaces, so it is described in the same
+    // words on both — two wordings of one fact is how they come to disagree (A34.7/A34.8).
+    expect(amended.split(`${APPORTION} ${FLOOR}`).length - 1, 'the pair is on the panel footnote and the strip footnote, and nowhere else').toBe(2);
+    // Every sentence that was there is still there, byte for byte — the fix-round-3 lesson.
+    for (const carried of [
+      'A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.',
+      'Affluence compares this practice\u2019s median income with the US median; growth is the surrounding city or county\u2019s; payroll is the county\u2019s.',
+      'Population growth is measured for the surrounding city or county, not the tract.',
+      'Pet-household counts and average practice payroll are derived estimates, not observed values.'
+    ]) {
+      expect(amended.split(carried).length - 1, `A48.5/A48.6 dropped a ruled sentence: ${carried}`).toBe(1);
+    }
+    // …and each pair is at the END of its own paragraph, not spliced into the middle of one.
+    expect(amended.split(`${FLOOR}</p>`).length - 1, 'the sentences were not appended at the end of both paragraphs').toBe(2);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A51 (John, 2026-09-16): "add a 'recenter' button that recenters the map on the selected city
+  // and or if selected practice location, place this recenter icon between the + | -".
+  //
+  // The control stack is `+ | -` since A49 withdrew the desktop `on-basemap` (the Map | Satellite
+  // pair is behind `onBasemap &&` and the desktop mount no longer passes it), so the button joins
+  // that one flex row between the two zoom buttons, with a SECOND copy of the row's own 1 px
+  // divider. Both entries edit `MarketMapV3.jsx` (`file: 'jsx'`, A28.1's precedent).
+  // ---------------------------------------------------------------------------------------
+  it('A51 puts a Recenter button BETWEEN the two zoom buttons, in the row\'s own style and divider', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+    // The pristine stack really is the two buttons and one divider this entry sits inside — the
+    // removal direction, so the assertions below cannot pass against a file that already had it.
+    expect(pristineJsx, 'the pristine bundle already carries a Recenter control').not.toContain('"aria-label": "Recenter"');
+    expect((pristineJsx.match(/React\.createElement\("span", \{ style: \{ width: "1px", background: "#e6e6e6" \} \}\),/g) ?? []).length).toBe(1);
+
+    // ORDER is the ruling: Zoom in, divider, Recenter, divider, Zoom out — read off the file as
+    // one sequence rather than three independent `toContain`s, which could not tell the order.
+    const labels = [...jsx.matchAll(/"aria-label": "(Zoom in|Zoom out|Recenter)"/g)].map((m) => m[1]);
+    expect(labels).toEqual(['Zoom in', 'Recenter', 'Zoom out']);
+    expect((jsx.match(/React\.createElement\("span", \{ style: \{ width: "1px", background: "#e6e6e6" \} \}\),/g) ?? []).length,
+      'the second divider is what keeps the three buttons evenly separated').toBe(2);
+
+    // The row's OWN style, not a new token: `stackBtn` with the same two overrides its two
+    // neighbours carry. `ctrlIcon` is the file's own control-stack icon style (V2's `iconImg`
+    // body), declared here since the V3 rewrite and read by nothing until now.
+    expect(jsx).toContain('style: Object.assign({}, stackBtn, { flex: 1, width: "auto" }),\n                onClick: () => recenterView(),\n                "aria-label": "Recenter"');
+    expect(jsx).toContain('React.createElement("img", { src: "assets/icons/sub-recenter-disc.svg", alt: "", width: 15, height: 15, style: ctrlIcon })');
+    expect(jsx.split('const ctrlIcon = ').length - 1, 'ctrlIcon is declared once and is no longer an orphan').toBe(1);
+
+    // The behavioural branch, and A25's own finite test in it: a listing whose seller has not
+    // disclosed its location is served lat/lng null, and a missing point omits rather than
+    // fabricating a centre (`Number.isFinite`, never `!= null` — a NaN passes that).
+    expect(jsx).toContain('const sel = practices.filter((p) => p.id === activeId)[0];');
+    expect(jsx).toContain('if (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) map.setView([sel.lat, sel.lng], map.getZoom(), { animate: true });');
+    expect(jsx).toContain('else if (center) map.setView(center, zoom, { animate: true });');
+    // The zoom is the map's OWN on the practice arm and the metro's on the other: a control that
+    // silently zooms is performing a second action its label does not name.
+    expect(jsx, 'the practice arm must not re-apply the metro zoom').not.toContain('map.setView([sel.lat, sel.lng], zoom');
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

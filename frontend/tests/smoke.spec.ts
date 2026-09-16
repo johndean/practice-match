@@ -1,9 +1,13 @@
 import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test';
-import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, guard, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designBoundariesBody } from './design-boundaries.mjs';
+import { designSummaryBody } from './design-summary.mjs';
 import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
 // render in a real browser; this one proves the same for a token-bearing URL — the gate frame
@@ -78,6 +82,157 @@ test.describe('smoke', () => {
     await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
     await expect(page.getByText('This page is not available to your account')).toBeVisible();
     await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task A39 (D-C53, 2026-09-13): a decision lands and the table it was taken on catches up.
+  //
+  // `admin/listings.ts` posted the decide and DISCARDED the updated draft the route has always
+  // answered with, so the pill, the buttons and the badge all stood until the reviewer reloaded
+  // the page — which is what made a reviewer press Publish a second time on a listing that was
+  // already published. Unit tests prove the adapter asks for the reload and `logic.test.ts` proves
+  // `loadAdmin` answers it; only a real browser can prove the two meet and the ROW changes.
+  //
+  // The queue is stubbed here rather than seeded, for `prepare()`'s own reason: this asserts the
+  // app's behaviour against a known payload, and the API path is pytest's. Registered AFTER
+  // `prepare()`, so it wins over the design-fixture page for this one test (Playwright matches the
+  // last registered handler first).
+  // ---------------------------------------------------------------------------------------
+  test('a Publish in Admin > Listings posts the decision and the row settles with no reload (A39)', async ({ page }) => {
+    await prepare(page);
+    const collection = new URL('/api/admin/listings', appOrigin()).href;
+    // `state` is set, so this is a REPUBLISH and the reviewer is asked for nothing (D12).
+    const row = (status: string) => ({
+      id: 'aaaaaaaa-0000-4000-8000-000000000001', status, name: 'Hill Country Animal Hospital',
+      type: 'Mixed', city: 'Bastrop', price: 860000, rev: null, docs: null, bldg: null,
+      state: 'TX', seller_name: 'Dr. Susan Ortiz', submitted_at: '2026-09-01T12:00:00Z',
+      listed_at: '2026-08-24T09:00:00Z', status_changed_at: null, status_changed_by: null,
+      decline_reason: null
+    });
+    let status = 'in_review';
+    await page.route((url) => url.href === collection || url.href.startsWith(`${collection}?`),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ items: [row(status)], next_cursor: null, counts: { in_review: status === 'in_review' ? 1 : 0, total: 1 } })
+      }));
+    const posted: unknown[] = [];
+    await page.route((url) => url.href.startsWith(`${collection}/`) && url.href.endsWith('/decide'), (route) => {
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      status = 'published';
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row('published')) });
+    });
+
+    await signInAs(page, 'design', '/admin');
+    await page.getByRole('button', { name: /^Listings\s*1$/ }).first().click();
+    await expect(page.getByText('In review', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+
+    // The pill, the buttons and the badge — all three from the RE-READ, none of them from a reload.
+    await expect(page.getByText('Published', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unpublish', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Listings\s*0$/ })).toBeVisible();
+    expect(posted, 'the decision the API was actually asked for').toEqual([{ action: 'publish', reason: '' }]);
+    await expect(page, 'the page never navigated').toHaveURL(/\/admin\?tab=listings$/);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
+  // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
+  // need to see it all!!!"
+  //
+  // The defect ADMIN-GATE (D-C53, above) surfaced rather than caused: `page.seller` was
+  // `["seller"]` and `request.read_own` was `["buyer","seller"]`, so an account holding `admin`
+  // ALONE held neither, and once the guard ran on the header-nav path those two screens answered
+  // with the unavailable gate. Every persona this suite had held four roles or one member role —
+  // `design@` masked it everywhere — so `adminOnly` (`admin@practice-match.test`, seeded by
+  // `scripts/seed_persona.py` under this ruling) is the account with exactly John's grants.
+  //
+  // All THREE doors, in one test, because the point of the ruling is that an admin sees it all:
+  // the two he was locked out of and the one he was not.
+  // ---------------------------------------------------------------------------------------
+  test('an admin-only account opens My Requests, List a Practice and the Admin screens (D-C54)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'adminOnly', '/browse');
+    await expect(page).toHaveURL(/\/browse$/);
+
+    for (const [label, url] of [['My Requests', /\/requests$/], ['List a Practice', /\/seller$/],
+                                ['VIN Foundation Admin', /\/admin$/]] as const) {
+      await page.getByRole('button', { name: label, exact: true }).first().click();
+      await expect(page, `${label} must open, not answer with the unavailable gate`).toHaveURL(url);
+      await expect(page.getByText('This page is not available to your account')).toHaveCount(0);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  // The other half of the ruling, and the reason it is one role and not "privilege": D-C53's own
+  // case must stay green. A buyer is still refused the Admin screen — asserted above — and here a
+  // buyer is still refused nothing it used to hold, i.e. the ruling widened `admin` and nobody else.
+  test('and the buyer keeps exactly the doors it had — D-C54 widened one role', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'buyer', '/browse');
+    await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/requests$/);
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
+    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task ADMIN-SUPERSET fix round 1 (review Important-1, chained on A16.9, amendment A16.23,
+  // ruling D-C54). The two tests above prove an admin-only account REACHES "List a Practice"; this
+  // one proves it can actually USE it and keep using it — the gap the review found: D-C54 widened
+  // `seller.apply`/`page.seller`, so an admin-only account could CREATE a listing, but
+  // `componentDidMount`'s own bootstrap load still gated on the literal string `(me.roles ||
+  // []).indexOf("seller") > -1` — a SECOND, unrelated copy of the matrix nobody had asked to agree
+  // with D-C54 — so the dashboard never showed that listing again after a reload.
+  //
+  // `guard(page)`, not `prepare(page)`: this presses real buttons against the real API
+  // (`listing-flows.spec.ts`'s own idiom — no route of any kind, "Create a listing" mints a real
+  // row) and a stubbed `/api/listings`/seller-collection would prove nothing about A16.23's fix.
+  // "Save and exit" needs nothing typed (A16.15/A-SL27 (2): a draft is incomplete by nature, and
+  // the partial save omits the blank required fields rather than refusing them).
+  // ---------------------------------------------------------------------------------------
+  test('an admin-only account creates a listing, reloads, and still sees it on the dashboard (D-C54, A16.23)', async ({ page }) => {
+    guard(page);
+    await signInAs(page, 'adminOnly', '/seller');
+    const createButton = page.getByRole('button', { name: 'Create a listing', exact: true });
+    await expect(createButton).toBeVisible();
+
+    const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
+    await createButton.click();
+    const createdResponse = await created;
+    expect(createdResponse.status(), 'an admin-only account may now create a listing (D-C54: seller.apply/page.seller)').toBe(201);
+    const { id } = (await createdResponse.json()) as { id: string };
+
+    const saved = page.waitForResponse((r) => r.url().includes(`/api/seller/listings/${id}`) && r.request().method() === 'PATCH');
+    await page.getByRole('button', { name: 'Save and exit', exact: true }).click();
+    expect((await saved).status(), 'the partial save accepts a bare draft').toBe(200);
+    await expect(createButton, 'back on the dashboard, straight after creating it').toBeVisible();
+
+    // The reload: a FRESH componentDidMount, the one A16.23 fixes. Before the fix this loaded
+    // nothing — an admin-only account holds no `seller` role string — and the dashboard showed
+    // either the design's own fixtures (no adapter) or, with one, no rows at all.
+    await page.reload();
+    await expect(createButton, 'the dashboard, not the sign-in gate — the session survives a reload').toBeVisible();
+    // `frontend/src/listings/seller.ts`'s own title rule: a bare draft has no city, so its row
+    // reads "Untitled listing" — never the design's four Austin fixtures and never a blank
+    // dashboard, either of which is what the pre-fix literal role check produced for this account.
+    // The SECTION is named, not counted (re-review Minor 4): the dashboard is two columns of
+    // `--shadow-sm` cards — "My Listings" and the "Buyer Interest" inbox, whose cards come from
+    // the design's own `requests` fixture and are therefore always present — so a bare
+    // `page.locator('div[style*="var(--shadow-sm)"]').first()` was choosing between two sections
+    // by document order, and was green only because My Listings happens to render first. `My
+    // Listings` is a real <h2>, so its own role and name anchor the search, and the column it
+    // heads is its parent element.
+    // `.first()` INSIDE that section stays, and is `listing-flows.spec.ts`'s own idiom: the API
+    // orders rows `updated_at DESC`, so the row this run just saved is always first, whatever else
+    // this persona owns from an earlier run — this account is not reseeded between runs, only its
+    // identity is.
+    const myListings = page.getByRole('heading', { name: 'My Listings', exact: true }).locator('..');
+    const firstListingRow = myListings.locator('div[style*="var(--shadow-sm)"]').first();
+    await expect(firstListingRow, 'A16.23: the bootstrap loaded this account\'s own row, by permission').toContainText('Untitled listing');
   });
 
   test('unknown routes redirect to /', async ({ page }) => {
@@ -306,24 +461,31 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(sheetBox.height)).toBe(Math.round(mapBox.height));
 
     const scrolls = await sheet(page).locator('.rf-scroll').evaluate((el) => el.scrollHeight > el.clientHeight);
-    expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all five sections').toBe(true);
+    expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all four sections').toBe(true);
   });
 
-  test('every one of the five sections renders, in order', async ({ page }) => {
+  // C13 gave the sheet FIVE sections and A49 (controller ruling, 2026-09-15 — Task
+  // SATELLITE-GATE) took the last of them away: A49.3 removed the whole "Basemap" section,
+  // heading included, because the imagery licence is unresolved (Census & Market Data Source
+  // Specification §15, "Until answered, the Satellite toggle ships disabled"). Four remain, in
+  // the same order, and the ORDER is what this case has always been about — the count is how it
+  // states it. `BASEMAP`'s absence is asserted positively in the A49 case above rather than left
+  // to this list quietly getting shorter.
+  test('every one of the four sections renders, in order', async ({ page }) => {
     await mobileMap(page);
     await openSheet(page);
     const text = await sheet(page).innerText();
     // innerText is the RENDERED text, and rendered is what "renders" has to mean here: a
     // display:none section would drop out of it entirely. V3 sets `text-transform:
-    // uppercase` on all four of the sheet's micro-labels and on the footer button (Global
+    // uppercase` on the sheet's micro-labels and on the footer button (Global
     // Constraint (f): V3 preserves and EXTENDS micro-label uppercase while dropping it from
     // display headings), so the strings that reach the screen are SHADING, COMPARE AGAINST,
-    // DATASETS, BASEMAP and SHOW MAP, while the "What this means" display heading is not
+    // DATASETS and SHOW MAP, while the "What this means" display heading is not
     // transformed. They are matched here exactly as they render, which pins that styling as
     // well as the section order. Confirmed character-for-character identical on the V3
     // reference (`PW_APP_URL=http://localhost:5174`): reference and app return the same
     // innerText for this sheet, so the case is the design's, not the port's.
-    const order = ['SHADING', 'COMPARE AGAINST', 'DATASETS', 'What this means', 'BASEMAP'];
+    const order = ['SHADING', 'COMPARE AGAINST', 'DATASETS', 'What this means'];
     let at = -1;
     for (const section of order) {
       const next = text.indexOf(section);
@@ -349,8 +511,16 @@ test.describe('mobile: the same map, market data in a sheet', () => {
       .toBeLessThan(text.indexOf('COMPARE AGAINST'));
     // A24.36 (fix round 1, Important 2): income shades at the CENSUS TRACT and its source line
     // said "community level" — the one line on this card that named no geography while the line
-    // above it named the tract.
-    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    // above it named the tract. A34.4 (Task ONE-VOCABULARY, ruling D-C51) then took the geography
+    // back OUT of the source line, because the card prints it on its own `geoLine` directly above:
+    // one fact, one string (A24.44–A24.57's rule, which this one surface never followed). Both
+    // halves are asserted, and in the order the sheet renders them.
+    expect(text).toContain('Census tract');
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023)');
+    expect(text, 'the geography is printed twice on the sheet\'s Market data card')
+      .not.toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+    expect(text.indexOf('Census tract'), 'the geography line is not above the source line')
+      .toBeLessThan(text.indexOf('Source: U.S. Census ACS 5-year estimates (2023)'));
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
@@ -397,32 +567,41 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     for (const r of [...options, ...datasets]) {
       expect(r.minHeight, `"${r.label}" computes to min-height ${r.minHeight}px, under the design's 46px`).toBeGreaterThanOrEqual(46);
     }
-    const basemaps = rows.filter((r) => r.label === 'Map' || r.label === 'Satellite');
-    expect(basemaps.length, 'the Basemap section\'s two buttons').toBe(2);
-    for (const b of basemaps) {
-      expect(Math.round(b.height), `the "${b.label}" basemap button is ${b.height}px, not the design's 46px`).toBe(46);
-    }
+    // The sheet's "Basemap" section used to be measured here too. A49 removed it with the rest of
+    // the Satellite control (the imagery licence is unresolved), so there is nothing left to size;
+    // its ABSENCE is asserted in the A49 case below rather than left unsaid here.
   });
 
-  // Fix round 1, minor 4. C13's whole point: the mobile mount omits `on-basemap`
-  // (Practice Match V3.dc.html:1359 vs the desktop's :324), so the map's 132px Map|Satellite
-  // cluster cannot fight a full-width key on a 388px map — the SHEET owns basemap switching
-  // instead. That was gated only by `mobile-map` at zero tolerance, which names the failure as
-  // a pixel diff; this names it in words, on both sides of the contrast.
-  test('the phone has no basemap tabs on the map — the sheet owns basemap switching', async ({ page }) => {
+  // A49 (controller ruling, 2026-09-15 — Task SATELLITE-GATE). These two cases used to assert the
+  // CONTRAST C13 drew: the phone's mount omits `on-basemap` so the map's 132 px Map|Satellite
+  // cluster cannot fight a full-width key on a 388 px map, while the desktop's passes it and the
+  // SHEET owns basemap switching on the phone. The Satellite basemap is now gated in the design
+  // until the imagery licence is signed — Census & Market Data Source Specification §15, "Until
+  // answered, the Satellite toggle ships disabled" — so BOTH mounts omit it and the sheet's
+  // Basemap section is gone with them. C13's contrast is not contradicted; it is subsumed.
+  //
+  // In a real browser rather than at the pixel level, because "the control is not painted" and
+  // "the control cannot be reached" are different claims and only the second one is the ruling:
+  // an accessible-name query finds a button a zero-tolerance screenshot of a 1440 px page can
+  // miss behind a scroll, a collapse or a z-index.
+  test('no surface offers the satellite basemap while its licence is unresolved (A49)', async ({ page }) => {
     await mobileMap(page);
-    const tabs = page.getByRole('button', { name: 'Satellite', exact: true });
-    await expect(tabs, 'a Map|Satellite tab pair leaked onto the phone map — on-basemap reached the mobile mount').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Satellite', exact: true }),
+      'a Map|Satellite tab pair is on the phone map').toHaveCount(0);
     await openSheet(page);
-    await expect(sheet(page).getByRole('button', { name: 'Satellite', exact: true }), 'the sheet does not own basemap switching').toHaveCount(1);
-  });
+    await expect(sheet(page).getByRole('button', { name: 'Satellite', exact: true }),
+      'the phone sheet still carries its Basemap section — the imagery licence is still unresolved').toHaveCount(0);
 
-  test('the desktop map keeps the basemap tabs the phone gives up', async ({ page }) => {
     await prepare(page);
     await signInAs(page, 'design', '/browse');
     await waitMap(page);
-    await expect(page.getByRole('button', { name: 'Satellite', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
-    await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Satellite', exact: true }),
+      'the desktop map still offers the satellite basemap (spec §15)').toHaveCount(0);
+    // The gray canvas is not gated and must still be drawn — a licence gate that blanked the
+    // basemap would be a regression wearing a ruling's clothes. `Map` was the pair's other half,
+    // so its absence AS A BUTTON is the second half of the removal.
+    await expect(page.getByRole('button', { name: 'Map', exact: true }),
+      'the Map half of the pair survived its twin').toHaveCount(0);
   });
 
   // Review I1 (controller ruling, 2026-09-07): redraw-after-selection, MEASURED. What this
@@ -908,7 +1087,10 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await serveListings(page, { community_label: LABEL });
     const panel = await openPanel(page);
 
-    await expect(panel.getByText(LABEL)).toBeVisible();
+    // `.first()` since A34.6 (ruling D-C51): the Competitive Landscape heading carries the SAME
+    // sub-line, because its three figures are the ring's too and it stood under no scope line at
+    // all. Two elements now render this label on the Insights tab, by ruling.
+    await expect(panel.getByText(LABEL).first()).toBeVisible();
     // D-C42 (John, 2026-09-11). The heading KEEPS its name and the geography renders on its own
     // sub-line beneath it — A21.5a let the label replace the heading, and D-C38 gives 28 of 29 QA
     // listings a label, so "Market Overview" appeared nowhere on QA and A27.3's own correction
@@ -973,8 +1155,12 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
       .toMatch(/[+-]\d+\.\d% \(5 yrs\) \u00b7 Dallas/);
     // The heading's own sub-line still says what the AREA figures describe, and says it once.
     await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    // TWICE since A34.6 (ruling D-C51), and exactly twice: once under "Market Overview" for the
+    // four tiles it describes and once under "Competitive Landscape" for the three figures that
+    // had no scope line at all (audit R35–R37, collision C8). A third occurrence would mean the
+    // Population tile had taken it back, which is the D-C48 defect A27.8 removed.
     expect((await panel.innerText()).split(LABEL).length - 1,
-      'the ring caption is stated more than once on the Insights tab').toBe(1);
+      'the ring caption is not stated exactly once per block that describes the ring').toBe(2);
     expect(errors).toEqual([]);
   });
 
@@ -1672,7 +1858,10 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
 
     const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
     await expect(strip.getByText(/^AREA · /)).toBeVisible();
-    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // A31.14e (Task SNAP-METRO, 2026-09-14) supersedes A31.7's own sentence here: from here the
+    // AREA headline is the Census's own PUBLISHED metro figure wherever the Census publishes one,
+    // so the Census areas describe the BARS and the sub-line names both halves.
+    await expect(strip.getByText('The metro\u2019s own figures, with the Census areas the map shades beneath them')).toBeVisible();
     // The figure the card prints IS the answered median, formatted by the design's own
     // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
     const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
@@ -1762,6 +1951,69 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const printed = (await strip.innerText()).split(LABEL).length - 1;
     expect(printed, 'the basis is named on the sub-line and on the four cards it describes').toBe(5);
     console.log(`[A31.12] the practice basis is printed ${printed} time(s) on the strip; growth reads "${SCOPE}"`);
+  });
+
+  // A31.14 (Task SNAP-METRO, 2026-09-14) — THE SERVED-FIGURE ARM, which no approved state reaches.
+  //
+  // The design's own fixtures carry no `metro` key: `summarySet()` computes none and
+  // `design-summary.mjs` sends none, which is precisely why every one of the 55 approved states
+  // keeps A31.12's "median of N Census tracts" caption and only ONE of them re-bases at all (the
+  // footnote's, which is prose). So the PUBLISHED path — the whole point of the ruling — has no
+  // pixel oracle and this is the case that carries it: a real browser, the real adapter, the real
+  // route wiring, and a summary body carrying exactly what `app.api.market._metro_figure` serves
+  // for CBSA 12420 (`acs_measure` summary level 310, B19013_001E = 97,638 ± 1,163 against the
+  // 94,801 median of the same metro's valued tracts). The two numbers DISCRIMINATE: a card that
+  // went on printing the median would print $95K here and this fails.
+  test('the AREA headline is the Census’s own published metro figure where one is served (A31.14)', async ({ page }) => {
+    const PUBLISHED = 97638;      // the Census's own metro median for CBSA 12420, ACS 2019–2023
+    const BASIS = 'Census published for the metro';   // `app.api.market.METRO_BASIS['published']`
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The DESIGN's own distribution — the same body `harness.ts` answers this route with, so the
+    // bars, the counts and the geography label are the ones every other case reads — plus the
+    // `metro` object the real route serves for `income` and nothing else. Composed here rather
+    // than fetched through `route.fetch()`, which bypasses `page.route` and would reach the real
+    // API for a CBSA it has never heard of.
+    const body = JSON.parse(designSummaryBody('12420')) as { layers: Record<string, unknown>[] };
+    const median = body.layers.find((l) => l.layer === 'income')!.median as number;
+    for (const layer of body.layers) {
+      if (layer.layer === 'income') layer.metro = { value: PUBLISHED, moe: 1163, kind: 'published', basis: BASIS };
+    }
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/summary'),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(PUBLISHED / 1000)}K`);
+    await expect(card).toContainText(BASIS);
+    // IMPORTANT-2 (review 1, 2026-09-14): ONE geography on the card, and it is the metro's. The
+    // note carries it; the source line carries the DATASET ALONE, which is A31.12b's own rule for
+    // a caller with no geography to name and what LOCATION mode already does. Measured before the
+    // fix: "$98K · Census published for the metro" sat above "U.S. Census ACS 5-year estimates
+    // (2023) · Census tract" — two geographies, the source-looking one attached to the figure it
+    // does not describe, which is the D-C51 defect one line below where this family answered it.
+    await expect(card, 'the source line still names the TRACT beneath a metro figure').not.toContainText('Census tract');
+    // …and the DERIVED figure it replaced is gone from the card, caption and all. Read off the
+    // body the page was actually answered with rather than retyped, so the case cannot drift.
+    expect(Math.round(median / 1000), 'the fixture median equals the published figure, so this case proves nothing')
+      .not.toBe(Math.round(PUBLISHED / 1000));
+    await expect(card, 'the headline is the tract median, not the published metro figure').not.toContainText(`$${Math.round(median / 1000)}K`);
+    await expect(card, 'the derived caption survives beside a published figure').not.toContainText('median of');
+    // The layers the route serves no metro figure for are UNTOUCHED — `econ` and `competition` are
+    // Business Patterns, which publishes nothing at summary level 310, so those cards keep the
+    // median of their own counties or ZIP areas and say so.
+    const households = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Households' }).first();
+    await expect(households).toContainText('median of');
+    // …and their source line KEEPS its geography, because there the headline IS those polygons.
+    await expect(households, 'the derived path lost the geography its own figure is measured at').toContainText('Census tract');
+    console.log(`[A31.14] the income card reads "$${Math.round(PUBLISHED / 1000)}K · ${BASIS}" where the derived figure was $${Math.round(median / 1000)}K`);
+    expect(errors).toEqual([]);
   });
 });
 
@@ -1915,7 +2167,7 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
   // through the harness — the cost of measuring the real chain rather than a stub of it.
   test.setTimeout(180_000);
 
-  test('+ reaches zoom 20, every Canvas request stops at 16, and Satellite stops at 19', async ({ page }) => {
+  test('+ reaches zoom 20, every Canvas request stops at 16, and no imagery tile is ever asked for', async ({ page }) => {
     const hits = recordTiles(page);
     await browseMap(page);
 
@@ -1959,28 +2211,26 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     // upscaled basemap is underneath them, not instead of them.
     expect(await paintedOverlay(page), 'the shading vanished on the way up').toBeGreaterThan(0);
 
-    // (v) The other basemap, switched AT the ceiling — which is where A35.6's reset is load-bearing,
-    // because the two services clamp to different tile zooms and `redraw()` alone leaves the
-    // layer holding the previous zoom's world range. An empty tile pane here is the blank map.
-    const beforeSat = hits.length;
-    const satTab = page.getByRole('button', { name: 'Satellite', exact: true });
-    await satTab.click();
-    await expect(satTab, 'the Satellite tab did not take').toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
-      .toEqual({ services: ['imagery'], maxZ: NATIVE_MAX.imagery, count: expect.any(Number) });
-    expect((await paneState(page, TILE_PANE)).count,
-      'the tile pane is EMPTY at zoom 20 — the basemap switch drew no tiles at all').toBeGreaterThan(0);
-    expect(hits.slice(beforeSat).filter((h) => h.z > NATIVE_MAX[h.service]),
-      'Satellite was asked past Esri\'s published US floor of z19').toEqual([]);
+    // (v) WAS the satellite half: switch AT the ceiling and switch back, which is where A35.6's
+    // reset is load-bearing because the two services clamp to different tile zooms. A49 gated the
+    // Satellite control out of the design (the imagery licence is unresolved, spec §15), so there
+    // is no longer a control to switch with and this leg is UNREACHABLE THROUGH THE PRODUCT —
+    // retired here rather than rewritten around a back door, because an e2e that reaches a surface
+    // no member can reach is not evidence about the product. A35.6's reset keeps its own gate at
+    // the unit level, where it never needed a control: `src/map/engines/leaflet.test.ts` drives
+    // `setBase('satellite')` directly and pins the `remove()`/`addTo()` rebuild, the per-service
+    // `maxNativeZoom` (16 and 19) and the attribution hand-over. When the licence lands and A49 is
+    // reverted, this leg comes back with it.
+    //
+    // (v, A49) What replaces it is the licence assertion the ruling is actually about, and the
+    // recorder above has been watching for it the whole climb: across a full Browse session and
+    // ten zoom steps, the member's browser never asked Esri for one tile of satellite imagery.
+    expect(hits.filter((h) => h.service === 'imagery'),
+      'an imagery tile was requested while the satellite licence is unresolved — the gate leaks')
+      .toEqual([]);
 
-    await page.getByRole('button', { name: 'Map', exact: true }).click();
-    await expect.poll(() => paneState(page, TILE_PANE), { timeout: 20_000 })
-      .toEqual({ services: ['gray-base'], maxZ: NATIVE_MAX['gray-base'], count: expect.any(Number) });
-    expect((await paneState(page, TILE_PANE)).count,
-      'the tile pane is EMPTY after switching back — the reset did not take in this direction').toBeGreaterThan(0);
-
-    // (vi) The whole recording, in one sentence: not one request, at any zoom, on either basemap,
-    // for a tile the service that serves it does not have.
+    // (vi) The whole recording, in one sentence: not one request, at any zoom, on the basemap the
+    // product actually ships, for a tile the service that serves it does not have.
     const past = hits.filter((h) => h.z > NATIVE_MAX[h.service]);
     expect(past, `requests past a service's native max: ${JSON.stringify(past)}`).toEqual([]);
 
@@ -2007,22 +2257,20 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
   // registering the new one — leaving BOTH credits in the footer for the life of the map.
   // Assigning between `remove()` and `addTo()` fixes both, and this case is what says so.
   // -----------------------------------------------------------------------------------------
-  test('the attribution control shows exactly the current basemap\'s credit, never both', async ({ page }) => {
+  //
+  // A49 (2026-09-15) narrowed this case to the one basemap that ships. The ROUND TRIP it was
+  // written for needs the Satellite control, which the licence gate removed, so what is left is
+  // the half that is still reachable — and that half is the legally load-bearing one: attribution
+  // is load-bearing per CLAUDE.md, and a footer crediting an imagery vendor whose licence is
+  // unresolved would be a claim the product has no right to make. `src/lib/leaflet.test.ts` keeps
+  // A35.7's satellite CREDIT STRING pinned and `src/map/engines/leaflet.test.ts` keeps the
+  // hand-over between the two, so the round trip comes back with the control.
+  test('the attribution control credits the gray canvas, and never the unlicensed imagery (A35, narrowed by A49)', async ({ page }) => {
     await browseMap(page);
-    const other = (kind: string) => (kind === 'map' ? CREDIT.satellite : CREDIT.map);
-
-    for (const step of ['map', 'satellite', 'map', 'satellite'] as const) {
-      if (step !== 'map' || (await attributionText(page)).includes(CREDIT.satellite)) {
-        await page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }).click();
-        await expect(page.getByRole('button', { name: step === 'map' ? 'Map' : 'Satellite', exact: true }))
-          .toHaveAttribute('aria-pressed', 'true');
-      }
-      await expect.poll(() => attributionText(page), { timeout: 10_000 })
-        .toContain(CREDIT[step]);
-      expect(await attributionText(page), `the footer carries BOTH credits on the ${step} basemap`)
-        .not.toContain(other(step));
-    }
-    console.log(`[A35] attribution after the round trip: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
+    await expect.poll(() => attributionText(page), { timeout: 10_000 }).toContain(CREDIT.map);
+    expect(await attributionText(page), 'the footer credits satellite imagery the product is not licensed to show')
+      .not.toContain(CREDIT.satellite);
+    console.log(`[A35/A49] attribution on the only basemap that ships: ${(await attributionText(page)).replace(/\s+/g, ' ')}`);
   });
 
   // -----------------------------------------------------------------------------------------
@@ -2067,5 +2315,796 @@ test.describe('A35 — the gray basemap never asks Esri for a tile it does not h
     expect(base, 'the basemap was built more than once at mount — the no-op setBase reset the layer')
       .toBe(labels);
     console.log(`[A35] mount built ${base} base tiles and ${labels} label tiles`);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A36 (Task A36, D-C53, 2026-09-13) — the Admin Users tab in a real browser: REAL-SHAPED
+// accounts render through `admin/users.ts`'s own derivation, and a decision reaches the API.
+//
+// The oracle's own stub answers this endpoint with the DESIGN's four rows (`DesignUserRow`), which
+// is what keeps the frozen `admin-users` capture — so these cases override it with the shape the
+// real API serves. That is the half no approved state can photograph: the design's fixtures are
+// prose, the live path is `UserItem`s, and the rows, the pills and the buttons below all come out
+// of `PILLS`/`ACTIONS` rather than out of a fixture's own words.
+// ---------------------------------------------------------------------------------------
+test.describe('A36 — the Admin Users tab reads accounts, and every decision reaches the API', () => {
+  const ACCOUNTS = [
+    {
+      account_id: 'aaaaaaaa-0000-4000-8000-000000000001', email: 'pending@example.test', state: 'pending',
+      name: 'Dr. Wanda Okafor', affiliation_label: null, kind: 'buyer', flags: [], roles: [], grants: [],
+      decided_at: null, decided_by_name: null, application_status: 'pending',
+      fields: { school_year: 'Tufts, 2011', license_state: 'MA', employer: 'Associate, three-doctor practice', intent: 'Buying near Boston within a year.', vin_member_id: '884201' }
+    },
+    {
+      account_id: 'aaaaaaaa-0000-4000-8000-000000000002', email: 'approved@example.test', state: 'active',
+      name: 'Dr. Idris Calloway', affiliation_label: null, kind: 'seller', flags: [],
+      roles: ['admin', 'buyer'],
+      grants: [{ role: 'admin', granted_by_name: 'Dr. Wanda Okafor', granted_at: '2026-08-12T09:00:00+00:00' }],
+      decided_at: '2026-08-12T15:04:05+00:00', decided_by_name: 'K. Alvarez', application_status: 'approved',
+      fields: { school_year: 'Cornell, 2003', license_state: 'NY, NJ', employer: 'Owner, one practice', intent: 'Listing in 2027.' }
+    }
+  ];
+
+  /** `GET /api/admin/users` as the REAL API serves it, over the oracle's design-fixture stub.
+   *
+   *  `log` records one `'GET'` per LIST request, which is how the reload seam is gated (fix round 1,
+   *  review Important 2): the case that claims a decision re-reads the queue asserted only that a
+   *  row was still on screen, and a row that never left is no evidence at all. It is ONE ORDERED
+   *  log shared with the decide route rather than a count (fix round 2, re-review Minor 4) — a
+   *  count that rises 1 → 2 is satisfied by a second BOOT load arriving late, which is the same
+   *  false green one door over, while `['GET', 'POST', 'GET']` says the re-read FOLLOWED the
+   *  decision. `queue` lets a case answer the SECOND read with something different from the first. */
+  async function serveAccounts(
+    page: Page,
+    opts: { log?: string[]; queue?: () => { items: unknown[]; counts: { open: number; total: number } } } = {}
+  ): Promise<void> {
+    const href = new URL('/api/admin/users', appOrigin()).href;
+    const answer = opts.queue ?? (() => ({ items: ACCOUNTS, counts: { open: 1, total: 2 } }));
+    await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
+      (route) => {
+        opts.log?.push('GET');
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ ...answer(), next_cursor: null })
+        });
+      });
+  }
+
+  const usersTab = (page: Page) => page.getByRole('button', { name: /^Users\s*\d/ });
+
+  test('renders the served accounts, their pills and the per-state buttons — and no Revoke anywhere', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveAccounts(page);
+    await signInAs(page, 'design', '/admin');
+    // `exact` because the SECOND account's roles sub-line names this same person as its granter
+    // (`granted_by_name`, the fact A36 added to every grant), so a substring match resolves to two.
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+
+    // Nobody from the design's own fixture survives an adapter that answered (A36.1's ternary).
+    await expect(page.getByText('Dr. Priya Raghavan'), 'a design fixture row reached a real reviewer').toHaveCount(0);
+    // The design's own Approved row is asserted by its APPLICANT SUB-LINE rather than by its name:
+    // the persona this case signs in as IS `state.me` — "Dr. Rachel Mendes" — so the header's
+    // account menu names her on every admin screen, and a header is not a row. "Texas A&M, 2014 ·
+    // TX license" (`logic.js`'s fourth fixture row) belongs to the row and to nothing else.
+    await expect(page.getByText('Texas A&M, 2014 · TX license')).toHaveCount(0);
+
+    // `PILLS`, and `ACTIONS` per state — pending offers three, an active account one.
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+    for (const label of ['Approve', 'Decline', 'Request info', 'Suspend']) {
+      await expect(page.getByRole('button', { name: label, exact: true }), label).toHaveCount(1);
+    }
+    // Ruling 6: the one decision in `permissions.REAUTH`, and V3 has no step-up element.
+    await expect(page.getByRole('button', { name: 'Revoke', exact: true }),
+      'Revoke cannot complete its action without a step-up dialog, so it is not rendered').toHaveCount(0);
+
+    // The three facts stated in the design's own ` · ` idiom (rulings 6, 7 and 8) and the
+    // provenance sentence the API now serves.
+    await expect(page.getByText('Tufts, 2011 · MA license · VIN member 884201')).toBeVisible();
+    await expect(page.getByText('Cornell, 2003 · NY, NJ licenses · VIN Foundation admin · granted by Dr. Wanda Okafor August 12')).toBeVisible();
+    await expect(page.getByText('Seller applicant · Approved August 12 by staff reviewer K. Alvarez.')).toBeVisible();
+
+    // A36.3: the badge is the served open count, not the design's literal 3.
+    await expect(usersTab(page)).toHaveText(/^Users\s*1$/);
+    expect(errors).toEqual([]);
+  });
+
+  test('Approve posts the decision the API names, and re-reads the queue after it', async ({ page }) => {
+    await prepare(page);
+    // ORDERED, not observed and not merely counted. This case used to end on "the row is still
+    // visible", which was true before the click and is answered by the same stub after it: cutting
+    // A36.2's `list(() => this.loadAdmin())` to `list(() => {})` left all three A36 cases green
+    // (fix round 1, review Important 2). And a bare count 1 → 2 would be satisfied by a second BOOT
+    // load arriving late (fix round 2, re-review Minor 4), so the two routes share ONE log and the
+    // assertion is that the re-read FOLLOWS the decision.
+    const log: string[] = [];
+    await serveAccounts(page, { log });
+    const posted: unknown[] = [];
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      log.push('POST');
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer'] }) });
+    });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+    expect(log, 'the tab load reads the queue exactly once, and writes nothing').toEqual(['GET']);
+
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect.poll(() => posted).toEqual([{ action: 'approve', note: '' }]);
+    // A36.2's reload seam: the decision re-enters `loadAdmin()`, so the list GET is made AGAIN —
+    // after the POST, which is the part a count cannot say.
+    await expect.poll(() => log, { message: 'the queue was not re-read AFTER the decision' })
+      .toEqual(['GET', 'POST', 'GET']);
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Important 1 — the controller's ruling of 2026-09-13, in a real browser.
+  // A SELLER applies from an account that is already `active`, so this row arrives `state:
+  // "active"` with `application_status: "pending"` and the API accepts three decisions on it.
+  // Keyed on the account state alone it read "Approved", offered one "Suspend" and was not in the
+  // badge — a seller applicant a reviewer could see and could not decide.
+  // -----------------------------------------------------------------------------------------
+  const SELLER_APPLICANT = [{
+    account_id: 'aaaaaaaa-0000-4000-8000-000000000003', email: 'seller@example.test', state: 'active',
+    name: 'Dr. Noor Haddad', affiliation_label: null, kind: 'seller', flags: [], roles: ['buyer'], grants: [],
+    decided_at: '2026-07-04T10:00:00+00:00', decided_by_name: 'K. Alvarez', application_status: 'pending',
+    fields: { school_year: 'Davis, 2012', license_state: 'CA', employer: 'Owner, one practice', intent: 'Selling in 2027.' }
+  }];
+
+  test('a seller applying from an approved account is decidable, and is in the badge', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // `counts.open` is 1 because the API counts the open APPLICATION, whatever the account state —
+    // the same union `COUNTS_SQL` explains, pinned on its own side by
+    // `test_an_open_seller_application_on_an_active_account_is_in_the_open_queue_count`.
+    await serveAccounts(page, { queue: () => ({ items: SELLER_APPLICANT, counts: { open: 1, total: 1 } }) });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
+
+    // The applicant's own three, from the OPEN application rather than from `account.state`.
+    for (const label of ['Approve', 'Decline', 'Request info']) {
+      await expect(page.getByRole('button', { name: label, exact: true }), label).toHaveCount(1);
+    }
+    await expect(page.getByRole('button', { name: 'Suspend', exact: true }),
+      'an account with an open application is not offered an account action').toHaveCount(0);
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approved', { exact: true }),
+      'the row is not approved — its application is open').toHaveCount(0);
+    // Ruling 8's marker still leads the sub-line, and the account's EARLIER buyer approval does not
+    // introduce itself over an open application.
+    await expect(page.getByText('Seller applicant · “Selling in 2027.”')).toBeVisible();
+    await expect(usersTab(page)).toHaveText(/^Users\s*1$/);
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Fix round 1, review Minor 2. Both cases above stub the decide route, so until now the CSRF
+  // header was proved at the unit boundary alone. Here the header the REAL browser sends is read
+  // off the request and compared with the browser's own cookie, the stub answers a real 200, and
+  // the reload is answered with the row in its NEW state — the whole loop the task is named after.
+  //
+  // The decision is not driven against the live route on purpose: the only real accounts this
+  // suite's database holds in an open state are `seed_persona.py`'s `pending@practice-match.test`
+  // and `needs-review@practice-match.test`, which `harness.ts`'s own personas sign in AS to reach
+  // the "under review" gate, so deciding one here would change what `account-flows.spec.ts` sees.
+  // The route itself is exercised end to end by `tests/api/test_admin_users.py`.
+  // -----------------------------------------------------------------------------------------
+  test('the decision the browser really sends is accepted, and the reload renders the new state', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    let decided = false;
+    const sent: { method: string; csrf: string | undefined; body: unknown }[] = [];
+    await serveAccounts(page, {
+      queue: () => ({
+        items: [{ ...SELLER_APPLICANT[0], application_status: decided ? 'approved' : 'pending' }],
+        counts: { open: decided ? 0 : 1, total: 1 }
+      })
+    });
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      const request = route.request();
+      sent.push({
+        method: request.method(),
+        csrf: request.headers()['x-csrf-token'],
+        body: JSON.parse(request.postData() ?? 'null')
+      });
+      decided = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer', 'seller'] }) });
+    });
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect.poll(() => sent).toHaveLength(1);
+
+    const cookie = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
+    expect(sent[0].method).toBe('POST');
+    expect(sent[0].body).toEqual({ action: 'approve', note: '' });
+    // The real header, against the real cookie the real browser is holding — `csrfToken()`'s whole
+    // job, and the one thing a unit test with a stubbed `document.cookie` cannot say.
+    expect(cookie?.value, 'the session carries no csrf cookie to send').toBeTruthy();
+    expect(sent[0].csrf).toBe(cookie?.value);
+
+    // 200 → reload → the row's NEW state on screen: "Approved", and the badge down to nothing.
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toHaveCount(1);
+    // A queue of nothing is a NUMBER, not silence: A36.4/A36.5 unmount the pill where the API sent
+    // no count at all (`counts: null`), which is not the same statement as "none are waiting".
+    await expect(usersTab(page)).toHaveText(/^Users\s*0$/);
+    expect(errors).toEqual([]);
+  });
+
+  test('a blank decline note sends nothing at all — the API refuses one, so the click is not a decision', async ({ page }) => {
+    await prepare(page);
+    await serveAccounts(page);
+    const posted: string[] = [];
+    await page.route((url) => /\/api\/admin\/users\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      posted.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    // The browser's own prompt, cancelled — `window.prompt` answers null on a dismissed dialog.
+    page.on('dialog', (d) => void d.dismiss());
+    await signInAs(page, 'design', '/admin');
+    await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Decline', exact: true }).click();
+    await page.waitForTimeout(300);
+    expect(posted, 'a cancelled note posted a decision the API would refuse').toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task ONE-VOCABULARY — GATE 1 of ruling D-C51 (John, 2026-09-13): "WE MUST COMMUNICATE THE EXACT
+// DESCRIPTION OF THE NUMBER SO USERS UNDERSTAND THE DIFFERENCES AND THEY ARE MEASURING DIFFERENT
+// THINGS BECAUSE RIGHT NOW THEY ARE ALL LABELED THE SAME SO THE LOGIC WOULD BE THEY ARE SAME."
+//
+// THE RULING, LITERALLY. Browse holds THREE "median household income" figures at once and they
+// are three different measurements: one Census tract's published median (the map tooltip), the
+// selected practice's own five-mile ring — a household-weighted median of about ninety-nine tract
+// medians, derived and never published (the snapshot strip), and that same ring figure again in
+// the docked panel. Audit collision C1. This case reads all three captions off one rendered
+// screen and asserts that they say so.
+//
+// IT LIVES HERE, not in `screens.ts`, for the reason A27.7's and D-C48's own oracles do: the
+// design's fixtures carry no `communityLabel`, no `incomeNote` and no `growthScope`, and the
+// reference has no way to be handed one without editing approved fixture data or declaring a
+// ninth prototype prop. So the assertion is on the RENDERED DOM under a stubbed API.
+// -------------------------------------------------------------------------------------------
+test.describe('A34 — one vocabulary, on one screen (D-C51)', () => {
+  const RING = 'Within about 5 miles of the practice';
+  /** Audit §3.1's closed geography list, verbatim. */
+  const GEOGRAPHY = [
+    'Census tract', 'Census tracts', 'Place (city/town)', 'places', 'County', 'counties',
+    'ZIP Code Tabulation Area', 'ZIP areas', RING, 'surrounding city or county',
+    'surrounding county', 'across the metro', 'vs US'
+  ];
+  /** Audit §3.1's basis words — appended only where the figure is not the Census's own published
+   *  estimate for that exact area. `'not an observed count'` is NOT in this list (review Minor 10):
+   *  A34.1 took it out of every caption in the product when `pets` gained a `dataset:`, and the one
+   *  surviving occurrence is the pets tooltip's own margin sentence "Not an observed count.",
+   *  capital N, which this case-sensitive matcher could never have matched anyway. Dead vocabulary
+   *  in a gate reads as coverage it does not have. */
+  const BASIS = ['approximate', 'derived estimate'];
+
+  /** Every ruled geography phrase a caption names, longest first so "Census tracts" is not read
+   *  as "Census tract" and a stray "s". */
+  const geographiesIn = (caption: string) => GEOGRAPHY.slice().sort((a, b) => b.length - a.length)
+    .filter((g) => { const hit = caption.includes(g); if (hit) caption = caption.split(g).join(''); return hit; });
+  const basesIn = (caption: string) => BASIS.filter((b) => caption.includes(b));
+
+  async function serveListings(page: Page, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    for (const item of body.items) Object.assign(item, over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  /** Browse with the docked panel open over Cedar Park AND the snapshot strip expanded — the one
+   *  screen that carries all three income figures at once. The selection is the click
+   *  `browse-market-panel` makes and the expansion the one `browse-market-strip-location` makes. */
+  async function browseWithPanelAndStrip(page: Page) {
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.getByText('Cedar Park').first().click();
+    const panel = page.locator('div.rf-scroll[style*="width: 366px"]');
+    await panel.getByRole('button', { name: 'View full listing' }).waitFor({ state: 'visible' });
+    await click(page, 'Expand all six layers');
+    await page.getByText(/^LOCATION · /).first().waitFor({ state: 'visible' });
+    return panel;
+  }
+
+  /** The SNAPSHOT card whose title is `title`, flattened. Anchored on the card's own
+   *  "View on map" / "Showing on map" control rather than on the title alone: the Market data
+   *  legend card renders the SAME title on its own trigger, and reading that one instead is how
+   *  this case first went red with "Census tract" where the ring belongs. The innermost matching
+   *  container is the card. */
+  const stripCard = (page: Page, title: string) => page.evaluate((t) => {
+    const boxes = Array.from(document.querySelectorAll('div')).filter((d) =>
+      /View on map|Showing on map/.test(d.textContent || '')
+      && Array.from(d.querySelectorAll('div')).some((x) => (x.textContent || '').trim() === t));
+    const card = boxes[boxes.length - 1];
+    return card ? (card.textContent || '').replace(/\s+/g, ' ').trim() : null;
+  }, title);
+
+  /** The docked panel's overview tile whose key is `key`, flattened. */
+  const panelTile = (panel: Locator, key: string) => panel.evaluate((root, k) => {
+    const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === k);
+    const box = label && (label.parentElement as HTMLElement | null);
+    return box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : null;
+  }, key);
+
+  /** The map's own `rf-tip`, opened by hovering the shaded polygons. The boundary layer is drawn
+   *  on the engine's shared canvas renderer, so there is no element to hover — the hit test is
+   *  Leaflet's, over the container. A short lattice is walked until one opens; a map with no
+   *  polygons on it opens none and the caller fails on the null rather than on a timeout. */
+  async function hoverAreaTip(page: Page): Promise<string | null> {
+    const box = (await page.locator('.leaflet-container').first().boundingBox())!;
+    for (const fx of [0.5, 0.4, 0.6, 0.35, 0.65]) {
+      for (const fy of [0.5, 0.4, 0.6]) {
+        await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+        const tip = page.locator('.leaflet-tooltip.rf-tip');
+        try { await tip.first().waitFor({ state: 'visible', timeout: 700 }); } catch { continue; }
+        return (await tip.first().innerText()).replace(/\s+/g, ' ').trim();
+      }
+    }
+    return null;
+  }
+
+  test('the three "median household income" figures on Browse read as three different measurements', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, {
+      community_label: RING,
+      income_note: `${RING} · approximate`,
+      income_approximate: true,
+      income_vs_us_pct: 19.4,
+      growth_scope: 'Dallas',
+    });
+    const panel = await browseWithPanelAndStrip(page);
+
+    // (1) ONE TRACT'S PUBLISHED MEDIAN — the map tooltip's own source line.
+    const tip = await hoverAreaTip(page);
+    expect(tip, 'no polygon tooltip opened — the map drew no shading to read a caption off').toBeTruthy();
+    const tipGeo = geographiesIn(tip!);
+    expect(tipGeo, `the tooltip names ${JSON.stringify(tipGeo)}, not exactly one ruled geography: "${tip}"`).toEqual(['Census tract']);
+    expect(basesIn(tip!), 'a published tract estimate carries a basis word it has not earned').toEqual([]);
+
+    // (2) THE PRACTICE'S OWN RING — the snapshot strip's income card, in LOCATION mode.
+    const strip = await stripCard(page, 'Median household income');
+    expect(strip, 'the snapshot strip has no "Median household income" card').toBeTruthy();
+    expect(geographiesIn(strip!), `the strip card reads "${strip}"`).toEqual([RING]);
+    expect(basesIn(strip!), 'the API serves "approximate" on this exact figure and the strip drops it').toEqual(['approximate']);
+
+    // (3) THE SAME RING FIGURE IN THE PANEL — the Median Income tile, under the card's own scope.
+    const tile = await panelTile(panel, 'Median Income');
+    expect(tile, 'the panel has no Median Income tile').toBeTruthy();
+    expect(tile).toContain('+19% vs US · approximate');
+    await expect(panel.getByText(RING).first()).toBeVisible();
+
+    // THE RULING: the tract figure and the ring figures are captioned differently, and the two
+    // that ARE the same measurement are captioned the same.
+    expect(tipGeo).not.toEqual(geographiesIn(strip!));
+    expect(basesIn(strip!)).toEqual(basesIn(tile!));
+    expect(errors).toEqual([]);
+  });
+
+  test('every block of the docked panel says which area it describes, and the footnotes say how the three kinds differ', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, { community_label: RING, growth_scope: 'Dallas' });
+    const panel = await browseWithPanelAndStrip(page);
+
+    // R35-R37 / collision C8: the Competitive Landscape block sat under NO scope line at all —
+    // `overviewScope` is rendered once, above the overview grid, and this heading is below it. It
+    // takes the Market Overview heading's own sub-line, which is A27.7's established idiom.
+    for (const heading of ['Market Overview', 'Competitive Landscape']) {
+      const beneath = await panel.evaluate((root, h) => {
+        const head = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === h);
+        const next = head && (head.nextElementSibling as HTMLElement | null);
+        return { found: Boolean(head), text: next && (next.textContent || '').trim(), size: next && getComputedStyle(next).fontSize };
+      }, heading);
+      expect(beneath.found, `the panel has no "${heading}" heading`).toBe(true);
+      expect(beneath.text, `"${heading}" names no area — the block beneath it reads as the card's own ring scope without saying so`).toBe(RING);
+      expect(beneath.size, `"${heading}"'s sub-line is not the design's own place-line type`).toBe('12.5px');
+    }
+
+    // §4 — the same paragraph on both surfaces, because the three kinds of figure appear on both.
+    const KINDS = 'Three kinds of figure appear here and they measure different things.';
+    await expect(panel.getByText(KINDS)).toBeVisible();
+    // …after D-C39's own sentence, which must not move.
+    await expect(panel.getByText('A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.').first()).toBeVisible();
+    // R38-R41 / collisions C6 and C7: the four Market Opportunity verdicts are explained where a
+    // 9.5 px tile sub-line cannot carry them.
+    await expect(panel.getByText('Affluence compares this practice’s median income with the US median; growth is the surrounding city or county’s; payroll is the county’s.')).toBeVisible();
+
+    const strip = page.getByText(KINDS);
+    await expect(strip.first()).toBeVisible();
+    // The Addendum's own correction: the growth and payroll cards contradict "that practice's own
+    // community figure" on their own captions, so the sentence says what is true of all six.
+    await expect(page.getByText('with a practice selected each card is that practice’s own figure, captioned with the geography it is measured for.').first()).toBeVisible();
+    // A24.20's growth caveat and the derived-estimates sentence stay byte for byte (the
+    // fix-round-3 lesson recorded in CLAUDE.md).
+    await expect(page.getByText('Population growth is measured for the surrounding city or county, not the tract.').first()).toBeVisible();
+    await expect(page.getByText('Pet-household counts and average practice payroll are derived estimates, not observed values.').first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task A38 (D-C53) — the Admin > Data Sources tab reads `dataset_registry`, in a real browser.
+//
+// This is the surface CLAUDE.md marks LEGALLY load-bearing ("Blocked datasets never ship … The
+// admin Data Sources tab shows this gate; keep it"), and until this task it was five literal
+// fixture rows — two of them false about the running product. The approved-state oracle proves
+// the tab keeps its PIXELS through the design's own rows; what a pixel gate cannot say is that a
+// REAL registry reaches it, so these walk Chromium against a registry-shaped answer of the size
+// and shape the API actually sends (a bare array, ordered by key, no envelope and no cursor).
+//
+// Every stub row below is a real `dataset_registry` row's shape — `app/api/admin_data_sources.py`
+// `::_row`'s own keys — including the two states this tab exists to show: `blocked` with no
+// licence URL (pet ownership, the CLAUDE.md gate) and `unresolved` (the Esri basemap rows
+// migration 092 registers, which SHIP while their licence is undecided).
+// ---------------------------------------------------------------------------------------
+test.describe('admin data sources', () => {
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'acs5', display_name: 'ACS 5-Year Detailed Tables', api_dataset_id: '2023/acs/acs5',
+    vintage: '2019–2023', refresh_cadence: 'Annual (Dec)', license_status: 'cleared',
+    license_name: 'Public domain', license_url: 'https://www.census.gov/data/developers/about/terms-of-service.html',
+    attribution_text: 'Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023',
+    last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  // Sixteen of the nineteen keys migration 092 leaves in the registry, plus the three the tab is
+  // FOR: the blocked dataset with no terms page, and BOTH Esri basemap rows, which ship while
+  // their licence is undecided. Both of them, not one: 092 registers two, and the badge below is
+  // the count of rows nobody has cleared — with a single unresolved row beside the blocked one
+  // the fixture would answer exactly the design's own literal "2" and prove nothing about which
+  // of the two the tab is reading (gate run, 2026-09-14).
+  const REGISTRY = [
+    ...Array.from({ length: 15 }, (_, i) => registryRow({ dataset_key: `ds_${String(i).padStart(2, '0')}` })),
+    registryRow({
+      dataset_key: 'esri_tiles', display_name: 'Base map and tiles (Esri Light Gray Canvas)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement', attribution_text: 'Tiles © Esri'
+    }),
+    registryRow({
+      dataset_key: 'esri_imagery', display_name: 'Satellite imagery (Esri World Imagery)',
+      license_status: 'unresolved', license_name: null, refresh_cadence: 'live',
+      license_url: 'https://www.esri.com/en-us/legal/terms/master-agreement',
+      attribution_text: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+    }),
+    registryRow({
+      dataset_key: 'pet_ownership', display_name: 'Pet ownership incidence (commercial)',
+      license_status: 'blocked', license_name: null, license_url: null, refresh_cadence: 'n/a',
+      attribution_text: 'Pet-ownership incidence (licensed) — not in use',
+      notes: 'Ship only the ACS-derived estimate (rate 0.57) until a licence is signed',
+      drift_flagged: true
+    }),
+    registryRow({ dataset_key: 'zzz_cleared' })
+  ];
+
+  async function dataTab(page: Page, answer: { status: number; body?: string }, arm?: number) {
+    await prepare(page);
+    // Registered AFTER prepare()'s own collection stub — Playwright matches the LAST handler first.
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (route) => route.fulfill({ status: answer.status, contentType: 'application/json', body: answer.body ?? '{}' }));
+    // `expectApiStatus` tells the app from the reference by reading `page.url()`, so it needs a
+    // page that has already navigated, and it must be armed BEFORE the refusal it allows reaches
+    // the console. The signed-out boot is that navigation and logs nothing of its own — the
+    // ROUTES loop at the top of this file is what says so (gate run, 2026-09-14).
+    if (arm !== undefined) {
+      await booted(page);
+      expectApiStatus(page, arm);
+    }
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+  }
+
+  /** One status pill per row, and the head row has none — so this counts ROWS, and counts them
+   *  by the cell that carries the legal gate rather than by a div nesting a refactor could move.
+   *  `.sc-interp` is the generated template's own interpolation span, so each pill counts once. */
+  const statusPills = (page: Page) =>
+    page.locator('span.sc-interp').filter({ hasText: /^(Cleared|Unresolved|Blocked)$/ });
+
+  test('every registry row renders, with the blocked dataset\'s own pill and its attribution verbatim', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+
+    // The design draws five rows; a real registry has nineteen. Proving the COUNT is what says the
+    // tab stopped being a fixture — the pixel oracle can only ever say it still looks like one.
+    await expect(page.getByText('Base map and tiles (Esri Light Gray Canvas)').first()).toBeVisible();
+    await expect(page.getByText('Pet ownership incidence (commercial)').first()).toBeVisible();
+    await expect(statusPills(page), 'one status pill per registry key').toHaveCount(REGISTRY.length);
+    // …and NONE of the design's own fixture rows survives beside them.
+    await expect(page.getByText('Prior VetVision work'), 'a design fixture row is still on the tab').toHaveCount(0);
+
+    // The legal gate itself: the blocked dataset says Blocked, and its attribution is the
+    // `attribution_text` column verbatim, never composed.
+    await expect(statusPills(page).filter({ hasText: 'Blocked' })).toHaveCount(1);
+    await expect(page.getByText('Pet-ownership incidence (licensed) — not in use').first()).toBeVisible();
+    // `drift_flagged` is appended to the source sub-line — no fourth pill (controller ruling).
+    await expect(page.getByText(/Terms drift flagged/).first()).toBeVisible();
+    // The Esri row ships while its licence is undecided, and the tab says so in both columns.
+    await expect(page.getByText('Tiles © Esri').first()).toBeVisible();
+    await expect(page.getByText('Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community').first()).toBeVisible();
+    await expect(statusPills(page).filter({ hasText: 'Unresolved' })).toHaveCount(2);
+    await expect(page.getByText('Licence not recorded').first()).toBeVisible();
+  });
+
+  test('the badge counts the rows nobody has cleared — never the design\'s literal 2', async ({ page }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const outstanding = REGISTRY.filter((r) => r.license_status !== 'cleared').length;
+    expect(outstanding, 'the fixture must not accidentally equal the design\'s own 2').toBeGreaterThan(2);
+    await expect(page.getByRole('button', { name: `Data Sources ${outstanding}`, exact: true })).toBeVisible();
+  });
+
+  test('View terms renders only where a licence URL is recorded, and opens that page', async ({ page, context }) => {
+    await dataTab(page, { status: 200, body: JSON.stringify(REGISTRY) });
+    const terms = page.getByRole('button', { name: 'View terms' });
+    // Every row but the blocked one — the only row in the fixture with a null `license_url`.
+    await expect(terms).toHaveCount(REGISTRY.length - 1);
+
+    // `window.open(url, '_blank', 'noopener')` — the page the button actually reaches for.
+    const opened = await page.evaluate(() => {
+      const w = window as unknown as { __opened: unknown[] };
+      w.__opened = [];
+      window.open = (...args: unknown[]) => { w.__opened.push(args); return null; };
+      return true;
+    });
+    expect(opened).toBe(true);
+    await terms.first().click();
+    expect(await page.evaluate(() => (window as unknown as { __opened: unknown[][] }).__opened))
+      .toEqual([['https://www.census.gov/data/developers/about/terms-of-service.html', '_blank', 'noopener']]);
+    expect(context.pages(), 'the stub replaced window.open, so no tab may actually have opened').toHaveLength(1);
+  });
+
+  test('a refusal empties the tab and the badge — it never falls back to the design\'s five rows', async ({ page }) => {
+    // A17.1's rule, applied to the surface that carries the legal gate: showing a reviewer five
+    // datasets that are not the ones the platform holds is worse than showing none, and a badge
+    // over no rows is the "Data Sources 2" defect this task closed.
+    await dataTab(page, { status: 403, body: '{"error":{"code":"FORBIDDEN","message":"no"}}' }, 403);
+    await expect(statusPills(page), 'no row at all, rather than the design\'s five').toHaveCount(0);
+    await expect(page.getByText('Prior VetVision work')).toHaveCount(0);
+    await expect(page.getByText('Pet ownership estimates')).toHaveCount(0);
+    // No number at all, rather than a stale or fabricated one (A39.3b/A38.2).
+    await expect(page.getByRole('button', { name: /^Data Sources\s*\d/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Data Sources', exact: true })).toBeVisible();
+    // The footnote — the sentence the whole gate rests on — is the design's own and still there.
+    await expect(page.getByText(/No dataset reaches production until its license is recorded here/).first()).toBeVisible();
+    await settleExpectedApiFailures(page);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// A38 review F11 — the committed re-derivation of the two layout caps.
+//
+// `app/census/registry.py` holds `SOURCE_SUBLINE_CAP` and `DATASET_SUBLINE_CAP` with their
+// measurements in prose, and `tests/census/test_registry.py` holds every registry row to them. A
+// number measured once in a browser and then written down is a number that goes stale the day the
+// admin table's grid, its padding, the design's 12.5 px/1.5 sub-line type or the card's own
+// max-width moves — so the probe that produced them is committed, runs in the same real Chromium
+// at the same 1440 x 940, and FAILS if either cap no longer buys two lines.
+//
+// `scripts/measure_source_subline_cap.py` runs this case and compares what it prints with the two
+// constants, the way `scripts/measure_area_breaks.py` re-derives `AREA_LAYERS`.
+// ---------------------------------------------------------------------------------------
+test.describe('A38 — the measured sub-line caps', () => {
+  // The registry's own longest `license_name`, which the Source sub-line carries in front of the
+  // note, and the design's own tallest fixture row, which is the budget both caps are cut to.
+  const LONGEST_LICENCE = 'CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)';
+  const TWO_SUBLINES_PX = 61;
+
+  /** The caps DERIVED from `app/census/registry.py`, never retyped (review Minor 7). That module
+   *  is the one place both numbers live — the pytest pin, the licence-decision route and the CLI
+   *  all import them from there — and a probe that declared its own copy could go on asserting a
+   *  number nothing else uses. Read out of the source, the way `tests/test_docs.py` reads this
+   *  repository's TypeScript literals from the other direction. */
+  function capFromPython(name: string): number {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app', 'census', 'registry.py'), 'utf8');
+    const m = new RegExp(`^${name} = (\\d+)$`, 'm').exec(src);
+    expect(m, `app/census/registry.py declares no ${name}`).not.toBeNull();
+    return Number(m![1]);
+  }
+
+  // `.slice` then `.trim()` could take a character back off the end, so two of the Dataset probe's
+  // seven rows used to compose 77 and never tested the cap itself (review Minor 7). Padding is
+  // added to the LAST word instead, so every row is exactly `n` characters.
+  const words = (w: number, n: number) => {
+    const out = Array.from({ length: Math.ceil(n / (w + 1)) }, () => 'abcdefghijklmnopqrstuvwxyz'.slice(0, w)).join(' ').slice(0, n);
+    return out.length === n && !out.endsWith(' ') ? out : out.slice(0, n - 1) + 'z';
+  };
+
+  const registryRow = (over: Record<string, unknown>) => ({
+    dataset_key: 'probe', display_name: 'D', api_dataset_id: null, vintage: null,
+    refresh_cadence: 'n/a', license_status: 'cleared', license_name: null, license_url: null,
+    attribution_text: 'A', last_verified_at: null, drift_flagged: false, notes: null,
+    active_vintage: null, active_vintage_note: null, last_run: null, ...over
+  });
+
+  /** Each cell's height for a page of probe rows, in the app's own admin table. */
+  async function heights(page: Page, rows: object[], cell: 0 | 1): Promise<number[]> {
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    return page.evaluate((which) => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => Math.round(e.children[which].getBoundingClientRect().height)), cell);
+  }
+
+  test('the Source column still holds SOURCE_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
+    // The sub-line is `license_name · notes`, so the note carries the cap minus the licence name
+    // and the separator. Word lengths 5 to 22: the note text that packs worst is what the cap has
+    // to survive, not the average.
+    const CAP = capFromPython('SOURCE_SUBLINE_CAP');
+    const MIXES = [5, 8, 12, 16, 22];
+    const rows = MIXES.flatMap((w) =>
+      [CAP, CAP + 10].map((n) => registryRow({ license_name: LONGEST_LICENCE, notes: words(w, n - LONGEST_LICENCE.length - 3) })));
+    const got = await heights(page, rows, 1);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
+    expect(Math.max(...atCap), `SOURCE_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    // Both sides of the number (review Minor 7): a cap that has become needlessly TIGHT is a
+    // measurement gone stale too, and until this the probe generated the over-cap rows and read
+    // none of them. The cap is the largest count that fits for EVERY word mix, so ten past it must
+    // fail for at least ONE of them — `max`, not `min`: a generous mix fitting more is what makes
+    // the floor a floor.
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] SOURCE_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the Dataset column still holds DATASET_SUBLINE_CAP characters of sub-line on two lines, and not ten more', async ({ page }) => {
+    // `refresh_cadence` is printed verbatim as the first clause, which is the cheapest way to
+    // drive a sub-line of an exact length; ` · Terms verified never` (23) is always appended.
+    // Word lengths 4 to 16 — the range this sub-line's own vocabulary spans, its longest token
+    // being `Current_Current` at 15.
+    const CAP = capFromPython('DATASET_SUBLINE_CAP');
+    const TAIL = ' · Terms verified never'.length;
+    const MIXES = [4, 5, 6, 8, 10, 12, 16];
+    const rows = MIXES.flatMap((w) => [CAP, CAP + 10].map((n) => registryRow({ refresh_cadence: words(w, n - TAIL) })));
+    const got = await heights(page, rows, 0);
+    const atCap = MIXES.map((_w, i) => got[i * 2]);
+    const over = MIXES.map((_w, i) => got[i * 2 + 1]);
+    expect(Math.max(...atCap), `DATASET_SUBLINE_CAP = ${CAP} no longer buys two lines`).toBeLessThanOrEqual(TWO_SUBLINES_PX);
+    expect(Math.max(...over), `${CAP} + 10 characters fits two lines at every word mix — the cap is too tight`).toBeGreaterThan(TWO_SUBLINES_PX);
+    console.log(`[A38-CAPS] DATASET_SUBLINE_CAP=${CAP} maxPx=${Math.max(...atCap)} overPx=${Math.max(...over)} twoLinePx=${TWO_SUBLINES_PX}`);
+  });
+
+  test('the design\'s own tallest fixture row is still the 94 px budget both caps are cut to', async ({ page }) => {
+    const { designAdminDataSourcesBody } = await import('./design-admin-data-sources.mjs');
+    await prepare(page);
+    await page.route((url) => url.pathname === '/api/admin/data-sources',
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: designAdminDataSourcesBody() }));
+    await signInAs(page, 'design', '/admin?tab=data');
+    await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' })).toBeVisible();
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll('div[style*="grid-template-columns: 1.1fr"]'))
+      .filter((e) => (e as HTMLElement).getAttribute('style')!.includes('padding: 16px 20px'))
+      .map((e) => [Math.round(e.getBoundingClientRect().height),
+                   Math.round(e.children[0].getBoundingClientRect().width),
+                   Math.round(e.children[1].getBoundingClientRect().width)]));
+    expect(Math.max(...rows.map((r) => r[0]))).toBe(94);
+    expect(rows[0][1]).toBe(258);  // Dataset column
+    expect(rows[0][2]).toBe(376);  // Source column
+    console.log(`[A38-CAPS] designTallestPx=${Math.max(...rows.map((r) => r[0]))} datasetPx=${rows[0][1]} sourcePx=${rows[0][2]}`);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A51 — THE RECENTER CONTROL (Task MAP-RECENTER, John, 2026-09-16): "add a 'recenter' button
+// that recenters the map on the selected city and or if selected practice location, place this
+// recenter icon between the + | −".
+//
+// The approved state `browse-recenter-location` photographs the result on BOTH targets, which is
+// the oracle. What it cannot say is a NUMBER — that the zoom the member was on survived, and that
+// the pin landed at the middle of the map rather than merely somewhere new — so those are read
+// here, off real Chromium and off the DOM, without the production code growing a test-only seam
+// (the A35 discipline, one control over).
+//
+// The pin's own anchor is what makes this exact: `marker(..., { size: [78, 34], anchor: [39, 34] })`
+// puts the practice's latitude and longitude at the icon box's horizontal centre and its BOTTOM
+// edge, so that point — not the box's middle — is what the map centres.
+// ---------------------------------------------------------------------------------------
+test.describe('A51 — the recenter control centres what is selected, and the city when nothing is', () => {
+  const SELECTED = '.leaflet-marker-pane .leaflet-marker-icon';
+  const CEDAR_PARK = 'Cedar Park Animal Hospital';
+
+  /** How far ONE named practice's own point sits from the middle of the map, in CSS pixels.
+   *
+   *  Addressed by the marker's `title`, which the design sets to `name + " — " + priceLabel`
+   *  (MarketMapV3.jsx's own marker options) and Leaflet renders onto the icon. NOT by z-index, and
+   *  that is measured rather than stylistic: `Marker._setPos` computes `_zIndex = pos.y +
+   *  zIndexOffset`, so the selected pin's 1000 is an offset on a PIXEL ordinate, and at zoom 12 a
+   *  practice far enough south sits thousands of pixels down and outranks it — the first draft of
+   *  this case read Kyle's pin and reported the selected practice 165 px off centre while the
+   *  screenshot showed it dead centre. */
+  const pinOffset = (page: Page, name: string) => page.evaluate(([sel, want]) => {
+    const map = document.querySelector('.leaflet-container') as HTMLElement | null;
+    const pin = [...document.querySelectorAll<HTMLElement>(sel)].find((el) => (el.title || '').startsWith(want));
+    if (map === null || pin === undefined) return null;
+    const m = map.getBoundingClientRect();
+    const p = pin.getBoundingClientRect();
+    // anchor [39, 34] on a [78, 34] icon: horizontal centre, bottom edge.
+    return { dx: Math.abs(p.left + 39 - (m.left + m.width / 2)), dy: Math.abs(p.top + 34 - (m.top + m.height / 2)) };
+  }, [SELECTED, name] as const);
+
+  /** The map's own zoom, off Leaflet's animation proxy — the A35 reader, verbatim. */
+  const zoomOf = (page: Page) => page.evaluate(() => {
+    const proxy = document.querySelector('.leaflet-map-pane > .leaflet-proxy') as HTMLElement | null;
+    if (proxy === null) return null;
+    const m = /scale\(([0-9.e+-]+)\)/.exec(proxy.style.transform);
+    return m === null ? null : Math.round(Math.log2(Number(m[1]))) + 1;
+  });
+
+  const recenter = (page: Page) => page.getByRole('button', { name: 'Recenter' }).first().click();
+
+  test('a selected practice is brought to the middle of the map, at the zoom the member is on, with its panel still open', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    await page.getByText('Cedar Park').first().click();
+    await page.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await page.waitForTimeout(700);                    // the selection's own animated panInside
+
+    // The member zooms in twice and drags the map away, so "it did not move" cannot pass for
+    // "it recentred" and the zoom the control must NOT touch is not the metro's own 10.
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(700);
+    const zoomed = await zoomOf(page);
+    expect(zoomed, 'the + control did not move the map, so this case proves nothing about the zoom').toBe(12);
+    const before = await pinOffset(page, CEDAR_PARK);
+    expect(before, 'the selected practice has no pin on the map at all').not.toBeNull();
+    // …and it is NOT already at the middle, or the assertion below would pass on the pan rather
+    // than on the recentre.
+    expect(before!.dx + before!.dy, 'the map already had the practice centred before Recenter was pressed').toBeGreaterThan(4);
+
+    await recenter(page);
+    await page.waitForTimeout(900);                    // the recentre is animated too
+
+    const after = (await pinOffset(page, CEDAR_PARK))!;
+    expect(after.dx, 'the selected practice is not at the middle of the map horizontally').toBeLessThanOrEqual(2);
+    expect(after.dy, 'the selected practice is not at the middle of the map vertically').toBeLessThanOrEqual(2);
+    expect(await zoomOf(page), 'recentring changed the zoom — a second action the label does not name').toBe(12);
+    // THE OTHER HALF OF THE RULING: the selection survives, so the docked panel that names the
+    // practice is still open beside the map. `resetView` (the bottom-right "Reset view" button)
+    // is what clears a selection, and this control is deliberately not it.
+    await expect(page.getByText('View full listing').first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('with nothing selected it returns the metro to its own centre AND zoom', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    // The map as the metro opens it, read through every pin's position at once — a centre this
+    // test can compare without reaching into Leaflet for one.
+    const pins = () => page.evaluate((sel) => [...document.querySelectorAll<HTMLElement>(sel)]
+      .map((el) => { const r = el.getBoundingClientRect(); return `${Math.round(r.left)},${Math.round(r.top)}`; }).join(' '), SELECTED);
+    const home = await pins();
+    expect(home, 'no pins are drawn, so nothing here can move').not.toBe('');
+    expect(await zoomOf(page)).toBe(10);
+
+    await page.getByRole('button', { name: 'Zoom in' }).first().click();
+    await page.waitForTimeout(700);
+    expect(await pins(), 'the map never moved, so the recentre below would pass vacuously').not.toBe(home);
+
+    await recenter(page);
+    await page.waitForTimeout(900);
+    expect(await zoomOf(page), 'the metro zoom was not restored').toBe(10);
+    expect(await pins(), 'the metro centre was not restored').toBe(home);
+    expect(errors).toEqual([]);
   });
 });

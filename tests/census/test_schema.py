@@ -6,11 +6,18 @@ def _cols(cur, table):
 def test_registry_and_ledger_tables_match_spec_13(conn):
     with conn.cursor() as cur:
         assert _cols(cur, "ingest_run") == ["id", "dataset_key", "vintage", "started_at", "finished_at", "status",
-                                            "rows_written", "request_count", "raw_payload_uri", "error_detail"]
+                                            "rows_written", "request_count", "raw_payload_uri", "error_detail",
+                                            "notes"]  # 095_ingest_run_notes.sql (Task CENSUS-204, defect 3)
         assert _cols(cur, "dataset_registry") == ["dataset_key", "display_name", "api_dataset_id", "base_url", "vintage",
                                                   "naics_param", "refresh_cadence", "license_status", "license_name",
                                                   "license_url", "attribution_text", "last_verified_at", "notes",
-                                                  "drift_flagged"]  # 020_license_audit.sql (Task A8, spec §9)
+                                                  "drift_flagged",  # 020_license_audit.sql (Task A8, spec §9)
+                                                  # 094_registry_blocked_reason.sql (A38 fix round 3): the MEMBER's
+                                                  # sentence, served by `/api/layers` and the two payloads when a
+                                                  # layer's licence is not cleared. `notes` is the OPERATOR's column
+                                                  # and the admin tab's; the two shared one until this migration, so
+                                                  # a geography note could be served as the reason for a block.
+                                                  "blocked_reason"]
         assert _cols(cur, "active_vintage") == ["dataset_key", "vintage", "activated_at", "activated_by", "note"]
         cur.execute("SELECT conname FROM pg_constraint WHERE conname = 'ingest_run_dataset_fk'")
         assert cur.fetchone(), "spec §13 adds the ingest_run → dataset_registry FK after the registry exists"

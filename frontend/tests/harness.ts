@@ -2,7 +2,9 @@ import { request as apiRequest, type BrowserContext, type Page } from '@playwrig
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminUsersBody } from './design-admin-users.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody } from './design-summary.mjs';
 
@@ -61,8 +63,56 @@ export function guard(page: Page): void {
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     if (consumeExpectedApiFailure(page, m.text())) return;
+    if (allowsAnonymousBootRefusal(page, m.text(), m.location().url)) return;
     throw new Error(`console.error: ${m.text()}`);
   });
+}
+
+// ---------------------------------------------------------------------------------------
+// THE ANONYMOUS BOOT'S OWN REFUSAL, on a LIVE target only (Task HOUSEKEEPING-C item 9,
+// REL-0123 concern 2).
+//
+// `signin-form.spec.ts` is the repository's own check that the design's sign-in card works, and it
+// is the one check a QA hand-back most wants to run. It CANNOT run against `PW_APP_URL`: the tests
+// load `/` anonymously, `src/main.ts` asks `GET /api/listings` before it mounts, a real deployment
+// answers 401 to an anonymous visitor, Chromium logs every 4xx subresource as a console error that
+// cannot be suppressed, and `guard()` throws at 1.3 s before a key is typed. Locally and in CI the
+// endpoint is stubbed (`listingsStubUrl` returns `null` under `PW_APP_URL` BY DESIGN, so the QA
+// parity run measures the real seeded API), which is exactly why nothing saw it until the 0.1.23
+// release agent ran the suite at QA and had to re-create the check as a throwaway spec.
+//
+// The allowance is shaped like `expectApiStatus` and is deliberately narrower in three ways and
+// wider in one:
+//
+//   * LIVE ONLY. It is a no-op wherever the D6 stub is armed — the same `listingsStubUrl` decision,
+//     read once, so the local and CI runs keep the gate they have always had and a 401 there still
+//     fails the test at its cause.
+//   * ONE REQUEST. `GET /api/listings` — the anonymous boot's own call — and no other: the console
+//     line carries no request identity of its own, so `guard()` reads it from the message's own
+//     `location().url`, the resource Chromium is reporting on for a "Failed to load resource" line,
+//     and it is matched with `matchesListings`'s own idiom (the bare path or the same path with a
+//     query, never a prefix) so a real server route under it is never swept in by accident. Review,
+//     HOUSEKEEPING-C fix round 1, Important-3: matching on status alone tolerated a 401 from ANY
+//     request for the whole life of the page, which is a real refusal this gate exists to catch.
+//   * ONE STATUS. 401 and nothing else: a 500 from the boot is a real failure and still throws.
+//   * STANDING, not one-shot, which is the one way it is weaker than `expectApiStatus`. An
+//     anonymous boot happens on every anonymous load and these tests load more than once, so a
+//     counted arming would have to guess a number that depends on how many endpoints the boot
+//     asks for — and a wrong guess fails the run for the wrong reason. It is armed per PAGE from
+//     the test's own body, so nothing else in the suite is exempted from anything.
+// ---------------------------------------------------------------------------------------
+const anonymousBootAllowance = new WeakMap<Page, string>();
+
+/** Tolerates the anonymous boot's own 401 on this page, on a LIVE target. A no-op locally. */
+export function allowAnonymousBootRefusal(page: Page, env: NodeJS.ProcessEnv = process.env): void {
+  if (listingsStubUrl(env) !== null) return;
+  anonymousBootAllowance.set(page, new URL('/api/listings', appOrigin(env)).href);
+}
+
+/** Whether this console line, FROM THIS REQUEST, is that refusal on a page that armed the allowance. */
+export function allowsAnonymousBootRefusal(page: Page, message: string, url: string): boolean {
+  const base = anonymousBootAllowance.get(page);
+  return base !== undefined && matchesListings(url, base) && isExpectedApiFailure(401, message);
 }
 
 export async function prepare(page: Page): Promise<void> {
@@ -286,20 +336,30 @@ export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string 
   return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
-/** The two collection endpoints the oracle answers itself, or `[]` on a remote target
- *  (A-SL2, A-SL23 (2)). Pinned in harness.test.ts (review I4): an untested `if` is all that
- *  stands between a stub and a QA parity run. */
+/** The four collection endpoints the oracle answers itself, or `[]` on a remote target
+ *  (A-SL2, A-SL23 (2); Task A36 added the accounts queue and Task A38 the registry). Pinned in
+ *  harness.test.ts (review I4): an untested `if` is all that stands between a stub and a QA
+ *  parity run. */
 export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
-  return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
+  return ['/api/seller/listings', '/api/admin/listings', '/api/admin/users', '/api/admin/data-sources']
+    .map((path) => new URL(path, appOrigin(env)).href);
 }
 
-/** What each of them answers: the design's own four seller rows, and — for the admin collection
- *  (Task SL8) — the design's own five Listings rows, "Flagged" included (see `design-admin-
- *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit). Never "no
- *  page": an error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
+/** What each of them answers: the design's own four seller rows; for the admin listings collection
+ *  (Task SL8) the design's own five Listings rows, "Flagged" included (see `design-admin-
+ *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit); and for the
+ *  registry (Task A38) the design's own five Data Sources rows, whose pill words ARE
+ *  `dataset_registry.license_status`'s own three values. Never "no page": an error-shaped answer is
+ *  exactly what A-SL23 (2) took out of this harness. */
 export function collectionStubBody(href: string): string {
-  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : designAdminListingsBody();
+  if (href.endsWith('/api/seller/listings')) return designSellerPageBody();
+  if (href.endsWith('/api/admin/data-sources')) return designAdminDataSourcesBody();
+  // Task A36: the Users tab now reads this endpoint too, so the oracle answers it with the
+  // design's own four rows AND the design's own badge (`counts.open`, read off the tab literal
+  // by `design-admin-users.mjs`) — the frozen `admin-users` capture keeps its pixels through the
+  // SUCCESS path, exactly as `admin-listings` does.
+  return href.endsWith('/api/admin/users') ? designAdminUsersBody() : designAdminListingsBody();
 }
 
 /** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid
@@ -628,6 +688,11 @@ export const PERSONAS = {
   design: { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] },
   buyer: { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] },
   seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
+  // Ruling D-C54 (John, 2026-09-13): an account whose ONLY grant is `admin` — the shape his own
+  // account has, and the one `design@`'s four roles can never express. Its computed label is
+  // `design@`'s own, which is part of why the defect hid: the header reads "VIN Foundation admin"
+  // for both, and only the matrix knew they opened different doors.
+  adminOnly: { email: 'admin@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin'] },
   pending: { email: 'pending@practice-match.test', name: 'Pending Applicant', role: 'Applicant', initials: 'PA', state: 'pending', roles: [] },
   needsReview: { email: 'needs-review@practice-match.test', name: 'Applicant Under Review', role: 'Applicant', initials: 'AR', state: 'needs_review', roles: [] },
   declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] },
@@ -1020,7 +1085,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET — FIFTEEN of thirty (review round 1, I1/M3; traced against the real
+ * THE BUDGET — SIXTEEN of thirty (review round 1, I1/M3; traced against the real
  * `POST /api/auth/signin` calls, not estimated).
  *
  * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
@@ -1036,14 +1101,16 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  *                     and Task ADMIN-GATE's own: `design@` through the design's own form, the one
  *                     path that exercises the reload seam (A40.5) — `signInAs` sets cookies and
  *                     reloads, which is precisely what hid that defect
- *   smoke         +1  the reauth check's standalone `personaSignIn()` session
+ *   smoke         +2  the reauth check's standalone `personaSignIn()` session, and ruling D-C54's
+ *                     `adminOnly` — the account with `admin` and nothing else
  *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
  *                     reset revoked the session and `personaPasswordRotated` forgot it
  *
- * TEN accounts are seeded and NINE of them are signed in as: `design`, `buyer`, `seller`,
- * `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The tenth,
- * `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists only to
- * own the verify fixture tokens, because consuming one confirms its account for good (A-S5.2).
+ * ELEVEN accounts are seeded and TEN of them are signed in as: `design`, `buyer`, `seller`,
+ * `adminOnly`, `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The
+ * eleventh, `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists
+ * only to own the verify fixture tokens, because consuming one confirms its account for good
+ * (A-S5.2).
  *
  * Each RESET costs one extra: `POST /api/auth/password/reset` revokes every session the account
  * had, so `personaPasswordRotated` drops the memo and the next state that needs `verified@` signs
@@ -1057,7 +1124,9 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * A REMOTE run (`PW_APP_URL`) differs on both halves of that, and Task S7 (John, 2026-09-08) is
  * where the difference is handled. Nothing clears QA's counters — its rate limits are the real
  * ones, deliberately (A-S5.1), so two runs of this suite against QA are fifteen minutes apart, one
- * fixed `SIGNIN_IP` window. The FIXTURES, though, are reseeded either way: a local run's `api` web
+ * sliding `SIGNIN_IP` window measured from the first run's LAST sign-in (Task RATE-LIMIT-WINDOW —
+ * there is no quarter-hour boundary to wait for, and the window holds every sign-in for a full
+ * 900 s after it, so counting from the FIRST one is a lower bound rather than a guarantee). The FIXTURES, though, are reseeded either way: a local run's `api` web
  * server runs `seed_persona` before it serves (A-I7), and a remote run runs the same script against
  * the target from `frontend/tests/global-setup.ts` before its first test — so every run of this
  * suite, local or live, starts from the same known baseline, and the eight live account flows
@@ -1068,7 +1137,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * for `buyer@` only, and one of ten.
  */
 export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
-  design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
+  design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null }, adminOnly: { cookies: null },
   pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null },
   verified: { cookies: null }, unverified: { cookies: null }, invited: { cookies: null },
   verifyMe: { cookies: null }

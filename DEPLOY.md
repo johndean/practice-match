@@ -123,7 +123,7 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 **`SKIP_VERIFY=1 scripts/deploy.sh <env>`** skips the automatic `verify-deploy.sh` call at the end of `deploy.sh`. It exists only to sequence the very first deploy of a brand-new commit (e.g. deploying `api` and `worker` back to back without the first one's probe racing the second's rollout) and must never be habitual — Railway's own healthcheck passes on an always-200 `/api/healthz` regardless of the database or Redis being reachable (Task 8 proved this: the first QA attempt was green in Railway with the database unreachable), so `scripts/verify-deploy.sh` is the only gate that actually reads component state (`db.ok`, `postgis_version`, the `/deep` endpoint's 200). Always let it run; only skip it deliberately, and always run it by hand immediately after if you do.
 
-**`EXPECT_SHA`** is the commit `scripts/verify-deploy.sh` requires the live `/api/healthz` to report, so a stale container that answers 200 with yesterday's code fails the deploy: unset or empty both fall back to this checkout's `git rev-parse --short HEAD` (the script's `${EXPECT_SHA:-…}` cannot tell an empty value from an absent one), a non-empty value is compared verbatim, and the assertion is skipped only when the script runs outside a git checkout, where `git rev-parse` yields nothing to compare against. When the branch has moved past the tree that is actually deployed, pass the deployed commit explicitly — `EXPECT_SHA=087acc1 scripts/verify-deploy.sh QA` — because the default would otherwise demand a HEAD that was never shipped.
+**`EXPECT_SHA`** is the commit `scripts/verify-deploy.sh` requires the live `/api/healthz` to report, so a stale container that answers 200 with yesterday's code fails the deploy: unset or empty both fall back to this checkout's `git rev-parse --short HEAD` (the script's `${EXPECT_SHA:-…}` cannot tell an empty value from an absent one), a non-empty value is compared verbatim, and the assertion is skipped only when the script runs outside a git checkout, where `git rev-parse` yields nothing to compare against. When the branch has moved past the tree that is actually deployed, pass the deployed commit explicitly — `EXPECT_SHA=087acc1 scripts/verify-deploy.sh QA` — because the default would otherwise demand a HEAD that was never shipped. **It must be the SHORT sha.** The value is compared verbatim against the `commit_sha` `/api/healthz` reports, and that is `/app/BUILD_SHA` — the `git rev-parse --short HEAD` `deploy.sh` stamps into the archive — so the 40-character form every `git log` and every GitHub URL hands you is rejected as a stale container and a perfectly good deploy fails its own verification with `FAIL: commit_sha is '087acc1', expected '087acc1c0f…'` (REL-0123, 2026-09-13).
 
 **`EXPECT_VERSION`** is the release version the live `/api/healthz` must report, and it is the probe that proves the deployed **artefact** rather than a variable. `commit_sha` could not: it was the `COMMIT_SHA` service variable `deploy.sh` sets immediately before each upload, so it agreed with the deploy even in P14, when the tree that had actually been uploaded was a different one. `version` is read from the `pyproject.toml` *inside the image*, so a tree that is not the one we built shows up here — a mismatch fails with one `FAIL:` line naming both versions. `deploy.sh` passes the version of the tree it archived; run by hand the default is the version in the `pyproject.toml` beside the script, and (as with `EXPECT_SHA`) unset and empty behave identically, the assertion being skipped only when that file is unreadable or carries no version. **After deploying a SOURCE_DIR other than this checkout**, both defaults are wrong for a hand-run verification — the verifier would demand this checkout's version and sha and report `FAIL: version is …, expected …` against a perfectly good deploy — so re-run it as `EXPECT_SHA=<sha> EXPECT_VERSION=<version> scripts/verify-deploy.sh QA`, with the sha and version of the tree that was archived. `scripts/deploy.sh` prints that exact line, filled in, after every successful deploy. `commit_sha` is now an artefact property too: it is the contents of `/app/BUILD_SHA`, a file `deploy.sh` writes into the archive and the Dockerfile copies, falling back to the `COMMIT_SHA` variable only when the image carries no stamp (a git-connected Railway build, or a local `docker build`).
 
@@ -186,7 +186,7 @@ rather than through the app, so they belong on this page:
   Every run writes an audit row. **The link is a credential**: send it the way you would a password
   reset, never into a shared log.
 * **QA persona accounts** — `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`
-  seeds the ten `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
+  seeds the eleven `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
   **refuses on production with no override flag** (exit 2). `PERSONA_PASSWORD` is read from the
   shell by the script itself; held in the operator's macOS Keychain (service `practice-match-qa`,
   account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s
@@ -520,13 +520,48 @@ env PYTHONPATH=/app python scripts/census_load.py qwi      # resolves the latest
 env PYTHONPATH=/app python scripts/census_load.py bds --year 2022
 ```
 
+**A QWI run that reports `succeeded` with fewer than 51 states is expected, not a fault** (Task
+CENSUS-204). When the Census publishes nothing for a state it answers `204 No Content` with an
+empty body, and the loader records that state on the run and carries on with the rest. **Measured
+once, on 2026-09-14:** Alaska (`02`) and Michigan (`26`) answered `204` at every quarter probed
+back to 2022Q4, with no industry filter — an absence from the programme on that day's evidence
+rather than a late publication, and not a standing fact this file can promise for future years.
+Read `ingest_run.notes` for that run to see exactly which states were skipped and why;
+`error_detail` stays for what ENDED a run. **Nothing in the code names a state** — the rule is "no
+data for this state in this period", measured per run — so a state that starts or stops publishing
+needs no change here and no change to this paragraph. To re-run one state on its own:
+
+```bash
+env PYTHONPATH=/app python scripts/census_load.py qwi --states 26
+env PYTHONPATH=/app python scripts/census_load.py cbp --states 26         # the same door for the other two
+env PYTHONPATH=/app python scripts/census_load.py bds --year 2023 --states 26
+```
+
 Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
 e.g. a licence gate or a missing prerequisite · `3` database unreachable or failed · `4` a
-download/fetch failed · `5` validation failed) and stop on the first non-zero — nothing later
-depends on a partial load, and every table is an idempotent upsert.
+download/fetch failed, **including a `qwi` probe that walked its whole twelve-quarter window and
+found no published quarter** — the shape `--states 02` produces before Alaska starts publishing,
+and one that writes its own `failed` `ingest_run` row before it exits · `5` validation failed) and
+stop on the first non-zero — nothing later depends on a partial load, and every table is an
+idempotent upsert.
 
 Then activate, one dataset at a time, each with its own reviewed note — `--force` needs both
-`--note` and John's word, never one without the other:
+`--note` and John's word, never one without the other.
+
+> **`activate` refuses a vintage whose run skipped anything** (Task CENSUS-204 fix round 1, exit
+> 5, `ActivationRefused`). The refusal names the geographies and says the vintage is PARTIAL, so
+> it reads differently from the row-count-ratio refusal beside it. There is no override and
+> `--force` does not lift it — `--force` covers the ratio alone. The route is to **re-run the
+> missing geographies** (`--states`, or `acs --levels`) and activate the run that skipped nothing:
+> `activate` reads the LATEST `ingest_run` for that vintage. This exists because a loader that
+> meets a `204` now completes instead of failing, so `succeeded` is no longer on its own a claim
+> that the vintage is whole, and the ratio guard cannot stand in for it: on a dataset's first-ever
+> activation there is no prior vintage to divide by and the ratio check does not run at all.
+> **QWI is untouched by this**: it is not in `vintage.TABLE_FOR`, so it has no QA diff, no
+> `active_vintage` row and no activation path at all — which is exactly why one absent state can
+> be skipped there without ever blocking anything. BDS *is* in that table, though it has no
+> `activate` step in this sequence (see the QWI/BDS note further down); a BDS run that skipped a
+> state is refused the same way, and `bds --year <y> --states <fips>` is its re-run door.
 
 ```bash
 env PYTHONPATH=/app python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"
