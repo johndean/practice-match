@@ -56,6 +56,7 @@ import logging
 from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -69,6 +70,8 @@ from app.cache import LIST_CACHE_PREFIX, sync_redis
 from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
+from app.privacy import record
+from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
 from app.tasks.celery_app import celery_app
 
@@ -84,7 +87,10 @@ LIST_TTL_S = 60
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_MARKET_LEN = 64
-PHOTO_CACHE_CONTROL = "private, max-age=86400"
+#: D-IDP-11, replacing `private, max-age=86400`. See `app/privacy/delivery.py::PHOTO_HEADERS`: a
+#: flip changes the URL AND the ETag, so no browser can revalidate its way back to a variant the
+#: policy has replaced. Kept as a name because `tests/api/test_listings.py` pins it.
+PHOTO_CACHE_CONTROL = PHOTO_HEADERS["Cache-Control"]
 # GEO-WIRE (1). `app/api/market.py`'s `BACKFILL_DEDUPE_TTL` (600 s) and its key shape, one task
 # earlier in the same chain: geocode -> backfill -> materialise.
 GEOCODE_DEDUPE_PREFIX = "geocode:"
@@ -92,7 +98,8 @@ GEOCODE_DEDUPE_TTL = 600
 
 _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
-       name_disclosed, rev_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
+       name_disclosed, rev_disclosed, identifiable_content_visibility,
+       ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
        note, staff, services, facility, ownership, photos, photo_captions,
        coalesce((SELECT jsonb_object_agg(a.id::text, a.caption) FROM listing_asset a
@@ -102,7 +109,26 @@ SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_
        -- stays a single table every caller can go on appending its own WHERE to. `null` for a
        -- listing that has never been geocoded, which is what absence means everywhere else in
        -- this payload (D-C31).
-       (SELECT pl.geo_precision FROM practice_location pl WHERE pl.listing_id = listing.id) AS geo_precision
+       (SELECT pl.geo_precision FROM practice_location pl WHERE pl.listing_id = listing.id) AS geo_precision,
+       -- Spec 2026-09-09 C.7 row 3, the `visible_photos` aggregate: every privacy record this
+       -- listing's photographs have, keyed by asset id, so `_photo_urls` can resolve a whole page
+       -- in ONE statement rather than a lookup per photograph.
+       --
+       -- The JOIN to `listing_asset` is NOT optional: `buyer_variant`'s SHOW arm answers a
+       -- `Variant` only when the DISPLAY key and hash are both present, and the privacy table
+       -- holds neither — so an aggregate carrying status, visibility and the redacted hash alone
+       -- would resolve to None for every SHOW photograph in the country.
+       coalesce((SELECT jsonb_object_agg(p.asset_id::text, jsonb_build_object(
+                          'status', p.processing_status,
+                          'visible', p.buyer_visible,
+                          'redacted_key', p.redacted_storage_key,
+                          'redacted', p.redacted_sha256,
+                          'display_key', a.storage_key,
+                          'display', a.sha256))
+                   FROM listing_asset_privacy p
+                   JOIN listing_asset a ON a.id = p.asset_id
+                  WHERE p.listing_id = listing.id),
+                '{}'::jsonb) AS visible_photos
   FROM listing
 """
 
@@ -273,6 +299,54 @@ def photo_file(photos: list[str | None], n: int) -> Path | None:
     return candidate
 
 
+@lru_cache(maxsize=1)
+def seed_digests() -> dict[str, str]:
+    """`<slug>/<file>` -> the SHA-256 `scripts/prepare_photos.py` recorded, read once per process.
+
+    The sibling of `seed_captions()` (which lives in `app/api/seller_listings.py`); it is HERE
+    because `serialise` is here and `seller_listings` imports from this module, never the reverse.
+    An absent or malformed inventory falls back to an empty map, and a seed URL then carries no
+    `?v=` -- a missing cache key, never a missing photograph."""
+    try:
+        index = json.loads((PHOTOS_ROOT / "index.json").read_text())
+        return {f"{slug}/{photo['file']}": photo["sha256"]
+                for slug, photos in index["hospitals"].items() for photo in photos if photo["file"]}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def photo_response(body: bytes, sha256: str, request: Request) -> Response:
+    """The bytes, or a 304. The ETag is the CONTENT hash, so a flip changes it and no browser can
+    revalidate its way back to the variant it had (directive 14, "cached browser response")."""
+    etag = f'"{sha256}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={**PHOTO_HEADERS, "ETag": etag})
+    return Response(content=body, media_type="image/webp", headers={**PHOTO_HEADERS, "ETag": etag})
+
+
+def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any]) -> list[str | None]:
+    """One URL per slot, or None where the resolver refuses it (spec C.7 rows 3-4).
+
+    Every decision here belongs to `buyer_variant`; this function's whole job is to hand it the
+    listing's visibility and the photograph's own record and to turn its answer into a positional
+    URL. The record comes from `_SELECT`'s `visible_photos` aggregate -- one query for the whole
+    page, never a lookup per photograph -- and a seed PATH entry has no record at all, which is why
+    the entry and the inventory digest are passed too."""
+    visibility = str(row["identifiable_content_visibility"])
+    aggregate = row["visible_photos"]
+    digests = seed_digests()
+    out: list[str | None] = []
+    for n, entry in enumerate(photos, start=1):
+        if entry is None:
+            out.append(None)
+            continue
+        found = aggregate.get(entry)
+        asset = None if found is None else record.delivery_row(entry, row["id"], found)
+        variant = buyer_variant(visibility, asset, entry, digests.get(entry))
+        out.append(None if variant is None else photo_url(listing_id, n, variant.sha256))
+    return out
+
+
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
@@ -290,6 +364,10 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     named = bool(row["name_disclosed"])
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
+    # Spec C.7 rows 3-4, computed ONCE and read twice below: the two arrays are parallel, and a
+    # caption must not describe a slot the resolver refused.
+    urls = _photo_urls(listing_id, photos, row)
+    captions = photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"])
 
     # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for
     # fallback, D-C38: the two per-figure geography fields beside it)
@@ -382,15 +460,20 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
         # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
         # the design's own placeholder for that slot instead of a broken image.
-        "photos": [
-            None if path is None else f"/api/listings/{listing_id}/photos/{n}"
-            for n, path in enumerate(photos, start=1)
-        ],
+        #
+        # Directive 9: under NOT_SHOW the buyer must not receive the original by "an API response"
+        # either. A slot the resolver refuses is that same JSON null — never a URL that would 404
+        # and, much worse, never one that would resolve to something else.
+        "photos": urls,
         # A-L11: one description per photograph, PARALLEL to `photos` — position `n` describes
         # position `n`. The design's `photoSet` reads it as `p.photoCaptions[i]` and falls back to
         # its own fixed slot caption where the entry is null (amendment A15), which is what lets a
         # photograph past the sixth be rendered at all: the design has no seventh caption.
-        "photo_captions": photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"]),
+        #
+        # A caption whose slot resolved to None becomes "", so no description of a hidden
+        # photograph is delivered beside a null (spec F, "API response leakage").
+        "photo_captions": [caption if url is not None else ""
+                           for url, caption in zip(urls, captions, strict=True)],
     }
 
 
@@ -523,17 +606,23 @@ def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _published_photos(conn: Any, listing_id: str) -> list[str | None] | None:
-    """The `photos` of one published listing, or None when there is no such listing.
+def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[str | None], str] | None:
+    """The `photos` AND the authoritative privacy setting of one published listing, or None when
+    there is no such listing.
 
-    One column, not `_SELECT`'s thirty-one and its two PostGIS accessors (review round 2, M6): the
+    TWO columns, not `_SELECT`'s thirty-odd and its two PostGIS accessors (review round 2, M6): the
     photo route uses nothing else, and a query that says what the route means cannot drift into
-    reading something it should not."""
+    reading something it should not. The setting is read in the SAME statement because spec C.7
+    row 1 makes it the first input to every delivery decision — and a second query for it is a
+    second chance to be reading a different listing's."""
     parsed = _parsed_uuid(listing_id)
     if parsed is None:
         return None
-    rows = _rows(conn, "SELECT photos FROM listing WHERE id = %s AND status = 'published'", (parsed,))
-    return photo_list(rows[0]["photos"]) if rows else None
+    rows = _rows(conn, "SELECT photos, identifiable_content_visibility FROM listing"
+                       " WHERE id = %s AND status = 'published'", (parsed,))
+    if not rows:
+        return None
+    return photo_list(rows[0]["photos"]), str(rows[0]["identifiable_content_visibility"])
 
 
 @router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_LISTING_READ)])
@@ -561,63 +650,77 @@ async def get_listing(listing_id: str) -> Response:
     return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"]))))
 
 
-def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
-    """A seller-uploaded photograph's bytes, or None.
+def _object_bytes(key: str) -> bytes | None:
+    """One object's bytes, or None. `_asset_bytes`'s own rule with the DECISION taken out of it:
+    WHICH key is `buyer_variant`'s to make, and this reads the key it chose (spec C.7).
 
-    The SECOND arm of `listing.photos`'s single `if` (spec 2026-09-08 D15 reason 3): a
-    `source='seed'` entry is a relative path resolved under PHOTOS_ROOT by `photo_file`, and a
-    seller entry is an asset uuid resolved here. Both arms are tested, and the URL the browser asks
-    for is identical — which is why no amendment, no baseline and no `toPractice` field moves.
-
-    Every "no" is the same None, and the route's 404: an entry that is not a uuid, a uuid that
-    names no asset of this listing, an unconfigured bucket, an object that is gone. A photograph
-    that cannot be served is a missing photograph, never a 500."""
-    try:
-        asset_id = UUID(entry)
-    except ValueError:
-        return None
-    with conn.cursor() as cur:
-        cur.execute("SELECT storage_key FROM listing_asset WHERE id=%s AND listing_id=%s AND kind='photo'",
-                    (asset_id, UUID(listing_id)))
-        found = cur.fetchone()
-    if found is None:
-        return None
+    Every "no" is the same None, and the route's 404: an unconfigured bucket, an object that is
+    gone. A photograph that cannot be served is a missing photograph, never a 500 — and never a
+    fallback to a different object (directive 19)."""
     store = ObjectStore.from_settings(settings)
     if store is None:
         return None
     try:
-        return store.get(found[0])
+        return store.get(key)
     except (BotoCoreError, ClientError):
         # A bucket outage is a photograph that cannot be served, which is what a 404 says here —
         # `_error`'s envelope, never an unhandled exception (A-SL16 M2). The refusal that a
         # seller's WRITE gets is a 503, because a write can be retried into a different outcome.
-        log.warning("[listings] object store unavailable reading %s", found[0])
+        log.warning("[listings] object store unavailable reading a photograph")
         return None
 
 
-@router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def get_listing_photo(listing_id: str, n: int) -> Response:
-    # ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface, and
-    # the seller arm used to close this one and open a second to resolve the asset.
+def _privacy_for(conn: Any, listing_id: str, entry: str) -> record.PrivacyRow | None:
+    """The one photograph's record, for the bytes route -- the single-row sibling of the list
+    route's `visible_photos` aggregate.
+
+    None for three different things, all of which the resolver answers the same way: a seed PATH
+    entry (which is not a uuid at all), an entry whose row is gone, and an entry whose row belongs
+    to another listing. The last is the IDOR check and it is in SQL through `record.read`'s own
+    join plus the comparison below, never in a query parameter."""
+    try:
+        parsed = UUID(entry)
+    except ValueError:
+        return None                                   # a seed path entry: `buyer_variant` handles it
+    row = record.read(conn, parsed)
+    return row if row is not None and str(row.listing_id) == str(listing_id) else None
+
+
+@router.api_route("/listings/{listing_id}/photos/{n}", methods=["GET", "HEAD"],
+                  dependencies=[Depends(REQUIRE_LISTING_READ)])
+async def get_listing_photo(listing_id: str, n: int, request: Request) -> Response:
+    """The ONE buyer bytes route. Every query parameter is ignored for resolution: `?variant=`,
+    `?v=` and anything else a caller invents cannot change what this returns (directive 20,
+    "alternate image endpoints").
+
+    `api_route(methods=["GET", "HEAD"])` and not `@router.get`: Starlette's own `Route` adds HEAD
+    beside GET but FastAPI's `APIRoute` does not, so a `@router.get` route answers HEAD with
+    **405**. Spec F's "HEAD mirrors GET on the buyer route and returns the same headers and no
+    body" is a claim, and declaring both methods is what makes it true rather than a comment that
+    says Starlette will handle it.
+
+    ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface."""
     with closing(sync_conn()) as conn, conn:
-        photos = _published_photos(conn, listing_id)
-        if photos is None:
+        found = _published_photos_and_visibility(conn, listing_id)
+        if found is None:
             return _error("NOT_FOUND", "No such listing.", 404)
+        photos, visibility = found
         entry = photos[n - 1] if 1 <= n <= len(photos) else None
-        if entry is not None and "/" not in entry:
-            # A seller's photograph: `listing.photos` holds the asset uuid, not a path. A seed
-            # entry always contains a "/" (`<slug>/<n>.webp`), so the two are told apart by the
-            # value itself rather than by a second query for the row's `source`.
-            content = _asset_bytes(conn, listing_id, entry)
-            if content is None:
+        if entry is None:
+            return _error("NOT_FOUND", "No such photograph.", 404)
+        variant = buyer_variant(visibility, _privacy_for(conn, listing_id, entry), entry,
+                                seed_digests().get(entry))
+        if variant is None:
+            return _error("NOT_FOUND", "No such photograph.", 404)
+        if not variant.from_disk:
+            body = _object_bytes(variant.key)
+            if body is None:
+                # A bucket outage stays a 404 -- never a fallback to another key (directive 19).
                 return _error("NOT_FOUND", "No such photograph.", 404)
-            return Response(content=content, media_type="image/webp",
-                            headers={"Cache-Control": PHOTO_CACHE_CONTROL})
+            return photo_response(body, variant.sha256, request)
+    # A seed entry: `listing.photos` holds a relative path, resolved under PHOTOS_ROOT by
+    # `photo_file`, which is what refuses one that escapes it.
     path = photo_file(photos, n)
     if path is None:
         return _error("NOT_FOUND", "No such photograph.", 404)
-    return Response(
-        content=path.read_bytes(),
-        media_type="image/webp",
-        headers={"Cache-Control": PHOTO_CACHE_CONTROL},
-    )
+    return photo_response(path.read_bytes(), variant.sha256, request)

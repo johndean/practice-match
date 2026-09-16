@@ -27,7 +27,7 @@ test.describe('reference baselines', () => {
       // checked here too at no extra cost.
       // A19's three states mount filled slots beneath a 55 % scrim, where a pre-hydration ring
       // would be frozen into the oracle.
-      if (['browse', 'detail', 'interest-modal', 'detail-lightbox', 'browse-panel-lightbox', 'detail-lightbox-next'].includes(s.name)) {
+      if (['browse', 'detail', 'interest-modal', 'detail-lightbox', 'browse-panel-lightbox', 'detail-lightbox-next', 'wizard-step-6-photos', 'wizard-step-6-review'].includes(s.name)) {
         expect(
           await placeholderRings(page),
           'an <image-slot> with a real src is still drawing its placeholder ring, so this baseline would freeze the design tool\'s pre-hydration artifact instead of the design'

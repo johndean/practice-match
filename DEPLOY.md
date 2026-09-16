@@ -26,6 +26,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `VIN_FOUNDATION_POSTAL_ADDRESS` | ✓ | ✓ | The VIN Foundation's official postal address, printed in the launch email's CAN-SPAM footer (`VIN Foundation · {address}`). John sets it; never invented and never a placeholder (controller amendment A-I5d.4, 2026-09-08 — "Do not invent the address"). Optional at boot: `POST /api/admin/signups/launch-mail` refuses a real send with `409 LAUNCH_MAIL_NOT_CONFIGURED` while it is unset, rather than sending a footer with a blank address line |
 | `RESEND_API_KEY` | | ✓ | **worker only** — the Resend API key. John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set RESEND_API_KEY=… --service worker --environment <env>`. A worker without it raises on every `mail.send` beat rather than leaving mail silently queued (Identity plan Task I6) |
 | `RESEND_WEBHOOK_SECRET` | ✓ | | **api only** — the `whsec_…` signing secret Resend shows when the endpoint `https://<host>/api/webhooks/resend` is created. Same handling rule. Unset, the route answers `401` to every call rather than trusting one (Identity plan Task I6) |
+| `ANTHROPIC_API_KEY` | | ✓ | **worker only** — the vision step of the image identifiability pipeline (spec 2026-09-09 C.5 step 4). John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set ANTHROPIC_API_KEY=… --service worker --environment <env>`. Optional at boot and its absence is a legitimate state: with it unset the worker makes no request and every photograph completes with `vision: unavailable`, which is not a failure — the seller's review carries the OCR, regex and symbol regions instead |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
 | `CENSUS_CONTACT_EMAIL` | | ✓ | Sub-project 3 — the VIN Foundation's designated technical contact address, carried in the Census `User-Agent` (A-C1 ruling 4); never a developer's own. Required before the ingest worker's first live load — the load refuses to run without it |
 | `S3_ENDPOINT_URL` | ✓ | ✓ | Sub-project 3 (A-C2) — the S3-compatible endpoint for Railway bucket `practice-match-data`, from `railway bucket credentials`. `api` reserves it for future tile reads; only the worker uses it today |
@@ -33,11 +34,25 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `S3_ACCESS_KEY_ID` | ✓ | ✓ | Railway bucket credentials, set by the controller after John's demo — never printed. `ObjectStore.from_settings` returns `None` (object store disabled, logged) until all four `S3_*` variables are set |
 | `S3_SECRET_ACCESS_KEY` | ✓ | ✓ | Same handling rule as `S3_ACCESS_KEY_ID` — never in git, chat, or CI |
 | `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); held in the operator's macOS Keychain (service `practice-match-qa`, account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed to the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1) (Identity plan Task I5) |
+| `PRIVACY_ENGINE_MODULE` | | | **Test only, and never set in Railway.** The module the Playwright api under test loads stub OCR and barcode engines from (`tests/e2e/stub_engines.py`); `Settings` refuses it at boot in every other environment, naming the variable and never its value, because a stubbed OCR would let a photograph reach `READY_FOR_REVIEW` unscanned (image-identifiability plan Task P4) |
+| `CELERY_TASK_ALWAYS_EAGER` | | | **Test only, and never set in Railway.** Runs `media.process_photo` inline in the api process for the Playwright suite instead of publishing it to the `media` queue; refused at boot in every other environment, for the same reason and by the same validator (image-identifiability plan Task P4) |
 > **Setting a variable is not the same as the process seeing it.** `railway variable set … --skip-deploys`
 > writes the value but leaves the running container with its old environment, so a job started with
 > `railway ssh` afterwards still sees nothing. Either omit `--skip-deploys`, or run
 > `railway redeploy --service <svc> --environment <env> --yes` and re-check from inside the container
 > before relying on it (2026-09-10: the first Census load failed this way, silently, on all four `S3_*`).
+
+### Outbound destinations
+
+Where each deployed service reaches the public internet, so a new egress is a deliberate line here
+rather than a surprise in a firewall log. **api**: `api.pwnedpasswords.com` (the k-anonymity
+password screen, `HIBP_ENABLED`) and the Railway bucket's `S3_ENDPOINT_URL`. **worker**:
+`api.resend.com` (transactional email), `api.census.gov`, `www2.census.gov` and
+`geocoding.geo.census.gov` (the market-data ingest), the same `S3_ENDPOINT_URL`, and — only while
+`ANTHROPIC_API_KEY` is set — `api.anthropic.com`. That last one is the only destination a seller's
+photograph is ever sent to: the vision step of the image identifiability pipeline sends the display
+derivative and the practice's name, city and state, and nothing else; with the key unset no request
+is made at all. **The api reaches nothing new for that pipeline.**
 
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
@@ -116,8 +131,10 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 **Numbering is reserved by plan, and a new file must take a free range.** `001`–`002` are the
 original platform migrations · `010`–`015` Sub-project 2 (identity) · `016` the Seed Listings plan
-· **`017`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B** (that plan's
-D14) · `080`–`089` the map engines · **`090`–`099` platform and hotfix migrations on `main`**
+· **`017`–`029` and `050`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B**
+(that plan's D14) · **`030`–`039` the seller listing lifecycle** (A-SL5) · **`040`–`049` the image
+identifiability protection sub-project** (A-C12, 2026-09-09) · `080`–`089` the map engines ·
+**`090`–`099` platform and hotfix migrations on `main`**
 (A-L12, 2026-09-09 — `090_listing_photo_captions.sql` is the first). `003`–`009` are unassigned and
 may only be taken by a platform migration that depends on nothing later.
 `scripts/migrate.py` applies files in FILENAME order, so a file may only be numbered above
@@ -125,6 +142,46 @@ everything it depends on; the test suite applies the whole ladder into a fresh d
 run, which is where a mis-numbered dependency fails.
 
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
+
+## Runtime image size (measured, never estimated)
+
+The image-identifiability pipeline's engines are the largest dependency change this repository has
+made, and the figures below are measurements rather than estimates — the `f454fe7` precedent, which
+measured +42 MB against a ~10 MB estimate. Taken with `docker build --build-arg ENVIRONMENT=qa`
+(`scripts/verify-image.sh`'s own invocation, so `linux/arm64` on the operator's machine rather than
+Railway's amd64) on the same machine immediately before and immediately after this change and
+nothing else, 2026-09-13: **810 MB → 1.57 GB** as `docker images` reports SIZE, which decomposes in
+`docker history` as **+510 MB across two layers** — `poetry install --only main` 288 MB → 585 MB and
+the runtime stage's `apt-get install` line 4.25 MB → 217 MB. (The two Docker measures of the same
+pair of images disagree by about 250 MB; both are recorded here rather than one being chosen.)
+
+Three packages, each with its licence: `rapidocr-onnxruntime` 1.4.4 (Apache-2.0 — its three PP-OCR
+ONNX models are inside the 14.9 MB wheel, so the worker downloads nothing at run time and opens no
+socket to read a photograph), `onnxruntime` 1.30.0 (MIT — the runtime rapidocr drives) and
+`zxing-cpp` 3.1.1 (Apache-2.0, a ~1 MB wheel with its own `py.typed`). Five transitive additions:
+`opencv-python` 5.0.0.93, `protobuf` 7.36.1, `flatbuffers` 25.12.19, `pyclipper` 1.4.0 and `tqdm`
+4.70.1.
+
+`libgl1` and `libglib2.0-0` join the runtime stage's existing `ca-certificates curl` line because
+`rapidocr-onnxruntime` requires the FULL `opencv-python`, which links libGL. That single apt line
+costs **+213 MB**, of which `libllvm15` is 109 MB and `libgl1-mesa-dri` 23 MB — a software OpenGL
+stack in a container that never renders anything. The measured delta is three to five times the
++120–150 MB the spec estimated, so it is RECORDED for a controller ruling rather than accepted as a
+fait accompli (image-identifiability plan Task P4, deviation D5); the spec's own D-IDP-10 already
+names the alternative, and `opencv-python-headless` 5.0.0.93 (36.5 MB against 50.6 MB on aarch64)
+needs neither apt package.
+
+`scripts/start.sh`'s **worker** role exports **`ORT_DISABLE_TELEMETRY=1`** before it starts celery.
+MEASURED (2026-09-16, onnxruntime 1.30.0): `import onnxruntime` — before any inference session
+exists — writes `deviceid` and a SQLite database under
+`$HOME/Library/Application Support/Microsoft/DeveloperTools/.onnxruntime/` (the platform equivalent
+elsewhere), so the Python switch `onnxruntime.disable_telemetry_events()` **cannot prevent it**: it
+can only run after the import that already wrote the file. With the variable set, no such file is
+created at all. It is not a robustness fix and is not documented as one — an unwritable `$HOME` does
+not fail the engine, measured: onnxruntime logs `Failed to persist telemetry device ID; using an
+in-memory identifier` and constructs the session anyway. It is set so the worker writes no
+unasked-for file in a container. `tests/scripts/test_start_sh.sh` asserts the worker role's dry run
+carries it.
 
 ## Identity operations (Wave 2a)
 
@@ -411,11 +468,23 @@ refused with `503 STORAGE_UNAVAILABLE` rather than crashing — a developer's ma
 environment still serves every READ (the seed hospitals' photographs come off disk and
 need none of this) while only the WRITES stop.
 
-Keys are `listings/<listing id>/photos/<asset id>.webp` for a photograph — every upload is
-re-encoded to WebP with its metadata stripped (D15) — and `listings/<listing id>/documents/<asset
-id><suffix>` for a floor plan, a financial packet or any other document, `<suffix>` being the
-uploaded file's own extension. An asset is written once (`put_immutable`'s never-overwrite
-guarantee) and deleted at most once; nothing under `listings/` is ever mutated in place.
+A photograph's asset id is a DIRECTORY, not a filename (spec 2026-09-09 C.2, Task P2), holding up
+to three objects built by `app/privacy/__init__.py`'s own key functions:
+
+* `listings/<listing id>/photos/<asset id>/original.<ext>` — the bytes exactly as uploaded,
+  `<ext>` chosen by the file's MAGIC BYTES and cross-checked against the declared Content-Type.
+  Directive 13: never overwritten, and reachable by the owner and the reviewer alone.
+* `listings/<listing id>/photos/<asset id>/display.webp` — the re-encoded, metadata-stripped WebP
+  (D15). This is the key `listing_asset.storage_key` names, so it is what the buyer photo route
+  serves today.
+* `listings/<listing id>/photos/<asset id>/redacted.webp` — written by the media worker once the
+  identifiability pipeline has a derivative to write; absent until then.
+
+A document is still one key, `listings/<listing id>/documents/<asset id><suffix>`, `<suffix>` being
+the uploaded file's own extension. An asset is written once and deleted at most once — a delete
+removes every object under the photograph's prefix — and nothing under `listings/` is mutated in
+place except `redacted.webp`, which the worker regenerates and which buyers address by its content
+hash so a stale URL is never a stale image.
 
 The seed demo hospitals' own photographs are **not** in this bucket at all (D26): they are
 committed under `seeds/hospitals/photos/`, already in the image, and served straight off disk by

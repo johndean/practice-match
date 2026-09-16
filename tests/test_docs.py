@@ -39,7 +39,14 @@ REQUIRED_CI_COMMANDS = (
     # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
     # report predicted it would have to — the plan's own file list for this task names neither
     # file, which is why the note above is here rather than in the plan.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py tests/e2e/api_under_test.py --strict",
+    # Task P4 fix round 3 (2026-09-14): scripts/prove_offline_engines.py joins it too — it is
+    # constraint (i)'s proof made runnable (re-review M-8), and `scripts/*.py` is derived from
+    # the directory by test_ci_strict_mypy_covers_every_python_script above.
+    # Image-identifiability Task P4 (2026-09-13): tests/e2e/stub_engines.py joins the same
+    # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
+    # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
+    # a new module there means editing the workflow AND this string, always both.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py scripts/reprocess_photos.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1940,17 +1947,275 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "not a failed import" in section
 
 
+#: Every file that WRITES the `listing` table, and how it satisfies migration `042`'s publish gate
+#: (`listing_publish_photos_ready`, which fires BEFORE UPDATE OF status on the transition into
+#: `published` — A-IDP-6). Controller amendment A-IDP-3 (1): the plan asserted in prose that there
+#: were "exactly three" such writers and a fourth was found by reading; a count stated in prose is
+#: enforced by nothing. This enumerates instead, and it is pinned BOTH ways below, so the fifth
+#: writer cannot be missed the way the fourth was — whoever adds it has to say here how the row it
+#: publishes reaches the gate ready, which is where the `identifiable_content_visibility` decision
+#: is recorded.
+LISTING_WRITERS = {
+    "app/api/admin_listings.py":
+        "the reviewer's decide route — the ONE production transition into `published`. Every "
+        "photograph it carries is a seller upload with a privacy row (Task P2), so the gate is met "
+        "by the pipeline, never by a visibility value written here.",
+    "app/api/seller_listings.py":
+        "the wizard's own writes. None of them sets `status = 'published'`: submit writes "
+        "`in_review`, and `take_off_market` moves a published row OFF the market (A-SL15), so no "
+        "statement in this module can fire the gate.",
+    "app/census/geocode.py":
+        "Task GEO-WIRE's resolve, which writes `listing.geom` (and nothing else) for a listing "
+        "whose address has just been geocoded. The trigger is BEFORE UPDATE **OF status**, so a "
+        "statement that never names `status` does not fire it at all — the easy declaration, and "
+        "the honest one: a pin is not a publication. `app/tasks/census.py` reaches the table only "
+        "through this function and writes no listing row of its own.",
+    "scripts/seed_listings.py":
+        "the demo hospitals' UPSERT, which INSERTs directly as `published`. The gate has no INSERT "
+        "arm (A-IDP-6), and the seeds take `040`'s `NOT_SHOW` default (A-IDP-4 (1)) — their path "
+        "photographs are hidden at delivery, not at publication.",
+    "tests/api/test_admin_listings.py":
+        "review-queue fixtures with no photographs; a listing with an empty `photos` array has "
+        "nothing for the gate's predicate to find.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "Task P9's own delivery-resolver suite. `_publish` writes two UPDATEs; by the time the "
+        "second names `status`, `_process` has already given the listing's one photograph a "
+        "SELLER_CONFIRMED-or-later privacy row, so the gate is met by the pipeline's own state, "
+        "`test_listing_assets.py`'s own shape. `_seed_listing` INSERTs directly as `published` "
+        "(no INSERT arm, A-IDP-6); its other UPDATEs — a visibility flip, a photos-array swap for "
+        "the IDOR case — never name `status` and do not fire the trigger at all.",
+    "tests/api/test_geo_wire.py":
+        "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
+        "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "
+        "already-published row and never `status` — BEFORE UPDATE **OF status** does not fire.",
+    "tests/api/test_listing_assets.py":
+        "`_SEED_INSERT` inserts as `published` (no INSERT arm); `_publish` and `_republish` write a "
+        "SELLER_CONFIRMED privacy row with a derivative for every uploaded photograph BEFORE they "
+        "move the row into `published`.",
+    "tests/api/test_listings.py":
+        "its module-level template inserts seed rows directly as `published` — the fourth writer "
+        "A-IDP-3 (1) found, and the reason this map exists. No INSERT arm, so no refusal.",
+    "tests/api/test_seller_listings.py":
+        "two shapes. `_SEED_INSERT` inserts a seed row carrying PATH photographs directly as "
+        "`published` — no INSERT arm (A-IDP-6) — while every row its UPDATEs move into `published` "
+        "is a wizard draft with an empty `photos` array, so the predicate finds nothing to refuse.",
+    "tests/census/listing_fixtures.py":
+        "geocoding fixtures inserted directly with their status; no INSERT arm.",
+    "tests/census/test_geocode.py":
+        "the geocoder's own suite. Its one direct statement seeds a pin with `UPDATE listing SET "
+        "geom` so the no-coordinate rung can be proved not to blank it; it never names `status`, "
+        "and the rows it builds come from `tests/census/listing_fixtures.py` already declared "
+        "above.",
+    "tests/census/test_market_api.py":
+        "sets `location_disclosed` on an existing row and never `status`, so the trigger — BEFORE "
+        "UPDATE **OF status** — does not fire at all.",
+    "tests/api/test_listing_privacy.py":
+        "the publishing gate's own route suite (Task P10). Every listing it publishes goes through "
+        "the real routes — submit, decide and republish — so the gate is what it measures rather "
+        "than something it works around; its two direct UPDATEs write the visibility setting a "
+        "flip test has to START from and an `in_review` status the decline case needs, and "
+        "neither touches `status = 'published'`.",
+    "tests/perf/test_api_latency.py":
+        "Task P9's own photo-budget test, `test_buyer_photo_delivery.py`'s `_process`/`_publish` "
+        "shape: one UPDATE gives the listing's uploaded photograph a SELLER_CONFIRMED privacy row "
+        "before a second UPDATE names `status`, so the gate is met by that already-ready row. "
+        "`test_listings_p95_within_budget`'s own UPDATE flips the seeded eighteen to SHOW and "
+        "never names `status`, so the trigger does not fire for it at all.",
+    "tests/perf/test_query_plans.py":
+        "query-plan fixtures inserted directly with their status; no INSERT arm.",
+    "tests/privacy/conftest.py":
+        "the privacy suites' own builder (Task P3). `make_listing` INSERTs a `draft` row and never "
+        "writes `status` again; `make_row` appends the asset id to `photos` with an `UPDATE listing "
+        "SET photos`, which the trigger — BEFORE UPDATE **OF status** — does not fire on. No row it "
+        "makes ever moves into `published`, because the state machine it builds rows for is tested "
+        "on `listing_asset_privacy` alone.",
+    "tests/privacy/test_gate.py":
+        "the gate PREDICATE's own suite (Task P10). It reads `listing_photos_not_ready` directly "
+        "and never publishes: its UPDATEs plant a `photos` array — a seed path entry, a reordered "
+        "pair — on a `draft` row the builder made, which the trigger (BEFORE UPDATE **OF status**) "
+        "does not fire on.",
+    "tests/scripts/test_seed_listings.py":
+        "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
+        "use `draft` rows precisely so the gate is not what they are measuring.",
+    "tests/test_listing_privacy_schema.py":
+        "the gate's OWN suite — it drives the trigger on purpose, from both sides, which is why "
+        "the enumeration below excludes nothing and this file is simply declared.",
+    "tests/test_listing_schema.py":
+        "`016`/`030`'s column and CHECK contract, inserted directly; no INSERT arm.",
+}
+
+
+def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
+    """Controller amendment A-IDP-3 (1), and the pin P1 Step 6b owed and did not leave behind.
+
+    Migration `042` refuses a listing that moves into `published` while a photograph of its is not
+    ready, so every writer of the table is a writer that has to have thought about it — including
+    the ones that reach it only by inserting a row that is already published, which A-IDP-6 then
+    exempted. Pinned BOTH ways: a file that stops writing the table has to leave this map, and a
+    file that starts writing it cannot be added without recording, here, how the row it writes
+    reaches the gate ready. That is where a new writer's `identifiable_content_visibility` decision
+    gets made, rather than in a prose count that enforces nothing."""
+    # THIS file is skipped: the pattern below occurs in it as the pattern, and a docs-and-drift
+    # suite that takes no `conn` fixture writes no table. Every other file is scanned.
+    # The pattern ends at the TABLE NAME and never reaches for `SET`. It used to be
+    # `UPDATE listing\s+SET`, which cannot see `UPDATE listing l SET ... FROM ...` — the aliased
+    # form any join-carrying write takes — so a planted `UPDATE listing l SET status = 'published'`
+    # in `app/api/listings.py` left this pin GREEN (P3 fix-round-1 re-review N1, widened here under
+    # the controller's zero-gaps ruling; `app/privacy/record.py`'s `claim` already writes in that
+    # form on the privacy table). `\b` is what keeps `listing_asset` and `listing_asset_privacy`
+    # out: `_` is a word character, so `listing\b` does not match inside either name. `\s+` also
+    # keeps `app/census/geocode.py`'s `UPDATE listing\n      SET geom = ...` — a PRODUCTION writer
+    # the one-space form walked straight past. Every widening was proved by perturbation: the
+    # aliased plant turns this red, and the found set is unchanged at seventeen without it.
+    write = re.compile(r"(?:INSERT INTO|UPDATE)\s+listing\b")
+    found = {
+        str(path.relative_to(ROOT))
+        for root in ("app", "scripts", "tests")
+        for path in (ROOT / root).rglob("*.py")
+        if path != Path(__file__).resolve() and write.search(path.read_text())
+    }
+    assert found == set(LISTING_WRITERS), (
+        f"undeclared writers of the listing table: {sorted(found - set(LISTING_WRITERS))}; "
+        f"declared but no longer writing it: {sorted(set(LISTING_WRITERS) - found)}"
+    )
+    for path, disposition in LISTING_WRITERS.items():
+        assert len(disposition) > 40, f"{path}'s disposition says nothing useful"
+
+
+#: Every file that WRITES `listing_asset_privacy`, and what it writes there. The P3 review's
+#: Minor-3: `listing` has had a two-way enumeration since P2 (`LISTING_WRITERS` above) and the
+#: privacy row — the table this whole sub-project's fail-closed argument rests on — had none, so
+#: nothing would have said so the day `app/tasks/media.py` or an admin route started writing the
+#: state column directly. The property pinned below is spec C.4's own: `app/privacy/record.py` is
+#: the ONE writer of this table in `app/` and `scripts/`, so every transition goes through a
+#: function there and carries that function's state predicate.
+PRIVACY_WRITERS = {
+    "app/privacy/record.py":
+        "the state machine itself (Task P3) — the one production writer. One function per "
+        "transition of spec C.4, each carrying the predicate that names its own source states, so "
+        "a transition the table does not hold matches no row and writes nothing.",
+    "tests/api/test_admin_listings.py":
+        "the reviewer's own step-6/bytes-route suite (Task P9). One UPDATE plants a "
+        "READY_FOR_REVIEW row — a redacted key, its sha256, the region and OCR JSON a completed "
+        "pass leaves — onto the row the real upload route already created, so the admin tile can "
+        "be exercised without running the pipeline; it is a column poke, never a transition "
+        "through `app/privacy/record.py`.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "the delivery resolver's own suite (Task P9, directives 20/21). `_process` plants the "
+        "pipeline's OUTCOME onto the row the real upload route already created — whichever state "
+        "a scenario needs, with every CHECK migration `041` carries for that state already true — "
+        "and one case pokes `buyer_visible`/`processing_status` back to a not-yet-finished shape "
+        "to prove SHOW's own floor. Neither is a transition through `app/privacy/record.py`; both "
+        "are direct column pokes, `tests/privacy/test_record.py`'s own idiom.",
+    "tests/api/test_listing_assets.py":
+        "P2's own upload and delivery suite. Two `_SEED_INSERT`s build the privacy rows a "
+        "published seed listing needs for migration `042`'s gate to pass; neither moves a row "
+        "through a transition, they insert the end state directly.",
+    "tests/api/test_listings.py":
+        "the photo-caption suite's own builder, `_asset` (A-L11/Task P9): for a PHOTOGRAPH kind it "
+        "INSERTs the privacy row the real `upload_photo` writes in the same transaction as its "
+        "`listing_asset` row, already `PUBLISHED` and `buyer_visible`, so a caption fixture never "
+        "represents a shape no real upload produces.",
+    "tests/api/test_seller_listings.py":
+        "`_uploaded_and_processed`'s own builder (Task P9) — its own docstring: \"what is planted "
+        "here is its outcome.\" One UPDATE moves the row the real upload route created to a named "
+        "post-pipeline state, READY_FOR_REVIEW by default, with the redaction regions and OCR size "
+        "a finished pass leaves, so the step-6 tile can be asserted without running the pipeline.",
+    "tests/perf/test_api_latency.py":
+        "the photo-budget test's own plant (Task P9), `test_buyer_photo_delivery.py`'s `_process` "
+        "shape: one UPDATE moves the uploaded photograph's row to SELLER_CONFIRMED with a "
+        "redacted key and matching sha256 before the listing's own UPDATE moves it into "
+        "`published`, so what is timed is the resolver's warm path and never the pipeline that "
+        "fed it.",
+    "tests/privacy/conftest.py":
+        "the privacy suites' shared builder (Task P3) — one INSERT that makes a row in any state "
+        "with whatever `041`'s CHECKs require of that state already true, so a CHECK that changes "
+        "fails in one place rather than in every suite.",
+    "tests/api/test_listing_privacy.py":
+        "the flip's own route suite (Task P10). One deliberate column poke, in a case whose "
+        "docstring says why: the REDACTION_FAILED row that still carries a live "
+        "`redacted_storage_key` — the shape `lap_ready_has_derivative_ck` permits outside the "
+        "ready states, and the one `reset_confirmation` must refuse to promote.",
+    "tests/privacy/test_record.py":
+        "the state machine's own suite. Two deliberate column pokes, each in a case whose "
+        "docstring says why: the `updated_at` back-date that opens the six-minute lost-child "
+        "window, and the `redacted_sha256 := NULL` that builds the ready-row-with-no-derivative "
+        "shape `lap_ready_has_derivative_ck` permits and `confirm` must refuse.",
+    "tests/tasks/test_media.py":
+        "the Celery pipeline's own suite (Task P8). One deliberate column poke, `_age`: every "
+        "sweeper window is `updated_at < now() - interval ...`, so a row is made old by moving "
+        "that column backwards, which is the only way to open a window without sleeping for six "
+        "minutes. It moves no row through a transition.",
+    "tests/test_listing_privacy_schema.py":
+        "`041`/`042`'s own column, CHECK and trigger contract (Task P1). It inserts rows column by "
+        "column to drive each CHECK from both sides, and its one UPDATE sets the stale flag on a "
+        "ready row to prove staleness is a flag and not a state.",
+}
+
+
+def test_every_writer_of_the_privacy_row_is_declared_and_only_one_is_production():
+    """P3 review Minor-3, in `LISTING_WRITERS`' own shape and for the same reason.
+
+    Pinned BOTH ways — a file that starts writing `listing_asset_privacy` has to say here what it
+    writes, and one that stops has to leave — plus the property the sub-project's whole fail-closed
+    argument rests on: under `app/` and `scripts/` there is exactly ONE writer, so there is exactly
+    one place a state transition can happen and every one of them carries a state predicate. Task
+    P8's sweeper adds its `REPROCESS_REQUIRED` rule to `app/privacy/record.py` as a transition
+    function for this reason; putting it in `app/tasks/media.py` would fail here.
+
+    The pattern ends at the TABLE NAME (fix-round-2, re-review N1). It used to require `SET` to
+    follow it, which cannot see `UPDATE listing_asset_privacy p SET … FROM …` — the exact form
+    `claim` took in the round that added this pin, and the natural form for any join-carrying
+    write — so a planted aliased sweeper in `app/api/listings.py` was undeclared, counted as no
+    production writer at all, and left this test GREEN. That is the one failure this pin exists to
+    prevent, arriving by the door the pin could not see."""
+    write = re.compile(r"(?:INSERT INTO|UPDATE)\s+listing_asset_privacy\b")
+    found = {
+        str(path.relative_to(ROOT))
+        for root in ("app", "scripts", "tests")
+        for path in (ROOT / root).rglob("*.py")
+        if path != Path(__file__).resolve() and write.search(path.read_text())
+    }
+    assert found == set(PRIVACY_WRITERS), (
+        f"undeclared writers of the privacy row: {sorted(found - set(PRIVACY_WRITERS))}; "
+        f"declared but no longer writing it: {sorted(set(PRIVACY_WRITERS) - found)}"
+    )
+    production = sorted(path for path in found if path.startswith(("app/", "scripts/")))
+    assert production == ["app/privacy/record.py"], (
+        f"the privacy row has more than one production writer: {production}; every transition "
+        "belongs in app/privacy/record.py, where it carries its own state predicate"
+    )
+    for path, disposition in PRIVACY_WRITERS.items():
+        assert len(disposition) > 40, f"{path}'s disposition says nothing useful"
+
+
 def test_deploy_md_documents_the_object_storage_layout():
     """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
     the bucket holds. An operator diagnosing a photo or a document that failed to load needs the
-    key scheme, read from `upload_photo`'s own key-building expression rather than retyped, so a
-    changed prefix fails this test instead of leaving a stale runbook."""
+    key scheme, read from the key builders themselves rather than retyped, so a changed prefix
+    fails this test instead of leaving a stale runbook."""
     deploy = (ROOT / "DEPLOY.md").read_text()
     assert "## Object storage" in deploy
     section = deploy.split("## Object storage", 1)[1].split("\n## ", 1)[0]
-    seller = (ROOT / "app" / "api" / "seller_listings.py").read_text()
-    key_expr = re.search(r'key = f"([^"]+)"', seller)
-    assert key_expr, "app/api/seller_listings.py no longer builds the asset key the way this test reads"
+    # The key scheme moved out of `upload_photo` and into `app/privacy/__init__.py` in Task P2,
+    # when a photograph's asset id became a DIRECTORY holding three objects (spec 2026-09-09 C.2).
+    # Read from those builders rather than retyped, for the reason the docstring gives: each one's
+    # object name is lifted out of its own `return`, and the WHOLE key it builds — prefix and all —
+    # has to be in the runbook, so renaming an object or moving the prefix fails here.
+    keys = (ROOT / "app" / "privacy" / "__init__.py").read_text()
+    prefix_expr = re.search(r'def photo_prefix.*?\n    return f"([^"]+)"', keys, re.DOTALL)
+    assert prefix_expr, "app/privacy/__init__.py no longer builds the photo prefix the way this test reads"
+    documented = (prefix_expr.group(1)
+                  .replace("{listing_id}", "<listing id>").replace("{asset_id}", "<asset id>"))
+    built = {}
+    for builder in ("original_key", "display_key", "redacted_key"):
+        expr = re.search(rf'def {builder}.*?\n    return f"\{{photo_prefix\(listing_id, asset_id\)\}}([^"]+)"',
+                         keys, re.DOTALL)
+        assert expr, f"app/privacy/__init__.py no longer builds {builder} the way this test reads"
+        built[builder] = documented + expr.group(1).replace("{ext}", ".<ext>")
+    assert len(set(built.values())) == 3, f"two of the three photo keys are the same string: {built}"
+    for builder, key in built.items():
+        assert key in section, f"DEPLOY.md's Object storage section does not carry {builder}'s key `{key}`"
     variables_section = deploy.split("## Variables", 1)[1].split("\n## ", 1)[0]
     bucket_row = re.search(r"`S3_BUCKET`.*", variables_section)
     assert bucket_row, "DEPLOY.md's Variables table no longer has an S3_BUCKET row to cross-check against"
@@ -2015,15 +2280,18 @@ def test_runbook_names_the_five_account_routes():
 # before it ever compared a string: A18 (2026-09-09) made sixteen families and it stopped at
 # "Fifteen"; `feat/card-geography` hit it at A27; and A24 — real Census boundary polygons,
 # 2026-09-11 — makes TWENTY-FIVE against a tuple that stopped at "Twenty-four". It now runs to
-# thirty-nine, which is roughly a year of families at the current rate. When it runs out again,
-# extend it: an index error here is never evidence about CLAUDE.md.
+# forty-three (Task P11, 2026-09-16, made forty-two families) — the headroom check below wants one
+# word past the current family count, so an extension lands here whenever the count is even with
+# the tuple's own end. When it runs out again, extend it: an index error here is never evidence
+# about CLAUDE.md.
 NUMBER_WORDS = {n: w for n, w in enumerate(
     ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
      "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two",
+     "Forty-three"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

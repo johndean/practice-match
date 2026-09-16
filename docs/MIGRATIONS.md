@@ -20,6 +20,9 @@ failure it names is not a ledger.
 
 | # | File | Branch | What |
 |---|---|---|---|
+| 040 | `040_listing_identifiable_content_visibility.sql` | `feat/image-identifiability` | the listing's one authoritative identifiable-content setting (`SHOW`/`NOT_SHOW`, default `NOT_SHOW`) |
+| 041 | `041_listing_asset_privacy.sql` | `feat/image-identifiability` | one privacy record per photograph — the per-image state machine |
+| 042 | `042_listing_publish_photos_ready_trigger.sql` | `feat/image-identifiability` | the fail-closed publish gate: no `published` listing while a photograph is not ready |
 | 090 | `090_listing_photo_captions.sql` | **main** | photograph captions |
 | 091 | `091_listing_provenance.sql` | **main** | listing provenance |
 | 092 | `092_esri_basemap_registry.sql` | `feat/admin-data-sources` | the two Esri basemap registry rows |

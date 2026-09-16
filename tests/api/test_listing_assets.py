@@ -4,8 +4,11 @@ The `store` fixture points `settings`' four `S3_*` fields at a moto-backed bucke
 one test, so the routes reach object storage through their OWN `store_for_request()` — no test
 needs credentials and none reaches the network. (The brief proposed monkeypatching
 `store_for_request` itself; pointing the settings instead leaves the real function on the path, so
-its configured arm is exercised rather than replaced, and `app/api/listings.py::_asset_bytes`,
-which builds its own store from the same settings, is reached by the same fixture.)
+its configured arm is exercised rather than replaced, and `app/api/listings.py::_object_bytes`,
+which builds its own store from the same settings, is reached by the same fixture.) It lives in
+`tests/conftest.py` since Task P2 Step 0, with `BUCKET`, `ENDPOINT` and `_intercepted_by_moto`:
+the image-identifiability pipeline gave three suites outside `tests/api/` a bucket to need, and
+one fixture is better than six copies.
 
 `ENDPOINT` is an AWS-shaped host on purpose: moto 5's interceptor matches the request URL, so a
 Railway bucket endpoint would ESCAPE the mock and make a real HTTPS call (proved by trying it).
@@ -15,24 +18,20 @@ Every refusal is asserted as an `{"error": {...}}` body, never `{"detail": ...}`
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from contextlib import closing
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-import boto3
 import pytest
 from botocore.exceptions import ClientError
-from moto import mock_aws
 from PIL import Image
 
-from app.config import settings
 from app.storage import ObjectStore
-from tests.api.conftest import auth_headers, padded_json
-
-BUCKET = "pm-test"
-ENDPOINT = "https://s3.amazonaws.com"
+from tests.api.conftest import _draft, _jpeg_bytes, _png_bytes, auth_headers, padded_json
+from tests.conftest import ENDPOINT
 
 PDF = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
 XLSX = b"PK\x03\x04" + b"\x00" * 40
@@ -45,31 +44,6 @@ VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7',
         true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb)
 RETURNING id
 """
-
-
-def _intercepted_by_moto(endpoint: str) -> bool:
-    """Whether moto 5 will intercept a request to `endpoint`, asserting rather than reporting.
-
-    A-SL16 M4: moto matches the request URL, so a bucket endpoint from the fleet ESCAPES `mock_aws`
-    and makes a real HTTPS call — which is what happened the first time this fixture was written.
-    The credentials are dummies, so such a call would fail rather than reach a real bucket; a test
-    suite that can talk to the internet is still not a test suite."""
-    assert endpoint.endswith(".amazonaws.com"), (
-        f"{endpoint} escapes moto's interceptor; the fake bucket must be an AWS-shaped host")
-    return True
-
-
-@pytest.fixture
-def store(monkeypatch: Any) -> Any:
-    """A moto bucket, reached through the real `ObjectStore.from_settings`."""
-    _intercepted_by_moto(ENDPOINT)
-    with mock_aws():
-        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=BUCKET)
-        for name, value in (("s3_endpoint_url", ENDPOINT), ("s3_bucket", BUCKET),
-                            ("s3_access_key_id", "AKIA"), ("s3_secret_access_key", "secret")):
-            monkeypatch.setattr(settings, name, value)
-        _intercepted_by_moto(str(settings.s3_endpoint_url))
-        yield ObjectStore.from_settings(settings)
 
 
 def _seller(member: Any, email: str = "sl4-seller@example.org") -> tuple[Any, dict[str, str], dict[str, str]]:
@@ -129,15 +103,65 @@ def _asset_rows(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
         return list(cur.fetchall())
 
 
-def _publish(conn: Any, listing_id: str) -> None:
+def _redacted_bytes() -> bytes:
+    """A real WebP, distinct from the display derivative `encode_webp` produced from `_jpeg()`, so
+    "the buyer got the redacted one" is a byte comparison rather than a hash the test chose."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (240, 180), (10, 200, 90)).save(buffer, "WEBP", lossless=True)
+    return buffer.getvalue()
+
+
+def _publish(conn: Any, listing_id: str, store: Any = None) -> None:
     """The draft, made publishable: 030's two CHECKs want the wizard's own fields plus the three
-    the reviewer supplies at the first publish (D12), and 034 (A-SL33 (1)) adds a fourth —
-    `sqft`, which `frontend/src/logic.js` dereferences unconditionally at every site Browse
-    renders a practice from."""
+    the reviewer supplies at the first publish (D12) — the original ten columns, unchanged — and
+    migration 042 now also wants a ready privacy row for every photograph (spec 2026-09-09 C.8).
+    A helper that could publish an unprocessed photograph would be a hole in exactly the gate this
+    sub-project exists to close.
+
+    It names NO visibility (A-IDP-4 (1)), so the row takes the column's own NOT_SHOW default and a
+    buyer is served the REDACTED derivative — which is why `store` exists (Task P9): pass it and
+    the object this helper's row names is really written, so a test that then reads the buyer route
+    gets bytes instead of the 404 a named-but-absent derivative correctly earns."""
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park', zip='78613',"
-                    " type='Small animal', est=1998, price=1450000, sqft=3000, state='TX', market='Austin, TX',"
-                    " area='Cedar Park', status='published' WHERE id=%s", (listing_id,))
+        cur.execute("SELECT jsonb_array_elements_text(photos) FROM listing WHERE id = %s", (listing_id,))
+        for (entry,) in cur.fetchall():
+            if "/" in entry:                      # a seed path entry: no asset row, SHOW only
+                continue
+            redacted = f"listings/{listing_id}/photos/{entry}/redacted.webp"
+            digest = "f" * 64
+            if store is not None:
+                body = _redacted_bytes()
+                store.put(redacted, body, "image/webp")
+                digest = hashlib.sha256(body).hexdigest()
+            cur.execute(
+                "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
+                " original_storage_key, processing_status, seller_confirmed, seller_confirmed_at,"
+                " final_privacy_state, confirmed_sha256, redacted_storage_key, redacted_sha256, buyer_visible)"
+                " VALUES (%s,%s,1,%s,'SELLER_CONFIRMED',true,now(),'NOT_SHOW',%s,%s,%s,true)"
+                " ON CONFLICT (asset_id) DO UPDATE SET processing_status = 'SELLER_CONFIRMED',"
+                " seller_confirmed = true, seller_confirmed_at = now(), final_privacy_state = 'NOT_SHOW',"
+                " confirmed_sha256 = EXCLUDED.confirmed_sha256,"
+                " redacted_storage_key = EXCLUDED.redacted_storage_key,"
+                " redacted_sha256 = EXCLUDED.redacted_sha256, buyer_visible = true",
+                (entry, listing_id, f"listings/{listing_id}/photos/{entry}/original.jpg",
+                 digest, redacted, digest),
+            )
+        cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park',"
+                    " zip='78613', type='Small animal', est=1998, price=1450000, sqft=3000, state='TX',"
+                    " market='Austin, TX', area='Cedar Park', status='published' WHERE id=%s",
+                    (listing_id,))
+
+
+def _tile(expected: dict[str, Any], **privacy: Any) -> dict[str, Any]:
+    """An expected step-6 tile: the fields these cases are about, plus the five Task P9 adds for
+    the seller's own review (spec C.6).
+
+    The defaults are the "no privacy record" shape — a seed PATH entry, and an asset whose row is
+    somehow absent — so a case that IS about the privacy fields names the ones it means. An asset
+    uploaded through the route and not yet processed passes `variant="redacted"`: it HAS a record,
+    in `UPLOADED`, and the listing's own setting defaults to NOT_SHOW."""
+    return {**expected, "src": None, "variant": None, "state": "processing", "masks": [],
+            "width": None, "height": None, **privacy}
 
 
 def _seed_listing(conn: Any, photos: list[str | None]) -> str:
@@ -165,7 +189,7 @@ async def test_a_photograph_is_re_encoded_to_webp_and_recorded(client: Any, conn
     asset_id, kind, name, content_type, byte_size, digest, key, _created = rows[0]
     assert (kind, name, content_type) == ("photo", "front.jpg", "image/webp")
     assert len(digest) == 64
-    assert key == f"listings/{listing_id}/photos/{asset_id}.webp"
+    assert key == f"listings/{listing_id}/photos/{asset_id}/display.webp"
     stored = store.get(key)
     assert stored[:4] == b"RIFF" and stored[8:12] == b"WEBP"
     assert byte_size == len(stored) == body["byte_size"]
@@ -204,7 +228,12 @@ async def test_there_is_no_photograph_cap_and_the_seventh_is_stored_like_the_fir
 
     assert len(_photos(conn, listing_id)) == 7
     assert len(_asset_rows(conn, listing_id)) == 7
-    assert len(store.list(f"listings/{listing_id}/photos/")) == 7
+    # Two objects per photograph since Task P2 (the original as received and the display
+    # derivative, spec 2026-09-09 C.2), so the count that means "seven photographs" is the number
+    # of distinct asset DIRECTORIES rather than the number of keys.
+    keys = store.list(f"listings/{listing_id}/photos/")
+    assert len({key.rsplit("/", 1)[0] for key in keys}) == 7
+    assert len(keys) == 14
 
 
 async def test_a_caption_is_the_sellers_own_words_for_one_photograph(
@@ -220,7 +249,8 @@ async def test_a_caption_is_the_sellers_own_words_for_one_photograph(
     response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                   json={"caption": "  Reception, looking in  "}, headers=signed)
     assert response.status_code == 200, response.text
-    assert response.json()["photos"] == [{"id": asset_id, "name": "Reception, looking in", "source": "asset"}]
+    assert response.json()["photos"] == [_tile({"id": asset_id, "name": "Reception, looking in",
+                                            "source": "asset"}, variant="redacted")]
     assert [a["caption"] for a in response.json()["assets"]] == ["Reception, looking in"]
 
 
@@ -236,7 +266,8 @@ async def test_an_undescribed_photograph_is_named_by_nothing_at_all(
     asset_id = (await _upload_photo(client, listing_id, signed, filename="DSC_0431.jpg")).json()["id"]
 
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
-    assert read.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
+    assert read.json()["photos"] == [_tile({"id": asset_id, "name": "", "source": "asset"},
+                                       variant="redacted")]
 
 
 async def test_a_blank_caption_clears_the_one_that_was_there(
@@ -255,7 +286,8 @@ async def test_a_blank_caption_clears_the_one_that_was_there(
         response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                       json={"caption": blank}, headers=signed)
         assert response.status_code == 200, response.text
-        assert response.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
+        assert response.json()["photos"] == [_tile({"id": asset_id, "name": "", "source": "asset"},
+                                               variant="redacted")]
 
 
 async def test_a_caption_is_refused_when_it_is_not_text_and_when_the_asset_is_not_this_listings(
@@ -298,7 +330,12 @@ async def test_captioning_a_document_is_refused_because_only_a_photograph_carrie
 
 async def test_a_photograph_that_is_not_an_image_is_refused(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
     """The declared type is a claim the uploader controls: a `.jpg` announced as `image/jpeg` and
-    carrying a zip's magic number is the encoder's `None`, which is this route's 422."""
+    carrying a zip's magic number is refused, and its 422 is the route's `BAD_IMAGE`.
+
+    Since Task P2 the refusal comes from `_sniffed_photo` rather than from the encoder, one step
+    earlier and before any decode is attempted. The test below is its twin: bytes that PASS the
+    sniff and that Pillow still cannot open, which is the OTHER way to the same 422 and the only
+    way to reach it now."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     refused = await _upload_photo(client, listing_id, auth_headers(cookies, headers), b"PK\x03\x04not-an-image")
@@ -394,7 +431,7 @@ async def test_delete_removes_the_row_the_object_and_the_photos_entry_in_one_tra
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
     ids = [(await _upload_photo(client, listing_id, signed)).json()["id"] for _ in range(3)]
-    key = f"listings/{listing_id}/photos/{ids[1]}.webp"
+    key = f"listings/{listing_id}/photos/{ids[1]}/display.webp"
     assert store.exists(key) is True
 
     response = await client.delete(f"/api/seller/listings/{listing_id}/assets/{ids[1]}", headers=signed)
@@ -432,7 +469,7 @@ async def test_delete_of_another_listings_asset_is_a_404(client: Any, conn: Any,
     assert refused.status_code == 404
     assert refused.json() == {"error": {"code": "NOT_FOUND", "message": "No such asset."}}
     assert [str(row[0]) for row in _asset_rows(conn, other_id)] == [foreign]
-    assert store.exists(f"listings/{other_id}/photos/{foreign}.webp") is True
+    assert store.exists(f"listings/{other_id}/photos/{foreign}/display.webp") is True
 
 
 async def test_a_document_is_stored_as_uploaded_with_its_kind(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
@@ -628,24 +665,42 @@ async def test_a_document_whose_object_has_vanished_is_a_404_not_a_500(client: A
 async def test_a_sellers_photograph_is_served_through_the_unchanged_buyer_route(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
-    """D15 reason 2: `serialise` emits `/api/listings/{id}/photos/{n}` and that route does not
-    change, so the frontend, the design and the pixel oracles see nothing at all."""
+    """D15 reason 2: `serialise` emits `/api/listings/{id}/photos/{n}` and that POSITIONAL route
+    does not change, so the frontend, the design and the pixel oracles see nothing at all.
+
+    Task P9 re-pins the two things that DID change, and the byte-identity assertion becomes the
+    SHOW case. The URL carries a `?v=` (D-IDP-11, a cache key and never a selector), the headers
+    are `private, no-cache` plus an ETag, and WHICH object the bytes come from is now the
+    listing's own privacy setting: the DEFAULT is NOT_SHOW, under which the buyer gets the redacted
+    derivative, and only a listing set to SHOW serves the display one."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
     asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
-    _publish(conn, listing_id)
+    _publish(conn, listing_id, store)
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     buyer = auth_headers(buyer_cookies, buyer_headers)
+    display = store.get(f"listings/{listing_id}/photos/{asset_id}/display.webp")
 
+    hidden = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+    assert hidden.status_code == 200
+    assert hidden.headers["content-type"] == "image/webp"
+    assert hidden.headers["cache-control"] == "private, no-cache"
+    assert hidden.content == store.get(f"listings/{listing_id}/photos/{asset_id}/redacted.webp")
+    assert hidden.content != display
+    assert hidden.content[:4] == b"RIFF"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
     response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
-    assert response.headers["cache-control"] == "private, max-age=86400"
-    assert response.content == store.get(f"listings/{listing_id}/photos/{asset_id}.webp")
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert response.content == display
     assert response.content[:4] == b"RIFF"
     detail = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1"]
+    digest = hashlib.sha256(display).hexdigest()[:12]
+    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={digest}"]
     assert (await client.get(f"/api/listings/{listing_id}/photos/2", headers=buyer)).status_code == 404
 
 
@@ -655,6 +710,13 @@ async def test_a_seed_listings_photograph_still_comes_off_disk(client: Any, conn
     from app.api.listings import PHOTOS_ROOT
 
     listing_id = _seed_listing(conn, ["abc_animal_hospital/1.webp"])
+    # SHOW, named by THIS test and by neither `_SEED_INSERT` nor the seeder (A-IDP-4 (1)): a seed
+    # photograph has no asset row and therefore no derivative, so under the column's own NOT_SHOW
+    # default there is nothing it could honestly serve and the route answers 404 — which is
+    # `tests/api/test_buyer_photo_delivery.py`'s own case. What THIS one is about is the other arm
+    # of D15 reason 3's single `if`: a path entry read off disk rather than out of the bucket.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
     _, cookies, headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=auth_headers(cookies, headers))
     assert response.status_code == 200
@@ -665,8 +727,9 @@ async def test_a_seed_listings_photograph_still_comes_off_disk(client: Any, conn
 async def test_a_photo_entry_that_names_no_asset_is_a_404_not_a_500(
     client: Any, conn: Any, redis: Any, member: Any, store: Any, entry: str
 ) -> None:
-    """Both arms of `_asset_bytes`'s two refusals: an entry that is not a uuid at all, and a uuid
-    that names no row of this listing."""
+    """Both arms of the bytes route's own two refusals: an entry that is not a uuid at all, and a
+    uuid that names no photograph of this listing. Neither resolves, so neither reaches an object
+    (`_privacy_for`, Task P9 — before it, `_asset_bytes` asked the same question of `listing_asset`)."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     _publish(conn, listing_id)
@@ -697,12 +760,17 @@ async def test_uploads_are_refused_with_a_clear_message_when_storage_is_unconfig
         assert "S3_BUCKET" in refused.json()["error"]["message"]
 
     seed_id = _seed_listing(conn, ["abc_animal_hospital/1.webp"])
+    with conn.cursor() as cur:
+        # SHOW: the claim under test is "a read that needs no bucket keeps working", and under the
+        # column's own NOT_SHOW default a seed photograph is unservable for a reason that has
+        # nothing to do with storage (A-IDP-4 (4)).
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (seed_id,))
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     buyer = auth_headers(buyer_cookies, buyer_headers)
     assert (await client.get(f"/api/listings/{seed_id}/photos/1", headers=buyer)).status_code == 200
 
-    # A seller entry with no bucket to read it from is a 404, not a 500 — `_asset_bytes`'s
-    # `store is None` arm.
+    # A seller entry with no bucket to read it from is a 404, not a 500 — `_object_bytes`'s
+    # `store is None` arm, reached through a privacy row `_publish` writes for this very asset.
     asset_id = uuid4()
     with conn.cursor() as cur:
         cur.execute("INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size, sha256, storage_key)"
@@ -976,8 +1044,9 @@ async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents
                                json={"ids": [second, first]}, headers=signed)).status_code == 200
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
-    assert body["photos"] == [{"id": second, "name": "Reception, looking in", "source": "asset"},
-                              {"id": first, "name": "", "source": "asset"}]
+    assert body["photos"] == [_tile({"id": second, "name": "Reception, looking in", "source": "asset"},
+                                    variant="redacted"),
+                              _tile({"id": first, "name": "", "source": "asset"}, variant="redacted")]
     assert body["documents"] == [{"id": document, "kind": "other", "name": "accounts.pdf",
                                   "content_type": "application/pdf", "byte_size": len(PDF),
                                   "caption": None,
@@ -1001,13 +1070,17 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
     # The committed inventory's own captions, curated slot by slot against the photographs
     # themselves (A-L10, merged from `main`).
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
-        {"id": "abc_animal_hospital/2.webp", "name": "Interior — reception", "source": "seed", "position": 2},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 1}),
+        _tile({"id": "abc_animal_hospital/2.webp", "name": "Interior — reception", "source": "seed",
+               "position": 2}),
+        _tile({"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed",
+               "position": 3}),
         # An entry the inventory does not name is named by NOTHING (A-SL22 (2)): a file name is
         # not a description, and the design's own slot caption at that position is what the
         # wizard renders in its place (amendment A16.4).
-        {"id": "abc_animal_hospital/nope.webp", "name": "", "source": "seed", "position": 4},
+        _tile({"id": "abc_animal_hospital/nope.webp", "name": "", "source": "seed",
+               "position": 4}),
     ]
     assert body["documents"] == []
 
@@ -1030,8 +1103,10 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
+        _tile({"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed",
+               "position": 1}),
+        _tile({"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed",
+               "position": 3}),
     ]
 
     moved = await client.patch(f"/api/seller/listings/{listing_id}/photos",
@@ -1112,8 +1187,26 @@ async def test_a_listing_id_that_is_not_a_uuid_is_a_404_on_every_asset_write(
 
 
 def _republish(conn: Any, listing_id: str) -> None:
-    """Back on the market, and its review stamp cleared, so the next write's transition is visible."""
+    """Back on the market, and its review stamp cleared, so the next write's transition is visible.
+    Like _publish, this ensures privacy rows exist for all photographs before re-publishing."""
     with conn.cursor() as cur:
+        cur.execute("SELECT jsonb_array_elements_text(photos) FROM listing WHERE id = %s", (listing_id,))
+        for (entry,) in cur.fetchall():
+            if "/" in entry:                      # a seed path entry: no asset row, SHOW only
+                continue
+            cur.execute(
+                "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
+                " original_storage_key, processing_status, seller_confirmed, seller_confirmed_at,"
+                " final_privacy_state, confirmed_sha256, redacted_storage_key, redacted_sha256, buyer_visible)"
+                " VALUES (%s,%s,1,%s,'SELLER_CONFIRMED',true,now(),'NOT_SHOW',%s,%s,%s,true)"
+                " ON CONFLICT (asset_id) DO UPDATE SET processing_status = 'SELLER_CONFIRMED',"
+                " seller_confirmed = true, seller_confirmed_at = now(), final_privacy_state = 'NOT_SHOW',"
+                " confirmed_sha256 = EXCLUDED.confirmed_sha256,"
+                " redacted_storage_key = EXCLUDED.redacted_storage_key,"
+                " redacted_sha256 = EXCLUDED.redacted_sha256, buyer_visible = true",
+                (entry, listing_id, f"listings/{listing_id}/photos/{entry}/original.jpg",
+                 "f" * 64, f"listings/{listing_id}/photos/{entry}/redacted.webp", "f" * 64),
+            )
         cur.execute("UPDATE listing SET status='published', submitted_at=NULL WHERE id=%s", (listing_id,))
 
 
@@ -1350,7 +1443,7 @@ async def test_a_storage_failure_on_a_document_read_is_a_503_in_the_envelope(
 async def test_a_storage_failure_on_the_buyer_photo_route_is_a_404_not_a_500(
     client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
 ) -> None:
-    """`_asset_bytes`'s own docstring promises "every 'no' is the same None … never a 500"."""
+    """`_object_bytes`'s own docstring promises "every 'no' is the same None … never a 500"."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     await _upload_photo(client, listing_id, auth_headers(cookies, headers))
@@ -1411,7 +1504,7 @@ def test_the_store_fixture_only_ever_talks_to_a_host_moto_intercepts() -> None:
     """A-SL16 M4. The rule was prose in a docstring, and prose is enforced by nothing: moto 5
     matches the request URL, so a Railway-shaped endpoint escapes `mock_aws` and makes a real HTTPS
     call (it did, once). The fixture asserts through this function, and this proves it bites."""
-    from tests.api.test_listing_assets import _intercepted_by_moto
+    from tests.conftest import _intercepted_by_moto
 
     assert _intercepted_by_moto(ENDPOINT) is True
     with pytest.raises(AssertionError):
@@ -1482,7 +1575,7 @@ async def test_the_seller_photo_arm_opens_one_connection(
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     await _upload_photo(client, listing_id, auth_headers(cookies, headers))
-    _publish(conn, listing_id)
+    _publish(conn, listing_id, store)
     _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
     opened.clear()
 
@@ -1587,3 +1680,194 @@ async def test_an_asset_write_claims_a_seeded_listing_as_the_sellers_own(
             f"/api/seller/listings/{listing_id}/assets/{uploaded.json()['id']}", headers=signed)
         assert response.status_code == 204, response.text
     assert _listing_source(conn, listing_id) == "seller"
+
+
+# --- Task P2: three objects per photograph (spec 2026-09-09 C.2, C.5 step 0) ----------------------
+
+
+async def test_an_upload_stores_the_original_and_the_display_and_enqueues_one_task(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec C.5 step 0. The original is kept because directive 13 says "NEVER overwrite the
+    original"; the display is the SHOW representation; the enqueue happens AFTER the commit, so a
+    task can never find no row, and a lost enqueue leaves an UPLOADED row for the sweeper."""
+    sent: list[tuple[str, list[object]]] = []
+    monkeypatch.setattr("app.privacy.record.celery_app.send_task",
+                        lambda name, args=None, **kw: sent.append((name, list(args or []))))
+    listing_id = await _draft(client, seller)
+    response = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                 files={"file": ("sign.jpg", _jpeg_bytes(), "image/jpeg")},
+                                 headers=seller)
+    assert response.status_code == 201, response.text
+    asset_id = response.json()["id"]
+    prefix = f"listings/{listing_id}/photos/{asset_id}/"
+    assert sorted(store.list(prefix)) == [f"{prefix}display.webp", f"{prefix}original.jpg"]
+    assert store.get(f"{prefix}original.jpg") == _jpeg_bytes()          # byte for byte, as received
+    assert store.get(f"{prefix}display.webp") != _jpeg_bytes()          # normalised and stripped
+    with conn.cursor() as cur:
+        cur.execute("SELECT storage_key FROM listing_asset WHERE id = %s", (asset_id,))
+        assert cur.fetchone()[0] == f"{prefix}display.webp"
+        cur.execute("SELECT processing_status, processing_version, original_storage_key,"
+                    " redacted_storage_key, buyer_visible FROM listing_asset_privacy WHERE asset_id = %s",
+                    (asset_id,))
+        assert cur.fetchone() == ("UPLOADED", 1, f"{prefix}original.jpg", None, False)
+    assert sent == [("media.process_photo", [asset_id, 1])]
+
+
+async def test_a_file_whose_bytes_disagree_with_its_header_is_refused(
+    client: Any, seller: dict[str, str], store: Any, conn: Any
+) -> None:
+    """The skeptic's decode-anything finding: the route used to accept "anything Pillow can open,
+    labelled jpeg/png/webp", first frame only. The magic-byte sniff mirrors the document route's
+    own `_sniffed`."""
+    listing_id = await _draft(client, seller)
+    res = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                            files={"file": ("sign.jpg", _png_bytes(), "image/jpeg")}, headers=seller)
+    assert res.status_code == 422 and res.json()["error"]["code"] == "BAD_IMAGE"
+    assert store.list(f"listings/{listing_id}/photos/") == []
+
+
+async def test_a_second_put_of_the_same_original_key_is_a_refusal_not_a_write(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth (spec C.5 step 0): the asset uuid is minted per request, so `exists()` can
+    only be true for a key some earlier, rolled-back request wrote. Reached here by planting an
+    object at a patched uuid, never by a seller's action."""
+    listing_id = await _draft(client, seller)
+    planted = UUID("33333333-3333-4333-8333-333333333333")
+    monkeypatch.setattr("app.api.seller_listings.uuid4", lambda: planted)
+    store.put(f"listings/{listing_id}/photos/{planted}/original.jpg", b"older", "image/jpeg")
+    res = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                            files={"file": ("sign.jpg", _jpeg_bytes(), "image/jpeg")}, headers=seller)
+    assert res.status_code == 409 and res.json()["error"]["code"] == "STORAGE_CONFLICT"
+    assert res.json()["error"]["message"] == "That photograph has already been stored."
+    assert store.get(f"listings/{listing_id}/photos/{planted}/original.jpg") == b"older"
+
+
+async def test_deleting_a_photograph_removes_all_three_objects_and_the_privacy_row(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Directive 13's retention rule, unchanged: an asset's objects live exactly as long as its
+    row. The privacy row goes by CASCADE (migration 041)."""
+    monkeypatch.setattr("app.privacy.record.celery_app.send_task", lambda *a, **kw: None)
+    listing_id = await _draft(client, seller)
+    created = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                files={"file": ("sign.jpg", _jpeg_bytes(), "image/jpeg")}, headers=seller)
+    asset_id = created.json()["id"]
+    prefix = f"listings/{listing_id}/photos/{asset_id}/"
+    store.put(f"{prefix}redacted.webp", b"derivative", "image/webp")     # as the worker would
+    gone = await client.delete(f"/api/seller/listings/{listing_id}/assets/{asset_id}", headers=seller)
+    assert gone.status_code == 204
+    assert store.list(prefix) == []
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM listing_asset_privacy WHERE asset_id = %s", (asset_id,))
+        assert cur.fetchone() is None
+
+
+@pytest.mark.parametrize(("payload", "declared", "accepted"), [
+    ("jpeg", "image/jpeg", True),
+    ("png", "image/png", True),
+    ("webp", "image/webp", True),
+    ("jpeg", "image/png", False),
+    ("jpeg", "image/webp", False),
+    ("png", "image/jpeg", False),
+    ("webp", "image/jpeg", False),
+    ("riff-not-webp", "image/webp", False),
+    ("nothing-recognisable", "image/jpeg", False),
+])
+async def test_the_sniff_pairs_each_photo_type_with_its_own_magic_bytes(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, payload: str, declared: str, accepted: bool
+) -> None:
+    """Spec 2026-09-09 C.5 step 0, every arm of `_sniffed_photo`. WebP is a RIFF container whose
+    fourcc sits at byte 8, so a RIFF file that is NOT a WebP is refused by the same branch that
+    accepts one that is — a `startswith` could express neither."""
+    webp = io.BytesIO()
+    Image.new("RGB", (60, 40), (30, 30, 120)).save(webp, "WEBP")
+    bodies = {"jpeg": _jpeg_bytes(), "png": _png_bytes(), "webp": webp.getvalue(),
+              "riff-not-webp": b"RIFF" + b"\x00" * 4 + b"WAVEfmt " + b"\x00" * 32,
+              "nothing-recognisable": b"GIF89a" + b"\x00" * 32}
+    listing_id = await _draft(client, seller)
+    response = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                 files={"file": ("sign", bodies[payload], declared)}, headers=seller)
+    if accepted:
+        assert response.status_code == 201, response.text
+        ext = {"jpeg": ".jpg", "png": ".png", "webp": ".webp"}[payload]
+        prefix = f"listings/{listing_id}/photos/{response.json()['id']}/"
+        assert sorted(store.list(prefix)) == [f"{prefix}display.webp", f"{prefix}original{ext}"]
+    else:
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "BAD_IMAGE"
+        assert store.list(f"listings/{listing_id}/photos/") == []
+
+
+async def test_a_bucket_outage_on_the_immutability_check_is_a_503_not_a_500(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ObjectStore.exists` returns False for a 404 and RE-RAISES everything else
+    (`app/storage.py`), so the upload's own never-overwrite guard would answer FastAPI's
+    `{"detail": ...}` on a throttle without `_exists`. A-SL16 M2's shape, applied to the check
+    Task P2 added."""
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "SlowDown", "Message": "no"}}, "HeadObject")
+
+    listing_id = await _draft(client, seller)
+    monkeypatch.setattr(ObjectStore, "exists", _boom)
+    refused = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                files={"file": ("sign.jpg", _jpeg_bytes(), "image/jpeg")}, headers=seller)
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert _asset_rows(conn, listing_id) == []
+
+
+async def test_a_bucket_outage_while_listing_a_photographs_objects_is_a_503_not_a_500(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete reads the asset's PREFIX to find every object under it, so `ObjectStore.list` is
+    on the refusal path the same way `put` and `delete` are, and the row must survive the outage."""
+    listing_id = await _draft(client, seller)
+    asset_id = (await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                  files={"file": ("sign.jpg", _jpeg_bytes(), "image/jpeg")},
+                                  headers=seller)).json()["id"]
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "no"}}, "ListObjectsV2")
+
+    monkeypatch.setattr(ObjectStore, "list", _boom)
+    refused = await client.delete(f"/api/seller/listings/{listing_id}/assets/{asset_id}", headers=seller)
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert [str(row[0]) for row in _asset_rows(conn, listing_id)] == [asset_id]
+
+
+def test_no_test_in_the_suite_publishes_to_a_real_broker(published_tasks: list[Any]) -> None:
+    """Task P2 made the upload path publish a Celery message unconditionally, where every publish
+    before it was conditional and reached by a handful of tests that patched `send_task` for
+    themselves. `tests/conftest.py::published_tasks` is autouse, so it is already active for every
+    test without being asked for by name; asking for it here proves it actually bites, the way the
+    two guards above prove theirs do."""
+    from app.tasks.celery_app import celery_app
+
+    celery_app.send_task("media.process_photo", args=["an-asset", 1], queue="media")
+    assert published_tasks == [("media.process_photo", ["an-asset", 1])]
+
+
+@pytest.mark.parametrize("magic", [b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n"])
+async def test_a_file_with_the_right_magic_bytes_that_pillow_cannot_open_is_still_refused(
+    client: Any, seller: dict[str, str], store: Any, conn: Any, magic: bytes
+) -> None:
+    """The twin of the sniff's refusal, and the only remaining way to `encode_webp`'s own `None`.
+
+    `_sniffed_photo` reads the first bytes and nothing else, so a truncated or corrupt file whose
+    header is honest passes it and reaches the decode — which is where the megapixel guard and
+    `UnidentifiedImageError` live. Both refusals are the same `BAD_IMAGE` to the seller, and both
+    leave the listing exactly as it was: a 422 that wrote a row or an object would be worse than
+    the upload it refused."""
+    declared = {b"\xff\xd8\xff": "image/jpeg"}.get(magic, "image/png")
+    listing_id = await _draft(client, seller)
+    refused = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                files={"file": ("sign", magic + b"\x00" * 64, declared)}, headers=seller)
+    assert refused.status_code == 422, refused.text
+    assert refused.json() == {"error": {"code": "BAD_IMAGE", "message": "That file could not be read as a photograph."}}
+    assert _asset_rows(conn, listing_id) == []
+    assert store.list(f"listings/{listing_id}/") == []
+    assert _photos(conn, listing_id) == []

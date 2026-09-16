@@ -63,7 +63,16 @@ export function designWizardAssets(listingId) {
  *  its default `false`, which `serialise_draft` answers as `revBand: true`, while the design's
  *  `w` opens the step-7 switch OFF. A-SL27 (1) rules the NULL set alone; this one field is
  *  recorded for the controller in the round-4 report rather than moved here, because `wizard-step-7`
- *  is a frozen capture of that switch. */
+ *  is a frozen capture of that switch.
+ *
+ *  `showIdentifiable: false` (Task P11, spec C.1) is `create`'s own DEFAULT column value, not a
+ *  design borrowing — the safest privacy state, exactly as the design's own `w` opens it.
+ *
+ *  Each photo tile carries `state: "review"` (Task P11) — a freshly-created listing's photograph
+ *  has been through the pipeline and is awaiting the seller's own look, which is the true state a
+ *  `create` leaves it in — and deliberately carries NO `src`: this stub is what a listing with NO
+ *  disclosed photograph looks like (`create` inserts none), so the reference and the app render
+ *  the same tiles either way and no approved state moves for a reason other than the ruled ones. */
 export function designWizardDraft(listingId, status = 'draft') {
   const assets = designWizardAssets(listingId);
   return {
@@ -71,11 +80,11 @@ export function designWizardDraft(listingId, status = 'draft') {
     name: null, type: null, est: null, ownership: null,
     city: null, zip: null, price: null, rev: null, docs: null, rooms: null, sqft: null,
     hours: null, desc: null, bldg: null, facilityType: null, facility: null,
-    anon: true, revBand: false, docsLocked: true,
+    anon: true, revBand: false, docsLocked: true, showIdentifiable: false,
     state: null, market: null, area: null,
     decline_reason: null, submitted_at: null, updated_at: '2026-09-09T00:00:00+00:00',
     assets,
-    photos: assets.filter((a) => a.kind === 'photo').map((a) => ({ id: a.id, name: a.name, source: 'asset' })),
+    photos: assets.filter((a) => a.kind === 'photo').map((a) => ({ id: a.id, name: a.name, source: 'asset', state: 'review' })),
     documents: assets.filter((a) => a.kind !== 'photo')
       .map((a) => ({ ...a, url: `/api/seller/listings/${listingId}/documents/${a.id}` }))
   };

@@ -49,9 +49,25 @@ case "$role" in
     exec "${cmd[@]}"
     ;;
   worker)
-    wcmd=(celery -A app.tasks.celery_app:celery_app worker -B --loglevel=info --concurrency="${CELERY_CONCURRENCY:-2}" --queues=celery)
+    # `--queues=celery,media`: ONE worker process consumes both. `media.*` is routed to its own
+    # queue (spec 2026-09-09 E) so a burst of fifty photographs cannot delay the minutely mail
+    # drain — the separation is of BACKLOGS, not of processes, and a queue this line omits is a
+    # queue nothing ever drains while beat goes on publishing `media.sweep` into it.
+    #
+    # `ORT_DISABLE_TELEMETRY=1`: onnxruntime writes a device-id file and a SQLite database under
+    # `$HOME/Library/Application Support/Microsoft/DeveloperTools/.onnxruntime/` (or the platform
+    # equivalent) at `import onnxruntime` — MEASURED, before any session exists, which is why
+    # `onnxruntime.disable_telemetry_events()` cannot prevent it and this has to be an environment
+    # variable set before the process starts. An unwritable `$HOME` does not FAIL (measured: the
+    # runtime warns "Failed to persist telemetry device ID; using an in-memory identifier" and goes
+    # on), so this is about not writing an unasked-for file in a container, not about robustness.
+    export ORT_DISABLE_TELEMETRY=1
+    wcmd=(celery -A app.tasks.celery_app:celery_app worker -B --loglevel=info --concurrency="${CELERY_CONCURRENCY:-2}" --queues=celery,media)
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-      echo "${wcmd[*]}"
+      # The ENVIRONMENT is part of what this role runs, not decoration: the telemetry switch has to
+      # be set before the process imports onnxruntime, so a dry run that printed the command alone
+      # could not show whether it was.
+      echo "ORT_DISABLE_TELEMETRY=${ORT_DISABLE_TELEMETRY:-unset} ${wcmd[*]}"
       exit 0
     fi
     # Celery serves no HTTP; Railway's healthcheck would restart-loop the service.

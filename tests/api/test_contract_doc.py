@@ -166,6 +166,11 @@ def test_contract_doc_names_every_community_field_the_listing_serialiser_emits()
         # not a `CommunityRow` field, so it is constant across the two calls below and the
         # measurement never claims it — which is exactly the distinction this test is drawing.
         "geo_precision": None,
+        # Task P9: `_SELECT`'s own two new columns — `serialise` resolves every photo slot through
+        # `app/privacy/delivery.py::buyer_variant`, which reads exactly these. This row carries no
+        # photographs, so both are inert here and present because a row "as `_rows()` builds one"
+        # carries every column the query names.
+        "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},
     }
     now = datetime(2026, 9, 6, tzinfo=UTC)
     fields = tuple(CommunityRow.__annotations__)

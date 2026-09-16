@@ -14,6 +14,7 @@ server on a refusal. `uvicorn.run` is monkeypatched throughout: nothing here bin
 """
 from __future__ import annotations
 
+import os
 import runpy
 from pathlib import Path
 from typing import Any
@@ -185,3 +186,46 @@ def test_the_cli_entry_point_runs_as___main__(server: Any, test_env: None, monke
         runpy.run_path(str(Path(api_under_test.__file__)), run_name="__main__")
     assert exc.value.code != 0
     assert server == []
+
+
+def test_it_arms_the_privacy_pipeline_for_this_process_alone(server: Any, test_env: None,
+                                                             monkeypatch: Any) -> None:
+    """Controller amendment A-IDP-2, spec 2026-09-09 E. The pipeline is worker-only and this
+    launcher starts no worker, so the two settings below are what make a wizard photograph reach
+    READY_FOR_REVIEW in `listing-flows.spec.ts` instead of stopping at UPLOADED.
+
+    Both are DELETED first and restored by monkeypatch's own teardown: `setdefault` on
+    `os.environ` outlives the call that made it, and a test that left them set would arm eager
+    Celery and the stub engines for every later test in this process."""
+    for name in api_under_test.PIPELINE_DEFAULTS:
+        monkeypatch.delenv(name, raising=False)
+    assert api_under_test.main(["--port", "8099"]) == 0
+    assert os.environ["CELERY_TASK_ALWAYS_EAGER"] == "1"
+    assert os.environ["PRIVACY_ENGINE_MODULE"] == "tests.e2e.stub_engines"
+    # The engine module is a TEST module, which is the whole reason `Settings` refuses the variable
+    # outside `ENVIRONMENT=test`: a stubbed OCR would let a photograph reach the seller's review
+    # unscanned. This launcher has already required that environment, exactly.
+    assert api_under_test.PIPELINE_DEFAULTS["PRIVACY_ENGINE_MODULE"].startswith("tests.")
+    assert api_under_test.ALLOWED_ENVIRONMENT == "test"
+
+
+def test_a_run_that_set_either_setting_itself_keeps_its_own_value(server: Any, test_env: None,
+                                                                  monkeypatch: Any) -> None:
+    """`setdefault` and not `[...] = ...`, the same rule `targets.ts` applies to the four `S3_*`
+    defaults: a caller that has chosen a value keeps it."""
+    monkeypatch.setenv("PRIVACY_ENGINE_MODULE", "tests.e2e.some_other_stub")
+    monkeypatch.delenv("CELERY_TASK_ALWAYS_EAGER", raising=False)
+    assert api_under_test.main(["--port", "8099"]) == 0
+    assert os.environ["PRIVACY_ENGINE_MODULE"] == "tests.e2e.some_other_stub"
+    assert os.environ["CELERY_TASK_ALWAYS_EAGER"] == "1"
+
+
+def test_a_refused_launcher_changes_nothing_about_its_own_process(server: Any, test_env: None,
+                                                                  monkeypatch: Any) -> None:
+    """The two settings are armed AFTER the refusals, so a launcher that exits 2 leaves the process
+    it was started in exactly as it found it."""
+    for name in api_under_test.PIPELINE_DEFAULTS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    assert api_under_test.main(["--port", "8099"]) == 2
+    assert [n for n in api_under_test.PIPELINE_DEFAULTS if n in os.environ] == []

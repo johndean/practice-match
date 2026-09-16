@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component, ECON_K, MARKETS, P, VETS } from './logic.js';
-import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
+import { ListingError, STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
 beforeEach(() => { c = new Component({}); });
@@ -65,7 +65,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
   // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
   // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
-  // the filter moved 28 of the 56 approved states and seven of the thirteen frozen hashes. The
+  // the filter moved 28 of the 58 approved states and seven of the thirteen frozen hashes. The
   // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
   // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
   // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
@@ -1588,11 +1588,14 @@ describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
     const c2: any = new Component({ listings: adapter() });
     c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6, wizAssets: undefined });
     expect(c2.wizardVals().uploads).toEqual([]);
-    // …and with no adapter the design's own path is untouched, which is the reference.
+    // …and with no adapter the design's own path is untouched, which is the reference. A20.4
+    // widens each fixture tile with the same coordinate fields the adapter path carries
+    // (`src: null, hasSrc: false, noSrc: true`), fixed rather than derived, so the badge band
+    // renders exactly as it always has (Task P11).
     expect(new Component({}).wizardVals().uploads).toEqual([
-      { kind: 'Photo', name: 'Exterior.jpg' },
-      { kind: 'Photo', name: 'Lobby.jpg' },
-      { kind: 'Photo', name: 'Treatment.jpg' }
+      { kind: 'Photo', name: 'Exterior.jpg', src: null, hasSrc: false, noSrc: true },
+      { kind: 'Photo', name: 'Lobby.jpg', src: null, hasSrc: false, noSrc: true },
+      { kind: 'Photo', name: 'Treatment.jpg', src: null, hasSrc: false, noSrc: true }
     ]);
   });
 
@@ -1747,6 +1750,7 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
     name: null, type: null, est: null, ownership: null, city: null, zip: null,
     price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
     bldg: null, facilityType: null, facility: null, anon: true, revBand: false, docsLocked: true,
+    showIdentifiable: false,
     state: null, market: null, area: null, decline_reason: null, submitted_at: null,
     updated_at: '2026-09-09T00:00:00Z', assets: [], photos: [], documents: [], ...over
   });
@@ -1776,7 +1780,8 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       await c2.wizardVals().next();
       expect(sent.map((r) => r.method), `step ${step}`).toEqual(['PATCH']);
       expect(sent[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
-      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual([...keys].sort());
+      const sendable = [...keys].sort();
+      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual(sendable);
       expect(c2.state.wizErr, `step ${step}`).toBe('');
       expect(c2.state.step, `step ${step}`).toBe(Math.min(8, Number(step) + 1));
       vi.unstubAllGlobals();
@@ -3367,6 +3372,152 @@ describe('A19 — the photo lightbox', () => {
       }
       (P[0] as any).growth = originalGrowth;
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A20 — the identifiable-image control and the seller's review surface (John's implementation
+// directive, 2026-09-09, spec 2026-09-09-image-identifiability-protection-design.md, C.1/C.9):
+//
+//   "The seller should have ONE simple listing-level control: IDENTIFIABLE IMAGE CONTENT
+//    [ SHOW ] [ NOT SHOW ] ... DEFAULT: NOT SHOW. The safest privacy state is the default."
+//
+// Composed from the design's own idioms and nothing else (spec C.9): the step-7 toggle is the
+// fourth entry of a list of three, rendered by the checkbox+label+help markup already there; the
+// tile thumbnail is the detail grid's own <image-slot>; the pill is a small rounded badge in the
+// same idiom the design already uses for status pills; the preview strip is the same slot again.
+// No new element, no new colour, no new font.
+//
+// Directive 15, verbatim: "Keep the UI extremely simple ... Do not expose OCR controls, AI
+// confidence scores, bounding boxes by default, technical privacy settings, model configuration,
+// API details, redaction engine details." Every assertion below is either that the control exists
+// in the design's own idiom, or that none of those does.
+// ---------------------------------------------------------------------------------------
+describe('A20 — the identifiable-image control and the step-6 tiles', () => {
+  /** Every method the wizard's script reaches through `this.props.listings` — the A16 block's own
+   *  `adapter()` shape (line 1549), reused rather than re-invented. */
+  function adapter(over: Record<string, unknown> = {}): any {
+    return {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue('new-1'),
+      get: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+      patch: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+      submit: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+      attach: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+      ...over
+    };
+  }
+
+  /** A seller on the wizard with a real adapter and three tiles: the first with a `src`, a
+   *  `state` of `review` and one auto mask (Task P9 Step 6's own shape for `wizAssets`), the
+   *  second a photograph awaiting processing, the third a document. */
+  function mountWithPhotos(over: { wizStep?: number; listings?: any } = {}): any {
+    const c: any = new Component({ listings: over.listings ?? adapter() });
+    c.setState({
+      auth: true, screen: 'seller', sellerView: 'wizard', step: over.wizStep ?? 6, editingId: 'a3f1',
+      wizAssets: [
+        {
+          kind: 'Photo', name: 'Front entrance', id: 'as-1', source: 'asset',
+          src: '/api/seller/listings/a3f1/photos/as-1?v=abcdef012345', state: 'review',
+          masks: [{ id: 'm1', box: [10, 10, 40, 40], source: 'auto' }], width: 1200, height: 900
+        },
+        { kind: 'Photo', name: '', id: 'as-2', source: 'asset' },
+        { kind: 'PDF', name: 'Floor plan.pdf', id: 'as-3', source: 'asset' }
+      ]
+    });
+    return c;
+  }
+
+  it('step 7 carries a fourth toggle whose help changes with its state', () => {
+    const c2: any = new Component({});
+    c2.setState({ screen: 'seller', sellerView: 'wizard', step: 7 });
+    const toggles = c2.wizardVals().toggles;
+    expect(toggles.map((t: any) => t.key)).toEqual(['anon', 'revBand', 'docsLocked', 'showIdentifiable']);
+    expect(toggles[3].label).toBe('Identifiable image content');
+    expect(toggles[3].help).toBe('Not shown to buyers — recommended');
+    c2.setState({ w: { ...c2.state.w, showIdentifiable: true } });
+    expect(c2.wizardVals().toggles[3].help)
+      .toBe('Shown to buyers — signage, logos and names may be visible');
+  });
+
+  it('a tile with a src renders the design\'s image slot and a state pill', () => {
+    const c2 = mountWithPhotos();
+    const [first, second] = c2.wizardVals().uploads;
+    expect(first.hasSrc).toBe(true);
+    expect(first.src).toMatch(/^\/api\/seller\/listings\/[^/]+\/photos\/[^?]+\?v=[0-9a-f]{12}$/);
+    expect(first.pill).toBe('Review');
+    expect(second.hasSrc).toBe(false);
+  });
+
+  it('a tile with no src keeps the badge band exactly as it was', () => {
+    const c2: any = new Component({});   // no adapter
+    c2.setState({ screen: 'seller', sellerView: 'wizard', step: 6 });
+    const [tile] = c2.wizardVals().uploads;
+    expect(tile.hasSrc).toBe(false);
+    expect(tile.kind).toBe('Photo');
+    expect(tile.src).toBe(null);
+  });
+
+  it('the once-only line appears above the tiles under NOT_SHOW and never under SHOW', () => {
+    const c2 = mountWithPhotos();
+    expect(c2.wizardVals().privacyNote).toBe(
+      'We\'ve automatically hidden information that could identify the hospital. '
+      + 'Review your images before publishing.');
+    c2.setState({ w: { ...c2.state.w, showIdentifiable: true } });
+    expect(c2.wizardVals().privacyNote).toBe('');
+  });
+
+  // A20.4b's own widening (Task P11 Step 5/6): the reference reaches a tile WITH a src through
+  // `startWizardPhotos` alone, with no adapter — and the privacy line has to agree with the tiles
+  // it sits above, on the SAME condition, or `wizard-step-6-photos`/`wizard-step-6-review` would
+  // show a tile with a photograph and no line above it on the reference while the app (a real
+  // adapter, the same simulated draft) shows both — the exact mismatch the pixel gate exists to
+  // catch, and did.
+  it('the once-only line also appears with no adapter, once a simulated wizAssets seed is present', () => {
+    const c2: any = new Component({});   // no adapter — the reference's own path
+    c2.setState({
+      screen: 'seller', sellerView: 'wizard', step: 6,
+      wizAssets: [{ kind: 'Photo', name: 'Front entrance', id: 'wp-1', source: 'asset', src: '/x.webp', state: 'review' }]
+    });
+    expect(c2.wizardVals().privacyNote).toBe(
+      'We\'ve automatically hidden information that could identify the hospital. '
+      + 'Review your images before publishing.');
+    c2.setState({ w: { ...c2.state.w, showIdentifiable: true } });
+    expect(c2.wizardVals().privacyNote).toBe('');
+  });
+
+  it('the pills are the four contracted words and nothing technical is rendered', () => {
+    const rendered = JSON.stringify(mountWithPhotos().renderVals());
+    for (const forbidden of ['confidence', 'ocr', 'vision', 'claude', 'rapidocr', 'zxing',
+      'identity_matches', 'processing_version', 'storage_key']) {
+      expect(rendered.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it('step 8 shows the buyer-facing variant of every visible photograph', () => {
+    const c2 = mountWithPhotos({ wizStep: 8 });
+    const strip = c2.wizardVals().previewPhotos;
+    expect(strip.map((p: any) => p.src)).toEqual(
+      c2.wizardVals().uploads.filter((u: any) => u.hasSrc).map((u: any) => u.src));
+  });
+
+  it('a PHOTOS_NOT_READY refusal from Submit lands in the design\'s own error slot', async () => {
+    const listings = adapter({
+      submit: vi.fn().mockRejectedValue(new ListingError('PHOTOS_NOT_READY',
+        'Every photograph must finish processing and be reviewed before this listing can be submitted.'))
+    });
+    const c2 = mountWithPhotos({ wizStep: 8, listings });
+    await c2.wizardVals().submit();
+    expect(c2.wizardVals().error).toBe(true);
+    expect(c2.wizardVals().errorText).toContain('must finish processing');
+  });
+
+  it('the reference path — no adapter — renders exactly what it rendered before', () => {
+    const c2: any = new Component({});
+    c2.setState({ screen: 'seller', sellerView: 'wizard', step: 6 });
+    expect(c2.wizardVals().uploads.map((u: any) => u.name))
+      .toEqual(['Exterior.jpg', 'Lobby.jpg', 'Treatment.jpg']);
+    expect(c2.wizardVals().privacyNote).toBe('');
   });
 });
 

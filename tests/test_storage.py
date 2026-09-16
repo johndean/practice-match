@@ -149,3 +149,26 @@ def test_from_settings_returns_a_real_client_when_all_four_are_present():
     store = ObjectStore.from_settings(s)
     assert isinstance(store, ObjectStore)
     assert store.bucket == "practice-match-data"
+
+
+# --- Task P9: the delivery paths that must NOT exist ---------------------------------------------
+
+
+def test_no_presigning_exists() -> None:
+    """Directive 9 and 20: a presigned URL is a delivery path with no resolver in front of it — the
+    bucket serves the bytes directly, so `buyer_variant` is never asked and a photograph a seller
+    believes is redacted is served intact for as long as the signature lives.
+
+    Two claims, because either alone is weak: the ADAPTER has no such method, and no module under
+    `app/` or `scripts/` so much as names one."""
+    from pathlib import Path
+
+    from app.storage import ObjectStore
+
+    assert not hasattr(ObjectStore, "generate_presigned_url")
+    assert not any(hasattr(ObjectStore, name) for name in dir(ObjectStore) if "presign" in name.lower())
+    root = Path(__file__).resolve().parent.parent
+    named = sorted(str(f.relative_to(root)) for directory in ("app", "scripts")
+                   for f in (root / directory).rglob("*.py")
+                   if "presign" in f.read_text().lower())
+    assert named == [], named
