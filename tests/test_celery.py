@@ -51,7 +51,39 @@ def test_the_mail_pipeline_tasks_are_registered_and_scheduled():
     # -- still goes red here.
     assert {entry["task"] for entry in schedule.values()} == {
         "mail.send", "mail.purge_sessions", "mail.purge_outbox", "census.load_qwi", "census.license_audit",
-        "census.materialize_metrics", "census.materialize_geo_metrics",
+        "census.materialize_metrics", "census.materialize_geo_metrics", "media.sweep",
     }
     for name in ("sessions-purge-nightly", "outbox-purge-nightly"):
         assert schedule[name]["schedule"].hour == {4}, name
+
+
+def test_the_media_queue_and_its_sweep_are_registered_and_scheduled():
+    """Spec 2026-09-09 E. The set-equality assertions above are what stop a future edit wiping
+    either sub-project's entries; these are this sub-project's rows in them.
+
+    `app.tasks.media` is imported here for the reason this file's own docstring already gives of
+    `app.mail.tasks` and `app.tasks.census`: `include=[...]` only makes `celery worker`/`celery
+    beat` import a module at start-up, never a bare `celery_app.tasks` access under pytest. Without
+    the import the two lookups below raise `KeyError` and this case would be testing the import
+    system rather than the wiring."""
+    from app.tasks import media as MM  # importing the module is what registers them
+
+    assert (MM.process_photo_task.name, MM.sweep_task.name) == ("media.process_photo", "media.sweep")
+    assert {"media.process_photo", "media.sweep"} <= set(celery_app.tasks)
+    assert "app.tasks.media" in celery_app.conf.include
+    assert celery_app.conf.task_routes["media.*"] == {"queue": "media"}
+    assert celery_app.conf.beat_schedule["media-sweep-5min"] == {"task": "media.sweep", "schedule": 300.0}
+    for name in ("media.process_photo", "media.sweep"):
+        task = celery_app.tasks[name]
+        # `acks_late` acks on RETURN, so a retry is always a fresh message rather than a
+        # redelivery; `reject_on_worker_lost` redelivers the message of a child killed mid-run, and
+        # the redelivered run finds the row PROCESSING and writes nothing. The two together are
+        # what make `media.sweep`'s rule (2) the only thing that can recover a dead child's row.
+        assert task.acks_late and task.reject_on_worker_lost
+        # The hard limit is `record.LOST_AFTER` minus a minute, which is what makes a PROCESSING row
+        # older than six minutes a lost child rather than a slow one.
+        assert (task.time_limit, task.soft_time_limit) == (300, 240)
+    # Never in a deployed environment: `Settings` refuses `CELERY_TASK_ALWAYS_EAGER` outside
+    # `ENVIRONMENT=test`, and the pytest process sets it nowhere -- so a task published here would
+    # go to the broker, exactly as it does on QA.
+    assert celery_app.conf.task_always_eager is False

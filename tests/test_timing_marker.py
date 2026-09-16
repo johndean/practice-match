@@ -130,6 +130,7 @@ MARKED = {
     (test_api_latency, "test_interest_stored_path_p95_within_budget"),
     (test_api_latency, "test_listings_p95_within_budget"),
     (test_api_latency, "test_market_api_p95_within_budget"),
+    (test_api_latency, "test_a_sellers_redacted_photograph_is_served_within_the_photo_budget"),
     (test_db, "test_check_db_and_check_redis_time_out_against_a_black_hole"),
     (test_passwords, "test_argon2id_parameters_hash_verify_rehash_and_cost"),
 }

@@ -8,6 +8,16 @@ first=$(printf '%s\n' "$out" | sed -n 1p); second=$(printf '%s\n' "$out" | sed -
 out=$(DRY_RUN=1 RAILWAY_SERVICE_NAME=worker bash scripts/start.sh) || fail "worker role via RAILWAY_SERVICE_NAME exited non-zero"
 [[ "$out" == *celery* && "$out" == *worker* ]] || fail "worker role should start a celery worker, got: $out"
 [[ "$out" != *migrate.py* ]] || fail "the worker must not run migrations (the api does, under the advisory lock)"
+# Spec 2026-09-09 E: `media.*` is routed to its own queue so a burst of fifty photographs cannot
+# delay the minutely mail drain — but ONE worker process consumes both, so a queue the worker does
+# not subscribe to is a queue nothing ever drains. Beat publishes `media.sweep` by name every five
+# minutes whatever this line says, so getting it wrong is silent.
+[[ "$out" == *"--queues=celery,media"* ]] || fail "the worker must consume both queues, got: $out"
+# MEASURED: `import onnxruntime` writes a device id and a SQLite database under $HOME before any
+# session exists, so the Python switch `disable_telemetry_events()` cannot prevent it and only an
+# environment variable set before the process starts can. The worker is the only role that loads an
+# engine.
+[[ "$out" == *"ORT_DISABLE_TELEMETRY=1"* ]] || fail "the worker must disable onnxruntime telemetry before it imports an engine, got: $out"
 
 # --- migration outcomes at api boot (fake python + fake uvicorn on PATH; no DRY_RUN) ---
 FAKE=$(mktemp -d); trap 'rm -rf "$FAKE"' EXIT

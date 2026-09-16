@@ -968,3 +968,88 @@ async def test_a_publish_after_an_address_edit_re_enqueues_inside_the_same_windo
 
     assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json=publish, headers=admin)).status_code == 200
     assert sent == [("census.geocode_listing", [str(listing_id)])] * 2
+
+
+# --- Task P9: the reviewer's own copy of the step-6 tiles, and of the bytes route ---------------
+
+
+async def test_the_reviewers_draft_carries_the_same_tiles_pointing_at_the_admin_route(
+    client: Any, conn: Any, redis: Any, store: Any, member: Any
+) -> None:
+    """Spec C.6: one payload shape, two route prefixes. The reviewer's tiles must point at the
+    route the REVIEWER's permission opens — a `src` under `/api/seller/...` would be a 404 for
+    them, because `owned_row` scopes that route to the listing's own seller in SQL.
+
+    The `?v=` is the content hash of the variant actually served, from
+    `app/privacy/delivery.py::owner_url` and from nowhere else, so both payloads carry the same one
+    and the thumbnail changes the moment a mask does."""
+    import hashlib
+    import io
+    import json as _json
+    from uuid import UUID as _UUID
+
+    from PIL import Image
+
+    from app.privacy import record, redacted_key
+    from tests.api.conftest import _jpeg_bytes
+
+    listing_id, owner = await _draft(client, member)
+    uploaded = await client.post(f"/api/seller/listings/{listing_id}/photos",
+                                 files={"file": ("front.jpg", _jpeg_bytes(), "image/jpeg")}, headers=owner)
+    assert uploaded.status_code == 201, uploaded.text
+    asset_id = uploaded.json()["id"]
+    buffer = io.BytesIO()
+    Image.new("RGB", (240, 180), (10, 200, 90)).save(buffer, "WEBP", lossless=True)
+    body = buffer.getvalue()
+    key = redacted_key(listing_id, asset_id)
+    store.put(key, body, "image/webp")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset_privacy SET processing_status='READY_FOR_REVIEW',"
+                    " redacted_storage_key=%s, redacted_sha256=%s, redaction_regions=%s::jsonb,"
+                    " ocr=%s::jsonb WHERE asset_id=%s",
+                    (key, hashlib.sha256(body).hexdigest(),
+                     _json.dumps([{"id": "r1", "polygon": [[1, 2], [9, 2], [9, 8], [1, 8]],
+                                   "source": "auto", "expanded_from": 0, "pad_px": 12,
+                                   "by": None, "at": None}]),
+                     _json.dumps({"size": [1200, 900]}), asset_id))
+    row = record.read(conn, _UUID(asset_id))
+
+    staff = await _staff(client, member)
+    reviewer = (await client.get(f"/api/admin/listings/{listing_id}", headers=staff)).json()["photos"][0]
+    seller_side = (await client.get(f"/api/seller/listings/{listing_id}", headers=owner)).json()["photos"][0]
+
+    assert reviewer["src"] == f"/api/admin/listings/{listing_id}/photos/{asset_id}?v={row.redacted_sha256[:12]}"
+    assert seller_side["src"] == f"/api/seller/listings/{listing_id}/photos/{asset_id}?v={row.redacted_sha256[:12]}"
+    assert {key: reviewer[key] for key in ("variant", "state", "masks", "width", "height")} == \
+           {key: seller_side[key] for key in ("variant", "state", "masks", "width", "height")}
+    assert reviewer["state"] == "review" and reviewer["variant"] == "redacted"
+    assert reviewer["masks"] == [{"id": "r1", "box": [1, 2, 9, 8], "source": "auto"}]
+
+    # …and the bytes that `src` names really are the reviewer's to read, while a buyer's are not.
+    served = await client.get(reviewer["src"], headers=staff)
+    assert served.status_code == 200 and served.content == body
+    _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="al-buyer@example.org")
+    refused = await client.get(reviewer["src"], headers=auth_headers(buyer_cookies, buyer_headers))
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "FORBIDDEN"
+
+
+async def test_the_reviewers_photo_route_carries_exactly_one_guard_and_it_is_listing_review(
+    dist: Any
+) -> None:
+    """A-SL8's rule for the route this task adds: ONE guard, resolvable by identity, and
+    `listing.review` — the permission to look at anybody's listing. Not in `AUDITED`, for the
+    reason the queue read beside it is not: a dialog that polls must not write a row per poll."""
+    from app.api.admin_listings import REQUIRE_REVIEW
+    from app.auth import deps
+    from app.auth import permissions as PM
+    from app.main import create_app
+    from tests.conftest import walk_routes
+
+    path = "/api/admin/listings/{listing_id}/photos/{asset_id}"
+    routes = {(m, p): r for m, p, r in walk_routes(create_app(dist=dist).routes)}
+    guards = [g for d in routes[("GET", path)].dependant.dependencies if (g := deps.permission_of(d.call))]
+    assert guards == ["listing.review"]
+    assert deps.permission_of(REQUIRE_REVIEW) == "listing.review"
+    assert "listing.review" not in PM.AUDITED
+    assert ("GET", path) not in set(PM.PUBLIC_ROUTES)

@@ -59,6 +59,48 @@ def _no_stray_network():
     patch.undo()
 
 
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """Snapshots the real process `os.environ` before every test and restores it byte for byte
+    after, whatever wrote to it and however (Task P8 fix round 1, CI run 35061796545 on
+    `0174e32`: two `tests/test_config.py` tests that build `Settings()` with neither
+    `privacy_engine_module` nor `celery_task_always_eager` in its kwargs failed a validator
+    naming one of them anyway).
+
+    `monkeypatch.delenv(name, raising=False)` is not the backstop it looks like when `name` is
+    already ABSENT: pytest's own `MonkeyPatch.delitem` (which `delenv` calls) records an undo
+    action only in its `else` branch —
+
+        if name not in dic:
+            if raising: raise KeyError(name)
+            # else: nothing recorded at all — no undo, nothing
+        else:
+            self._setitem.append((dic, name, dic.get(name, NOTSET)))
+            del dic[name]
+
+    — so `monkeypatch.delenv("X", raising=False)` on a name that was never set is a complete
+    no-op, and code that then writes to `os.environ` DIRECTLY (`tests/e2e/api_under_test.py`'s
+    `PIPELINE_DEFAULTS` loop calls `os.environ.setdefault(name, value)` on the real environment,
+    never through monkeypatch) leaves monkeypatch with no record of it at all. That write
+    survives the test's teardown for the rest of this pytest PROCESS — pytest collects every
+    file under `tests/` into one process by default — and poisons whichever later test builds a
+    bare `Settings()` first, in whatever order pytest-randomly gives the suite. Confirmed
+    directly: running only `tests/e2e/test_api_under_test.py` in a fresh process and inspecting
+    `os.environ` afterwards shows `CELERY_TASK_ALWAYS_EAGER` and `PRIVACY_ENGINE_MODULE` still
+    set; `tests/test_conftest_environ.py` pins the regression end to end.
+
+    Function-scoped rather than session-scoped: only a restore BETWEEN tests stops one test's
+    leak from reaching the next, and a session-scoped fixture's finalizer runs once, after the
+    last test in the whole run — too late to matter. The restore is unconditional and total
+    (`clear()` then `update()` from the snapshot) rather than a table of names to watch, so it
+    closes this exact leak and any other shape the same mistake could take — a future test file
+    calling code that writes to `os.environ` directly is covered without being named here."""
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
+
+
 import boto3
 from moto import mock_aws
 

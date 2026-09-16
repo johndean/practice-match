@@ -77,6 +77,24 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines,
 // reference and the Claude Design preview pass none. (The three `admin-*` siblings are captured on
 // the same screen and kept their hashes, so nothing leaked through the shared admin shell either.)
 //
+// Amendment A20 (John, 2026-09-09 — Task P11 of the image-identifiability protection sub-project)
+// re-based ONE row: `wizard-step-7`. A20.3a puts a fourth toggle, "Identifiable image content", on
+// the design's own three-switch step-7 list — a new checkbox+label+help row is new pixels on the
+// one screen that captures that step, and the pixel oracle compares the app to the REFERENCE,
+// which has no adapter to gate the control on, so it is unconditionally there. The plan's own
+// ruling names this row as a new approved state to re-pin (spec §I, "Ruling-9 wording"), not a
+// leak: MEASURED, the A33/A34/A38 way, baselines were regenerated cold from the design as it stood
+// before this task and again from this one, and the 58 PNGs (56 before, plus the two states this
+// task appends) diffed by SHA-256 — exactly ONE of the fifty-six pre-existing states moved, and it
+// is this row. The other TWELVE frozen hashes are unchanged, which is the proof the family
+// reached nothing else: none of `mobile-list`, `mobile-detail`, `detail`, `requests`,
+// `seller-dash`, `wizard-step-1`, `wizard-preview`, `wizard-done` or the four `admin-*` screens
+// renders step 7's toggle list or step 6's tile grid, so A20's other twelve entries — the step-6
+// tile, its pill, the once-only privacy line, the step-8 preview strip and error slot, and the
+// `startWizardPhotos` wiring — paint nothing on any of them. `wizard-step-6-photos` and
+// `wizard-step-6-review` are ADDITIONS to `screens.ts`, not re-bases of an existing row, so they
+// carry no entry in this manifest — the thirteen it guards are unchanged in number and in kind.
+//
 // From here a moved hash means a CODE change moved a screen the design did not.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 

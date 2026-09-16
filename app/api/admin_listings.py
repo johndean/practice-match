@@ -32,13 +32,24 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.listings import _error, enqueue_geocode, has_geocode
-from app.api.seller_listings import _COLUMNS, _row, _rows, assets_for, assets_of, serialise_draft
+from app.api.seller_listings import (
+    _COLUMNS,
+    Refusal,
+    _row,
+    _rows,
+    assets_for,
+    assets_of,
+    photo_variant_response,
+    serialise_draft,
+)
 from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import require
 from app.cache import drop_list_cache_quietly, sync_redis
 from app.db import sync_conn
 from app.mail.outbox import enqueue
+from app.privacy import gate
+from app.privacy import record as privacy_record
 
 router = APIRouter(prefix="/api/admin")
 
@@ -229,7 +240,8 @@ async def list_all(request: Request) -> Response:
         page = rows[:limit]
         assets = assets_for(conn, [row["id"] for row in page])
         names = sellers_for(conn, [row["seller_id"] for row in page if row["seller_id"] is not None])
-        items = [{**serialise_draft(row, assets[row["id"]]),
+        items = [{**serialise_draft(row, assets[row["id"]],
+                                    owner_route=f"/api/admin/listings/{row['id']}/photos"),
                   "seller_id": str(row["seller_id"]) if row["seller_id"] is not None else None,
                   "seller_name": names.get(row["seller_id"]),
                   # Ruling 5's three: the date a listing reached the market (016's own column,
@@ -281,11 +293,12 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         return _error("NOT_FOUND", "No such listing.", 404)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, name, state, seller_id, sqft FROM listing WHERE id = %s FOR UPDATE", (parsed,))
+            cur.execute("SELECT status, name, state, seller_id, sqft, identifiable_content_visibility"
+                        " FROM listing WHERE id = %s FOR UPDATE", (parsed,))
             row = cur.fetchone()
             if row is None:
                 return _error("NOT_FOUND", "No such listing.", 404)
-            before, name, state, seller_id, sqft = row
+            before, name, state, seller_id, sqft, visibility = row
             if before not in allowed_from:
                 return _error("STATE", f"cannot {body.action} a listing in state {before}", 409)
             # A-SL33 (1), fix round 1 on the SL8 review's Critical finding: `listing_publishable_ck`
@@ -313,6 +326,17 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             problem = bad_field(body.state.strip(), body.market.strip()) if first_publish else None
             if problem is not None:
                 return _error("BAD_FIELD", problem, 422)
+            # Directive 11 (spec 2026-09-09 C.8), on the PUBLISH branch alone: a decline or an
+            # unpublish takes a listing off the market and asks nothing. The same predicate the
+            # seller's own two routes call and the same one migration 042's trigger evaluates —
+            # answered in this module's own `_error` idiom, with the additive `photos` key inside
+            # decision A5's envelope, because a reviewer needs to know WHICH photograph is holding
+            # a listing back and not merely that one is.
+            offenders = gate.photos_not_ready(conn, parsed) if body.action == "publish" else []
+            if offenders:
+                return JSONResponse({"error": {"code": "PHOTOS_NOT_READY",
+                                               "message": gate.NOT_READY_MESSAGE[visibility],
+                                               **gate.not_ready_extra(offenders)}}, status_code=422)
             sets = "status = %(status)s, updated_at = now()"
             params: dict[str, Any] = {"status": after, "id": parsed}
             if first_publish:
@@ -329,6 +353,11 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             cur.execute(f"UPDATE listing SET {sets} WHERE id = %(id)s", params)
             cur.execute("SELECT email FROM account WHERE id = %s", (seller_id,))
             owner = cur.fetchone()
+        if body.action == "publish":
+            # In the SAME transaction as the status it records (spec C.4). PUBLISHED means
+            # "published at least once" and is not reverted by a later pause, unpublish or
+            # withdrawal — the listing's own status filter is what hides it.
+            privacy_record.mark_published(conn, parsed)
         template = MAIL.get(body.action)
         if template is not None and owner is not None:
             # A-SL19 (6): only `listing_declined` declares a `reason`, so passing one with a
@@ -348,7 +377,8 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         # listing it has just published — the slug it needs for that link is written above, by this
         # request. Read after the audit row so `decline_reason` carries the decision just made.
         decided = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE id = %s", (parsed,))[0]
-        payload = serialise_draft(decided, assets_of(conn, parsed))
+        payload = serialise_draft(decided, assets_of(conn, parsed),
+                                  owner_route=f"/api/admin/listings/{parsed}/photos")
     # AFTER the commit (D16): a publish must reach Browse at once and an unpublish must leave it at
     # once, and dropping the key while the write was uncommitted would re-cache the old payload.
     drop_list_cache_quietly()
@@ -370,4 +400,29 @@ async def read_one(listing_id: str) -> Response:
         row: dict[str, Any] | None = _row(conn, listing_id)
         if row is None:
             return _error("NOT_FOUND", "No such listing.", 404)
-        return JSONResponse(serialise_draft(row, assets_of(conn, row["id"])))
+        return JSONResponse(serialise_draft(row, assets_of(conn, row["id"]),
+                                            owner_route=f"/api/admin/listings/{row['id']}/photos"))
+
+
+@router.get("/listings/{listing_id}/photos/{asset_id}", dependencies=[Depends(REQUIRE_REVIEW)])
+async def read_photo(listing_id: str, asset_id: str, request: Request) -> Response:
+    """One seller's photograph, to the reviewer — spec A.4 row 6, closed: until this route existed
+    nobody could look at an uploaded photograph before publication and the reviewer decided blind.
+
+    The handler body is `app/api/seller_listings.py::photo_variant_response`, IMPORTED and not
+    re-implemented, for the reason `serialise_draft` is: the reviewer and the owner must see the
+    same photograph, and two bodies for one contract is how they stop agreeing — and the second
+    would be a second place `original.*` can be reached from.
+
+    No ownership scope: `listing.review` is the permission to look at anybody's listing, which is
+    the whole job. NOT audited, like the queue read beside it: a bytes route the review dialog
+    polls must not write one audit row per poll."""
+    try:
+        with closing(sync_conn()) as conn, conn:
+            row: dict[str, Any] | None = _row(conn, listing_id)
+            if row is None:
+                return _error("NOT_FOUND", "No such listing.", 404)
+            return photo_variant_response(conn, row, asset_id,
+                                          request.query_params.get("variant"), request)
+    except Refusal as exc:
+        return _error(exc.code, exc.message, exc.status)

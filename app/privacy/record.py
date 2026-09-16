@@ -32,10 +32,13 @@ review Minor-2); P10's `apply_visibility_change` and P12's mask routes name the 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from app.config import settings
+from app.privacy import PROCESSING_VERSION
 from app.tasks.celery_app import celery_app
 
 
@@ -65,14 +68,32 @@ def enqueue_processing(asset_id: UUID, version: int) -> None:
     its own `except Refusal`, so a broker outage answers 500 while the row stays `UPLOADED` and
     `media.sweep`'s rule (1) enqueues it within two minutes (spec C.5).
 
-    Task P8 adds one branch above this line, for the Playwright launcher alone (controller
-    amendment A-IDP-2): `send_task` does NOT honour `task_always_eager`, so the eager execution
-    model cannot be had by a setting on this call."""
+    THE EAGER BRANCH is the Playwright launcher's and nothing else's (controller amendment
+    A-IDP-2, spec G). It exists because `send_task` IGNORES `task_always_eager` -- celery warns
+    `AlwaysEagerIgnored` and publishes anyway (`celery/app/base.py`, 5.6.3) -- so the eager model
+    cannot be had by a setting on the line below; `apply_async` is the call form that honours it.
+    `settings.celery_task_always_eager` is refused at boot by `Settings` in every environment but
+    `test`, so the import is unreachable on QA and in production, and
+    `tests/api/test_import_surface.py` proves at RUN TIME that the api process holds no engine
+    module after `create_app()`."""
+    if settings.celery_task_always_eager:
+        from app.tasks.media import process_photo_task  # a LAZY import; see the docstring
+
+        process_photo_task.apply_async(args=(str(asset_id), version), queue="media")
+        return
     celery_app.send_task("media.process_photo", args=[str(asset_id), version], queue="media")
 
 
 #: Spec C.4's three ready states. `buyer_visible` is never true outside them (lap_visible_ready_ck).
 READY_STATES = ("READY_FOR_REVIEW", "SELLER_CONFIRMED", "PUBLISHED")
+#: Every state migration 041's column CHECK permits, in its own order. It is the predicate of the
+#: ONE writer here that is legal from all of them -- `reset_for_reprocess`, P10's SHOW -> NOT_SHOW
+#: arm -- and it is a named tuple rather than an absent WHERE so that a state added to `041` has to
+#: be added HERE too, instead of being silently refused by a writer nobody re-read.
+#: `tests/privacy/test_record.py` reads this tuple and pins it against `pg_constraint` both ways.
+ALL_STATES = ("UPLOADED", "PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
+              "SELLER_CONFIRMED", "PUBLISHED", "PROCESSING_FAILED", "REDACTION_FAILED",
+              "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
 #: Directive 6's four. Left only by the claim of a retry, a Try-again or a delete.
 ERROR_STATES = ("PROCESSING_FAILED", "REDACTION_FAILED", "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
 #: What `media.process_photo` may take. REVIEW_REQUIRED is NOT here: its retries are spent and only
@@ -80,6 +101,12 @@ ERROR_STATES = ("PROCESSING_FAILED", "REDACTION_FAILED", "REVIEW_REQUIRED", "REP
 CLAIMABLE_STATES = ("UPLOADED", "PROCESSING_FAILED", "REDACTION_FAILED", "REPROCESS_REQUIRED")
 #: The hard time limit (300 s) plus a minute -- past it a PROCESSING row is a lost child.
 LOST_AFTER = "6 minutes"
+#: Sweeper rule (1): an UPLOADED row whose enqueue never arrived. Two minutes, so a row still
+#: inside the api's own commit-then-publish window is never swept out from under it.
+UNSTARTED_AFTER = "2 minutes"
+#: Sweeper rule (3): the longest backoff (10 min) plus two -- past it a re-enqueue was lost, or a
+#: mask route's regeneration failed and that route enqueues nothing itself.
+RETRY_AFTER = "12 minutes"
 MAX_ATTEMPTS = 3
 #: Seconds before the first, second and third re-enqueue (spec C.5). Never `Task.retry()`. Only the
 #: first `MAX_ATTEMPTS - 1` rungs are ever spent -- the third failure exhausts rather than
@@ -179,6 +206,28 @@ def read(conn: Any, asset_id: UUID) -> PrivacyRow | None:
     return None if found is None else _built(found)
 
 
+def delivery_row(entry: str, listing_id: object, found: Mapping[str, Any]) -> PrivacyRow:
+    """`app/api/listings.py`'s `visible_photos` aggregate object, as the row `buyer_variant` reads.
+
+    Only the six fields the resolver actually reads carry a value; the rest take the dataclass's
+    neutral ones, and NOTHING built here is ever serialised -- it exists for the length of one
+    `buyer_variant` call. `original_storage_key` is the empty string rather than the real key
+    because the resolver never reads it and the list route must never carry it: that is the
+    security matrix's "unauthorised original-image access" row, and it is why this function is here
+    rather than in the module that calls it
+    (`tests/api/test_buyer_photo_delivery.py::test_the_original_key_is_read_only_where_the_spec_says`
+    is what counts the modules that name that identifier)."""
+    return PrivacyRow(
+        asset_id=UUID(entry), listing_id=UUID(str(listing_id)),
+        processing_status=str(found["status"]), processing_version=0, attempts=0,
+        original_storage_key="", redacted_storage_key=found.get("redacted_key"),
+        redacted_sha256=found.get("redacted"), confirmed_sha256=None, seller_confirmed=False,
+        buyer_visible=bool(found["visible"]), redaction_regions=[], reprocess_reason=None,
+        final_privacy_state=None, display_storage_key=found.get("display_key"),
+        display_sha256=found.get("display"),
+    )
+
+
 def rows_for(conn: Any, listing_id: UUID) -> list[PrivacyRow]:
     with conn.cursor() as cur:
         cur.execute(f"{_READ} WHERE p.listing_id = %s ORDER BY p.created_at, p.asset_id", (listing_id,))
@@ -225,6 +274,29 @@ def record_scan(conn: Any, asset_id: UUID, *, ocr: dict[str, Any], identity_matc
             " updated_at = now() WHERE asset_id = %s AND processing_status = 'PROCESSING'",
             (json.dumps(ocr), json.dumps(identity_matches), json.dumps(vision),
              json.dumps(detected_regions), asset_id),
+        )
+
+
+def record_scan_in_place(conn: Any, asset_id: UUID, *, ocr: dict[str, Any],
+                         identity_matches: list[dict[str, Any]], vision: dict[str, Any],
+                         detected_regions: list[dict[str, Any]]) -> None:
+    """`record_scan` WITHOUT the state change -- the in-place re-run's scan columns, written while
+    the row stays in the ready state it is being re-run in (D-IDP-16).
+
+    Guarded by the three READY states, and that guard is the whole difference from its sibling: an
+    in-place re-run happens in a ready state and nowhere else, so a row that stopped being ready
+    between this run's read and this write is one this statement must not touch. It writes no
+    `processing_status`, so there is no transition to refuse -- only a scan to decline to record
+    for a photograph the pipeline no longer owns. `advance_in_place`, which runs immediately after
+    it, carries the same predicate and REPORTS the refusal (its rowcount); this one does not need
+    to, because the two are written together and the caller branches on the one that matters."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE listing_asset_privacy SET ocr = %s::jsonb, identity_matches = %s::jsonb,"
+            " vision = %s::jsonb, detected_regions = %s::jsonb, updated_at = now()"
+            " WHERE asset_id = %s AND processing_status = ANY(%s)",
+            (json.dumps(ocr), json.dumps(identity_matches), json.dumps(vision),
+             json.dumps(detected_regions), asset_id, list(READY_STATES)),
         )
 
 
@@ -371,6 +443,41 @@ def reset_for_retry(conn: Any, asset_id: UUID) -> bool:
         return cur.fetchone() is not None
 
 
+def reset_for_reprocess(conn: Any, asset_id: UUID) -> None:
+    """The SHOW -> NOT_SHOW flip's re-processing arm (spec C.1 step 3): "a key whose object is gone
+    has `redacted_storage_key`/`redacted_sha256` cleared, the reset rule applied,
+    `processing_status := 'UPLOADED'`, and is enqueued after the commit".
+
+    It lives HERE and not beside its one caller in `app/api/seller_listings.py`, where the plan
+    drew it: `app/privacy/record.py` is the ONE writer of this table under `app/` and `scripts/`
+    (P3 review Minor-3, pinned by `tests/test_docs.py`), so every state transition is in one place
+    and carries its own predicate.
+
+    **Guarded by `ALL_STATES`, which is every state the table names, and that is the transition
+    rather than an absent guard**: the flip meets a row in any of the eleven -- a READY_FOR_REVIEW
+    row whose object somebody deleted is exactly as unservable as an UPLOADED one -- and the
+    statement lands every one of them fail-closed, because it applies the reset rule and writes no
+    derivative claim. What the tuple buys is the twelfth state: a state added to `041` has to be
+    added to `ALL_STATES` or this writer refuses it, and the pin over the CHECK makes that a
+    failure rather than a silence.
+
+    **The stale flag goes with it**, which the plan's own sketch omitted: `reprocess_reason` is a
+    flag on a READY row awaiting an IN-PLACE re-run (D-IDP-16), `advance_in_place` is the only
+    writer that clears it, and nothing on the fresh `claim` -> `mark_ready` path ever reaches that
+    function. A row sent back to UPLOADED still carrying one would come back READY_FOR_REVIEW and
+    STALE for ever -- unpublishable by the gate's own third arm, and named TWICE in one refusal --
+    so a fresh run supersedes the pending in-place one. Both columns move together:
+    `lap_stale_ck` holds `(reprocess_reason IS NULL) = (reprocess_requested_at IS NULL)`."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE listing_asset_privacy SET redacted_storage_key = NULL, redacted_sha256 = NULL,"
+            f" processing_status = 'UPLOADED', attempts = 0, last_error = NULL,"
+            f" reprocess_reason = NULL, reprocess_requested_at = NULL, {RESET_COLUMNS},"
+            f" updated_at = now() WHERE asset_id = %s AND processing_status = ANY(%s)",
+            (asset_id, list(ALL_STATES)),
+        )
+
+
 def flag_stale(conn: Any, *, listing_id: UUID, reason: str) -> list[UUID]:
     """Staleness is a FLAG, never a state (D-IDP-16): the ready rows of this listing are marked and
     their CURRENT derivatives go on being served while the in-place re-run replaces them. Returns
@@ -383,6 +490,94 @@ def flag_stale(conn: Any, *, listing_id: UUID, reason: str) -> list[UUID]:
             (reason, listing_id, list(READY_STATES)),
         )
         return [UUID(str(r[0])) for r in cur.fetchall()]
+
+
+def flag_stale_version(conn: Any, *, reason: str) -> list[UUID]:
+    """`flag_stale` for every ready row BELOW the current processing version, whatever listing it
+    belongs to. Returns the rows to enqueue after the commit.
+
+    Two callers, one statement: the sweeper's rule (5) marks them `VERSION`, and
+    `scripts/reprocess_photos.py --all-stale` marks the same set `OPERATOR` when a human asks for
+    the re-run rather than waiting five minutes for beat. The reason is the only thing that differs
+    between them, so it is the only parameter -- a second copy of this UPDATE in the script would
+    be a second production writer of the privacy row, which
+    `tests/test_docs.py::test_every_writer_of_the_privacy_row_is_declared_and_only_one_is_production`
+    refuses by design.
+
+    `reprocess_reason IS NULL` is what makes it idempotent: a row already flagged is not re-stamped,
+    so five minutes of sweeps do not enqueue five re-runs of one photograph."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE listing_asset_privacy SET reprocess_reason = %s, reprocess_requested_at = now(),"
+            " updated_at = now() WHERE processing_status = ANY(%s) AND reprocess_reason IS NULL"
+            "   AND processing_version < %s RETURNING asset_id",
+            (reason, list(READY_STATES), PROCESSING_VERSION),
+        )
+        return [UUID(str(r[0])) for r in cur.fetchall()]
+
+
+def _sql_array(values: tuple[str, ...]) -> str:
+    """A tuple of this module's own state names as a SQL array LITERAL, for the read-only sweeper
+    predicates that are interpolated rather than parameterised. Nothing a caller supplies reaches
+    it: every value comes from the constants above."""
+    return "ARRAY[" + ",".join(f"'{value}'" for value in values) + "]"
+
+
+#: The four sweeper rules that only ever LOOK: `(name, predicate, window)`. The two that write --
+#: rule (2)'s lost child and rule (5)'s version bump -- are statements of their own below and in
+#: `flag_stale_version`, because each is a transition and every transition in this codebase carries
+#: its own state predicate in this module (spec C.5).
+_SWEEP_RULES: tuple[tuple[str, str, str], ...] = (
+    # (1) the api committed the row and its publish never arrived.
+    ("unstarted", "processing_status = 'UPLOADED'", UNSTARTED_AFTER),
+    # (3) a re-enqueue was lost, or a mask route's regeneration failed -- that route enqueues
+    #     nothing itself. `attempts < MAX_ATTEMPTS`: REVIEW_REQUIRED is the seller's to leave.
+    ("retry", (f"processing_status = ANY({_sql_array(('PROCESSING_FAILED', 'REDACTION_FAILED'))})"
+               f" AND attempts < {MAX_ATTEMPTS}"), RETRY_AFTER),
+    # (4) a row the sweeper itself (or a lost child) put back, that nothing picked up.
+    ("reprocess", "processing_status = 'REPROCESS_REQUIRED'", LOST_AFTER),
+    # (6) a flagged ready row whose in-place re-run never ran.
+    ("flagged", f"processing_status = ANY({_sql_array(READY_STATES)}) AND reprocess_reason IS NOT NULL",
+     LOST_AFTER),
+)
+
+
+def sweep_candidates(conn: Any) -> dict[str, list[UUID]]:
+    """The six rules' subjects, keyed `unstarted`, `retry`, `reprocess`, `flagged`, `lost`,
+    `version` (spec C.5). THE ONLY THING IN THIS PIPELINE THAT FINDS A ROW NOTHING ELSE WILL.
+
+    Four of the six only look; two of them WRITE, and both writes are here rather than in
+    `app/tasks/media.py` because a transition of the privacy row belongs to this module and to no
+    other (`tests/test_docs.py`'s one-production-writer pin, which Task P8's own brief names).
+
+      (2) A PROCESSING row older than `LOST_AFTER` is a child that died mid-run: it becomes
+          REPROCESS_REQUIRED with `last_error = 'TASK_LOST'`, in ONE statement that both finds it
+          and moves it, so two sweeps running at once cannot both claim to have recovered it. A
+          STATE and not a flag -- the row has no derivative to go on serving.
+      (5) A ready row below `PROCESSING_VERSION` is flagged VERSION and does NOT move: it goes on
+          serving the derivative it has while the in-place re-run replaces it (D-IDP-16).
+
+    The four SELECTs run FIRST, so neither write can widen the set the same pass then enqueues: a
+    row rule (2) has just moved to REPROCESS_REQUIRED carries a fresh `updated_at` and is outside
+    rule (4)'s window anyway, and a row rule (5) has just flagged is outside rule (6)'s. The order
+    makes that true by construction rather than by that arithmetic.
+
+    Every window is `updated_at`, which every writer in this module sets explicitly and
+    `listing_asset_privacy_sweep_idx` (`processing_status, updated_at`) is the index for."""
+    found: dict[str, list[UUID]] = {}
+    with conn.cursor() as cur:
+        for name, predicate, window in _SWEEP_RULES:
+            cur.execute(f"SELECT asset_id FROM listing_asset_privacy"
+                        f" WHERE {predicate} AND updated_at < now() - interval '{window}'")
+            found[name] = [UUID(str(r[0])) for r in cur.fetchall()]
+        cur.execute(
+            f"UPDATE listing_asset_privacy SET processing_status = 'REPROCESS_REQUIRED',"
+            f" last_error = 'TASK_LOST', updated_at = now()"
+            f" WHERE processing_status = 'PROCESSING' AND updated_at < now() - interval '{LOST_AFTER}'"
+            f" RETURNING asset_id")
+        found["lost"] = [UUID(str(r[0])) for r in cur.fetchall()]
+    found["version"] = flag_stale_version(conn, reason="VERSION")
+    return found
 
 
 def advance_in_place(conn: Any, asset_id: UUID, *, sha256: str, version: int,

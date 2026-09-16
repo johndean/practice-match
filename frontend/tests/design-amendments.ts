@@ -3062,6 +3062,234 @@ const A19_12: Amendment = {
   count: 1
 };
 
+/** A20 — the identifiable-image control and the seller's review surface (John's implementation
+ *  directive, 2026-09-09). Ruling, quoted on every entry of this family and in every
+ *  LOCAL_AMENDMENTS.md row of it:
+ *
+ *    "The seller should have ONE simple listing-level control: IDENTIFIABLE IMAGE CONTENT
+ *     [ SHOW ] [ NOT SHOW ] ... DEFAULT: NOT SHOW. The safest privacy state is the default."
+ *
+ *  Composed from the design's own idioms and nothing else (spec C.9): the step-7 toggle is the
+ *  fourth entry of a list of three, rendered by the checkbox+label+help markup already there; the
+ *  tile thumbnail is the detail grid's own <image-slot>; the pill is a small rounded badge in the
+ *  design's own idiom for a status label; the preview strip is the same slot again. No new
+ *  element, no new colour, no new font.
+ *
+ *  A20 was RESERVED by the image-identifiability plan (2026-09-09, Tasks P11-P12) while A21
+ *  onward were written and merged around it — this file's own notes above A25.1, A26.1 and
+ *  A28.1 record exactly that — so it is applied here, immediately after A19, which is where
+ *  Task P11's own Step 3 puts it: nothing between A19 and A21 reads or is read by anything this
+ *  family touches. */
+export const IDENTIFIABLE_RULING =
+  'The seller should have ONE simple listing-level control: IDENTIFIABLE IMAGE CONTENT ' +
+  '[ SHOW ] [ NOT SHOW ] ... DEFAULT: NOT SHOW. The safest privacy state is the default.';
+
+/** A20.1 — the design's own initial `w` state literal gains the switch, defaulting NOT_SHOW
+ *  (`false`). The trailing newline is what makes this occurrence unique: without it the same text
+ *  also matches `openDraft`'s copy (A20.2's own anchor), which is exactly why A20.2 needs a
+ *  DIFFERENT anchor rather than a wider count on this one. */
+const A20_1: Amendment = {
+  id: 'A20.1', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: 'facilityType: "Standalone", docsLocked: true },\n',
+  replace: 'facilityType: "Standalone", docsLocked: true, showIdentifiable: false },\n'
+};
+
+/** A20.2 — `openDraft`'s own copy of the same defaults, so a listing fetched from the dashboard
+ *  (Edit) carries the key too — `(d && d.w) || {}` then lays the server's own value over this
+ *  default exactly as it does for `anon`/`revBand`/`docsLocked`. */
+const A20_2: Amendment = {
+  id: 'A20.2', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: 'docsLocked: true }, (d && d.w) || {})',
+  replace: 'docsLocked: true, showIdentifiable: false }, (d && d.w) || {})'
+};
+
+/** A20.3a — step 7's own three-toggle config gains a fourth: the CONTROL, in the design's own
+ *  slot (spec C.1), whose `help` reads John's two sentences by CURRENT STATE — the A12
+ *  `practiceName` class of edit, a new VALUE in an existing slot rather than a new template
+ *  branch. Copy verbatim, not to be improved (per the brief): "Not shown to buyers — recommended"
+ *  / "Shown to buyers — signage, logos and names may be visible". */
+const A20_3a: Amendment = {
+  id: 'A20.3a', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '{ key: "docsLocked", label: "Keep floor plans and financial packet locked", '
+      + 'help: "Buyers see the document titles and can ask for access." }\n      ] }',
+  replace: '{ key: "docsLocked", label: "Keep floor plans and financial packet locked", '
+      + 'help: "Buyers see the document titles and can ask for access." },\n'
+      + '        { key: "showIdentifiable", label: "Identifiable image content", '
+      + 'help: w.showIdentifiable ? "Shown to buyers — signage, logos and names may be visible" '
+      + ': "Not shown to buyers — recommended" }\n      ] }'
+};
+
+/** A20.3b — the toggles OUTPUT keeps the `key` each config entry already carries, so which
+ *  control is which is a fact the render values state rather than only an index a reader has to
+ *  infer; nothing in the template reads it (`renderVals()`'s own toggles loop reads `label`/
+ *  `help`/`on`/`toggle` alone), so no approved state's pixels move. */
+const A20_3b: Amendment = {
+  id: 'A20.3b', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: 'toggles: cfg.toggles.map((t) => ({ label: t.label, help: t.help, on: !!w[t.key], toggle: this.setW(t.key) })),',
+  replace: 'toggles: cfg.toggles.map((t) => ({ key: t.key, label: t.label, help: t.help, on: !!w[t.key], toggle: this.setW(t.key) })),'
+};
+
+/** A20.4 — the step-6 tile map gains the identifiability fields (spec C.9): `src`, `hasSrc`,
+ *  `noSrc`, `state` and `pill` per tile, plus `open`, the bound review-opener Task P12's A20.10
+ *  defines — until then `this.openPhotoReview` does not exist, and the design's own idiom for a
+ *  method that may not be there yet is the `&&` guard already on this exact page
+ *  (`this.props.perms && this.props.perms.allowed(...)`, `componentDidMount`), never optional
+ *  chaining, which this design never uses. `open` is `undefined` on every tile until P12, and no
+ *  template reads it (confirmed by the census case and by `logic.test.ts`'s reference-path case).
+ *
+ *  CHAINED on A16.21: that entry's own `describe:` field (SL7b, the tile's click-to-recaption
+ *  handler) already sits between `name:` and the closing `}))`, so the plan's own anchor — the
+ *  bare `.map(...)` call with no `describe:` field — no longer occurs once A16 has run, which
+ *  precedes this family in `amendments()`'s own order. This entry's `find` is the WHOLE two-line
+ *  ternary, A16.21's introduced text included, so AMEND-GUARD's own line-consumption rule is
+ *  satisfied by construction (this entry's `find` swallows A16.21's `replace` whole) and no
+ *  separate `consumes A16.21` token is needed on this row.
+ *
+ *  The FALLBACK branch (no adapter — the reference and the Claude Design preview) gains the same
+ *  three fields with fixed values (`src: null, hasSrc: false, noSrc: true`), so a tile with no
+ *  photograph keeps the design's own badge band exactly as it rendered before this family, on
+ *  BOTH branches, which is what `logic.test.ts`'s own reference-path cases pin. */
+const A20_4: Amendment = {
+  id: 'A20.4', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))\n'
+      + '      : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));',
+  // The leading `      ? ` (A16.21's own replace, whitespace included) is kept rather than
+  // trimmed to a shorter anchor: AMEND-GUARD's chain-following (`outputOf`) recognises a
+  // supersession only where a later `find` swallows an earlier `replace` WHOLE, so this entry's
+  // `find` has to be — byte for byte — at least A16.21's own replace, not merely a text that
+  // happens to occur inside it (the A48.5 lesson, `amend-guard.ts`'s own doc comment).
+  replace: '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), '
+      + 'src: a.src || null, hasSrc: !!a.src, noSrc: !a.src, state: a.state || "processing", '
+      + 'pill: ({ processing: "Processing…", review: "Review", confirmed: "Confirmed", failed: "Failed" })[a.state || "processing"], '
+      + 'open: this.openPhotoReview && this.openPhotoReview(a.id), '
+      + 'describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))\n'
+      + '      : [{ kind: "Photo", name: "Exterior.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Lobby.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Treatment.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "PDF", name: "Floor plan.pdf", src: null, hasSrc: false, noSrc: true }].slice(0, 3 + (w.photos || 0));'
+};
+
+/** A20.5 — the step-6 tile band gains the detail grid's own `hasSrc`/`noSrc` idiom (`ph.hasSrc`/
+ *  `ph.noSrc`, V3's detail photo grid): an `<image-slot>` in an identically-sized frame when the
+ *  tile has a source, and the design's own badge band — byte-identical, moved under `u.noSrc` —
+ *  when it does not. Both branches carry `hint-placeholder-val="{{ false }}"`, matching the
+ *  detail's own pair (never the results-rail's `{{ true }}` second branch), which is the family's
+ *  own idiom to follow. */
+const A20_5: Amendment = {
+  id: 'A20.5', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '                              <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;">{{ u.kind }}</div>',
+  replace: '                              <sc-if value="{{ u.hasSrc }}" hint-placeholder-val="{{ false }}">\n'
+      + '                                <div style="height: 68px; border-radius: 8px; overflow: hidden;">\n'
+      + '                                  <image-slot shape="rect" src="{{ u.src }}" placeholder="{{ u.name }}"></image-slot>\n'
+      + '                                </div>\n'
+      + '                              </sc-if>\n'
+      + '                              <sc-if value="{{ u.noSrc }}" hint-placeholder-val="{{ false }}">\n'
+      + '                                <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;">{{ u.kind }}</div>\n'
+      + '                              </sc-if>'
+};
+
+/** A20.6 — the state pill under the tile name, in the design's own small-rounded-badge idiom
+ *  (the shape `statusPill()` draws for the dashboard, not that function's six-status colour
+ *  table, which is a different domain). Gated on `u.pill` itself: a tile with none (the fallback
+ *  fixture path) renders nothing extra, which is what keeps "a tile with no src keeps the badge
+ *  band exactly as it was" true of the WHOLE tile and not only its band. */
+const A20_6: Amendment = {
+  id: 'A20.6', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '                              <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;">{{ u.name }}</div>',
+  replace: '                              <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;">{{ u.name }}</div>\n'
+      + '                              <sc-if value="{{ u.pill }}" hint-placeholder-val="{{ false }}"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;">{{ u.pill }}</span></sc-if>'
+};
+
+/** A20.7 — the once-only privacy line, above the tiles, in the step blurb's own `<p>` style
+ *  (byte-identical, a second paragraph): `sc-if wiz.privacyNote`, so it renders under NOT_SHOW
+ *  and never under SHOW (A20.8 supplies the value, gated on adapter presence so the reference
+ *  never claims a redaction pass that never ran). */
+const A20_7: Amendment = {
+  id: 'A20.7', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '                          <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;">Exterior, lobby, treatment area and exam rooms cover most of what buyers ask for. Floor plans and financial summaries can stay locked until you approve a buyer.</p>',
+  replace: '                          <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;">Exterior, lobby, treatment area and exam rooms cover most of what buyers ask for. Floor plans and financial summaries can stay locked until you approve a buyer.</p>\n'
+      + '                          <sc-if value="{{ wiz.privacyNote }}" hint-placeholder-val="{{ false }}"><p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;">{{ wiz.privacyNote }}</p></sc-if>'
+};
+
+/** A20.8 — `renderVals()`'s wizard block gains `previewPhotos` (the same `uploads` entries,
+ *  filtered to the ones with a source — step 8 shows the buyer-facing variant of every visible
+ *  photograph, not a second copy of it) and `privacyNote` (John's own two sentences, gated on
+ *  BOTH `!w.showIdentifiable` and the SAME "adapter or simulated seed" disjunct A20.4b's own
+ *  condition uses — `this.props.listings || (s.wizAssets && s.wizAssets.length)`: the reference
+ *  has no redaction pipeline behind it, so claiming one "automatically hidden" anything would be
+ *  false on the one path with no API to do it under, UNLESS `startWizardPhotos` has already
+ *  simulated a processed seed (A20.4c) — measured on the e2e gate itself (Task P11 Step 9): a
+ *  narrower gate left `wizard-step-6-photos`/`wizard-step-6-review` showing the tile WITH its
+ *  photograph on the reference and the app alike, but the privacy line only on the app, which is
+ *  the exact per-target disagreement the pixel gate exists to catch, and did. The reference-path
+ *  case with no `wizAssets` seed either asserts an empty string regardless of the design's own
+ *  NOT_SHOW default, unchanged. */
+const A20_8: Amendment = {
+  id: 'A20.8', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '      isPreview: !s.wizSubmitted && step === 8,\n',
+  replace: '      isPreview: !s.wizSubmitted && step === 8,\n'
+      + '      previewPhotos: uploads.filter((u) => u.hasSrc),\n'
+      + '      privacyNote: (this.props.listings || (s.wizAssets && s.wizAssets.length)) && !w.showIdentifiable ? "We\'ve automatically hidden information that could identify the hospital. Review your images before publishing." : "",\n'
+};
+
+/** A20.9 — step 8's preview card gains two things above its existing note: a strip of the same
+ *  `<image-slot>` tiles (`sc-if wiz.previewPhotos.length`, John's own idiom for step 6 reused
+ *  rather than reinvented), and the wizard's own error slot (V3's step-6/7 form, byte-identical),
+ *  which the preview card had never carried — so a refused Submit (`PHOTOS_NOT_READY` among
+ *  others) now lands somewhere on the screen it happens on, rather than nowhere at all. */
+const A20_9: Amendment = {
+  id: 'A20.9', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '                    <div style="margin-top: 18px; padding: 14px 16px; background: var(--color-off-white); border-left: 3px solid #339dde;',
+  replace: '                    <sc-if value="{{ wiz.previewPhotos.length }}" hint-placeholder-val="{{ false }}">\n'
+      + '                      <div style="display: flex; gap: 9px; margin-top: 18px; flex-wrap: wrap;">\n'
+      + '                        <sc-for list="{{ wiz.previewPhotos }}" as="pp" hint-placeholder-count="3">\n'
+      + '                          <div style="width: 92px; height: 68px; border-radius: 8px; overflow: hidden;">\n'
+      + '                            <image-slot shape="rect" src="{{ pp.src }}" placeholder="{{ pp.name }}"></image-slot>\n'
+      + '                          </div>\n'
+      + '                        </sc-for>\n'
+      + '                      </div>\n'
+      + '                    </sc-if>\n'
+      + '                    <sc-if value="{{ wiz.error }}" hint-placeholder-val="{{ false }}">\n'
+      + '                      <div style="margin-top: 18px; padding: 12px 14px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13.5px; line-height: 1.55; color: #494949;">{{ wiz.errorText }}</div>\n'
+      + '                    </sc-if>\n'
+      + '                    <div style="margin-top: 18px; padding: 14px 16px; background: var(--color-off-white); border-left: 3px solid #339dde;'
+};
+
+/** A20.4b — the step-6 tile source keys on an ADAPTER **or** on a real seed of photographs
+ *  (`s.wizAssets`) handed to the reference by A20.4c below — Task P11's own Step 5/6 seam for the
+ *  two approved states this task appends, `wizard-step-6-photos` and `wizard-step-6-review`,
+ *  neither of which the reference can reach through an adapter (it has none). CHAINED on A16.4,
+ *  whose own `const uploads = this.props.listings` line this widens. Every EXISTING reference
+ *  capture passes no `startWizardPhotos`, so `s.wizAssets` is unset there and the condition's
+ *  right-hand side is false exactly as before — no approved state's pixels move for this entry. */
+const A20_4b: Amendment = {
+  id: 'A20.4b', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '    const uploads = this.props.listings\n',
+  replace: '    const uploads = this.props.listings || (s.wizAssets && s.wizAssets.length)\n'
+};
+
+/** A20.4c — `componentDidMount` reads `startWizardPhotos` into `wizAssets`, one line after
+ *  A16.11b's own `startMyListings` line and in its exact shape: `JSON.parse` because the prop is
+ *  a STRING (the design tool's property panel has no array/object editor suited to a handful of
+ *  tiles with a real image URL each; `startMyListings`'s own `json` editor is for a LIST OF ROWS,
+ *  a different shape), so the app — which never passes `startWizardPhotos` — is unaffected: the
+ *  `if` guard is falsy on every request that omits it, exactly as A16.11b's own guard is. */
+const A20_4c: Amendment = {
+  id: 'A20.4c', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n',
+  replace: '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n'
+      + '    if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });\n'
+};
+
+/** A20.4d — the ninth declared prototype prop, in the `data-props` schema JSON, spliced
+ *  immediately after `startMyListings` with the same `&quot;` escaping as its neighbours and the
+ *  `startNotice`/`startAnswerNote` STRING shape (`editor: "text"`, default `""`) rather than
+ *  `startMyListings`'s own `json` editor: A16.11a's own mechanism, for the reason A20.4c's own
+ *  comment gives. `app.setup.js` declares it too, because `app-generated.test.ts` requires that
+ *  file to declare everything the design does; the app never passes it (D-I8-2). */
+const STARTWIZARDPHOTOS_ENTRY = '&quot;startWizardPhotos&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Wizard photographs on load&quot;}';
+const A20_4d: Amendment = {
+  id: 'A20.4d', date: '2026-09-09', ruling: IDENTIFIABLE_RULING, count: 1,
+  find: STARTMYLISTINGS_ENTRY, replace: `${STARTMYLISTINGS_ENTRY},${STARTWIZARDPHOTOS_ENTRY}`
+};
+
 // A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
 // Missing figures must be excluded from layers, not bucketed at zero, because a buyer reads zero as "nobody else practises here"
 // when we actually have no data. Absence is not zero.
@@ -6837,7 +7065,7 @@ const A35_7: Amendment = {
  *  doors for every account, while the app renders the account's own. Approved states are captured
  *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
  *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
- *  the filter moved 28 of the 56 approved states — every DOM and pixel capture of a member screen
+ *  the filter moved 28 of the 58 approved states — every DOM and pixel capture of a member screen
  *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
  *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
  *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
@@ -8417,6 +8645,17 @@ export function amendments(): Amendment[] {
     // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
     // so the family is last. Definition order in this file matches this list (m8).
     A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
+    // A20 — the identifiable-image control and the step-6 tiles (John's implementation directive,
+    // 2026-09-09, Task P11). Reserved by that plan while A21 onward were written around it (this
+    // file's own notes above A25.1, A26.1 and A28.1), applied here, immediately after A19, which
+    // is Task P11's own Step 3 placement. A20.4 is CHAINED — its `find` is A16.21's whole
+    // introduced text, so it must run after A16, which this position already guarantees.
+    // Definition order in this file matches this list (m8).
+    A20_1, A20_2, A20_3a, A20_3b, A20_4, A20_5, A20_6, A20_7, A20_8, A20_9,
+    // A20.4b-d — Task P11's own Step 5/6 seam for `wizard-step-6-photos`/`wizard-step-6-review`.
+    // A20.4b is CHAINED on A16.4, A20.4d on A16.11a's own STARTMYLISTINGS_ENTRY, so both must run
+    // after A16 — already true at this position.
+    A20_4b, A20_4c, A20_4d,
     // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).

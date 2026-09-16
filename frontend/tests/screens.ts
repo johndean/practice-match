@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, expectApiStatus, reach, settleExpectedApiFailures, waitMap } from './harness';
+import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, driverFor, expectApiStatus, reach, referenceUrl, settleExpectedApiFailures, waitMap } from './harness';
 
 export interface Screen {
   name: string;
@@ -21,6 +21,78 @@ export interface Screen {
 const browse = async (p: Page) => { await reach(p, { screen: 'browse' }); await waitMap(p); };
 const wizard = async (p: Page) => { await reach(p, { screen: 'seller' }); await click(p, 'Create a listing'); };
 const admin = async (p: Page) => { await reach(p, { screen: 'admin' }); };
+
+// A20 (Task P11) — `wizard-step-6-photos` and `wizard-step-6-review`: the step-6 tile with a REAL
+// loaded photograph, which neither `wizard` above nor any existing wizard state shows (all three
+// use the design's own no-src fallback or the D6 stub's src-less draft, deliberately, so none of
+// them moves). Reached on the reference through the ninth declared prototype prop
+// `startWizardPhotos` (A20.4c) — spliced onto `referenceUrl`'s own base props, since `ReachTarget`
+// has no field for it and every OTHER state must keep receiving exactly the seven it already
+// does — and on the app through the seller's real create → get exchange, answered here with a
+// draft carrying the same tile. `assets/photos/round-rock-exterior-street.webp` is the bundle's
+// own static asset (the design's `p2` fixture's own exterior photo), so the `<img>` genuinely
+// loads on both targets with no new asset added.
+const WIZ_PHOTO_SRC = '/assets/photos/round-rock-exterior-street.webp';
+const WIZ_PHOTO_TILE = { kind: 'Photo', name: 'Front entrance', id: 'wizphoto-1', source: 'asset' as const, src: WIZ_PHOTO_SRC, state: 'review' as const };
+const WIZ_LISTING_ID = 'wizphoto-listing-1';
+
+/** The draft `GET /api/seller/listings/{id}` answers with on the app path — `serialise_draft`'s
+ *  own shape (every column the seller has not yet typed a value for is NULL), carrying the one
+ *  photograph tile above. Not derived from `logic.js`'s fallback literal, unlike
+ *  `design-wizard-draft.mjs`'s own stub: that literal has no `src` at all (by design, A20's own
+ *  Step 5), so there is nothing to derive a real photograph from — this is a plain fixture. */
+function wizPhotoDraft(): unknown {
+  return {
+    id: WIZ_LISTING_ID, slug: `listing-${WIZ_LISTING_ID}`, status: 'draft',
+    name: null, type: null, est: null, ownership: null, city: null, zip: null,
+    price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
+    bldg: null, facilityType: null, facility: null,
+    anon: true, revBand: false, docsLocked: true, showIdentifiable: false,
+    state: null, market: null, area: null,
+    decline_reason: null, submitted_at: null, updated_at: '2026-09-16T00:00:00+00:00',
+    assets: [WIZ_PHOTO_TILE], photos: [WIZ_PHOTO_TILE], documents: []
+  };
+}
+
+/** The tile's own `<img>`, inside `<image-slot>`'s open shadow root — `document.querySelector`
+ *  does not pierce it, so the wait reaches in explicitly, in `photoLoaded`'s own shape above. */
+async function wizardPhotoLoaded(p: Page): Promise<void> {
+  await p.waitForFunction(() => {
+    const slot = document.querySelector('image-slot');
+    const img = slot && slot.shadowRoot && slot.shadowRoot.querySelector('img');
+    return !!(img && (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0);
+  });
+}
+
+const wizardWithPhoto = async (p: Page): Promise<void> => {
+  if (driverFor(p.url()) === 'reference') {
+    const props = JSON.parse(decodeURIComponent(referenceUrl({ screen: 'seller' }).slice('/?props='.length))) as Record<string, unknown>;
+    props.startWizardPhotos = JSON.stringify([WIZ_PHOTO_TILE]);
+    await p.goto(`/?props=${encodeURIComponent(JSON.stringify(props))}`);
+    await p.locator('#app > *, #dc-root > *').first().waitFor({ state: 'attached' });
+  } else {
+    await reach(p, { screen: 'seller' });
+    // The step rail saves the step it LEAVES before it moves (A16.18) — so clicking the "6"
+    // button first PATCHes step 1, a real network call this listing id (never written to the
+    // real database) would otherwise 404 on. Answered the same way GET is: the draft stands
+    // unchanged, which is honest — nothing on step 1 was typed into.
+    await p.route((url) => /^\/api\/seller\/listings(\/[^/?]*)?$/.test(url.pathname), async (route) => {
+      const request = route.request();
+      const hasId = new RegExp(`^/api/seller/listings/${WIZ_LISTING_ID}$`).test(new URL(request.url()).pathname);
+      if (request.method() === 'POST' && !hasId) {
+        return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: WIZ_LISTING_ID }) });
+      }
+      if ((request.method() === 'GET' || request.method() === 'PATCH') && hasId) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(wizPhotoDraft()) });
+      }
+      return route.fallback();
+    });
+  }
+  await click(p, 'Create a listing');
+  await btn(p, /^6/).click();
+  await wizardPhotoLoaded(p);
+  await atTop(p, 'image-slot');
+};
 // D-I8-7: the phone frame is a PROTOTYPE presentation, not a browser resize — the harness
 // viewport stays the design's 1440×940. The "Mobile view" toggle that used to set it lived in
 // the jump bar, so it is asked for through `startViewport` now: `?props=` on the reference,
@@ -569,6 +641,18 @@ export const SCREENS: Screen[] = [
     // …and the recentre is itself animated (`{ animate: true }`), so it is settled as well.
     await p.waitForTimeout(700);
   } },
+  // A20 (Task P11, 2026-09-16) — the step-6 tile with a real loaded photograph. Appended at the
+  // end of the array, not beside the other three `wizard-*` states above: `cross-plan-deltas.
+  // test.ts` pins `SCREENS.slice(0, 28)` to the 28 Browse V3 states that shipped, and an insertion
+  // any earlier than here would shift that whole window by two.
+  { name: 'wizard-step-6-photos', steps: wizardWithPhoto },
+  // The review dialog itself is Task P12's own control (openPhotoReview, A20.10) — not yet
+  // wired, so this entry reaches the same step-6-with-a-photograph state `wizard-step-6-photos`
+  // does. Appended here, at its own array position, so P12 only EXTENDS this entry's `steps`
+  // (a tile click, once its handler exists) rather than inserting a new one — which is what
+  // keeps every other entry's position, and every citation below this file, stable across both
+  // tasks.
+  { name: 'wizard-step-6-review', steps: wizardWithPhoto }
 ];
 
 /**

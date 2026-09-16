@@ -3609,7 +3609,9 @@ Files: `git add app/privacy/vision.py tests/privacy/test_vision.py app/config.py
 **Interfaces:**
 - Consumes: `app/privacy/ocr.py::Line`, `app/privacy/barcodes.py::Symbol`, `app/privacy/identity.py::Match`, `app/media/encode.py::encode_webp` and `sha256_hex`.
 - Produces, `app/privacy/aggregate.py`:
-  - `OCR_PAD_MIN = 12`, `OCR_PAD_FRACTION = 0.25`, `VISION_PAD_MIN = 24`, `VISION_PAD_FRACTION = 0.20`, `MERGE_GAP_PX = 8`, `BARCODE_EXPAND = 1.15`
+  - `OCR_PAD_MIN = 12`, `OCR_PAD_FRACTION = 0.25`, `VISION_PAD_MIN = 24`, `VISION_PAD_FRACTION = 0.20`, `MERGE_GAP_PX = 8`
+  - **CORRECTED 2026-09-16 (controller ruling 4).** There is no `BARCODE_EXPAND`: the symbol expansion factor is `app/privacy/barcodes.py::EXPAND`, imported, because a second copy of 1.15 could be changed in one place and not the other with nothing to notice. `barcodes.EXPAND` is the surviving declaration and lives beside the adapter whose symbols it describes.
+  - **ADDED 2026-09-16 (controller ruling 3).** `UnmeasurableRegion(ValueError)` — reason code `AGGREGATE_UNMEASURABLE`, the ONLY exception `regions_for` raises. `app/tasks/media.py` must catch it beside `OcrError` and `BarcodeError`. Raised for a detection whose geometry is not finite, one that encloses no area, and one whose expanded box the image clamp has emptied.
   - `regions_for(*, lines, matches, symbols, vision, size) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]` — `(detected_regions, redaction_regions)`, the two jsonb columns, in that order
   - `fillable(regions: Sequence[Mapping[str, Any]]) -> list[list[tuple[float, float]]]` — every polygon whose `source` is not `removed-by-seller`
   - `rect(box: tuple[float, float, float, float]) -> list[list[float]]` — a box as the stored four-point polygon; **public**, because P12's mask routes build a manual region with it
@@ -3637,7 +3639,7 @@ from typing import Any
 import pytest
 
 from app.privacy import aggregate
-from app.privacy.barcodes import Symbol
+from app.privacy.barcodes import EXPAND, Symbol
 from app.privacy.identity import Match
 from app.privacy.ocr import Line
 
@@ -3686,7 +3688,7 @@ def test_every_symbol_is_a_region_and_is_expanded_about_its_centroid() -> None:
     # the width back out as 115.0, while `100 * 1.15` is 114.99999999999999. Both are correct
     # IEEE754 and they are not equal; asserting bit equality on a scaled float is a test that fails
     # for arithmetic rather than for behaviour.
-    assert (x1 - x0) == pytest.approx(100 * aggregate.BARCODE_EXPAND)
+    assert (x1 - x0) == pytest.approx(100 * EXPAND)
     assert ((x0 + x1) / 2, (y0 + y1) / 2) == pytest.approx((150.0, 150.0))
 
 
@@ -3715,7 +3717,7 @@ def test_two_lines_of_one_sign_merge_into_one_polygon() -> None:
         lines=lines, matches=[Match("name", 0, "distinctive", 0.8), Match("name", 1, "token_set", 0.7)],
         symbols=[], vision={"status": "unavailable"}, size=SIZE)
     assert len(redaction) == 1
-    x0, y0, x1, y1 = _box(redaction[0])
+    _x0, y0, _x1, y1 = _box(redaction[0])   # `x0`/`x1` unused: RUF059 is on in this repository
     assert y0 <= 100 - aggregate.OCR_PAD_MIN and y1 >= 186 + aggregate.OCR_PAD_MIN
 
 
@@ -3788,11 +3790,12 @@ output -- because a regeneration that produced different regions from the same s
 derivative the seller had already confirmed."""
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
-from app.privacy.barcodes import Symbol
+from app.privacy.barcodes import EXPAND, Symbol
 from app.privacy.identity import Match
 from app.privacy.ocr import Line
 
@@ -3804,8 +3807,8 @@ VISION_PAD_MIN = 24
 VISION_PAD_FRACTION = 0.20
 #: Expanded boxes that overlap or sit within this many pixels become one polygon.
 MERGE_GAP_PX = 8
-#: A symbol's four corners, scaled about their centroid.
-BARCODE_EXPAND = 1.15
+#: A symbol's four corners are scaled about their centroid by `barcodes.EXPAND`, IMPORTED and not
+#: restated here (controller ruling 4, 2026-09-16).
 
 Box = tuple[float, float, float, float]
 
@@ -3816,6 +3819,31 @@ def _bounds(polygon: Sequence[Sequence[float]]) -> Box:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+# ADDED 2026-09-16 (controller ruling 3): normalise first, then refuse. `app/privacy/aggregate.py`
+# carries the measurements and the full reasoning; this is the shape.
+def _checked(polygon: Sequence[Sequence[float]], source: str) -> Box:
+    """The detection's bounds, NORMALISED (`min`/`max`, so an inverted vision box becomes the region
+    it plainly meant) -- or `UnmeasurableRegion` when an ordinate is not finite, or when the
+    detection encloses no area. The finite test walks EVERY ordinate rather than the bounding box's
+    four, because `min`/`max` swallow a NaN they do not see first."""
+    if not all(math.isfinite(float(o)) for pt in polygon for o in (pt[0], pt[1])):
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} is not finite")
+    box = _bounds(polygon)
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} covers no area")
+    return box
+
+
+def _covering(box: Box, source: str) -> Box:
+    """The EXPANDED box, or `UnmeasurableRegion` when the image clamp has emptied it -- a detection
+    wholly outside the image is measurable and non-degenerate, and it is `_padded`'s own clamp that
+    inverts it. A detection that merely OVERHANGS the frame still clamps to a real region and is
+    kept."""
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise UnmeasurableRegion(f"AGGREGATE_UNMEASURABLE: {source} lies outside the image")
+    return box
+
+
 def rect(box: Box) -> list[list[float]]:
     """A box as the four-point polygon every region is stored as. PUBLIC, because P12's mask routes
     build a manual region from the seller's dragged box and must not reach into a private helper of
@@ -3824,11 +3852,25 @@ def rect(box: Box) -> list[list[float]]:
     return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
 
 
-def _padded(box: Box, minimum: int, fraction: float, size: tuple[int, int]) -> tuple[Box, int]:
+# CORRECTED 2026-09-16 (controller ruling 1). This sketch previously took ONE pad from
+# `min(width, height)` for both callers, which cannot satisfy this task's own vision test:
+# `[400, 400, 600, 500]` is 200 x 100, the test asserts `max(24, round(200 * 0.20))` = 40, and the
+# shared rule answers `max(24, round(100 * 0.20))` = 24. Spec C.5 step 5 states TWO rules and
+# contrasts them in one sentence -- "25 % of the SHORTER SIDE" for text, "20 % PER SIDE" for a
+# vision box -- so the specification and the test agreed and only this sketch did not.
+def _pads(box: Box, minimum: int, fraction: float, *, per_axis: bool) -> tuple[int, int]:
+    width, height = box[2] - box[0], box[3] - box[1]
+    basis_x, basis_y = (width, height) if per_axis else (min(width, height), min(width, height))
+    return max(minimum, round(basis_x * fraction)), max(minimum, round(basis_y * fraction))
+
+
+def _padded(box: Box, minimum: int, fraction: float, size: tuple[int, int], *,
+            per_axis: bool = False) -> tuple[Box, int]:
     x0, y0, x1, y1 = box
-    pad = max(minimum, round(min(x1 - x0, y1 - y0) * fraction))
+    pad_x, pad_y = _pads(box, minimum, fraction, per_axis=per_axis)
     w, h = size
-    return (max(0.0, x0 - pad), max(0.0, y0 - pad), min(float(w), x1 + pad), min(float(h), y1 + pad)), pad
+    return ((max(0.0, x0 - pad_x), max(0.0, y0 - pad_y), min(float(w), x1 + pad_x), min(float(h), y1 + pad_y)),
+            max(pad_x, pad_y))
 
 
 def _scaled(polygon: Sequence[Sequence[float]], factor: float, size: tuple[int, int]) -> Box:
@@ -3877,21 +3919,26 @@ def regions_for(*, lines: Sequence[Line], matches: Sequence[Match], symbols: Seq
         if index >= len(lines):
             continue
         source = "regex" if all(m.field.startswith("regex:") for m in matches if m.line == index) else "ocr_match"
-        polygon = lines[index].quad
-        detected.append({"source": source, "polygon": [[x, y] for x, y in polygon], "line": index, "label": None})
-        box, pad = _padded(_bounds(polygon), OCR_PAD_MIN, OCR_PAD_FRACTION, size)
-        padded.append((box, pad, index))
+        quad = lines[index].quad
+        bounds = _checked(quad, source)
+        detected.append({"source": source, "polygon": [[x, y] for x, y in quad], "line": index, "label": None})
+        box, pad = _padded(bounds, OCR_PAD_MIN, OCR_PAD_FRACTION, size)
+        padded.append((_covering(box, source), pad, index))
 
     for symbol in symbols:
+        _checked(symbol.quad, "barcode")
         detected.append({"source": "barcode", "polygon": [[x, y] for x, y in symbol.quad],
                          "line": None, "label": symbol.payload_kind})
-        padded.append((_scaled(symbol.quad, BARCODE_EXPAND, size), 0, None))
+        padded.append((_covering(_scaled(symbol.quad, EXPAND, size), "barcode"), 0, None))
 
     for region in vision.get("regions", ()):
-        box = (float(region["box"][0]), float(region["box"][1]), float(region["box"][2]), float(region["box"][3]))
-        detected.append({"source": "vision", "polygon": rect(box), "line": None, "label": region.get("label")})
-        grown, pad = _padded(box, VISION_PAD_MIN, VISION_PAD_FRACTION, size)
-        padded.append((grown, pad, None))
+        # `_checked` NORMALISES as well as refusing, so the box is upright whichever way round the
+        # model handed its corners back -- and the RECORD keeps that region, not the inversion.
+        upright = _checked(rect((float(region["box"][0]), float(region["box"][1]),
+                                 float(region["box"][2]), float(region["box"][3]))), "vision")
+        detected.append({"source": "vision", "polygon": rect(upright), "line": None, "label": region.get("label")})
+        grown, pad = _padded(upright, VISION_PAD_MIN, VISION_PAD_FRACTION, size, per_axis=True)
+        padded.append((_covering(grown, "vision"), pad, None))
 
     redaction = [{"id": str(uuid4()), "polygon": rect(box), "source": "auto",
                   "expanded_from": origin, "pad_px": pad, "by": None, "at": None}
@@ -4114,10 +4161,14 @@ def fill_regions(display: bytes, polygons: Sequence[Sequence[tuple[float, float]
         image = Image.open(io.BytesIO(display)).convert("RGB")
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         return None
+    # CORRECTED 2026-09-16 (controller ruling 3): a polygon `ImageDraw` cannot draw, or one that
+    # encloses no area, FAILS THE CALL rather than being skipped -- "there must be no input that
+    # silently results in nothing being covered". See `app/media/redact.py::_covers_a_pixel`.
+    if not all(_covers_a_pixel(polygon) for polygon in polygons):
+        return None
     draw = ImageDraw.Draw(image)
     for polygon in polygons:
-        if len(polygon) >= 3:
-            draw.polygon([(float(x), float(y)) for x, y in polygon], fill=FILL)
+        draw.polygon([(float(x), float(y)) for x, y in polygon], fill=FILL)
     buffer = io.BytesIO()
     # `lossless=True`, not `quality=100`: q=100 is still the lossy coder, so the pixels this module
     # just drew would be re-derived approximately before `encode_webp` ever saw them. The ladder
@@ -4126,7 +4177,7 @@ def fill_regions(display: bytes, polygons: Sequence[Sequence[tuple[float, float]
     return encode_webp(buffer.getvalue())
 ```
 
-- [ ] `poetry run pytest tests/media/test_redact.py -q -W error` — GREEN. If `test_two_photographs_that_differ_only_under_the_mask_produce_identical_bytes` fails, there are exactly two causes and neither is answered by weakening the assertion. Check the intermediate save is `lossless=True` (a `quality=100` hand-off is still the lossy coder). Then check `_display` is `lossless=True` too: with a lossy source the two inputs differ OUTSIDE the mask through intra-prediction, and the derivatives then differ for a reason that has nothing to do with what the fill covers. Both were measured before this file was written — lossy sources give differing derivatives, lossless ones give 64 844 identical bytes. **Do not weaken the assertion.**
+- [ ] `poetry run pytest tests/media/test_redact.py -q -W error` — GREEN. If `test_two_photographs_that_differ_only_under_the_mask_produce_identical_bytes` fails, there are exactly two causes and neither is answered by weakening the assertion. Check the intermediate save is `lossless=True` (a `quality=100` hand-off is still the lossy coder). Then check `_display` is `lossless=True` too: with a lossy source the two inputs differ OUTSIDE the mask through intra-prediction, and the derivatives then differ for a reason that has nothing to do with what the fill covers. Both were measured before this file was written — lossy sources give differing derivatives, lossless ones give 64 844 identical bytes. **Do not weaken the assertion.** **CORRECTED 2026-09-16 (controller ruling 2): the SECOND of those two causes is measured FALSE.** With `quality=100` as the hand-off the whole redact suite still passes, because the fill is applied BEFORE that save, so once the region is covered the two sources are pixel-identical and any deterministic encoder answers the same bytes. `lossless=True` is kept and is correct -- measured, it holds the worst per-channel error twelve pixels inside the fill at 1 against 3 -- but it is a KNOWN UNGATED LINE and `app/media/redact.py` says so at the line, with the reason a later reader must not gate it by tightening `FILL_TOLERANCE`. Only cause (1), the lossless SOURCE, actually makes this property fail, and that one reproduces exactly.
 
 - [ ] **Step 5: the task's gates**
 

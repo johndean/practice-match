@@ -49,6 +49,9 @@ TRANSITIONS = (
     ("PROCESSING_FAILED", "UPLOADED", "reset_for_retry"),
     ("REDACTION_FAILED", "UPLOADED", "reset_for_retry"),
     ("REPROCESS_REQUIRED", "UPLOADED", "reset_for_retry"),
+    # Task P8's sweeper rule (2): a PROCESSING row older than `LOST_AFTER` is a child that died
+    # mid-run. A state and not a flag -- it has no derivative to go on serving.
+    ("PROCESSING", "REPROCESS_REQUIRED", "sweep_lost"),
 )
 
 # States from which the claim must write NOTHING: a ready row is never re-run by this path (its
@@ -56,14 +59,14 @@ TRANSITIONS = (
 UNCLAIMABLE = ("PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
                "SELLER_CONFIRMED", "PUBLISHED", "REVIEW_REQUIRED")
 
-#: Every state migration 041's CHECK permits, written out here because a `parametrize` argument is
-#: read at COLLECTION time and cannot come from a database fixture. It is pinned against
-#: `pg_constraint` itself, both ways, by
+#: Every state migration 041's CHECK permits, read at COLLECTION time -- which is why it is a
+#: literal somewhere rather than a database fixture. THE MODULE's own, not a second copy (Task
+#: P10): `reset_for_reprocess` is guarded by exactly this tuple, so the dead-end parametrisations
+#: below and that writer's predicate cannot disagree about what the eleven states are. It is
+#: pinned against `pg_constraint` itself, both ways, by
 #: `test_the_state_tuples_are_the_states_the_column_check_permits` -- so a state added to the table
 #: without a dead end being ruled for it fails here rather than going unnoticed.
-ALL_STATES = ("UPLOADED", "PROCESSING", "SCANNED", "REDACTION_GENERATED", "READY_FOR_REVIEW",
-              "SELLER_CONFIRMED", "PUBLISHED", "PROCESSING_FAILED", "REDACTION_FAILED",
-              "REVIEW_REQUIRED", "REPROCESS_REQUIRED")
+ALL_STATES = record.ALL_STATES
 
 #: Spec C.4 names ONE source per failure state: `PROCESSING -> PROCESSING_FAILED` (a decode,
 #: OCR or vision error) and `SCANNED -> REDACTION_FAILED` (the fill or the re-encode). Written as
@@ -108,6 +111,14 @@ def _all_columns(conn: Any, asset_id: UUID) -> dict[str, Any]:
         return dict(zip([d.name for d in cur.description], found, strict=True))
 
 
+def _age(conn: Any, asset_id: UUID, *, minutes: int) -> None:
+    """The row, moved backwards in time. Every sweeper window and the claim's own lost-child term
+    read `updated_at`, which is why every writer in `record.py` sets it explicitly."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset_privacy SET updated_at = %s WHERE asset_id = %s",
+                    (datetime.now(UTC) - timedelta(minutes=minutes), asset_id))
+
+
 def _perform(conn: Any, call: str, asset_id: UUID, listing_id: UUID) -> None:
     """The one call each transition names, with the arguments that transition takes. A `match` and
     not a dict of partials: each arm is read against its own TRANSITIONS row, and an arm added
@@ -132,6 +143,12 @@ def _perform(conn: Any, call: str, asset_id: UUID, listing_id: UUID) -> None:
             record.fail(conn, asset_id, state=state, code="UNDECODABLE")
         case "exhaust":
             record.exhaust(conn, asset_id, code="OCR_ERROR")
+        case "sweep_lost":
+            # The WINDOW is part of this transition and not a fixture detail: rule (2) is
+            # "PROCESSING for longer than `LOST_AFTER`", so the back-date belongs inside the one
+            # call the row names.
+            _age(conn, asset_id, minutes=30)
+            record.sweep_candidates(conn)
         case _:
             record.reset_for_retry(conn, asset_id)
 
@@ -408,6 +425,7 @@ def _privacy_updates(module: Any) -> dict[str, list[str]]:
 PRIVACY_UPDATES = {
     "claim": 1,
     "record_scan": 1,
+    "record_scan_in_place": 1,
     "record_derivative": 1,
     "mark_ready": 1,
     "fail": 1,
@@ -416,10 +434,17 @@ PRIVACY_UPDATES = {
     "reset_confirmation": 2,
     "reset_for_retry": 1,
     "flag_stale": 1,
+    "flag_stale_version": 1,
+    # Task P8's sweeper. Rule (2)'s lost-child transition is ONE statement that both finds the row
+    # and moves it; rule (5)'s version flag is `flag_stale_version`'s, shared with
+    # `scripts/reprocess_photos.py --all-stale`. The other four rules only SELECT and are counted
+    # by nothing here, which is right -- they write nothing.
+    "sweep_candidates": 1,
     "advance_in_place": 1,
     "bump_attempt": 1,
     "mark_published": 1,
     "set_visibility": 1,
+    "reset_for_reprocess": 1,
 }
 
 
@@ -498,7 +523,22 @@ def test_every_update_in_the_module_sets_updated_at() -> None:
     """The sweeper's age windows and `listing_asset_privacy_sweep_idx` read `updated_at`, and there
     is no trigger precedent in `migrations/` -- `listing.updated_at` is maintained the same way, by
     hand, in `app/api/seller_listings.py`. A statement that forgets it makes a row invisible to the
-    sweeper for ever, so the rule is checked rather than trusted (spec C.3)."""
+    sweeper for ever, so the rule is checked rather than trusted (spec C.3).
+
+    WHAT THIS WALK CANNOT SEE, stated rather than left to be discovered (re-review 3, Minor-c; Task
+    P8 closed it on entry): `_executed_sql` keys every statement by the FUNCTION that owns it, so a
+    statement at MODULE level -- outside any `def`, executed at import -- is counted by nothing
+    here, and would therefore escape this count, the `updated_at` rule and
+    `test_every_update_in_the_module_names_the_state_it_is_allowed_from`'s predicate rule alike.
+    That is acceptable for `record.py` specifically, and for two reasons rather than one. First,
+    the module opens NO connection and holds no cursor: every statement it runs is run through a
+    `conn` its caller passed, so a module-level `cur.execute` would need a module-level connection
+    this file has never had and whose addition is not a subtle edit. Second, EXISTENCE is still
+    caught elsewhere -- `tests/test_docs.py::test_every_writer_of_the_privacy_row_is_declared_and_
+    only_one_is_production` regexes the file's TEXT, not its AST, so a module-level writer is seen
+    there whatever encloses it. What would genuinely escape is the PREDICATE check, which is why
+    this is written down: a module-level writer in `record.py` is a finding, not a style, and the
+    walk is to be widened rather than the statement explained."""
     by_function = _privacy_updates(record)
     assert {name: len(sqls) for name, sqls in by_function.items()} == PRIVACY_UPDATES
     missing = [sql[:120] for sqls in by_function.values() for sql in sqls
@@ -654,6 +694,43 @@ def test_the_retry_clears_the_attempts_the_ladder_spent(conn: Any) -> None:
     assert record.reset_for_retry(conn, asset_id) is True
     after = _read(conn, asset_id)
     assert (after.processing_status, after.attempts) == ("UPLOADED", 0)
+
+
+@pytest.mark.parametrize("start", ALL_STATES)
+def test_the_reprocess_reset_starts_any_state_again_and_leaves_it_fail_closed(
+    conn: Any, start: str
+) -> None:
+    """P10's SHOW -> NOT_SHOW arm (spec C.1 step 3), from every state the table names.
+
+    The flip meets a row in any of the eleven -- a READY_FOR_REVIEW row whose derivative somebody
+    deleted off the bucket is exactly as unservable as an UPLOADED one -- so `ALL_STATES` IS this
+    transition, and what the parametrisation asserts is that the landing is fail-closed from each:
+    UPLOADED, no derivative claim, no confirmation, invisible, and the ladder's budget back."""
+    asset_id, _ = _row(conn, processing_status=start, attempts=2,
+                       confirmed=start == "SELLER_CONFIRMED", buyer_visible=start in record.READY_STATES)
+    record.reset_for_reprocess(conn, asset_id)
+    after = _read(conn, asset_id)
+    assert after.processing_status == "UPLOADED"
+    assert (after.redacted_storage_key, after.redacted_sha256, after.confirmed_sha256) == (None, None, None)
+    assert (after.seller_confirmed, after.buyer_visible, after.attempts) == (False, False, 0)
+    assert _review_status(conn, asset_id) == "pending"
+
+
+def test_the_reprocess_reset_clears_the_stale_flag_a_fresh_run_supersedes(conn: Any) -> None:
+    """D-IDP-16: `reprocess_reason` is a flag on a READY row awaiting an IN-PLACE re-run, and
+    `advance_in_place` is the only writer that clears it -- nothing on the fresh `claim` ->
+    `mark_ready` path ever reaches that function. A row sent back to UPLOADED still carrying one
+    would come back READY_FOR_REVIEW and STALE for ever, which the publishing gate's own third arm
+    reads as an offender. Both columns move together: `lap_stale_ck` holds
+    `(reprocess_reason IS NULL) = (reprocess_requested_at IS NULL)`."""
+    asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True,
+                       buyer_visible=True, reprocess_reason="VERSION")
+    record.reset_for_reprocess(conn, asset_id)
+    assert _read(conn, asset_id).reprocess_reason is None
+    with conn.cursor() as cur:
+        cur.execute("SELECT reprocess_requested_at FROM listing_asset_privacy WHERE asset_id = %s",
+                    (asset_id,))
+        assert cur.fetchone()[0] is None, "lap_stale_ck's other half"
 
 
 def test_the_scan_records_what_the_run_found(conn: Any) -> None:
@@ -890,6 +967,77 @@ def test_no_attempt_is_counted_from_a_state_no_in_place_re_run_owns(conn: Any, s
     assert _all_columns(conn, asset_id) == before
 
 
+@pytest.mark.parametrize("start", [s for s in ALL_STATES if s != "PROCESSING"])
+def test_the_sweepers_lost_child_rule_moves_nothing_from_any_other_state(conn: Any, start: str) -> None:
+    """Rule (2)'s dead ends. It is the sweeper's only STATE transition, and an unguarded version of
+    it would take a SCANNED row mid-encode, a REVIEW_REQUIRED row the seller has not touched and a
+    PUBLISHED row's whole listing back to the queue every five minutes for ever."""
+    asset_id, _ = _row(conn, processing_status=start)
+    _age(conn, asset_id, minutes=60)
+    before = _all_columns(conn, asset_id)
+    record.sweep_candidates(conn)
+    after = _all_columns(conn, asset_id)
+    # `flag_stale_version` legitimately marks a ready row below the version; nothing else may move.
+    assert after["processing_status"] == before["processing_status"]
+    assert after["last_error"] == before["last_error"]
+
+
+def test_the_lost_child_rule_waits_out_its_window(conn: Any) -> None:
+    """The window is the whole difference between "a worker is busy with this" and "a worker died
+    with this". Inside it the row is left alone; outside it the row is taken back."""
+    asset_id, _ = _row(conn, processing_status="PROCESSING", attempts=1)
+    _age(conn, asset_id, minutes=5)
+    assert record.sweep_candidates(conn)["lost"] == []
+    assert _read(conn, asset_id).processing_status == "PROCESSING"
+    _age(conn, asset_id, minutes=7)
+    assert record.sweep_candidates(conn)["lost"] == [asset_id]
+    assert _read(conn, asset_id).processing_status == "REPROCESS_REQUIRED"
+
+
+def test_the_version_flag_marks_a_stale_ready_row_once_and_leaves_its_state_alone(conn: Any) -> None:
+    """Rule (5), and `scripts/reprocess_photos.py --all-stale`'s own statement. Staleness is a FLAG
+    (D-IDP-16): the row keeps its state, its confirmation and its visibility, and goes on serving
+    the derivative it has while the in-place re-run replaces it.
+
+    Idempotent, which is what stops five minutes of sweeps enqueueing five re-runs of one
+    photograph: a row that already carries a reason is not re-stamped."""
+    stale, _ = _row(conn, processing_status="PUBLISHED", processing_version=0, buyer_visible=True)
+    current, _ = _row(conn, processing_status="PUBLISHED", processing_version=1, buyer_visible=True)
+    not_ready, _ = _row(conn, processing_status="PROCESSING_FAILED", processing_version=0)
+    assert record.flag_stale_version(conn, reason="VERSION") == [stale]
+    after = _read(conn, stale)
+    assert (after.processing_status, after.buyer_visible, after.reprocess_reason) == ("PUBLISHED", True, "VERSION")
+    assert _read(conn, current).reprocess_reason is None
+    assert _read(conn, not_ready).reprocess_reason is None
+    assert record.flag_stale_version(conn, reason="OPERATOR") == []
+    assert _read(conn, stale).reprocess_reason == "VERSION", "a flagged row was re-stamped"
+
+
+def test_the_in_place_scan_writes_its_columns_without_touching_the_state(conn: Any) -> None:
+    """`record_scan`'s twin for the re-run: the four scan columns, and no transition at all."""
+    asset_id, _ = _row(conn, processing_status="SELLER_CONFIRMED", confirmed=True, buyer_visible=True)
+    record.record_scan_in_place(conn, asset_id, ocr={"size": [800, 600], "lines": []},
+                                identity_matches=[{"field": "name", "line": 0, "method": "exact", "score": 1.0}],
+                                vision={"status": "unavailable"}, detected_regions=[{"source": "vision"}])
+    row = _all_columns(conn, asset_id)
+    assert (row["processing_status"], row["buyer_visible"]) == ("SELLER_CONFIRMED", True)
+    assert row["identity_matches"] == [{"field": "name", "line": 0, "method": "exact", "score": 1.0}]
+    assert row["detected_regions"] == [{"source": "vision"}]
+    assert row["vision"] == {"status": "unavailable"}
+
+
+@pytest.mark.parametrize("start", [s for s in ALL_STATES if s not in record.READY_STATES])
+def test_the_in_place_scan_writes_nothing_from_a_state_that_is_not_ready(conn: Any, start: str) -> None:
+    """Its dead ends. An in-place re-run happens in a ready state and nowhere else, so a row that
+    stopped being ready mid-run must not have a late scan written over the one its own run
+    recorded -- the four `jsonb` columns are exactly what `_all_columns` exists to compare."""
+    asset_id, _ = _row(conn, processing_status=start)
+    before = _all_columns(conn, asset_id)
+    record.record_scan_in_place(conn, asset_id, ocr={"size": [1, 1], "lines": []}, identity_matches=[],
+                                vision={"status": "ok"}, detected_regions=[{"source": "ocr_match"}])
+    assert _all_columns(conn, asset_id) == before
+
+
 def test_the_claim_is_one_statement_that_returns_the_row_it_claimed() -> None:
     """Review Minor-4. `app/db.py:239`'s `sync_conn()` is AUTOCOMMIT, so a claim that is an UPDATE
     followed by a separate `read()` COMMITS between the two and hands the caller a second snapshot
@@ -965,15 +1113,26 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
         name. `psycopg2.Error` and not a blind `Exception`: that is the whole class this finding is
         about (`OperationalError: server closed the connection unexpectedly`, `InterfaceError:
         connection already closed`), and a bug in `record.claim` itself is not a masking error --
-        it is one pytest SHOULD surface however loudly it can."""
-        racer = psycopg2.connect(scratch_dsn)
-        racer.autocommit = True
+        it is one pytest SHOULD surface however loudly it can.
+
+        The CONNECT is inside the `try` too (re-review 3, Minor-b; Task P8 closed it on entry).
+        It used to sit above it, so the one `psycopg2.Error` most likely of all -- the connection
+        itself failing -- was the one error this arm could not record, and it escaped as exactly
+        the `PytestUnhandledThreadExceptionWarning` the paragraph above exists to prevent.
+        Reproduced by pointing this connect at a closed port: one `-W error` run reported the case
+        FAILED and errored a second time in the same run, two reports for one cause."""
+        racer: Any = None
         try:
+            racer = psycopg2.connect(scratch_dsn)
+            racer.autocommit = True
             answers["racer"] = record.claim(racer, asset_id, 1)
         except psycopg2.Error as exc:
             escaped.append(exc)
         finally:
-            racer.close()
+            # `None` when the connect itself was what failed: there is nothing to close, and a
+            # bare `racer.close()` would raise an AttributeError over the error just recorded.
+            if racer is not None:
+                racer.close()
 
     # Built before the `try`, so the `finally` can always ask whether it is still running -- a
     # `finally` that cannot name the thread is the same defect one step further out.
@@ -990,7 +1149,14 @@ def test_two_connections_claiming_one_row_leave_exactly_one_winner(conn: Any, sc
         # The lock goes FIRST, so a racer blocked on it finishes in milliseconds, and only then do
         # we wait -- the thread owns its own connection, so there is nothing here to close.
         holder.close()
-        thread.join(timeout=30)
+        # ONLY a thread that was started (re-review 3, Minor-a; Task P8 closed it on entry).
+        # `Thread.join` raises `RuntimeError: cannot join thread before it is started`, and this
+        # `finally` runs for every way the body above can fail -- including the ways that fail
+        # BEFORE `thread.start()`, such as the row lock itself. Reproduced by raising one line
+        # above `start()`: the real error was reported only as "During handling of the above
+        # exception, another exception occurred" behind a `RuntimeError` about joining.
+        if thread.ident is not None:
+            thread.join(timeout=30)
     assert not thread.is_alive(), (
         "the racing claim did not return within 30 s of the lock being released; its connection is "
         "the thread's own, so nothing here has closed it and no second error is masking this one"

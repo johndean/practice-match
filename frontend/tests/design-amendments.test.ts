@@ -239,6 +239,23 @@ describe('local design amendments (spec D15)', () => {
     // whole family is appended last — after A16/A17 too: A19.11 was adapted at the SL9 merge to
     // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
+    // A20 — the identifiable-image control and the step-6 tiles (John's implementation directive,
+    // 2026-09-09, Task P11 of the image-identifiability sub-project). A20 was reserved by that
+    // plan while A21-A19 (sic — while A21 onward) were written and merged around it (this file's
+    // own note above A25.1 and above A28.1's block), so it is applied here, right after A19, which
+    // is where the plan's own Step 3 puts it. A20.4 is CHAINED: its `find` sits inside A16.21's own
+    // introduced text (the `describe` field A16.21 added to this same `.map()` call), so it runs
+    // after A16 — already true here since A16 precedes A19 in this list. A20.3 is two entries,
+    // 3a (the design's own `byStep[7].toggles` config, exactly A12's `practiceName` idiom — a new
+    // VALUE in an existing slot) and 3b (the toggles output keeps the `key` field the config
+    // carries, so the rendered order the seller sees is a pinnable fact and not merely inferred).
+    'A20.1', 'A20.2', 'A20.3a', 'A20.3b', 'A20.4', 'A20.5', 'A20.6', 'A20.7', 'A20.8', 'A20.9',
+    // A20.4b-d — Task P11's own Step 5/6 (2026-09-09): the two new approved states this task
+    // appends, `wizard-step-6-photos` and `wizard-step-6-review`, reached through the ninth
+    // declared prototype prop `startWizardPhotos` (the reference has no adapter to reach a real
+    // photograph through). A20.4b is CHAINED on A16.4; A20.4d's `find` is A16.11a's own
+    // `STARTMYLISTINGS_ENTRY`, so this trio runs after A16.
+    'A20.4b', 'A20.4c', 'A20.4d',
     // A21 — the Browse map's veterinarian and economic layers read real API data without
     // rendering missing data as zero (controller amendment A-C28, 2026-09-10, controller amendment
     // A-C29, 2026-09-10). A21.1 removes the `|| 0` defaults so missing census figures become
@@ -692,7 +709,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(387);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(400);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -719,6 +736,52 @@ describe('local design amendments (spec D15)', () => {
     expect(doubled(readFileSync(AMENDED, 'utf8')), 'a removal amendment left two blank lines where the design had one').toBe(doubled(pristine));
   });
 
+  // A20 — the identifiable-image control and the step-6 tiles (John's implementation directive,
+  // 2026-09-09, Task P11). Each surface the family touches gets ONE case, matching the family's
+  // own anchor table: the fourth toggle exists exactly once, the step-6 band's two branches are
+  // both present, the once-only privacy line appears exactly once, the preview strip appears
+  // exactly once, and directive 15's census sweeps the whole amended file for the technical
+  // vocabulary the seller must never see.
+  describe('A20 — the identifiable-image control and the step-6 tiles', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+
+    it('the fourth toggle exists exactly once, naming the control John dictated', () => {
+      expect(amended.split('key: "showIdentifiable"')).toHaveLength(2);
+      expect(amended).toContain('label: "Identifiable image content"');
+      expect(amended).toContain('Not shown to buyers — recommended');
+      expect(amended).toContain('Shown to buyers — signage, logos and names may be visible');
+    });
+
+    it('the step-6 tile carries both the has-src and the no-src branch, exactly once each', () => {
+      expect(amended.split('value="{{ u.hasSrc }}"')).toHaveLength(2);
+      expect(amended.split('value="{{ u.noSrc }}"')).toHaveLength(2);
+      // The badge band's own style string is UNCHANGED — same colours, same size — only its
+      // condition moved, which is what keeps a no-src tile pixel-identical to today.
+      expect(amended.split('height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;')).toHaveLength(2);
+    });
+
+    it('the once-only privacy line appears exactly once, gated on wiz.privacyNote', () => {
+      expect(amended.split('value="{{ wiz.privacyNote }}"')).toHaveLength(2);
+      expect(amended).toContain('{{ wiz.privacyNote }}');
+    });
+
+    it('the step-8 preview strip appears exactly once, gated on the photograph count', () => {
+      expect(amended.split('value="{{ wiz.previewPhotos.length }}"')).toHaveLength(2);
+      expect(amended.split('list="{{ wiz.previewPhotos }}"')).toHaveLength(2);
+    });
+
+    it('directive 15 (John, 2026-09-09): nothing technical is named anywhere a seller can see', () => {
+      // "Do not expose OCR controls, AI confidence scores, bounding boxes by default, technical
+      // privacy settings, model configuration, API details, redaction engine details." Phrases,
+      // not bare words: the file's own `getBoundingClientRect` and "remodeled"/"modelled" (the
+      // pets layer's own honest disclosure, A50) contain "bounding" and "model" as substrings —
+      // neither is what directive 15 forbids, and a bare-word sweep would fail on both today.
+      for (const forbidden of ['ocr', 'confidence score', 'bounding box', 'model configuration', 'redaction engine']) {
+        expect(amended.toLowerCase(), forbidden).not.toContain(forbidden);
+      }
+    });
+  });
+
   // A5.6: the `startGate` prototype prop. Asserted through the DECODED attribute rather than
   // as a substring, because that is what the bundle's runtime reads (support.js's
   // `parseDataProps` → `propsMeta[k].default`) and what `app-generated.test.ts` requires
@@ -727,7 +790,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',

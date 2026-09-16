@@ -46,7 +46,7 @@ REQUIRED_CI_COMMANDS = (
     # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
     # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
     # a new module there means editing the workflow AND this string, always both.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py scripts/reprocess_photos.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1977,6 +1977,13 @@ LISTING_WRITERS = {
     "tests/api/test_admin_listings.py":
         "review-queue fixtures with no photographs; a listing with an empty `photos` array has "
         "nothing for the gate's predicate to find.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "Task P9's own delivery-resolver suite. `_publish` writes two UPDATEs; by the time the "
+        "second names `status`, `_process` has already given the listing's one photograph a "
+        "SELLER_CONFIRMED-or-later privacy row, so the gate is met by the pipeline's own state, "
+        "`test_listing_assets.py`'s own shape. `_seed_listing` INSERTs directly as `published` "
+        "(no INSERT arm, A-IDP-6); its other UPDATEs — a visibility flip, a photos-array swap for "
+        "the IDOR case — never name `status` and do not fire the trigger at all.",
     "tests/api/test_geo_wire.py":
         "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
         "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "
@@ -2002,6 +2009,18 @@ LISTING_WRITERS = {
     "tests/census/test_market_api.py":
         "sets `location_disclosed` on an existing row and never `status`, so the trigger — BEFORE "
         "UPDATE **OF status** — does not fire at all.",
+    "tests/api/test_listing_privacy.py":
+        "the publishing gate's own route suite (Task P10). Every listing it publishes goes through "
+        "the real routes — submit, decide and republish — so the gate is what it measures rather "
+        "than something it works around; its two direct UPDATEs write the visibility setting a "
+        "flip test has to START from and an `in_review` status the decline case needs, and "
+        "neither touches `status = 'published'`.",
+    "tests/perf/test_api_latency.py":
+        "Task P9's own photo-budget test, `test_buyer_photo_delivery.py`'s `_process`/`_publish` "
+        "shape: one UPDATE gives the listing's uploaded photograph a SELLER_CONFIRMED privacy row "
+        "before a second UPDATE names `status`, so the gate is met by that already-ready row. "
+        "`test_listings_p95_within_budget`'s own UPDATE flips the seeded eighteen to SHOW and "
+        "never names `status`, so the trigger does not fire for it at all.",
     "tests/perf/test_query_plans.py":
         "query-plan fixtures inserted directly with their status; no INSERT arm.",
     "tests/privacy/conftest.py":
@@ -2010,6 +2029,11 @@ LISTING_WRITERS = {
         "SET photos`, which the trigger — BEFORE UPDATE **OF status** — does not fire on. No row it "
         "makes ever moves into `published`, because the state machine it builds rows for is tested "
         "on `listing_asset_privacy` alone.",
+    "tests/privacy/test_gate.py":
+        "the gate PREDICATE's own suite (Task P10). It reads `listing_photos_not_ready` directly "
+        "and never publishes: its UPDATEs plant a `photos` array — a seed path entry, a reordered "
+        "pair — on a `draft` row the builder made, which the trigger (BEFORE UPDATE **OF status**) "
+        "does not fire on.",
     "tests/scripts/test_seed_listings.py":
         "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
         "use `draft` rows precisely so the gate is not what they are measuring.",
@@ -2070,19 +2094,58 @@ PRIVACY_WRITERS = {
         "the state machine itself (Task P3) — the one production writer. One function per "
         "transition of spec C.4, each carrying the predicate that names its own source states, so "
         "a transition the table does not hold matches no row and writes nothing.",
+    "tests/api/test_admin_listings.py":
+        "the reviewer's own step-6/bytes-route suite (Task P9). One UPDATE plants a "
+        "READY_FOR_REVIEW row — a redacted key, its sha256, the region and OCR JSON a completed "
+        "pass leaves — onto the row the real upload route already created, so the admin tile can "
+        "be exercised without running the pipeline; it is a column poke, never a transition "
+        "through `app/privacy/record.py`.",
+    "tests/api/test_buyer_photo_delivery.py":
+        "the delivery resolver's own suite (Task P9, directives 20/21). `_process` plants the "
+        "pipeline's OUTCOME onto the row the real upload route already created — whichever state "
+        "a scenario needs, with every CHECK migration `041` carries for that state already true — "
+        "and one case pokes `buyer_visible`/`processing_status` back to a not-yet-finished shape "
+        "to prove SHOW's own floor. Neither is a transition through `app/privacy/record.py`; both "
+        "are direct column pokes, `tests/privacy/test_record.py`'s own idiom.",
     "tests/api/test_listing_assets.py":
         "P2's own upload and delivery suite. Two `_SEED_INSERT`s build the privacy rows a "
         "published seed listing needs for migration `042`'s gate to pass; neither moves a row "
         "through a transition, they insert the end state directly.",
+    "tests/api/test_listings.py":
+        "the photo-caption suite's own builder, `_asset` (A-L11/Task P9): for a PHOTOGRAPH kind it "
+        "INSERTs the privacy row the real `upload_photo` writes in the same transaction as its "
+        "`listing_asset` row, already `PUBLISHED` and `buyer_visible`, so a caption fixture never "
+        "represents a shape no real upload produces.",
+    "tests/api/test_seller_listings.py":
+        "`_uploaded_and_processed`'s own builder (Task P9) — its own docstring: \"what is planted "
+        "here is its outcome.\" One UPDATE moves the row the real upload route created to a named "
+        "post-pipeline state, READY_FOR_REVIEW by default, with the redaction regions and OCR size "
+        "a finished pass leaves, so the step-6 tile can be asserted without running the pipeline.",
+    "tests/perf/test_api_latency.py":
+        "the photo-budget test's own plant (Task P9), `test_buyer_photo_delivery.py`'s `_process` "
+        "shape: one UPDATE moves the uploaded photograph's row to SELLER_CONFIRMED with a "
+        "redacted key and matching sha256 before the listing's own UPDATE moves it into "
+        "`published`, so what is timed is the resolver's warm path and never the pipeline that "
+        "fed it.",
     "tests/privacy/conftest.py":
         "the privacy suites' shared builder (Task P3) — one INSERT that makes a row in any state "
         "with whatever `041`'s CHECKs require of that state already true, so a CHECK that changes "
         "fails in one place rather than in every suite.",
+    "tests/api/test_listing_privacy.py":
+        "the flip's own route suite (Task P10). One deliberate column poke, in a case whose "
+        "docstring says why: the REDACTION_FAILED row that still carries a live "
+        "`redacted_storage_key` — the shape `lap_ready_has_derivative_ck` permits outside the "
+        "ready states, and the one `reset_confirmation` must refuse to promote.",
     "tests/privacy/test_record.py":
         "the state machine's own suite. Two deliberate column pokes, each in a case whose "
         "docstring says why: the `updated_at` back-date that opens the six-minute lost-child "
         "window, and the `redacted_sha256 := NULL` that builds the ready-row-with-no-derivative "
         "shape `lap_ready_has_derivative_ck` permits and `confirm` must refuse.",
+    "tests/tasks/test_media.py":
+        "the Celery pipeline's own suite (Task P8). One deliberate column poke, `_age`: every "
+        "sweeper window is `updated_at < now() - interval ...`, so a row is made old by moving "
+        "that column backwards, which is the only way to open a window without sleeping for six "
+        "minutes. It moves no row through a transition.",
     "tests/test_listing_privacy_schema.py":
         "`041`/`042`'s own column, CHECK and trigger contract (Task P1). It inserts rows column by "
         "column to drive each CHECK from both sides, and its one UPDATE sets the stale flag on a "
@@ -2217,15 +2280,18 @@ def test_runbook_names_the_five_account_routes():
 # before it ever compared a string: A18 (2026-09-09) made sixteen families and it stopped at
 # "Fifteen"; `feat/card-geography` hit it at A27; and A24 — real Census boundary polygons,
 # 2026-09-11 — makes TWENTY-FIVE against a tuple that stopped at "Twenty-four". It now runs to
-# thirty-nine, which is roughly a year of families at the current rate. When it runs out again,
-# extend it: an index error here is never evidence about CLAUDE.md.
+# forty-three (Task P11, 2026-09-16, made forty-two families) — the headroom check below wants one
+# word past the current family count, so an extension lands here whenever the count is even with
+# the tuple's own end. When it runs out again, extend it: an index error here is never evidence
+# about CLAUDE.md.
 NUMBER_WORDS = {n: w for n, w in enumerate(
     ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
      "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
      "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
-     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two"))}
+     "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two",
+     "Forty-three"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

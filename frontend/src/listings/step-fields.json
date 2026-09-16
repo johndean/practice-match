@@ -5,7 +5,7 @@
     "3": ["price", "rev", "revBand"],
     "4": ["docs", "rooms", "sqft", "hours", "desc"],
     "5": ["bldg", "facilityType", "facility"],
-    "7": ["anon", "revBand", "docsLocked"]
+    "7": ["anon", "revBand", "docsLocked", "showIdentifiable"]
   },
   "requiredNumeric": ["est", "price"]
 }
