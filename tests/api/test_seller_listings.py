@@ -2538,6 +2538,28 @@ async def test_a_seed_path_entry_still_renders_the_designs_badge_band(
     assert tile["source"] == "seed" and tile["position"] == 1 and tile["name"] == "Exterior"
 
 
+async def test_an_asset_entry_with_no_matching_asset_row_still_renders_a_tile(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """`_tile_privacy`'s OTHER "somehow absent" row -- the seed one is
+    `test_a_seed_path_entry_still_renders_the_designs_badge_band`, above, and bypasses
+    `_tile_privacy` entirely (a seed entry has no uuid to look up). This is the ASSET-style entry: a
+    bare uuid in `listing.photos` that `by_id` -- `assets_for`'s own dict, keyed by `listing_asset`
+    id -- has no row for at all, which is what a caller mid-upload or a stale positional reference
+    looks like. The design's badge band is what it renders; a KeyError is not an option."""
+    _account, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _draft_as(client, signed)
+    ghost = str(uuid4())
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photos=%s::jsonb WHERE id=%s", (json.dumps([ghost]), listing_id))
+
+    tile = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["photos"][0]
+    assert tile["id"] == ghost and tile["source"] == "asset" and tile["name"] == ""
+    assert tile["src"] is None and tile["variant"] is None and tile["state"] == "processing"
+    assert tile["masks"] == [] and (tile["width"], tile["height"]) == (None, None)
+
+
 async def test_the_draft_payload_carries_masks_and_state_and_nothing_technical(
     client: Any, conn: Any, redis: Any, store: Any, member: Any
 ) -> None:

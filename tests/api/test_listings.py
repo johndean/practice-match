@@ -497,6 +497,36 @@ def test_photo_file_refuses_an_escaping_path() -> None:
     assert photo_file(["abc_animal_hospital/1.webp"], 1) is not None
 
 
+@pytest.mark.parametrize("corrupt", [
+    pytest.param(lambda root: None, id="missing-file"),                                     # OSError
+    pytest.param(lambda root: (root / "index.json").write_text("{not json"), id="malformed-json"),  # ValueError
+    pytest.param(lambda root: (root / "index.json").write_text('{"no_hospitals": []}'),
+                 id="no-hospitals-key"),                                                     # KeyError
+])
+def test_seed_digests_falls_back_to_an_empty_map_when_the_index_is_missing_or_malformed(
+    monkeypatch: Any, tmp_path: Any, corrupt: Any
+) -> None:
+    """`seed_digests`'s three-exception catch, each triggered on its own merits: a missing
+    `index.json` is OSError (`Path.read_text` -> `FileNotFoundError`), truncated content is
+    ValueError (`json.loads`), and valid JSON with no `"hospitals"` key is KeyError. Caught
+    together because a seed URL's `?v=` is a cache key and never a selector -- none of the three is
+    worth telling the caller apart from the other two, only ever `{}`.
+
+    `seed_digests` is `@lru_cache`d for the process: cleared before, so this call runs the body
+    against the broken root instead of returning an already-cached real map; cleared again after,
+    so the next caller recomputes against the real (monkeypatch-restored) root rather than reusing
+    this test's `{}`."""
+    import app.api.listings as listings_module
+
+    corrupt(tmp_path)
+    listings_module.seed_digests.cache_clear()
+    monkeypatch.setattr(listings_module, "PHOTOS_ROOT", tmp_path)
+    try:
+        assert listings_module.seed_digests() == {}
+    finally:
+        listings_module.seed_digests.cache_clear()
+
+
 @pytest.mark.parametrize(
     "days, expected",
     [(0, "today"), (1, "1 day ago"), (2, "2 days ago"), (6, "6 days ago"), (7, "1 week ago"),

@@ -440,6 +440,37 @@ def _seed_listing(conn: Any, photos: list[str | None]) -> str:
         return str(cur.fetchone()[0])
 
 
+async def test_a_seed_entry_the_index_still_knows_but_the_disk_has_lost_is_a_404(
+    client: Any, conn: Any, redis: Any, buyer: dict[str, str], monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Directive 19's fail-closed rule, one door over from the bucket
+    (`test_a_missing_derivative_object_is_a_404_and_never_a_fallback`, below): `seed_digests()` is
+    `@lru_cache`d for the process and does not re-read once warm, so an entry the digest map still
+    knows is no promise the FILE is still under `PHOTOS_ROOT` -- `photo_file` checks the disk
+    itself, fresh, on every call, and the seed arm has to answer its own refusal exactly as the
+    object-storage arm already does."""
+    import app.api.listings as listings_module
+
+    entry = "abc_animal_hospital/1.webp"
+    listing_id = _seed_listing(conn, [entry])
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility='SHOW' WHERE id=%s", (listing_id,))
+
+    # Warm the cache against the REAL inventory before pulling the floor out from under `photo_file`:
+    # the entry really is a key the committed index knows, sanity-checked rather than assumed.
+    listings_module.seed_digests.cache_clear()
+    assert entry in listings_module.seed_digests()
+    monkeypatch.setattr(listings_module, "PHOTOS_ROOT", tmp_path)   # the file the index knows is "gone"
+    try:
+        response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+        assert response.status_code == 404
+        assert response.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
+    finally:
+        # Cleared, not repopulated: the next caller recomputes against the real (monkeypatch-
+        # restored) root rather than reusing this test's empty one or this test's `{}`.
+        listings_module.seed_digests.cache_clear()
+
+
 async def test_a_missing_derivative_object_is_a_404_and_never_a_fallback(
     client: Any, buyer: dict[str, str], store: Any, published_not_show_listing: Any
 ) -> None:
@@ -564,6 +595,32 @@ async def test_the_reviewer_reads_any_sellers_photograph_and_a_buyer_reads_none(
     assert default.status_code == 200 and default.content == store.get(row.redacted_storage_key)
     assert (await client.get(url, headers=buyer)).status_code == 403
     assert (await client.get(url)).status_code == 401
+
+
+async def test_the_reviewers_photo_route_answers_a_missing_listing_with_404(
+    client: Any, admin: dict[str, str]
+) -> None:
+    """The reviewer's mount reads the listing through `_row` before it ever asks
+    `photo_variant_response` about the photograph (spec C.6) -- the same `_row` and the same
+    envelope `test_admin_listings.py::test_a_listing_that_does_not_exist_is_a_404_in_the_envelope`
+    already proves for the read-one route, one door over."""
+    url = "/api/admin/listings/11111111-1111-1111-1111-111111111111/photos/22222222-2222-2222-2222-222222222222"
+    response = await client.get(url, headers=admin)
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "NOT_FOUND", "message": "No such listing."}}
+
+
+async def test_the_reviewers_photo_route_converts_the_resolvers_refusal_into_its_own_404(
+    client: Any, seller: dict[str, str], admin: dict[str, str]
+) -> None:
+    """`photo_variant_response` is IMPORTED and not re-implemented (spec C.6): the reviewer's own
+    mount wraps it in a try/except `Refusal`, and that except has to answer the same envelope the
+    seller's mount already proves below in `test_an_unknown_variant_is_refused_and_names_the_three`
+    -- a bad photograph id is the simplest `Refusal` either mount can raise."""
+    listing_id = await _draft(client, seller)
+    response = await client.get(f"/api/admin/listings/{listing_id}/photos/not-a-uuid", headers=admin)
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
 
 
 async def test_an_unknown_variant_is_refused_and_names_the_three(
