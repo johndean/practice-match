@@ -46,7 +46,7 @@ REQUIRED_CI_COMMANDS = (
     # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
     # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
     # a new module there means editing the workflow AND this string, always both.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py scripts/reprocess_photos.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
