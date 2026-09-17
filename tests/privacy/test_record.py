@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 import psycopg2
 import pytest
 
-from app.privacy import record
+from app.privacy import PROCESSING_VERSION, record
 
 #: The builder Step 2 writes; every privacy suite imports it, so a CHECK that changes fails once.
 from tests.privacy.conftest import make_account, make_listing
@@ -1002,7 +1002,8 @@ def test_the_version_flag_marks_a_stale_ready_row_once_and_leaves_its_state_alon
     Idempotent, which is what stops five minutes of sweeps enqueueing five re-runs of one
     photograph: a row that already carries a reason is not re-stamped."""
     stale, _ = _row(conn, processing_status="PUBLISHED", processing_version=0, buyer_visible=True)
-    current, _ = _row(conn, processing_status="PUBLISHED", processing_version=1, buyer_visible=True)
+    current, _ = _row(conn, processing_status="PUBLISHED", processing_version=PROCESSING_VERSION,
+                      buyer_visible=True)
     not_ready, _ = _row(conn, processing_status="PROCESSING_FAILED", processing_version=0)
     assert record.flag_stale_version(conn, reason="VERSION") == [stale]
     after = _read(conn, stale)
