@@ -29,8 +29,39 @@ OCR_PAD_FRACTION = 0.25
 #: Vision: more, because a model's "coordinate and localization outputs are approximate".
 VISION_PAD_MIN = 24
 VISION_PAD_FRACTION = 0.20
-#: Expanded boxes that overlap or sit within this many pixels become one polygon.
-MERGE_GAP_PX = 8
+#: How close two expanded boxes must be to be even CONSIDERED for absorption: overlap, or a true
+#: gap of at most this many pixels between their own edges -- never inflated further by anything
+#: downstream. Reduced from the original spec's 8 px (Task fix/surgical-redaction, John,
+#: 2026-09-17, on seeing the masks the pipeline drew on the real 313-photograph corpus: "the blue
+#: blocks are HUGE and not surgical ... can it be implemented with finer point and control?").
+#:
+#: This constant alone was never the main cause -- CLAUDE.md's own diagnosis, and correct: every
+#: legitimate merge this module's tests exercise (two lines of one sign, a directory board) is an
+#: outright OVERLAP once each region is padded, which passes at any gap down to 0, so halving it
+#: costs those cases nothing. What it removes is one more degree of freedom for a near-miss to
+#: thread through on top of padding that already reaches 12-24+ px past the raw detection. See
+#: `MERGE_AREA_FACTOR`, the guard that actually breaks a chain, for the rest of the fix.
+MERGE_GAP_PX = 4
+#: Even a genuinely near pair (by `MERGE_GAP_PX` above) is refused as one polygon if absorbing it
+#: would leave the cluster's box more than this many times the size of what every finding folded
+#: into it ACTUALLY covers -- not the two boxes on either side of this one merge, but the running
+#: total across however many merges built the cluster so far. THE direct guard against a slab:
+#: two findings with real empty photograph between them can end up in one box only through a
+#: CHAIN of near-misses, each one enlarging the running box and so bringing it nearer the next --
+#: and it is the box's honesty about what it has actually found, not any one hop in isolation,
+#: that must stay bounded. A check against only the two boxes joining at this hop can look
+#: innocent every single time while the box on one side has already grown far past its own true
+#: content (measured, `tests/privacy/test_aggregate.py::
+#: test_a_per_hop_area_check_against_an_already_grown_box_lets_a_cluster_run_away`: a per-hop
+#: check keeps accepting merges whose ratio drifts toward 1 forever while the cluster's real fill
+#: falls toward zero), which is why `_merged` threads the running TRUE area of every absorbed
+#: finding through each merge rather than re-deriving it from a box that may already be inflated.
+#: 2.0 is chosen by measurement (`tests/privacy/test_aggregate.py`,
+#: `tests/privacy/test_redaction_masks_measurement.py` when that harness runs it over synthetic
+#: distributions matching the real corpus's own collapse pattern): every legitimate cluster this
+#: module exercises absorbs at a true ratio at or under roughly 1.1; the scattered/cascading cases
+#: this task exists to fix run past 2.3 within the first couple of hops and keep climbing.
+MERGE_AREA_FACTOR = 2.0
 #: A symbol's four corners are scaled about their centroid by `barcodes.EXPAND`. THE CONSTANT IS
 #: NOT RESTATED HERE (controller ruling, 2026-09-16): `app/privacy/barcodes.py` declares it beside
 #: the adapter whose symbols it describes, and a second copy of 1.15 in this module was a number
@@ -182,40 +213,86 @@ def _scaled(polygon: Sequence[Sequence[float]], factor: float, size: tuple[int, 
     return max(0.0, cx - hw), max(0.0, cy - hh), min(float(w), cx + hw), min(float(h), cy + hh)
 
 
-def _near(a: Box, b: Box) -> bool:
-    """Whether the two expanded boxes overlap or sit within `MERGE_GAP_PX` of each other.
+def _area(box: Box) -> float:
+    """A box's own area. Never negative: `_checked`/`_covering` refuse every degenerate or
+    inverted box before it can reach here, but this is also exercised directly (as `_near` already
+    is) against contrived boxes a real detection can never produce, so a stray zero-or-negative
+    extent is clamped rather than turned into a sign this arithmetic was never asked to carry."""
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _bounding(a: Box, b: Box) -> Box:
+    """The smallest axis-aligned box containing both -- the merge's own geometry, factored out so
+    the decision of WHETHER to merge (`_absorbs`) and the act of merging (`_merged`) measure and
+    build the identical box rather than two hand-written copies of the same min/max."""
+    return min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])
+
+
+def _near(a: Box, b: Box, gap: float = MERGE_GAP_PX) -> bool:
+    """Whether the two expanded boxes overlap or sit within `gap` of each other.
 
     EVERY ORDINATE REACHING HERE IS FINITE, and that is load-bearing rather than incidental:
     `_checked` refuses a detection before `_padded` or `_scaled` can ever hand this a NaN. Written
     as it is, a NaN makes all four comparisons False and this answers True -- an unmeasurable box
     would merge with every region in the photograph. The polarity is not fixable in place, because
     `not (... or ...)` is the only spelling in which two DISJOINT boxes answer False; what closes it
-    is that no such box can arrive. See `UnmeasurableRegion`."""
-    return not (a[2] + MERGE_GAP_PX < b[0] or b[2] + MERGE_GAP_PX < a[0]
-                or a[3] + MERGE_GAP_PX < b[1] or b[3] + MERGE_GAP_PX < a[1])
+    is that no such box can arrive. See `UnmeasurableRegion`.
+
+    `gap` defaults to the module constant and is overridable only for
+    `tests/privacy/test_redaction_masks_measurement.py`'s own before/after sweep, which must be
+    able to ask "what would the OLD 8 px threshold have done here" without a second,
+    hand-duplicated copy of this comparison drifting from the real one."""
+    return not (a[2] + gap < b[0] or b[2] + gap < a[0]
+                or a[3] + gap < b[1] or b[3] + gap < a[1])
 
 
-def _merged(boxes: list[tuple[Box, int, int | None]]) -> list[tuple[Box, int, int | None]]:
-    """Repeatedly absorb any two boxes within MERGE_GAP_PX. Quadratic in the number of regions,
+def _absorbs(a: Box, b: Box, true_area: float, *, gap: float = MERGE_GAP_PX,
+             area_factor: float | None = MERGE_AREA_FACTOR) -> bool:
+    """Whether `a` and `b` should become one polygon: genuinely near (by `gap`) AND the union does
+    not exceed `area_factor` times `true_area` -- the caller's own running sum of what every
+    finding on either side has ACTUALLY been found to cover, never re-derived from `a` or `b`'s own
+    extent (see `MERGE_AREA_FACTOR`'s docstring for why that distinction is the whole fix). Two
+    boxes that merely sit in the same half of the picture fail this second test even on the rare
+    occasion padding alone makes them pass the first.
+
+    `area_factor=None` disables the second test entirely -- the pre-fix rule, merge whenever near
+    -- for the same before/after measurement `gap` is overridable for; production code never
+    passes it."""
+    if not _near(a, b, gap):
+        return False
+    if area_factor is None:
+        return True
+    return _area(_bounding(a, b)) <= area_factor * true_area
+
+
+def _merged(boxes: list[tuple[Box, int, int | None]], *, gap: float = MERGE_GAP_PX,
+            area_factor: float | None = MERGE_AREA_FACTOR) -> list[tuple[Box, int, int | None]]:
+    """Repeatedly absorb any two boxes `_absorbs` accepts. Quadratic in the number of regions,
     which is tens at most: a photograph with hundreds of separate identifying regions is a
-    directory board, and merging it into one block is the right answer anyway."""
-    out = list(boxes)
+    directory board, and merging it into one block is the right answer anyway (and its own true
+    fill ratio stays close to 1, so `MERGE_AREA_FACTOR` never stands in its way).
+
+    Each working entry carries a FOURTH value alongside the box/pad/origin triple `regions_for`
+    hands back: the summed true area of every finding absorbed into it so far. That is what
+    `_absorbs` measures a candidate merge against, so a chain's running box is judged against what
+    it has actually found at every hop, however many hops built it -- see `MERGE_AREA_FACTOR`."""
+    out = [(box, pad, origin, _area(box)) for box, pad, origin in boxes]
     changed = True
     while changed:
         changed = False
         for i in range(len(out)):
             for j in range(i + 1, len(out)):
-                if _near(out[i][0], out[j][0]):
-                    a, b = out[i], out[j]
-                    box = (min(a[0][0], b[0][0]), min(a[0][1], b[0][1]),
-                           max(a[0][2], b[0][2]), max(a[0][3], b[0][3]))
-                    out[i] = (box, max(a[1], b[1]), a[2] if a[2] is not None else b[2])
+                a, b = out[i], out[j]
+                if _absorbs(a[0], b[0], a[3] + b[3], gap=gap, area_factor=area_factor):
+                    box = _bounding(a[0], b[0])
+                    out[i] = (box, max(a[1], b[1]), a[2] if a[2] is not None else b[2], a[3] + b[3])
                     del out[j]
                     changed = True
                     break
             if changed:
                 break
-    return sorted(out, key=lambda item: (item[0][1], item[0][0]))
+    return sorted(((box, pad, origin) for box, pad, origin, _true_area in out),
+                  key=lambda item: (item[0][1], item[0][0]))
 
 
 def regions_for(*, lines: Sequence[Line], matches: Sequence[Match], symbols: Sequence[Symbol],
