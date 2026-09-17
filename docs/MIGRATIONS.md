@@ -41,4 +41,4 @@ that a row here means a file exists, and the per-ref loop above finds no `096`, 
 ref. `096` stays RESERVED for A43 (the row above), which is a reservation and not a file. `099` is
 claimed — the row above, and the file beside it.
 
-The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `043`–`049` are still free inside it.
+The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `044`–`049` are still free inside it (`043` is claimed in the table above).
