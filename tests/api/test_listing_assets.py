@@ -26,11 +26,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-
-from app.privacy import PROCESSING_VERSION
 from botocore.exceptions import ClientError
 from PIL import Image
 
+from app.privacy import PROCESSING_VERSION
 from app.storage import ObjectStore
 from tests.api.conftest import _draft, _jpeg_bytes, _png_bytes, auth_headers, padded_json
 from tests.conftest import ENDPOINT
