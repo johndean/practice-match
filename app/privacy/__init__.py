@@ -16,7 +16,11 @@ from __future__ import annotations
 
 #: Bumped when any engine, prompt, expansion rule or fill changes; a privacy row below this is
 #: stale and the sweeper flags it for an in-place re-run (spec C.5).
-PROCESSING_VERSION = 1
+#: 2 (2026-09-17): the redaction EXPANSION RULE changed — `aggregate._merged` halved its gap
+#: and gained `MERGE_AREA_FACTOR`, so every row processed under 1 carries masks this release
+#: would not draw. Without this bump `sweep_candidates`' `reprocess` rule and
+#: `scripts/reprocess_photos.py --all-stale` both answer ZERO, which is measured: they did.
+PROCESSING_VERSION = 2
 
 #: The extension `original.*` takes, chosen by the MAGIC BYTES and cross-checked against the
 #: declared Content-Type (`app/api/seller_listings.py::_sniffed_photo`).

@@ -29,6 +29,7 @@ import pytest
 from botocore.exceptions import ClientError
 from PIL import Image
 
+from app.privacy import PROCESSING_VERSION
 from app.storage import ObjectStore
 from tests.api.conftest import _draft, _jpeg_bytes, _png_bytes, auth_headers, padded_json
 from tests.conftest import ENDPOINT
@@ -1710,8 +1711,8 @@ async def test_an_upload_stores_the_original_and_the_display_and_enqueues_one_ta
         cur.execute("SELECT processing_status, processing_version, original_storage_key,"
                     " redacted_storage_key, buyer_visible FROM listing_asset_privacy WHERE asset_id = %s",
                     (asset_id,))
-        assert cur.fetchone() == ("UPLOADED", 1, f"{prefix}original.jpg", None, False)
-    assert sent == [("media.process_photo", [asset_id, 1])]
+        assert cur.fetchone() == ("UPLOADED", PROCESSING_VERSION, f"{prefix}original.jpg", None, False)
+    assert sent == [("media.process_photo", [asset_id, PROCESSING_VERSION])]
 
 
 async def test_a_file_whose_bytes_disagree_with_its_header_is_refused(
