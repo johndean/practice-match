@@ -1,0 +1,18 @@
+-- Task SEED-CONFIRM (John's ruling, 2026-09-17: a demo-only operator bulk-confirm bypasses the
+-- confirmation gate for the 29 seeded hospitals' ingested photographs, and only for them).
+--
+-- `scripts/confirm_seed_photos.py` must key on the ENTRY BEING A PHOTOGRAPH THIS INGESTION
+-- CREATED -- never on a storage-key pattern, which is weaker (a real seller's upload key and a
+-- seed-ingested one share the same `listings/{listing_id}/photos/{asset_id}/…` layout, spec C.2,
+-- so nothing in the key itself says which door the row came through), and never on the listing's
+-- `source` column, which `claim_from_seed` (app/api/seller_listings.py) flips to 'seller' on the
+-- first edit of ANY kind to a demo hospital -- while its ALREADY-INGESTED photographs go on being
+-- exactly what they are.
+--
+-- FALSE for every photograph the wizard's own upload route has ever written (`_insert_asset`'s
+-- INSERT never names this column, so the DEFAULT is what a real upload gets) and TRUE for exactly
+-- the rows `scripts/ingest_seed_photos.py::ingest_photo` writes, which stamps it in the SAME
+-- statement that already writes `caption` after `_insert_asset` returns. Nothing else may ever set
+-- it true: it is not read by `app/privacy/delivery.py`, not read by the wizard, not read by any
+-- route -- its one reader is `scripts/confirm_seed_photos.py`'s own candidate query.
+ALTER TABLE listing_asset ADD COLUMN ingested_from_seed boolean NOT NULL DEFAULT false;

@@ -173,6 +173,12 @@ EXPECTED_ASSET_COLUMNS: dict[str, tuple[str, bool]] = {
     # none — the design's fixed slot caption is what the wizard shows in its place, by position.
     "caption": ("text", True),
     "created_at": ("timestamp with time zone", False),
+    # Task SEED-CONFIRM (migration 043): TRUE only for a photograph
+    # `scripts/ingest_seed_photos.py::ingest_photo` created -- never derived from `storage_key` or
+    # from the listing's `source` (`claim_from_seed` moves that on the first seller edit while an
+    # already-ingested photograph is untouched). `scripts/confirm_seed_photos.py` is this column's
+    # one reader; no route and no template ever names it.
+    "ingested_from_seed": ("boolean", False),
 }
 
 

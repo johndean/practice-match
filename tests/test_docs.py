@@ -42,11 +42,18 @@ REQUIRED_CI_COMMANDS = (
     # Task P4 fix round 3 (2026-09-14): scripts/prove_offline_engines.py joins it too — it is
     # constraint (i)'s proof made runnable (re-review M-8), and `scripts/*.py` is derived from
     # the directory by test_ci_strict_mypy_covers_every_python_script above.
+    # Task SEED-INGEST (2026-09-16): scripts/ingest_seed_photos.py joins it -- the seeded
+    # photographs become real listing assets so the privacy pipeline can process them, and
+    # `test_ci_strict_mypy_covers_every_python_script` below derives the requirement from the
+    # scripts/ directory while THIS literal pins the adjacency. Both, always.
     # Image-identifiability Task P4 (2026-09-13): tests/e2e/stub_engines.py joins the same
     # line — `test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in` derives
     # the requirement from the tests/e2e/ directory, and this literal pins the adjacency, so
     # a new module there means editing the workflow AND this string, always both.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py scripts/reprocess_photos.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
+    # Task SEED-CONFIRM (2026-09-17): scripts/confirm_seed_photos.py joins it -- the demo-only
+    # operator bulk confirm that renders the 29 seeded hospitals' ingested photographs MASKED to
+    # buyers under NOT_SHOW, the same both-always pairing SEED-INGEST's own note records above.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py scripts/measure_source_subline_cap.py scripts/prove_offline_engines.py scripts/reprocess_photos.py scripts/ingest_seed_photos.py scripts/confirm_seed_photos.py tests/e2e/api_under_test.py tests/e2e/stub_engines.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -2034,6 +2041,22 @@ LISTING_WRITERS = {
         "and never publishes: its UPDATEs plant a `photos` array — a seed path entry, a reordered "
         "pair — on a `draft` row the builder made, which the trigger (BEFORE UPDATE **OF status**) "
         "does not fire on.",
+    "scripts/ingest_seed_photos.py":
+        "Task SEED-INGEST: the seeded photographs become real listing assets. Its one write of "
+        "this table is `UPDATE listing SET photos = ..., updated_at = now()` -- never `status`, so "
+        "the trigger (BEFORE UPDATE **OF status**) does not fire on it, and never "
+        "`identifiable_content_visibility`, which has exactly one writer. What it does to the gate "
+        "is recorded rather than implied: a published seed listing was already unpublishable while "
+        "its path entries read SEED_UNPROCESSED under NOT_SHOW, and after the swap its asset "
+        "entries read UPLOADED and then READY_FOR_REVIEW -- still not ready, because under "
+        "NOT_SHOW only the seller's own `confirm` reaches SELLER_CONFIRMED. The row it writes is "
+        "therefore no closer to and no further from a republish; what changes is that a derivative "
+        "now EXISTS for the resolver to serve once the seller confirms.",
+    "tests/scripts/test_ingest_seed_photos.py":
+        "that script's own suite. `make_seed_listing` INSERTs a row that is already `published` -- "
+        "the shape `scripts/seed_listings.py` really leaves on QA, and the A-IDP-6 exemption, "
+        "because the trigger is BEFORE UPDATE **OF status** and never fires on an INSERT -- and no "
+        "case moves a status afterwards.",
     "tests/scripts/test_seed_listings.py":
         "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
         "use `draft` rows precisely so the gate is not what they are measuring.",

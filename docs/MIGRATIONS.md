@@ -23,6 +23,7 @@ failure it names is not a ledger.
 | 040 | `040_listing_identifiable_content_visibility.sql` | `feat/image-identifiability` | the listing's one authoritative identifiable-content setting (`SHOW`/`NOT_SHOW`, default `NOT_SHOW`) |
 | 041 | `041_listing_asset_privacy.sql` | `feat/image-identifiability` | one privacy record per photograph — the per-image state machine |
 | 042 | `042_listing_publish_photos_ready_trigger.sql` | `feat/image-identifiability` | the fail-closed publish gate: no `published` listing while a photograph is not ready |
+| 043 | `043_listing_asset_ingested_from_seed.sql` | `feat/seed-photo-ingest` | Task SEED-CONFIRM's provenance marker — TRUE only for a photograph `scripts/ingest_seed_photos.py` created, which is what `scripts/confirm_seed_photos.py`'s demo-only bulk confirm keys on |
 | 090 | `090_listing_photo_captions.sql` | **main** | photograph captions |
 | 091 | `091_listing_provenance.sql` | **main** | listing provenance |
 | 092 | `092_esri_basemap_registry.sql` | `feat/admin-data-sources` | the two Esri basemap registry rows |
@@ -40,4 +41,4 @@ that a row here means a file exists, and the per-ref loop above finds no `096`, 
 ref. `096` stays RESERVED for A43 (the row above), which is a reservation and not a file. `099` is
 claimed — the row above, and the file beside it.
 
-The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `043`–`049` are still free inside it.
+The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `044`–`049` are still free inside it (`043` is claimed in the table above).
