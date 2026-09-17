@@ -44,14 +44,19 @@ def make_account(conn: Any, email: str | None = None) -> UUID:
         return UUID(str(cur.fetchone()[0]))
 
 
-def make_listing(conn: Any, slug: str, *, status: str = "draft", visibility: str = "NOT_SHOW") -> UUID:
+def make_listing(conn: Any, slug: str, *, status: str = "draft", visibility: str = "NOT_SHOW",
+                 seller_id: UUID | None = None) -> UUID:
+    """`seller_id` (Task SEED-CONFIRM, `tests/scripts/test_confirm_seed_photos.py`): the demo
+    hospitals are seeded owned (D25), and a confirmation needs a real owning account
+    (`seller_confirmation_account_id REFERENCES account`), so that suite needs a listing it can
+    give one to. `None` is every existing caller's own default and this column's."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO listing (slug, name, city, state, area, type, market, source, status,"
-            " est, price, zip, photos, identifiable_content_visibility)"
+            " est, price, zip, photos, identifiable_content_visibility, seller_id)"
             " VALUES (%s,'Hill Country Animal Hospital','Cedar Park','TX','Cedar Park','Small animal',"
-            "'Austin, TX','seller',%s,1998,100,'78613','[]'::jsonb,%s) RETURNING id",
-            (slug, status, visibility),
+            "'Austin, TX','seller',%s,1998,100,'78613','[]'::jsonb,%s,%s) RETURNING id",
+            (slug, status, visibility, seller_id),
         )
         return UUID(str(cur.fetchone()[0]))
 

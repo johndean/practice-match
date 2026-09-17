@@ -166,7 +166,11 @@ def ingest_photo(conn: Any, store: Any, listing_id: UUID, photos: list[str | Non
     asset_id, key = _insert_asset(conn, listing_id, "photo", Path(entry).name, "image/webp",
                                   webp, digest, lambda a: display_key(listing_id, a))
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing_asset SET caption = %s WHERE id = %s", (caption, asset_id))
+        # `ingested_from_seed` (migration 043, Task SEED-CONFIRM): the ONE marker
+        # `scripts/confirm_seed_photos.py` keys its scope on, set in the same statement that
+        # already writes `caption` -- never derived from `storage_key` or from `source`.
+        cur.execute("UPDATE listing_asset SET caption = %s, ingested_from_seed = true WHERE id = %s",
+                    (caption, asset_id))
     source_key = original_key(listing_id, asset_id, ext)
     _put(store, source_key, data, content_type)
     _put(store, key, webp, "image/webp")

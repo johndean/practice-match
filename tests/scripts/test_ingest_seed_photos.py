@@ -338,6 +338,42 @@ def test_the_listings_visibility_is_never_written(conn: Any, store: Any, enqueue
         "the script body must never name the visibility column")
 
 
+def test_an_ingested_photograph_is_stamped_and_a_real_upload_is_not(
+    conn: Any, store: Any, enqueued: list[Any]
+) -> None:
+    """Task SEED-CONFIRM's provenance marker (migration 043): `scripts/confirm_seed_photos.py` must
+    key on the photograph being one THIS INGESTION created, never on a storage-key pattern (a real
+    upload and a seed-ingested one share the same key layout, spec C.2) and never on the listing's
+    `source` (`claim_from_seed` moves that on the first seller edit while an already-ingested
+    photograph does not stop being one, `test_a_claimed_listing_is_ingested_because_the_entry_is_a_path_not_because_of_source`
+    above). So the two ingested assets carry `ingested_from_seed = true`, and a photograph the real
+    upload route would have written -- planted directly here, the shape `_insert_asset` leaves --
+    carries the column's own default, `false`."""
+    from scripts import ingest_seed_photos
+
+    listing = make_seed_listing(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing_asset (listing_id, kind, name, content_type, byte_size, sha256, storage_key)"
+            " VALUES (%s,'photo','seller-upload.webp','image/webp',1024,'f'||repeat('0',63),"
+            "'listings/x/photos/seller-upload.webp') RETURNING id",
+            (listing,),
+        )
+        real_upload = UUID(str(cur.fetchone()[0]))
+
+    assert ingest_seed_photos.main(["--listing", str(listing)]) == 0
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, ingested_from_seed FROM listing_asset WHERE listing_id = %s", (listing,))
+        by_id = {UUID(str(row[0])): row[1] for row in cur.fetchall()}
+    assert by_id[real_upload] is False, "a real upload must never be mistaken for a seed ingestion"
+    ingested_ids = {a for a, _, _ in enqueued}
+    assert ingested_ids, "the fixture converts two photographs"
+    assert ingested_ids <= set(by_id), "every enqueued asset must be a real row on this listing"
+    assert all(by_id[asset_id] is True for asset_id in ingested_ids), (
+        "every photograph this script created must be stamped ingested_from_seed")
+
+
 # --- Refusals: a photograph that cannot become an asset keeps its path -----------------------------
 #
 # Every one of these leaves the ENTRY alone, so the photograph's siblings still convert and a later
