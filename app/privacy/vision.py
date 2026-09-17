@@ -83,7 +83,12 @@ VISION_SCHEMA: dict[str, Any] = {
                     "kind": {"enum": ["logo", "signage", "uniform", "vehicle", "wall_graphic",
                                       "document", "business_card", "directory", "text", "other"]},
                     "label": {"type": "string"},
-                    "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+                    # No minItems/maxItems: structured output refuses any array bound but 0 or 1 (measured on
+                    # QA 2026-09-17, a 400 on every photograph). The length IS enforced, one layer
+                    # down, by `VisionRegion.box: tuple[float, float, float, float]` under strict
+                    # pydantic — a box of any other length fails the parse and is recorded, never
+                    # trusted. `tests/privacy/test_vision.py` pins that both ways.
+                    "box": {"type": "array", "items": {"type": "number"}},
                     "confidence": {"enum": ["low", "medium", "high"]},
                 },
             },

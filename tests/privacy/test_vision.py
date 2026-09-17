@@ -487,3 +487,35 @@ def test_the_adapter_never_logs_the_image_or_the_response(
     logged = caplog.text
     assert "RuntimeError" in logged
     assert "sk-secret-value" not in logged and "PHOTOBYTES" not in logged and "boom" not in logged
+
+
+def test_the_request_schema_uses_no_array_bound_structured_output_refuses():
+    """QA, 2026-09-17, the first REAL vision call this pipeline has ever made: every one of the
+    eleven ingested photographs came back `VISION_FAILED` with
+
+        400 invalid_request_error — output_config.format.schema:
+        For 'array' type, 'minItems' values other than 0 or 1 are not supported
+
+    from `box`'s own `minItems: 4, maxItems: 4`. The module had been exercised against mocks
+    alone -- no key was set in any environment until that morning -- so a schema the API will not
+    accept passed every gate for eight days. It is NOT a consequence of moving to
+    `claude-sonnet-5`: the bound is refused at schema validation, before a model is chosen.
+
+    The constraint is not re-homed because it was never load-bearing here: `VisionRegion.box` is
+    `tuple[float, float, float, float]` under `ConfigDict(strict=True)`, so a box of any other
+    length is already refused by the parse -- which is the layer that module's own comment calls
+    "the schema the record trusts"."""
+    def bounds(node: object, path: str = "") -> list[str]:
+        out: list[str] = []
+        if isinstance(node, dict):
+            for key in ("minItems", "maxItems"):
+                if key in node and node[key] not in (0, 1):
+                    out.append(f"{path}.{key}={node[key]}")
+            for k, v in node.items():
+                out.extend(bounds(v, f"{path}.{k}"))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                out.extend(bounds(v, f"{path}[{i}]"))
+        return out
+
+    assert bounds(vision.VISION_SCHEMA) == []
