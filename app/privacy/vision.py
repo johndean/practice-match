@@ -49,11 +49,17 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
-#: John may name another; `claude-sonnet-5` is the cost lever. One constant, one line.
-VISION_MODEL = "claude-opus-5"
-#: Shared with adaptive thinking, which is ON by default on Opus 5 and is why `effort: "low"`
-#: is chosen: the spec's own estimate is ~800 output tokens including low-effort thinking,
-#: ~2.5x headroom. A systematic truncation would read as VISION_FAILED on every photograph and
+#: John named it on 2026-09-17, answering D-IDP-1's "which model": `claude-sonnet-5`, the cost
+#: lever this line was written for. Measured on the 313 seeded photographs the decision was
+#: taken against: ~$8.77 at `claude-opus-5` against ~$3.51 here. The work is locating signage,
+#: plates and text in a photograph, and the seller confirms every region before a buyer sees
+#: it, so the cheaper model's answer is checked by a human either way. One constant, one line.
+VISION_MODEL = "claude-sonnet-5"
+#: Shared with adaptive thinking, and why `effort: "low"` is chosen: the spec's own estimate is
+#: ~800 output tokens including low-effort thinking, ~2.5x headroom. That headroom was sized
+#: against Opus 5, where adaptive thinking is ON by default; the 2026-09-17 move to
+#: `claude-sonnet-5` can only widen it, so the bound is left where it is rather than re-tuned
+#: toward a truncation nobody has measured. A systematic truncation would read as VISION_FAILED on every photograph and
 #: cannot be measured without a live call, so it is recorded beside D-IDP-1 rather than tuned
 #: blind (review Minor 6).
 MAX_TOKENS = 2048
