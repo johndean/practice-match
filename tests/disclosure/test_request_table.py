@@ -52,12 +52,11 @@ def test_a_pending_request_can_be_inserted_with_only_the_required_fields(conn) -
 def test_a_buyer_cannot_be_the_listing_s_own_seller(conn) -> None:
     seller = _account(conn, "seller2@example.org")
     listing = _listing(conn, seller)
-    with pytest.raises(psycopg2.errors.CheckViolation):
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO request (listing_id, buyer_user_id, seller_user_id) VALUES (%s,%s,%s)",
-                (listing, seller, seller),
-            )
+    with pytest.raises(psycopg2.errors.CheckViolation), conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id) VALUES (%s,%s,%s)",
+            (listing, seller, seller),
+        )
 
 
 def test_only_one_active_request_per_listing_and_buyer(conn) -> None:
@@ -66,9 +65,8 @@ def test_only_one_active_request_per_listing_and_buyer(conn) -> None:
     listing = _listing(conn, seller)
     with conn.cursor() as cur:
         cur.execute("INSERT INTO request (listing_id, buyer_user_id, seller_user_id) VALUES (%s,%s,%s)", (listing, buyer, seller))
-    with pytest.raises(psycopg2.errors.UniqueViolation):
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO request (listing_id, buyer_user_id, seller_user_id) VALUES (%s,%s,%s)", (listing, buyer, seller))
+    with pytest.raises(psycopg2.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute("INSERT INTO request (listing_id, buyer_user_id, seller_user_id) VALUES (%s,%s,%s)", (listing, buyer, seller))
 
 
 def test_a_second_request_is_allowed_once_the_first_is_denied(conn) -> None:
@@ -94,9 +92,8 @@ def test_status_is_restricted_to_the_four_named_values(conn) -> None:
     seller = _account(conn, "seller5@example.org")
     buyer = _account(conn, "buyer5@example.org")
     listing = _listing(conn, seller)
-    with pytest.raises(psycopg2.errors.CheckViolation):
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status) VALUES (%s,%s,%s,'accepted')",
-                (listing, buyer, seller),
-            )
+    with pytest.raises(psycopg2.errors.CheckViolation), conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status) VALUES (%s,%s,%s,'accepted')",
+            (listing, buyer, seller),
+        )

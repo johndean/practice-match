@@ -2065,6 +2065,13 @@ LISTING_WRITERS = {
         "the enumeration below excludes nothing and this file is simply declared.",
     "tests/test_listing_schema.py":
         "`016`/`030`'s column and CHECK contract, inserted directly; no INSERT arm.",
+    "tests/disclosure/test_request_table.py":
+        "Task 1 of the per-buyer-disclosure plan: the `request` table's own fixture builder. "
+        "`_listing` INSERTs directly as `published` — no INSERT arm (A-IDP-6) — and never supplies "
+        "`photos`, which defaults to the empty array, so even were the trigger's predicate reached "
+        "it would find nothing to refuse. The extra columns it supplies (`zip`, `est`, `price`, "
+        "`sqft`) satisfy `listing_publishable_ck`/`listing_submittable_ck` alone and have nothing "
+        "to do with the photo-readiness gate this map exists for.",
 }
 
 
