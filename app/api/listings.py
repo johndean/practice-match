@@ -84,7 +84,6 @@ from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
 from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
-from app.disclosure.levels import capability_for_document_kind
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -399,13 +398,12 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceil
     own ceilings -- a document is listed only when BOTH hold, exactly as the bytes route requires
     both to serve it.
 
-    Existence is not treated as separately public here, deliberately (a deviation from the plan's
-    own literal Step 3, which selected every non-photo asset unconditionally): a filtered list is
-    what "the list cannot advertise what the route will refuse" requires, and a locked row's title
-    is not the only thing a filtered list has to withhold to keep that promise -- the row's KIND
-    conversely reveals which capability would unlock it, which is no smaller a hint. `ceiling_open`
-    is checked FIRST, and the query never runs when it is False, so a listing whose seller has never
-    opened this ceiling costs nothing extra to serve.
+    Existence IS public once the seller opens the ceiling, which is the plan's own literal Step 3
+    and the product's own promise: step 7's approved copy reads "Buyers see the document titles and
+    can ask for access." Titles are how a buyer knows what to request; withholding them would leave
+    the request flow this whole subsystem exists to serve with nothing to point at. `ceiling_open`
+    is checked FIRST, and the query never runs when it is False, so a listing whose seller has kept
+    its documents locked lists nothing and costs nothing extra to serve.
 
     Called once per single-listing read -- never from the list route, which has no document UI."""
     if not ceiling_open:
@@ -414,8 +412,15 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceil
         cur.execute("SELECT id, name, kind, content_type FROM listing_asset"
                     " WHERE listing_id = %s AND kind <> 'photo' ORDER BY created_at", (listing_id,))
         rows = cur.fetchall()
-    return [{"id": str(r[0]), "name": r[1], "kind": r[2], "content_type": r[3]} for r in rows
-            if capability_for_document_kind(r[2]) in capabilities]
+    # NOT filtered by `capabilities` (controller ruling, 2026-09-19, correcting this task's own
+    # brief). Step 7's approved copy — which directive §17 declares CORRECT and preserves — reads
+    # "Buyers see the document titles and can ask for access." A buyer cannot ask for access to a
+    # document they cannot see exists, so filtering the TITLES makes that promise false and leaves
+    # the request flow with nothing to request. The ceiling (`documents_disclosed`) decides whether
+    # the LIST appears at all; the per-buyer grant decides whether `read_document` serves the BYTES.
+    # Directive §10's "do not expose the original merely because the buyer knows its URL" is about
+    # CONTENT, and that refusal lives in the bytes route, which Task 9 also built and tests.
+    return [{"id": str(r[0]), "name": r[1], "kind": r[2], "content_type": r[3]} for r in rows]
 
 
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,

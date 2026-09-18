@@ -204,17 +204,31 @@ async def test_after_revocation_the_document_is_refused_again(client: Any, conn:
 
 
 @pytest.mark.asyncio
-async def test_an_unapproved_buyer_sees_no_documents_in_the_listing_payload(
+async def test_an_unapproved_buyer_sees_the_titles_and_cannot_fetch_them(
     client: Any, conn: Any, member: Any, store: Any,
 ) -> None:
-    """Finding 9 closed for real: the array exists (it is not fixture data any more) AND it is
-    already gated -- a buyer with no grant at all sees NOTHING in it, not merely a locked title."""
+    """Finding 9 closed for real: the array is the listing's OWN documents, not fixture data.
+
+    The titles are VISIBLE to a buyer with no grant, and that is the product's promise rather than a
+    leak -- step 7's approved copy, which directive §17 declares correct, reads "Buyers see the
+    document titles and can ask for access." A buyer cannot request access to a document they cannot
+    see exists, so a filtered list would leave the request flow this subsystem exists to serve with
+    nothing to point at (controller ruling, 2026-09-19, correcting this task's own brief).
+
+    What the grant gates is the BYTES, proved here in the same test: the titles list, and every one
+    of them refuses to open."""
     _sid, s_cookies, s_hdr = member(("seller",), email="d6-seller@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id, _asset_ids = await _listing_with_documents(conn, client, seller_headers)
     _bid, b_cookies, b_hdr = member(("buyer",), email="d6-buyer@x.org")
-    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(b_cookies, b_hdr))).json()
-    assert body["documents"] == []
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+    body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert [d["name"] for d in body["documents"]], "the titles must be visible so a buyer can ask"
+    # ...and not one of them opens without a grant.
+    for doc in body["documents"]:
+        refused = await client.get(
+            f"/api/seller/listings/{listing_id}/documents/{doc['id']}", headers=buyer_headers)
+        assert refused.status_code in (403, 404), refused.text
 
 
 @pytest.mark.asyncio
@@ -240,9 +254,11 @@ async def test_a_fully_approved_buyer_on_a_listing_with_no_documents_gets_an_emp
 async def test_the_documents_array_shows_a_buyer_only_what_their_grant_covers(
     client: Any, conn: Any, member: Any, store: Any,
 ) -> None:
-    """"Serve only what that buyer may actually reach, so the list cannot advertise what the route
-    will refuse" -- two documents of two DIFFERENT kinds, one grant covering only one of them, so
-    the list is proved to be filtered PER DOCUMENT rather than all-or-nothing per listing."""
+    """Two documents of two DIFFERENT kinds and a grant covering only one of them.
+
+    The LIST shows both -- existence is public once the seller opens the ceiling -- while the ROUTE
+    opens exactly one. That split is the point: a buyer learns a financial packet exists so they can
+    ask for it, and still cannot read it until the seller says yes."""
     _sid, s_cookies, s_hdr = member(("seller",), email="d7-seller@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id, (financial_id, floor_plan_id) = await _listing_with_documents(
@@ -252,9 +268,9 @@ async def test_the_documents_array_shows_a_buyer_only_what_their_grant_covers(
     await _approve(client, seller_headers, buyer_headers, listing_id, level="FLOOR_PLANS")
 
     body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
-    assert {d["id"] for d in body["documents"]} == {floor_plan_id}
-    assert financial_id not in {d["id"] for d in body["documents"]}
-    assert all(d["kind"] == "floor_plan" for d in body["documents"])
+    # BOTH are listed: the buyer must be able to see the financial packet exists to request it.
+    assert {d["id"] for d in body["documents"]} == {floor_plan_id, financial_id}
+    assert {d["kind"] for d in body["documents"]} == {"floor_plan", "financials"}
 
     # And what the ROUTE would actually do agrees with what the LIST just promised (the two must
     # never diverge, which is the whole reason this list exists rather than staying fixture data):
