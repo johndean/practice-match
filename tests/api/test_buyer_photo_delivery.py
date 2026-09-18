@@ -657,18 +657,19 @@ async def test_revocation_returns_the_buyer_to_the_redacted_derivative(
     assert after != before
 
 
-async def test_the_json_list_and_detail_routes_do_not_yet_reflect_a_grant(
+async def test_the_json_list_and_detail_routes_now_reflect_a_grant(
     client: Any, conn: Any, redis: Any, member: Any, published_not_show_listing: Any,
 ) -> None:
-    """Task 7's own honest boundary, pinned as a test rather than left to be discovered by a future
-    diff: `serialise` -> `_photo_urls` passes `authorized=False` UNCONDITIONALLY until per-buyer
-    disclosure plan Task 8 wires `has_capability`/`authorized_capabilities_bulk` into the list and
-    detail routes (the comment above that call site in `app/api/listings.py` says so too). A grant
-    that already unlocks the BYTES route (proved above) does not yet change the URL the JSON
-    payload names for the same photograph -- both still carry the redacted derivative's hash. This
-    is not a leak: the JSON's `?v=` is a cache key and never a selector (spec F,
-    `test_the_v_parameter_selects_nothing`), so it names no capability either way -- it is simply
-    not yet the real answer, and this test is the RED Task 8 is expected to turn GREEN."""
+    """Task 7's own honest boundary, RETIRED by Task 8 of the per-buyer disclosure plan
+    (2026-09-18) exactly as its own docstring predicted: `serialise` -> `_photo_urls` passed
+    `authorized=False` UNCONDITIONALLY until Task 8 wired `has_capability`/
+    `authorized_capabilities_bulk` into the list and detail routes -- this is that wiring, proved
+    from the OTHER side of the seam Task 7 left. A grant that already unlocked the BYTES route
+    (proved above) now ALSO changes the URL the JSON payload names for the same photograph: both
+    carry the DISPLAY derivative's hash, not the redacted one. This is still not a leak in the
+    other direction either: the JSON's `?v=` is a cache key and never a selector (spec F,
+    `test_the_v_parameter_selects_nothing`), so it is the capability threaded through `serialise`
+    -- never the `?v=` value itself -- that decided which derivative the URL resolves to."""
     listing_id, row = published_not_show_listing
     seller_id = _seller_id_of(conn, listing_id)
     buyer_id, cookies, headers = member(roles=("buyer",), email="grant-json-boundary@example.org")
@@ -676,12 +677,24 @@ async def test_the_json_list_and_detail_routes_do_not_yet_reflect_a_grant(
     _grant(conn, listing_id, buyer_id, seller_id)
 
     detail = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={row.redacted_sha256[:12]}"]
+    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={row.display_sha256[:12]}"]
 
     # The SAME buyer, the SAME photograph, the BYTES route: authorized, unaffected by the JSON's
-    # own stale-looking `?v=` (spec F: `?v=` is never read for resolution, proved for real above).
+    # own `?v=` (spec F: `?v=` is never read for resolution, proved for real above) -- and now the
+    # TWO routes agree about which derivative this buyer gets, rather than disagreeing by design.
     bytes_response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
     assert hashlib.sha256(bytes_response.content).hexdigest() == row.display_sha256
+
+    # A second buyer, same listing, same moment, NO grant: the two routes must still agree with
+    # EACH OTHER on the redacted derivative, exactly as the granted buyer's own pair agrees on the
+    # display one -- directive §7's isolation, restated at the JSON/bytes-route boundary Task 7
+    # could not reach yet.
+    _other_id, other_cookies, other_headers = member(roles=("buyer",), email="grant-json-boundary-b@example.org")
+    other = auth_headers(other_cookies, other_headers)
+    other_detail = (await client.get(f"/api/listings/{listing_id}", headers=other)).json()
+    assert other_detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={row.redacted_sha256[:12]}"]
+    other_bytes = await client.get(f"/api/listings/{listing_id}/photos/1", headers=other)
+    assert hashlib.sha256(other_bytes.content).hexdigest() == row.redacted_sha256
 
 
 # --- the owner's and the reviewer's own bytes routes (spec C.6) ----------------------------------

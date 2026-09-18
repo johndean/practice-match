@@ -359,7 +359,12 @@ async def test_the_patch_rate_limit_is_per_account_and_refuses_in_the_envelope(c
 async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is_on(conn: Any) -> None:
     """D22, on the BUYER serialiser — the one behavioural change this plan makes to it. `money()`
     renders a null as "—" already (logic.js:251), so no screen moves; every seed sets the flag true
-    (030's backfill), so nothing John sees on QA changes."""
+    (030's backfill), so nothing John sees on QA changes.
+
+    Per-buyer disclosure plan Task 8 (2026-09-18): `serialise`'s `capabilities` defaults to the
+    empty set, so the "flag on" half now ALSO needs the matching capability passed directly —
+    this test is about the FLAG's own AND-term, not about who granted what, so it grants the
+    capability inline rather than reaching for a real request/decide round trip."""
     from datetime import UTC, datetime
 
     from app.api.listings import serialise
@@ -382,7 +387,8 @@ async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is
         "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},
     }
     assert serialise(row, datetime.now(UTC))["rev"] is None
-    assert serialise({**row, "rev_disclosed": True}, datetime.now(UTC))["rev"] == 2_100_000
+    assert serialise({**row, "rev_disclosed": True}, datetime.now(UTC),
+                     capabilities=frozenset({"FINANCIALS"}))["rev"] == 2_100_000
 
 
 # --- supplemental (not in the brief's Step 1 — added for 100 % branch coverage and for the

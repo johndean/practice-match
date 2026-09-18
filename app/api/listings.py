@@ -38,6 +38,18 @@ blanks what the flags hide:
   returning it would hand back the hidden name in another spelling. Same posture as the address
   above: the flag nulls what it hides. **Task L6 therefore keys off `id`, never `slug`** (A-L5.1).
 
+**Since the per-buyer disclosure plan's Task 8 (2026-09-18), each flag above is a CEILING rather
+than the whole answer (directive §8, §24).** `location_disclosed`/`name_disclosed`/`rev_disclosed`
+still mean exactly what this section already says -- a seller-set precondition that must be true
+before *any* buyer can ever receive the value -- but a buyer additionally needs the matching
+capability (`EXACT_LOCATION`/`IDENTITY`/`FINANCIALS`) from an APPROVED `request` row before the
+field crosses into their own response. `list_listings`/`get_listing` compute the calling buyer's
+capabilities (one bulk query for a whole page, one single-listing query for the detail route --
+directive §23, `app.disclosure.access.authorized_capabilities`/`_bulk`) and `serialise` ANDs each
+flag against them; the flag being true discloses nothing to a buyer the seller has not separately
+approved. "Every seed sets both flags true" below therefore no longer means "every buyer sees the
+real name" -- it means "the ceiling is open for whichever buyer a seller approves."
+
 Every seed sets both flags true (D8, A-L5), so nothing John sees on QA changes; Wave 2b's sellers
 default to false, which is why both branches have to be right now rather than later.
 
@@ -71,7 +83,7 @@ from app.cache import LIST_CACHE_PREFIX, sync_redis
 from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
-from app.disclosure.access import has_capability
+from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -105,8 +117,16 @@ GEOCODE_DEDUPE_PREFIX = "geocode:"
 GEOCODE_DEDUPE_TTL = 600
 
 _SELECT = """
-SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
-       name_disclosed, rev_disclosed, identifiable_content_visibility,
+-- Per-buyer disclosure plan Task 8 (2026-09-18): `seller_id` is read here, ONCE per row, so the
+-- capability lookup (`app.disclosure.access.authorized_capabilities`/`_bulk`, called by the two
+-- routes below) never costs a second query to learn who a listing's own seller is -- and so the
+-- self-authorization guard those functions apply has a real value to check rather than always
+-- seeing None. `documents_disclosed` joins its three siblings for Task 9's own use; nothing in
+-- THIS task reads it, and selecting it now means Task 9 costs no second query of its own either.
+-- Neither is added to `serialise`'s OUTPUT -- `seller_id` never has been and never should be
+-- (it is an internal account id, not part of the buyer contract).
+SELECT id, seller_id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
+       name_disclosed, rev_disclosed, documents_disclosed, identifiable_content_visibility,
        ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
        note, staff, services, facility, ownership, photos, photo_captions,
@@ -362,7 +382,8 @@ def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any
     return out
 
 
-def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
+             *, capabilities: frozenset[str] = frozenset()) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
     and point, an undisclosed name loses the name and the slug that spells it.
@@ -373,23 +394,28 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     not a leak to close here. Wave 2b's UI says so beside the two switches. Do not "fix" this by
     making one flag imply the other.
 
+    **Per-buyer disclosure plan Task 8 (2026-09-18): `capabilities` is a SECOND, independent gate,
+    ANDed against each flag rather than replacing it (directive §8, §24).** The default is the
+    EMPTY set -- fail closed (directive §19): a caller that passes no `capabilities` argument at
+    all gets the SAME redacted shape an unapproved buyer does, never the pre-Task-8 "ceiling alone
+    decides" behaviour, so a future caller that forgets to compute one cannot accidentally leak a
+    confidential field by omission.
+
     **Community data is optional (Task B7).** When provided (a CommunityRow from serve.community_rows),
     the six fields are populated; absence means they remain null."""
-    disclosed = bool(row["location_disclosed"])
-    named = bool(row["name_disclosed"])
+    disclosed = bool(row["location_disclosed"]) and "EXACT_LOCATION" in capabilities
+    named = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
     # Spec C.7 rows 3-4, computed ONCE and read twice below: the two arrays are parallel, and a
     # caption must not describe a slot the resolver refused.
     #
-    # `authorized=False`, UNCONDITIONALLY, is this task's own placeholder and not yet the real
-    # per-buyer answer: per-buyer disclosure plan Task 8 is what computes the caller's actual
-    # UNREDACTED_IMAGES capability for this listing (`has_capability`/`authorized_capabilities_bulk`)
-    # and threads it in here. Until Task 8 lands, every caller of the list/detail routes sees
-    # EXACTLY what they see today -- `authorized=False` reproduces the pre-Task-7 function
-    # byte-for-byte -- so this line changes no existing response; only the bytes route
-    # (`get_listing_photo`, below) asks a buyer's own authorization in this task.
-    urls = _photo_urls(listing_id, photos, row, authorized=False)
+    # Per-buyer disclosure plan Task 8: `UNREDACTED_IMAGES` is a listing-level capability like the
+    # other three, so it is read from the SAME `capabilities` set the caller already computed,
+    # rather than asked for separately -- this replaces Task 7's own `authorized=False` placeholder
+    # (its comment said so: "Task 8 is what computes the caller's actual UNREDACTED_IMAGES
+    # capability ... and threads it in here").
+    urls = _photo_urls(listing_id, photos, row, authorized="UNREDACTED_IMAGES" in capabilities)
     captions = photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"])
 
     # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for
@@ -431,7 +457,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "zip": row["zip"] if disclosed else None,
         "phone": row["phone"] if disclosed else None,
         "hours": row["hours"],
-        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") else None,
+        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") and "FINANCIALS" in capabilities else None,
         "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
         "listed": relative_listed(row["listed_at"], now),
@@ -520,8 +546,8 @@ def _parse_limit(raw: str | None) -> int | None:
     return value if 1 <= value <= MAX_LIMIT else None
 
 
-@router.get("/listings", dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def list_listings(request: Request) -> Response:
+@router.get("/listings")
+async def list_listings(request: Request, principal: Reader) -> Response:
     limit = _parse_limit(request.query_params.get("limit"))
     if limit is None:
         return _error("BAD_REQUEST", "Invalid limit.", 400)
@@ -541,10 +567,19 @@ async def list_listings(request: Request) -> Response:
         except ValueError:
             return _error("BAD_REQUEST", "Invalid cursor.", 400)
 
-    # One key per (market, limit) — after I1 above, the two inputs that change a FIRST page. The
-    # list is published-only and carries no per-account field, so every member sees the same bytes
-    # and the cache is safe to share across principals; if a later task adds a per-account field to
-    # this payload, this key must gain the account id or the cache must go.
+    # One key per (market, limit, buyer) — after I1 above, the two market/limit inputs that change
+    # a FIRST page, PLUS the buyer's own account id since the per-buyer disclosure plan's Task 8
+    # (2026-09-18). This line used to read "the list is published-only and carries no per-account
+    # field, so every member sees the same bytes and the cache is safe to share across principals;
+    # if a later task adds a per-account field to this payload, this key must gain the account id
+    # or the cache must go" -- Task 8 is that later task: `serialise` now applies THIS caller's own
+    # capabilities to name/location/revenue/photos, so two buyers can receive two different bodies
+    # for the identical (market, limit). Without the account id here, a buyer holding an APPROVED
+    # grant would write their own disclosed value into a cache entry every OTHER buyer reads for up
+    # to `LIST_TTL_S` — "leave a field unguarded and it leaks to every buyer" at the cache layer
+    # rather than at the capability check itself. `drop_list_cache`/`drop_list_cache_quietly`
+    # (`app/cache.py`) need no change: both invalidate by a WILDCARD scan over the whole
+    # `listings:v1:*` prefix, which still matches every one of these longer keys.
     #
     # Only the first page is cached (review round 2, M2). `decode_cursor` accepts any ISO timestamp
     # paired with any UUID and nothing rate-limits this route, so a cacheable cursor page let one
@@ -562,7 +597,7 @@ async def list_listings(request: Request) -> Response:
     # run by hand in the api container, for which 60 s was a shorter wait than the `railway ssh`
     # session that seeded it.
     first_page = raw_cursor is None
-    cache_key = f"{LIST_CACHE_PREFIX}{market or ''}::{limit}"
+    cache_key = f"{LIST_CACHE_PREFIX}{market or ''}::{limit}::{principal.account_id}"
     # One binding for both ends of the cache (final review M9): the read below and the write at
     # the end of this function must not be able to reach two different clients.
     cache = sync_redis() if first_page else None
@@ -590,6 +625,15 @@ async def list_listings(request: Request) -> Response:
         # Task B7: Fetch community context data for the page in one batched query
         page_ids = [str(row["id"]) for row in page]
 
+        # Per-buyer disclosure plan Task 8 (directive §23): ONE extra query for the WHOLE page,
+        # never one per listing -- `authorized_capabilities_bulk` (Task 3) is built for exactly
+        # this call shape. `caps[listing_id]` is `frozenset()` for every listing this buyer holds
+        # no active grant for, which is what makes it safe to pass unconditionally below.
+        caps = authorized_capabilities_bulk(
+            conn, buyer_account_id=str(principal.account_id),
+            listings=[(str(row["id"]), row.get("seller_id")) for row in page],
+        )
+
         # Fetch active vintages and registry for community_rows
         with conn.cursor() as cur:
             cur.execute("SELECT dataset_key, vintage FROM active_vintage")
@@ -603,7 +647,8 @@ async def list_listings(request: Request) -> Response:
         community_data = community_rows(conn, page_ids, active=active, registry=registry)
 
     body = {
-        "items": [serialise(row, now, community=community_data.get(str(row["id"]))) for row in page],
+        "items": [serialise(row, now, community=community_data.get(str(row["id"])),
+                            capabilities=caps[str(row["id"])]) for row in page],
         "next_cursor": encode_cursor(page[-1]["listed_at"], UUID(str(page[-1]["id"]))) if more else None,
     }
     payload = json.dumps(body)
@@ -656,8 +701,8 @@ def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[s
             None if seller_id is None else str(seller_id))
 
 
-@router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def get_listing(listing_id: str) -> Response:
+@router.get("/listings/{listing_id}")
+async def get_listing(listing_id: str, principal: Reader) -> Response:
     with closing(sync_conn()) as conn, conn:
         row = _published(conn, listing_id)
     if row is None:
@@ -677,8 +722,13 @@ async def get_listing(listing_id: str) -> Response:
             registry = {r[0]: dict(zip(reg_cols, r)) for r in cur.fetchall()}
 
         community_data = community_rows(conn, [str(row["id"])], active=active, registry=registry)
+        # Per-buyer disclosure plan Task 8 (directive §23): ONE single-listing capability lookup —
+        # the detail route's own shape of the same authorization boundary the list route's bulk
+        # call uses.
+        caps = authorized_capabilities(conn, listing_id=str(row["id"]), seller_id=row.get("seller_id"),
+                                       buyer_account_id=str(principal.account_id))
 
-    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"]))))
+    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"])), capabilities=caps))
 
 
 def _object_bytes(key: str) -> bytes | None:

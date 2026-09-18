@@ -2002,6 +2002,12 @@ LISTING_WRITERS = {
     "tests/api/test_listings.py":
         "its module-level template inserts seed rows directly as `published` — the fourth writer "
         "A-IDP-3 (1) found, and the reason this map exists. No INSERT arm, so no refusal.",
+    "tests/api/test_listings_disclosure.py":
+        "per-buyer disclosure plan Task 8 (2026-09-18). `_published_seller_listing` creates a real "
+        "draft through the wizard's own create route and then UPDATEs it straight into `published` "
+        "— the draft `POST /api/seller/listings` writes carries no `photos` of its own, so the "
+        "column keeps its `[]` default and the gate's predicate finds nothing to refuse, "
+        "`test_admin_listings.py`'s own shape.",
     "tests/api/test_seller_listings.py":
         "two shapes. `_SEED_INSERT` inserts a seed row carrying PATH photographs directly as "
         "`published` — no INSERT arm (A-IDP-6) — while every row its UPDATEs move into `published` "
