@@ -84,6 +84,7 @@ from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
 from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
+from app.disclosure.levels import capability_for_document_kind
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -121,10 +122,13 @@ _SELECT = """
 -- capability lookup (`app.disclosure.access.authorized_capabilities`/`_bulk`, called by the two
 -- routes below) never costs a second query to learn who a listing's own seller is -- and so the
 -- self-authorization guard those functions apply has a real value to check rather than always
--- seeing None. `documents_disclosed` joins its three siblings for Task 9's own use; nothing in
--- THIS task reads it, and selecting it now means Task 9 costs no second query of its own either.
--- Neither is added to `serialise`'s OUTPUT -- `seller_id` never has been and never should be
--- (it is an internal account id, not part of the buyer contract).
+-- seeing None. `documents_disclosed` joins its three siblings for Task 9's own use -- the
+-- `documents_disclosed`/FINANCIALS-or-FLOOR_PLANS-or-FULL_CONFIDENTIAL ceiling `_documents` below
+-- applies to the very SELECT that put it here, so Task 9 costs no second query of its own either.
+-- Neither `seller_id` nor `documents_disclosed` is added to `serialise`'s OUTPUT directly --
+-- `seller_id` never has been and never should be (it is an internal account id, not part of the
+-- buyer contract), and `documents_disclosed` is a ceiling `_documents` consumes, not a fact a
+-- buyer is shown by name (the `documents` array it gates IS the buyer-facing fact).
 SELECT id, seller_id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, rev_disclosed, documents_disclosed, identifiable_content_visibility,
        ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
@@ -382,8 +386,41 @@ def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any
     return out
 
 
+def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceiling_open: bool) -> list[dict[str, Any]]:
+    """Every non-photo asset THIS CALLER could actually fetch through `read_document`
+    (`app/api/seller_listings.py`) -- directive §10's own "the JSON list must not advertise what
+    the bytes route will refuse."  The route's own `allowed` boolean is
+    `owner or staff or (documents_disclosed and published and has_capability(...))`; this list has
+    no notion of owner/staff at all (the buyer-facing `get_listing` route this feeds is not how a
+    seller or a reviewer reads their own listing -- they have `GET /api/seller/listings/{id}` and
+    `GET /api/admin/listings/{id}` for that), so it is exactly the buyer arm of that same boolean,
+    applied per document: `ceiling_open` is the listing's own `documents_disclosed` flag (directive
+    §8, §24) and `capabilities` is the SAME set `serialise`'s other fields already AND against their
+    own ceilings -- a document is listed only when BOTH hold, exactly as the bytes route requires
+    both to serve it.
+
+    Existence is not treated as separately public here, deliberately (a deviation from the plan's
+    own literal Step 3, which selected every non-photo asset unconditionally): a filtered list is
+    what "the list cannot advertise what the route will refuse" requires, and a locked row's title
+    is not the only thing a filtered list has to withhold to keep that promise -- the row's KIND
+    conversely reveals which capability would unlock it, which is no smaller a hint. `ceiling_open`
+    is checked FIRST, and the query never runs when it is False, so a listing whose seller has never
+    opened this ceiling costs nothing extra to serve.
+
+    Called once per single-listing read -- never from the list route, which has no document UI."""
+    if not ceiling_open:
+        return []
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, name, kind, content_type FROM listing_asset"
+                    " WHERE listing_id = %s AND kind <> 'photo' ORDER BY created_at", (listing_id,))
+        rows = cur.fetchall()
+    return [{"id": str(r[0]), "name": r[1], "kind": r[2], "content_type": r[3]} for r in rows
+            if capability_for_document_kind(r[2]) in capabilities]
+
+
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
-             *, capabilities: frozenset[str] = frozenset()) -> dict[str, Any]:
+             *, capabilities: frozenset[str] = frozenset(),
+             documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
     and point, an undisclosed name loses the name and the slug that spells it.
@@ -402,7 +439,14 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     confidential field by omission.
 
     **Community data is optional (Task B7).** When provided (a CommunityRow from serve.community_rows),
-    the six fields are populated; absence means they remain null."""
+    the six fields are populated; absence means they remain null.
+
+    **Per-buyer disclosure plan Task 9 (2026-09-18): `documents` is the buyer-facing document list**
+    (closing finding 9, the wizard-step audit's own name for this list being 100% fixture data
+    before this task) -- ALREADY filtered to what `read_document` would actually serve this caller
+    (`_documents`'s own docstring), so this parameter is never re-filtered here; `documents or []`
+    is only the "an absent list is not the same key error as a real empty one" guard `capabilities`'
+    own default already follows one field over."""
     disclosed = bool(row["location_disclosed"]) and "EXACT_LOCATION" in capabilities
     named = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
     listing_id = str(row["id"])
@@ -523,6 +567,11 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # photograph is delivered beside a null (spec F, "API response leakage").
         "photo_captions": [caption if url is not None else ""
                            for url, caption in zip(urls, captions, strict=True)],
+        # Per-buyer disclosure plan Task 9: every non-photo asset this SAME caller could fetch
+        # through `read_document` right now -- `_documents`'s own filter, already applied by the
+        # caller (`get_listing`) before this dict is built. `[]`, never `None`, for a caller that
+        # supplied nothing (`list_listings`, which renders no document UI at all).
+        "documents": documents or [],
     }
 
 
@@ -727,8 +776,14 @@ async def get_listing(listing_id: str, principal: Reader) -> Response:
         # call uses.
         caps = authorized_capabilities(conn, listing_id=str(row["id"]), seller_id=row.get("seller_id"),
                                        buyer_account_id=str(principal.account_id))
+        # Task 9: the SAME connection and the SAME `caps`, before either closes -- one more indexed
+        # query (`listing_asset_kind_idx`), filtered to what this caller's own capabilities and the
+        # listing's `documents_disclosed` ceiling actually admit.
+        documents = _documents(conn, str(row["id"]), capabilities=caps,
+                               ceiling_open=bool(row.get("documents_disclosed")))
 
-    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"])), capabilities=caps))
+    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"])),
+                                  capabilities=caps, documents=documents))
 
 
 def _object_bytes(key: str) -> bytes | None:

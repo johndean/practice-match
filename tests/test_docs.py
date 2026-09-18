@@ -1991,6 +1991,20 @@ LISTING_WRITERS = {
         "`test_listing_assets.py`'s own shape. `_seed_listing` INSERTs directly as `published` "
         "(no INSERT arm, A-IDP-6); its other UPDATEs — a visibility flip, a photos-array swap for "
         "the IDOR case — never name `status` and do not fire the trigger at all.",
+    "tests/api/test_documents_disclosure.py":
+        "Task 9 of the per-buyer-disclosure plan (2026-09-18), the HTTP-level suite for "
+        "`read_document`'s buyer-with-an-accepted-request arm and `serialise`'s real `documents` "
+        "array. `_listing_with_documents` creates a fresh draft through the real `POST /api/seller/"
+        "listings` route (empty `photos` array, that route's own INSERT default), uploads its "
+        "document(s) through the real multipart upload route WHILE the listing is still a draft — "
+        "`EDIT_REENTERS_REVIEW` (`published`/`paused` only) never fires on a draft, so the upload "
+        "itself never touches `status` — and only THEN moves the row to `published` with one direct "
+        "`UPDATE listing SET status = 'published', documents_disclosed = true, ...`, "
+        "`tests/api/test_requests.py::_seller_listing`'s own shape: a listing with an empty `photos` "
+        "array has nothing for the photo-readiness gate's predicate to find. The extra columns it "
+        "sets (`name`, `city`, `zip`, `type`, `est`, `price`, `state`, `market`, `area`, `sqft`) "
+        "satisfy `listing_submittable_ck` and `listing_publishable_ck` alone and have nothing to do "
+        "with the photo-readiness gate this map exists for.",
     "tests/api/test_geo_wire.py":
         "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
         "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "

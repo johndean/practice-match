@@ -79,6 +79,8 @@ from app.auth.limits import (
 from app.cache import drop_list_cache_quietly, sync_redis
 from app.config import settings
 from app.db import sync_conn
+from app.disclosure.access import has_capability
+from app.disclosure.levels import capability_for_document_kind
 from app.mail.outbox import enqueue
 from app.media.encode import encode_webp, sha256_hex
 from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, gate, original_key, photo_prefix
@@ -1614,12 +1616,32 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
 
 @router.get("/listings/{listing_id}/documents/{asset_id}")
 async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Response:
-    """A document, to its owner and to staff and to nobody else.
+    """A document, to its owner, to staff, to a buyer holding an APPROVED grant for the document's
+    own capability, and to nobody else.
 
-    That is the design's "Locked — seller approval" exactly as it is drawn (`logic.js:1288-1290`),
-    with no new approval workflow — John's ruling, D19. The buyer-with-an-accepted-request arm
-    belongs to the requests sub-project and is the arm that will be added here when a `request`
-    table exists; inventing it now would be inventing a workflow nobody approved.
+    Directive §12's numbered list, in this route's own shape — four checks, all server-side:
+    (1) authenticated user — `principal`, `Reader`'s `listing.read` guard, so an unauthenticated
+    caller never reaches this body; (2)/(3) the listing AND the asset — the one SELECT below, scoped
+    by BOTH ids and `kind <> 'photo'`, so a wrong pair, a photo id, or a listing that does not exist
+    is the SAME "No such document" 404 either way — never a 403, which would confirm something is
+    there (directive §22); (4) THIS buyer's own authorization — `has_capability`, asked with THIS
+    principal's own account id, gated on the SPECIFIC capability the document's own `kind` needs
+    (`capability_for_document_kind`) rather than on any capability at all, so an `EXACT_LOCATION` or
+    `IDENTITY` grant — or a `FLOOR_PLANS` grant asking for a `financials` document — cannot unlock a
+    different confidential surface than the one the seller actually approved (directive §16).
+
+    Owner and staff are UNCHANGED — the design's own "Locked — seller approval"
+    (`logic.js:1288-1290`), John's ruling D19, exactly as before this task. This completes the
+    reserved buyer-with-an-accepted-request arm the prior round's own comment named this exact
+    location for: `documents_disclosed`/`status` were read off the row and left DELIBERATELY UNUSED
+    (a round of this module once let disclosure and "published" stand in for authorization ALONE,
+    which let any signed-in member download a seller's documents the instant one ceiling flag
+    flipped, with no request and no approval ever made) — they are what this arm now ANDs in beside
+    `has_capability`'s own answer: `documents_disclosed` is the listing-wide CEILING (directive §8,
+    §24, `app/disclosure/access.py`'s own module docstring) and `has_capability` is the per-buyer
+    GRANT; neither is sufficient alone, and BOTH must hold before a buyer's request reaches the
+    store. `has_capability` is asked LAST, after `or` has already short-circuited past it for an
+    owner or a reviewer, so neither pays for a `request`-table lookup at all.
 
     Guarded by `listing.read` so every member reaches the handler, and the handler is what refuses:
     the alternative — `listing.manage_own` — would answer staff a 403 from the matrix and could
@@ -1627,30 +1649,36 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
     try:
         parsed_asset = _asset_uuid(asset_id, "document")
         parsed_listing = _asset_uuid(listing_id, "document")
-        with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
-            cur.execute("SELECT a.content_type, a.storage_key, l.seller_id, l.documents_disclosed, l.status"
-                        " FROM listing_asset a JOIN listing l ON l.id = a.listing_id"
-                        " WHERE a.id = %s AND a.listing_id = %s AND a.kind <> 'photo'",
-                        (parsed_asset, parsed_listing))
-            found = cur.fetchone()
-        if found is None:
-            raise Refusal("NOT_FOUND", "No such document.", 404)
-        content_type, key, seller_id, _disclosed, _status = found
-        # Owner or staff, and NOTHING else (Major-1, A-SL18 (1)): spec D19 and §5's route table
-        # allow only those two until the requests sub-project adds a buyer-with-an-accepted-request
-        # arm, and `documents_disclosed`/`status` alone are not that arm — a round of this module
-        # once let disclosure and "published" stand in for it, which let ANY signed-in member
-        # download a document the moment a seller flipped one switch, with no request and no
-        # accept. `_disclosed`/`_status` stay read off the row, unused, as the exact two values that
-        # future arm will AND in beside this boolean (`… or (has_accepted_request and _disclosed and
-        # _status == "published")`) — not inferred from the query, so the query needs no change
-        # when that arm lands.
-        #
-        # Staff by the MATRIX, not by a hard-coded role tuple: `listing.review` is the staff/admin
-        # capability the reviewer already holds, so a later role change moves both together.
-        allowed = seller_id == principal.account_id or P.allowed("listing.review", principal)
-        if not allowed:
-            raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
+        with closing(sync_conn()) as conn, conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT a.content_type, a.storage_key, a.kind, l.seller_id,"
+                            " l.documents_disclosed, l.status"
+                            " FROM listing_asset a JOIN listing l ON l.id = a.listing_id"
+                            " WHERE a.id = %s AND a.listing_id = %s AND a.kind <> 'photo'",
+                            (parsed_asset, parsed_listing))
+                found = cur.fetchone()
+            if found is None:
+                raise Refusal("NOT_FOUND", "No such document.", 404)
+            content_type, key, kind, seller_id, disclosed, status = found
+            # Owner or staff by the MATRIX, not a hard-coded role tuple (`listing.review` is the
+            # staff/admin capability the reviewer already holds, so a later role change moves both
+            # together) — OR a buyer whose grant covers THIS document, under BOTH ceilings above.
+            # The capability check needs `conn` OPEN, so it stays inside this `with` block, ONE
+            # mechanical reorder from before this task (the connection used to close first): every
+            # other pre-existing `raise Refusal(...)` in this module already runs inside an
+            # identical `with closing(sync_conn()) as conn, conn:` block (e.g. `locked_row`'s own
+            # 404, a few routes above), so this is not a new shape, only this route's first use of
+            # it.
+            allowed = (
+                seller_id == principal.account_id
+                or P.allowed("listing.review", principal)
+                or (bool(disclosed) and status == "published"
+                    and has_capability(conn, listing_id=listing_id, seller_id=seller_id,
+                                       buyer_account_id=str(principal.account_id),
+                                       capability=capability_for_document_kind(kind)))
+            )
+            if not allowed:
+                raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
         store = store_for_request()
         content = _fetch(store, key)
         if content is None:
