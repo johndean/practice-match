@@ -2087,6 +2087,18 @@ LISTING_WRITERS = {
         "`listing_submittable_ck`/`listing_publishable_ck` alone. It needs a listing only as "
         "something to hang a `request` row off; the request lifecycle it tests writes the "
         "`request` table and never the listing's own gate columns.",
+    "tests/api/test_requests.py":
+        "Task 5 of the same plan, the HTTP-level suite for `app/api/requests.py`. `_seller_listing` "
+        "creates a fresh draft through the real `POST /api/seller/listings` route (so it starts "
+        "with the empty `photos` array that route's own INSERT gives every listing) and then one "
+        "direct `UPDATE listing SET status = 'published', ...` moves it onto the market — the "
+        "`tests/api/test_admin_listings.py` shape: a listing with an empty `photos` array has "
+        "nothing for the gate's predicate to find. The extra columns it sets (`area`, `market`, "
+        "`type`, alongside `state`/`zip`/`est`/`price`/`sqft`) satisfy `listing_publishable_ck` and "
+        "`listing_submittable_ck` alone — a defect in the plan's own literal Step 1 helper, which "
+        "set only `state` and `sqft` of the first group and never `type`, and raised "
+        "`CheckViolation` twice before the fix (task-05-report.md's own RED transcripts) — and have "
+        "nothing to do with the photo-readiness gate this map exists for.",
 }
 
 
