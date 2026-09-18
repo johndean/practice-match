@@ -2072,6 +2072,13 @@ LISTING_WRITERS = {
         "it would find nothing to refuse. The extra columns it supplies (`zip`, `est`, `price`, "
         "`sqft`) satisfy `listing_publishable_ck`/`listing_submittable_ck` alone and have nothing "
         "to do with the photo-readiness gate this map exists for.",
+    "tests/disclosure/test_access.py":
+        "Task 3 of the same plan, and the same fixture shape as Task 1's above: `_listing` INSERTs "
+        "directly as `published` with no `photos`, so the photo-readiness trigger has nothing to "
+        "refuse, and the `zip`/`est`/`price`/`sqft` it supplies satisfy `listing_submittable_ck` and "
+        "`listing_publishable_ck` alone. It needs a listing only as something to hang a `request` "
+        "row off; the authorization boundary it tests reads the `request` table and never the "
+        "listing's own gate columns.",
 }
 
 
