@@ -30,7 +30,7 @@ failure it names is not a ledger.
 | 093 | `093_registry_notes_fit_the_tab.sql` | `feat/admin-data-sources` | shorten the seeded registry notes to the measured cap |
 | 094 | `094_registry_blocked_reason.sql` | `feat/admin-data-sources` | the member-facing "why is this blocked" column |
 | 095 | `095_ingest_run_notes.sql` | `fix/census-204` | per-run notes (which states were skipped, and why) |
-| 096 | `096_request.sql` | *(reserved — A43, the Requests build)* | `request` + `request_event` |
+| 096 | `096_request.sql` | `feat/per-buyer-disclosure` | the buyer/listing access-request table (supersedes A43's draft shape — see the migration's own header comment) |
 | 099 | `099_avma_pet_rate_registry.sql` | `feat/pet-rate-provenance` | the AVMA cited-statistic registry row, and the blocked per-geography feed's note stops standing in for it |
 
 **Next free: 097.** `097` WAS held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
