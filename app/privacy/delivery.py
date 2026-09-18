@@ -3,11 +3,13 @@
 Directive 12: "Do not trust frontend state, browser state, hidden fields, JavaScript variables,
 client-side image URLs." Every one of those reaches this codebase as a query string, and this
 function reads none of them. It takes the listing's own visibility, the photograph's own record,
-and nothing else.
+the caller's own pre-computed per-buyer authorization, and nothing else.
 
 Three rules it cannot break, each asserted directly in `tests/privacy/test_delivery.py`:
-the original is never the answer; display is never the answer under NOT_SHOW; a missing derivative
-is a null slot and never a fallback to something else."""
+the original is never the answer; display is never the answer under NOT_SHOW for a caller who does
+not carry the buyer-specific UNREDACTED_IMAGES grant (per-buyer disclosure plan Task 7,
+2026-09-18 -- see `buyer_variant`'s own docstring for the exact rule); a missing derivative is a
+null slot and never a fallback to something else."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,19 +40,44 @@ class Variant:
 
 
 def buyer_variant(visibility: str, asset: PrivacyRow | None, entry: str,
-                  seed_sha: str | None = None) -> Variant | None:
+                  seed_sha: str | None = None, *, authorized: bool = False) -> Variant | None:
     """The one representation this caller may have, or None -- a 404 on the bytes route and a null
     slot in the JSON.
 
+    `authorized` (per-buyer disclosure plan Task 7, directive 2026-09-18 §9/§20) is the caller's
+    OWN pre-computed answer to "does this buyer hold the UNREDACTED_IMAGES capability for this
+    listing" (`app.disclosure.access.has_capability`) -- this function stays pure and takes no
+    connection; only the caller may ask the database anything. It defaults to False (fail closed,
+    directive §19) so a caller that forgets the argument gets the redacted derivative, never the
+    display one and never the original.
+
+    **The NOT_SHOW ceiling gains one exception and nothing else.** Directive §9 states the rule
+    with no further condition on the global switch: "If a seller authorizes unredacted images for
+    Buyer A: Buyer A may receive the authorized version; Buyer B must continue receiving only the
+    permitted redacted version" -- and §20: "Server-side authorization must determine which
+    derivative/version a buyer receives." So an AUTHORIZED caller on a NOT_SHOW listing reaches the
+    exact same readiness check the SHOW branch already used (below), while an UNauthorized caller's
+    NOT_SHOW answer is untouched: with `authorized=False` this function is byte-for-byte the
+    pre-Task-7 code, which is what keeps every one of the 313 photographs QA serves today (all
+    NOT_SHOW, none of them granted) on exactly the pixels they serve now. The SHOW ceiling is NOT
+    narrowed the other way: SHOW already discloses the display derivative to every buyer today
+    (directive §8, "preserve that [publication] functionality where appropriate" -- no QA listing
+    is SHOW today, so this is untested in production either way, but a grant must never SUBTRACT
+    from what the ceiling already reveals), so `authorized` plays no role once `visibility` is
+    already SHOW.
+
     A seed entry is a PATH (it contains a "/") and has no asset row: it can only ever be served
-    under SHOW, because no derivative of it exists to serve under NOT_SHOW (spec C.10)."""
+    under SHOW, because no derivative of it exists to serve under NOT_SHOW (spec C.10). Seed
+    entries are the 29 demo hospitals' own photographs, seeded by John, and have no `request` row
+    to grant a capability against -- `authorized` plays no role on this branch either, which is
+    what keeps every approved-state fixture's pixels exactly where they are."""
     if asset is None:
         if "/" in entry and visibility == "SHOW" and seed_sha is not None:
             return Variant(entry, seed_sha, True)
         return None
     if not asset.buyer_visible:
         return None
-    if visibility == "NOT_SHOW":
+    if visibility == "NOT_SHOW" and not authorized:
         if asset.processing_status in _NOT_SHOW_READY and asset.redacted_storage_key and asset.redacted_sha256:
             return Variant(asset.redacted_storage_key, asset.redacted_sha256)
         return None

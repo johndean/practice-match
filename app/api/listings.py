@@ -58,18 +58,20 @@ from contextlib import closing
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
+from app.auth import sessions as S
 from app.auth.deps import require
 from app.cache import LIST_CACHE_PREFIX, sync_redis
 from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
+from app.disclosure.access import has_capability
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -80,6 +82,12 @@ router = APIRouter(prefix="/api")
 
 # Hoisted to a module-level constant, never wrapped (Global Constraint (g)).
 REQUIRE_LISTING_READ = require("listing.read")
+# Per-buyer disclosure plan Task 7: the FIRST of this module's three routes to need the caller's
+# own identity rather than a discarded `dependencies=[...]` guard -- `app/api/seller_listings.py`'s
+# own `Reader`, re-declared here from the SAME `REQUIRE_LISTING_READ` guard object rather than a
+# second `require("listing.read")`, because `deps.permission_of` resolves a route's permission by
+# the guard's object IDENTITY (`tests/api/test_listings.py::test_the_listings_routes_are_guarded_not_public`).
+Reader = Annotated[S.Principal, Depends(REQUIRE_LISTING_READ)]
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS_ROOT = ROOT / "seeds" / "hospitals" / "photos"
@@ -324,14 +332,21 @@ def photo_response(body: bytes, sha256: str, request: Request) -> Response:
     return Response(content=body, media_type="image/webp", headers={**PHOTO_HEADERS, "ETag": etag})
 
 
-def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any]) -> list[str | None]:
+def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any], *,
+                authorized: bool) -> list[str | None]:
     """One URL per slot, or None where the resolver refuses it (spec C.7 rows 3-4).
 
     Every decision here belongs to `buyer_variant`; this function's whole job is to hand it the
     listing's visibility and the photograph's own record and to turn its answer into a positional
     URL. The record comes from `_SELECT`'s `visible_photos` aggregate -- one query for the whole
     page, never a lookup per photograph -- and a seed PATH entry has no record at all, which is why
-    the entry and the inventory digest are passed too."""
+    the entry and the inventory digest are passed too.
+
+    `authorized` (per-buyer disclosure plan Task 7) is ONE bool for the WHOLE listing, threaded
+    straight through to every photograph's `buyer_variant` call: UNREDACTED_IMAGES is a listing-
+    level capability, not a per-photograph one, so the caller computes it once (Task 8's `serialise`
+    call, via `has_capability`/`authorized_capabilities_bulk`) and this function never asks the
+    database anything of its own."""
     visibility = str(row["identifiable_content_visibility"])
     aggregate = row["visible_photos"]
     digests = seed_digests()
@@ -342,7 +357,7 @@ def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any
             continue
         found = aggregate.get(entry)
         asset = None if found is None else record.delivery_row(entry, row["id"], found)
-        variant = buyer_variant(visibility, asset, entry, digests.get(entry))
+        variant = buyer_variant(visibility, asset, entry, digests.get(entry), authorized=authorized)
         out.append(None if variant is None else photo_url(listing_id, n, variant.sha256))
     return out
 
@@ -366,7 +381,15 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     photos = photo_list(row["photos"])
     # Spec C.7 rows 3-4, computed ONCE and read twice below: the two arrays are parallel, and a
     # caption must not describe a slot the resolver refused.
-    urls = _photo_urls(listing_id, photos, row)
+    #
+    # `authorized=False`, UNCONDITIONALLY, is this task's own placeholder and not yet the real
+    # per-buyer answer: per-buyer disclosure plan Task 8 is what computes the caller's actual
+    # UNREDACTED_IMAGES capability for this listing (`has_capability`/`authorized_capabilities_bulk`)
+    # and threads it in here. Until Task 8 lands, every caller of the list/detail routes sees
+    # EXACTLY what they see today -- `authorized=False` reproduces the pre-Task-7 function
+    # byte-for-byte -- so this line changes no existing response; only the bytes route
+    # (`get_listing_photo`, below) asks a buyer's own authorization in this task.
+    urls = _photo_urls(listing_id, photos, row, authorized=False)
     captions = photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"])
 
     # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for
@@ -606,23 +629,31 @@ def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[str | None], str] | None:
-    """The `photos` AND the authoritative privacy setting of one published listing, or None when
-    there is no such listing.
+def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[str | None], str, str | None] | None:
+    """The `photos`, the authoritative privacy setting, AND the seller's account id of one
+    published listing, or None when there is no such listing.
 
-    TWO columns, not `_SELECT`'s thirty-odd and its two PostGIS accessors (review round 2, M6): the
-    photo route uses nothing else, and a query that says what the route means cannot drift into
+    THREE columns, not `_SELECT`'s thirty-odd and its two PostGIS accessors (review round 2, M6):
+    the photo route uses nothing else, and a query that says what the route means cannot drift into
     reading something it should not. The setting is read in the SAME statement because spec C.7
     row 1 makes it the first input to every delivery decision — and a second query for it is a
-    second chance to be reading a different listing's."""
+    second chance to be reading a different listing's.
+
+    `seller_id` joined Task 7 of the per-buyer disclosure plan: `has_capability` takes it to refuse
+    treating a seller as their own buyer (`app/disclosure/access.py`'s own guard), and reading it
+    HERE keeps this a single statement rather than a second round trip that could answer for a
+    listing whose seller changed between the two reads (this product has no ownership-transfer
+    feature, but the shape matches every other read in this function on principle)."""
     parsed = _parsed_uuid(listing_id)
     if parsed is None:
         return None
-    rows = _rows(conn, "SELECT photos, identifiable_content_visibility FROM listing"
+    rows = _rows(conn, "SELECT photos, identifiable_content_visibility, seller_id FROM listing"
                        " WHERE id = %s AND status = 'published'", (parsed,))
     if not rows:
         return None
-    return photo_list(rows[0]["photos"]), str(rows[0]["identifiable_content_visibility"])
+    seller_id = rows[0]["seller_id"]
+    return (photo_list(rows[0]["photos"]), str(rows[0]["identifiable_content_visibility"]),
+            None if seller_id is None else str(seller_id))
 
 
 @router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_LISTING_READ)])
@@ -686,9 +717,8 @@ def _privacy_for(conn: Any, listing_id: str, entry: str) -> record.PrivacyRow | 
     return row if row is not None and str(row.listing_id) == str(listing_id) else None
 
 
-@router.api_route("/listings/{listing_id}/photos/{n}", methods=["GET", "HEAD"],
-                  dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def get_listing_photo(listing_id: str, n: int, request: Request) -> Response:
+@router.api_route("/listings/{listing_id}/photos/{n}", methods=["GET", "HEAD"])
+async def get_listing_photo(listing_id: str, n: int, request: Request, principal: Reader) -> Response:
     """The ONE buyer bytes route. Every query parameter is ignored for resolution: `?variant=`,
     `?v=` and anything else a caller invents cannot change what this returns (directive 20,
     "alternate image endpoints").
@@ -699,17 +729,35 @@ async def get_listing_photo(listing_id: str, n: int, request: Request) -> Respon
     body" is a claim, and declaring both methods is what makes it true rather than a comment that
     says Starlette will handle it.
 
-    ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface."""
+    ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface.
+
+    **This is the door directive §9's last line is about**: "Direct access to the original asset
+    URL must NOT bypass authorization." A caller reaching this route by its exact positional URL —
+    guessed, bookmarked, or replayed — asks its OWN authorization here, every time, from the
+    database, never from anything the request carries; the URL names a POSITION (`n`), never a
+    storage key, and nothing about which bytes a prior request received changes what THIS one
+    resolves to. `principal` REPLACES the router-level `dependencies=[Depends(REQUIRE_LISTING_READ)]`
+    this route used to declare (Task 7 of the per-buyer disclosure plan) rather than sitting beside
+    it: both spellings are `Depends` on the SAME `REQUIRE_LISTING_READ` object, so keeping both
+    would make `route.dependant.dependencies` carry the guard twice and fail
+    `tests/api/test_listings.py::test_the_listings_routes_are_guarded_not_public`'s `guards == [...]`
+    pin — `app/api/seller_listings.py::read_document` is the existing precedent for a `Reader`
+    parameter being the route's ONLY guard."""
     with closing(sync_conn()) as conn, conn:
         found = _published_photos_and_visibility(conn, listing_id)
         if found is None:
             return _error("NOT_FOUND", "No such listing.", 404)
-        photos, visibility = found
+        photos, visibility, seller_id = found
         entry = photos[n - 1] if 1 <= n <= len(photos) else None
         if entry is None:
             return _error("NOT_FOUND", "No such photograph.", 404)
+        # Fails closed by construction (directive §19): `has_capability` returns False for every
+        # input it cannot prove authorized, so an absent/expired/wrong-capability grant reaches
+        # `buyer_variant` as `authorized=False` — the SAME answer this route always gave.
+        authorized = has_capability(conn, listing_id=listing_id, seller_id=seller_id,
+                                    buyer_account_id=str(principal.account_id), capability="UNREDACTED_IMAGES")
         variant = buyer_variant(visibility, _privacy_for(conn, listing_id, entry), entry,
-                                seed_digests().get(entry))
+                                seed_digests().get(entry), authorized=authorized)
         if variant is None:
             return _error("NOT_FOUND", "No such photograph.", 404)
         if not variant.from_disk:
