@@ -24,6 +24,7 @@ from app.api.listings import router as listings_router
 from app.api.market import router as market_router
 from app.api.requests import router as requests_router
 from app.api.seller_listings import router as seller_listings_router
+from app.api.seller_requests import router as seller_requests_router
 from app.api.webhooks import router as webhooks_router
 from app.auth import deps
 from app.config import settings
@@ -166,6 +167,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # other member surface above, and `scripts/verify-deploy.sh` probes for their 404 beside
         # `/api/listings`'s and `/api/seller/listings`'s.
         app.include_router(requests_router)
+        # Same gate again (per-buyer disclosure plan, Task 6, directive §5, §13): the seller's own
+        # inbox and decide/revoke routes, disjoint prefix from `/api/requests` and `/api/seller/
+        # listings`, so behind the Coming Soon page they are absent, like every other member
+        # surface above, and `scripts/verify-deploy.sh` probes for their 404 beside the rest.
+        app.include_router(seller_requests_router)
         # Superseded 2026-09-09 by John's ruling (A-I5d.5) — this used to be UNCONDITIONAL (Task
         # I5d, D-I5d-5): `interest_signup` is filled by the Coming Soon page, so the rows this
         # reads only exist on PRODUCTION, which runs `coming_soon` until launch, and gating the

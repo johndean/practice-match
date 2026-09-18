@@ -216,6 +216,10 @@ if [[ "$mode" == "coming_soon" ]]; then
   # surface behind the same site_mode gate.
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/requests/mine")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/requests/mine answered $code in coming-soon mode (expected 404 - the requests surface must not be mounted before launch)" >&2; exit 1; }
+  # ...and the seller's own inbox beside it (per-buyer disclosure plan, Task 6): a member
+  # surface behind the same site_mode gate, disjoint prefix from /api/requests.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/seller/requests")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/seller/requests answered $code in coming-soon mode (expected 404 - the seller requests surface must not be mounted before launch)" >&2; exit 1; }
   echo "member endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
@@ -238,6 +242,12 @@ else
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/requests/mine")
   [[ "$code" == "401" ]] || { echo "FAIL: /api/requests/mine answered $code to an anonymous caller (expected 401 - the requests surface must be guarded by request.read_own)" >&2; exit 1; }
   echo "requests guarded OK"
+  # Beside it, the seller's own inbox (per-buyer disclosure plan, Task 6): guarded by
+  # request.answer_own, so an anonymous caller gets the same generic 401 rather than another
+  # seller's requests.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/seller/requests")
+  [[ "$code" == "401" ]] || { echo "FAIL: /api/seller/requests answered $code to an anonymous caller (expected 401 - the seller requests surface must be guarded by request.answer_own)" >&2; exit 1; }
+  echo "seller requests guarded OK"
   # A-I5d.5 (2026-09-09): the Admin Launch Sign-ups router is mounted only in app mode now, exactly
   # like /api/admin/users and /api/listings beside it, so this is the one probe of production's
   # real mount table for the positive half of that claim once SITE_MODE=app. An anonymous caller
