@@ -2079,6 +2079,14 @@ LISTING_WRITERS = {
         "`listing_publishable_ck` alone. It needs a listing only as something to hang a `request` "
         "row off; the authorization boundary it tests reads the `request` table and never the "
         "listing's own gate columns.",
+    "tests/disclosure/test_requests.py":
+        "Task 4 of the same plan, the same fixture shape as Tasks 1/3's above: `_listing` INSERTs "
+        "directly as `published` or `draft` (the one unpublished case `test_create_refuses_an_"
+        "unpublished_listing` needs) with no `photos`, so the photo-readiness trigger has nothing "
+        "to refuse either way, and the `zip`/`est`/`price`/`sqft` it supplies satisfy "
+        "`listing_submittable_ck`/`listing_publishable_ck` alone. It needs a listing only as "
+        "something to hang a `request` row off; the request lifecycle it tests writes the "
+        "`request` table and never the listing's own gate columns.",
 }
 
 
