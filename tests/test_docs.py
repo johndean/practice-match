@@ -1991,6 +1991,20 @@ LISTING_WRITERS = {
         "`test_listing_assets.py`'s own shape. `_seed_listing` INSERTs directly as `published` "
         "(no INSERT arm, A-IDP-6); its other UPDATEs — a visibility flip, a photos-array swap for "
         "the IDOR case — never name `status` and do not fire the trigger at all.",
+    "tests/api/test_documents_disclosure.py":
+        "Task 9 of the per-buyer-disclosure plan (2026-09-18), the HTTP-level suite for "
+        "`read_document`'s buyer-with-an-accepted-request arm and `serialise`'s real `documents` "
+        "array. `_listing_with_documents` creates a fresh draft through the real `POST /api/seller/"
+        "listings` route (empty `photos` array, that route's own INSERT default), uploads its "
+        "document(s) through the real multipart upload route WHILE the listing is still a draft — "
+        "`EDIT_REENTERS_REVIEW` (`published`/`paused` only) never fires on a draft, so the upload "
+        "itself never touches `status` — and only THEN moves the row to `published` with one direct "
+        "`UPDATE listing SET status = 'published', documents_disclosed = true, ...`, "
+        "`tests/api/test_requests.py::_seller_listing`'s own shape: a listing with an empty `photos` "
+        "array has nothing for the photo-readiness gate's predicate to find. The extra columns it "
+        "sets (`name`, `city`, `zip`, `type`, `est`, `price`, `state`, `market`, `area`, `sqft`) "
+        "satisfy `listing_submittable_ck` and `listing_publishable_ck` alone and have nothing to do "
+        "with the photo-readiness gate this map exists for.",
     "tests/api/test_geo_wire.py":
         "GEO-WIRE's own suite. It publishes through the REAL routes (the wizard's submit and the "
         "reviewer's decide), so the one direct statement it owns sets `location_disclosed` on an "
@@ -2002,6 +2016,12 @@ LISTING_WRITERS = {
     "tests/api/test_listings.py":
         "its module-level template inserts seed rows directly as `published` — the fourth writer "
         "A-IDP-3 (1) found, and the reason this map exists. No INSERT arm, so no refusal.",
+    "tests/api/test_listings_disclosure.py":
+        "per-buyer disclosure plan Task 8 (2026-09-18). `_published_seller_listing` creates a real "
+        "draft through the wizard's own create route and then UPDATEs it straight into `published` "
+        "— the draft `POST /api/seller/listings` writes carries no `photos` of its own, so the "
+        "column keeps its `[]` default and the gate's predicate finds nothing to refuse, "
+        "`test_admin_listings.py`'s own shape.",
     "tests/api/test_seller_listings.py":
         "two shapes. `_SEED_INSERT` inserts a seed row carrying PATH photographs directly as "
         "`published` — no INSERT arm (A-IDP-6) — while every row its UPDATEs move into `published` "
@@ -2065,6 +2085,53 @@ LISTING_WRITERS = {
         "the enumeration below excludes nothing and this file is simply declared.",
     "tests/test_listing_schema.py":
         "`016`/`030`'s column and CHECK contract, inserted directly; no INSERT arm.",
+    "tests/disclosure/test_request_table.py":
+        "Task 1 of the per-buyer-disclosure plan: the `request` table's own fixture builder. "
+        "`_listing` INSERTs directly as `published` — no INSERT arm (A-IDP-6) — and never supplies "
+        "`photos`, which defaults to the empty array, so even were the trigger's predicate reached "
+        "it would find nothing to refuse. The extra columns it supplies (`zip`, `est`, `price`, "
+        "`sqft`) satisfy `listing_publishable_ck`/`listing_submittable_ck` alone and have nothing "
+        "to do with the photo-readiness gate this map exists for.",
+    "tests/disclosure/test_access.py":
+        "Task 3 of the same plan, and the same fixture shape as Task 1's above: `_listing` INSERTs "
+        "directly as `published` with no `photos`, so the photo-readiness trigger has nothing to "
+        "refuse, and the `zip`/`est`/`price`/`sqft` it supplies satisfy `listing_submittable_ck` and "
+        "`listing_publishable_ck` alone. It needs a listing only as something to hang a `request` "
+        "row off; the authorization boundary it tests reads the `request` table and never the "
+        "listing's own gate columns.",
+    "tests/disclosure/test_requests.py":
+        "Task 4 of the same plan, the same fixture shape as Tasks 1/3's above: `_listing` INSERTs "
+        "directly as `published` or `draft` (the one unpublished case `test_create_refuses_an_"
+        "unpublished_listing` needs) with no `photos`, so the photo-readiness trigger has nothing "
+        "to refuse either way, and the `zip`/`est`/`price`/`sqft` it supplies satisfy "
+        "`listing_submittable_ck`/`listing_publishable_ck` alone. It needs a listing only as "
+        "something to hang a `request` row off; the request lifecycle it tests writes the "
+        "`request` table and never the listing's own gate columns.",
+    "tests/api/test_requests.py":
+        "Task 5 of the same plan, the HTTP-level suite for `app/api/requests.py`. `_seller_listing` "
+        "creates a fresh draft through the real `POST /api/seller/listings` route (so it starts "
+        "with the empty `photos` array that route's own INSERT gives every listing) and then one "
+        "direct `UPDATE listing SET status = 'published', ...` moves it onto the market — the "
+        "`tests/api/test_admin_listings.py` shape: a listing with an empty `photos` array has "
+        "nothing for the gate's predicate to find. The extra columns it sets (`area`, `market`, "
+        "`type`, alongside `state`/`zip`/`est`/`price`/`sqft`) satisfy `listing_publishable_ck` and "
+        "`listing_submittable_ck` alone — a defect in the plan's own literal Step 1 helper, which "
+        "set only `state` and `sqft` of the first group and never `type`, and raised "
+        "`CheckViolation` twice before the fix (task-05-report.md's own RED transcripts) — and have "
+        "nothing to do with the photo-readiness gate this map exists for.",
+    "tests/api/test_disclosure_isolation.py":
+        "Task 11 of the same plan (2026-09-18), directive §7's critical two-buyer security test. "
+        "`_seller_listing_with_everything_confidential` uploads a REAL photograph through the real "
+        "`POST /api/seller/listings/{id}/photos` route and plants a `SELLER_CONFIRMED` privacy row "
+        "on it with `tests/api/test_buyer_photo_delivery.py::_process` (that file's own shape: the "
+        "gate is met by the pipeline's state, not by anything this UPDATE names) and a real document "
+        "through the real multipart upload route WHILE THE LISTING IS STILL A DRAFT — "
+        "`tests/api/test_documents_disclosure.py`'s own reason: `EDIT_REENTERS_REVIEW` "
+        "(`app/api/seller_listings.py`) re-enters review on an edit to an already-published/paused "
+        "listing, so uploading after publish would silently undo the very `status = 'published'` "
+        "this fixture is building towards. ONE direct `UPDATE listing SET status = 'published', ...` "
+        "moves it onto the market last, once both uploads and the photo's privacy row are already in "
+        "place, never before.",
 }
 
 
@@ -2314,7 +2381,11 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
      "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two",
-     "Forty-three"))}
+     # A52 (2026-09-19) made forty-three families, and the discriminator below reads
+     # NUMBER_WORDS[family_count + 1] to prove the gate still fails on a count one too high — so
+     # the table must always run at least one word PAST the real count. Extended here for the
+     # fourth time (A18, A27, A24 are the three before it), the way each of those did.
+     "Forty-three", "Forty-four", "Forty-five"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

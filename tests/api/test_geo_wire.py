@@ -33,6 +33,10 @@ MATCH = json.loads((Path(__file__).parent.parent / "census" / "fixtures" / "geoc
 # The fixture's own rooftop coordinate — `450 Cypress Creek Rd, Cedar Park, TX 78613`, a real
 # recorded Census Geocoder response (`tests/census/test_geocode.py`'s own module docstring).
 MATCH_LNG, MATCH_LAT = -97.820278589313, 30.497509155435
+#: What a buyer WITHOUT an EXACT_LOCATION grant sees once the seller opens the ceiling: the same
+#: point coarsened to 2 decimal places, about 1.1 km — directive §11's "approximate map
+#: representation" (per-buyer disclosure, 2026-09-19). The exact pair above now requires a grant.
+APPROX_LNG, APPROX_LAT = round(MATCH_LNG, 2), round(MATCH_LAT, 2)
 CONTACT = "tech@vinfoundation.example.org"
 _REAL_GEOCODER = geocode.Geocoder
 
@@ -186,10 +190,13 @@ async def test_publishing_a_listing_carries_it_all_the_way_to_a_pin_a_metro_and_
 
     # (4) The pin. `listing.geom` is written by the geocode now, not by `seed_listings.py` alone.
     item = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert (item["lat"], item["lng"]) == (MATCH_LAT, MATCH_LNG)
+    # An ungranted buyer gets the APPROXIMATE point, not the exact one and not nothing: the pin is
+    # still drawn (this whole test is about the wire reaching a pin) while the precise position
+    # stays behind the per-buyer grant.
+    assert (item["lat"], item["lng"]) == (APPROX_LAT, APPROX_LNG)
     assert item["geo_precision"] == "rooftop"
     listed = (await client.get("/api/listings", headers=buyer)).json()["items"]
-    assert [(row["id"], row["lat"]) for row in listed] == [(listing_id, MATCH_LAT)]
+    assert [(row["id"], row["lat"]) for row in listed] == [(listing_id, APPROX_LAT)]
 
     # (5) The Community Context card has figures instead of "Community data unavailable".
     assert item["pop"] is not None and item["income"] is not None
@@ -206,7 +213,12 @@ async def test_the_geocoded_pin_is_still_withheld_from_a_listing_that_hides_its_
     """GEO-WIRE (3), the other half. A resolved point is not a published one: `location_disclosed`
     is `NOT NULL DEFAULT false` (`migrations/016_listing.sql`) and A-L5 blanks the point in
     `serialise`, so wiring the geocode must not become a way for an address the seller chose to
-    hide to reach a buyer's browser as a pair of coordinates."""
+    hide to reach a buyer's browser as a pair of coordinates.
+
+    Since the per-buyer disclosure work (2026-09-19) the OPEN case is the approximate point rather
+    than the exact one — the exact pair needs an EXACT_LOCATION grant — while the CLOSED case below
+    is unchanged and is what this test has always been about: `location_disclosed = false` still
+    yields no point at all, for every buyer, granted or not."""
     _seed_geography(conn)
     listing_id, _sent = await _published_listing(client, member, monkeypatch)
     CT.geocode_listing(listing_id)
@@ -214,7 +226,7 @@ async def test_the_geocoded_pin_is_still_withheld_from_a_listing_that_hides_its_
     _account, cookies, _headers = member(("buyer",), email="gw-buyer@example.org")
     buyer = auth_headers(cookies, headers=None)
     shown = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert (shown["lat"], shown["lng"]) == (MATCH_LAT, MATCH_LNG)
+    assert (shown["lat"], shown["lng"]) == (APPROX_LAT, APPROX_LNG)
 
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET location_disclosed = false WHERE id = %s", (listing_id,))

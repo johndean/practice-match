@@ -10,6 +10,8 @@ import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
 import { makePermsAdapter } from './auth/perms';
 import { makeMarketAdapter } from './market/boundaries';
+import { makeBuyerRequestsAdapter } from './requests/buyer';
+import { makeSellerRequestsAdapter } from './requests/seller';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -147,7 +149,26 @@ const props = defineProps({
   // does. Built by the factory in `src/market/boundaries.ts`, not an object literal here, for the
   // reason `auth` records: this file is copied verbatim into App.vue and sits outside the
   // coverage gate. It needs no `data-props` entry — the parity gate is one-directional.
-  market: { type: Object, default: () => makeMarketAdapter() }
+  market: { type: Object, default: () => makeMarketAdapter() },
+  // A52 (Task 14, per-buyer-disclosure plan, 2026-09-19): the real /api/requests client, as the
+  // prototype's `requests` adapter — the seam the interest modal's "Send request" and the buyer's
+  // own "My Requests" screen call through (`sendInterest`, `reqList`, and `detail()`'s own
+  // `sent`/`req`, all through the new `myReqs()` helper). The reference and the Claude Design
+  // preview pass nothing and keep the design's own shared `s.requests` fixture, which is what
+  // keeps the two targets on the same pixels. Nothing in the template reads `requests`; only
+  // `logic.js` does.
+  //
+  // `src/requests/buyer.ts`, not an object literal here, for the reason `market` records: this
+  // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
+  // in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  requests: { type: Object, default: () => makeBuyerRequestsAdapter() },
+  // A52: the real /api/seller/requests client, as the prototype's `sellerRequests` adapter — the
+  // seam the seller dashboard's own buyer-request inbox (`sellerVals`'s `inbox`, `accept`,
+  // `decline`) calls through. Same reasoning as `requests` above, one door over: the reference and
+  // the Claude Design preview pass nothing and keep the design's fixture path; nothing in the
+  // template reads `sellerRequests` either.
+  sellerRequests: { type: Object, default: () => makeSellerRequestsAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

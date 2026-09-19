@@ -40,6 +40,13 @@ LISTING_PATCH, LISTING_UPLOAD, LISTING_SUBMIT = (240, 3600), (40, 3600), (20, 36
 # round trip per call. Same shape, same per-account key, generous enough that nobody working through
 # the wizard meets one.
 LISTING_CREATE, LISTING_REORDER, LISTING_DELETE = (60, 3600), (240, 3600), (40, 3600)
+# Per-buyer disclosure (spec 2026-09-18, directive §6, §23). ACCESS_REQUEST_CREATE is a buyer
+# contacting a seller — a meaningful, infrequent action, generous enough that a genuine buyer never
+# notices it and tight enough that scripted spam against every listing in a market does; matches
+# LISTING_SUBMIT's own rate exactly (one submission-weight action per window). ACCESS_REQUEST_DECIDE
+# is a seller deciding on many requests in one sitting, which should not be throttled — matches
+# LISTING_PATCH. Both are keyed on the ACCOUNT id, the same shape as every tuple above.
+ACCESS_REQUEST_CREATE, ACCESS_REQUEST_DECIDE = (20, 3600), (240, 3600)
 
 
 def clear(r: Any, scope: str, subject: str) -> None:

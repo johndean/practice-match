@@ -524,6 +524,179 @@ async def test_a_photograph_the_pipeline_has_not_finished_is_hidden_under_show_t
     assert (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()["photos"] == [None]
 
 
+# --- per-buyer disclosure plan (2026-09-18), Task 7: buyer_variant grows a buyer dimension -------
+#
+# Everything above this line is the pre-Task-7 security matrix, unmodified, and every one of those
+# tests still passes with no `request` row ever created -- which is itself the regression proof:
+# `has_capability` returns False for a buyer with no grant, `authorized=False` is byte-for-byte the
+# function this whole file already pinned, and nothing above this line creates a grant.
+
+
+def _seller_id_of(conn: Any, listing_id: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT seller_id FROM listing WHERE id = %s", (listing_id,))
+        return str(cur.fetchone()[0])
+
+
+def _grant(conn: Any, listing_id: str, buyer_id: str, seller_id: str, *, level: str = "UNREDACTED_IMAGES") -> str:
+    """A directly-INSERTed APPROVED `request` row, in `tests/disclosure/test_access.py::_request`'s
+    own shape -- Task 7's own authorization boundary (`app.disclosure.access`) is what this suite
+    proves the bytes route actually CONSULTS, so this helper writes the grant at the table Tasks
+    1-6 already built and unit-tested on their own, rather than re-driving the seller's real decide
+    route (Task 6) here too."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status,"
+            " approved_disclosure_level, reviewed_at, reviewed_by)"
+            " VALUES (%s,%s,%s,'APPROVED',%s,now(),%s) RETURNING id",
+            (listing_id, buyer_id, seller_id, level, seller_id),
+        )
+        return str(cur.fetchone()[0])
+
+
+async def test_a_buyer_holding_the_grant_sees_display_while_every_other_buyer_stays_redacted(
+    client: Any, conn: Any, redis: Any, member: Any, seller: dict[str, str], admin: dict[str, str],
+    store: Any, published_not_show_listing: Any,
+) -> None:
+    """Directive §7's own critical security test, and §9: "If a seller authorizes unredacted
+    images for Buyer A: Buyer A may receive the authorized version; Buyer B must continue receiving
+    only the permitted redacted version" -- both halves, one listing, one moment, one test.
+
+    Buyer B's half is the WHOLE pre-existing security matrix (`assert_buyer_sees_only_redacted`):
+    the redacted bytes, no query-parameter bypass, the owner/reviewer routes still refusing a
+    buyer, no leak in the JSON payloads, and an anonymous caller still 401 -- none of which Task 7
+    may have moved for a buyer who holds no grant. Buyer A's half is the NEW capability, proved
+    against the REAL object the bucket holds, never a value this test computed."""
+    listing_id, row = published_not_show_listing
+    seller_id = _seller_id_of(conn, listing_id)
+
+    buyer_a_id, a_cookies, a_headers = member(roles=("buyer",), email="grant-a@example.org")
+    buyer_a = auth_headers(a_cookies, a_headers)
+    _grant(conn, listing_id, buyer_a_id, seller_id)
+
+    _, b_cookies, b_headers = member(roles=("buyer",), email="grant-b@example.org")
+    buyer_b = auth_headers(b_cookies, b_headers)
+    await assert_buyer_sees_only_redacted(client, buyer_b, seller, admin, store, listing_id, 1, row)
+
+    url = f"/api/listings/{listing_id}/photos/1"
+    body = (await client.get(url, headers=buyer_a)).content
+    assert body == store.get(row.display_storage_key)
+    assert body != store.get(row.redacted_storage_key)
+    assert hashlib.sha256(body).hexdigest() == row.display_sha256
+
+    head = await client.head(url, headers=buyer_a)
+    assert head.status_code == 200 and head.content == b""
+    assert head.headers["etag"] == f'"{row.display_sha256}"'
+
+
+async def test_an_unauthorized_buyer_never_receives_the_bytes_behind_the_display_storage_key(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, published_not_show_listing: Any
+) -> None:
+    """Directive §9's last line, its own test rather than folded into the matrix above: "Direct
+    access to the original asset URL must NOT bypass authorization." The bytes route takes no
+    storage key at all -- only a POSITION (`n`, spec F) -- so the strongest thing an unauthorized
+    caller can do is ask by the EXACT SAME route and the EXACT SAME `n` an authorized buyer would
+    use, and the object AT THAT KEY (read straight from the bucket, never a value this test
+    computed) must never be what comes back."""
+    listing_id, row = published_not_show_listing
+    _, cookies, headers = member(roles=("buyer",), email="no-grant-at-all@example.org")
+    buyer = auth_headers(cookies, headers)
+    display_bytes = store.get(row.display_storage_key)
+    assert display_bytes is not None  # the object genuinely exists; this is a real bypass attempt
+
+    response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+    assert response.status_code == 200
+    assert response.content != display_bytes
+    assert hashlib.sha256(response.content).hexdigest() != row.display_sha256
+    assert hashlib.sha256(response.content).hexdigest() == row.redacted_sha256
+
+
+async def test_a_grant_of_a_different_capability_still_serves_the_redacted_derivative(
+    client: Any, conn: Any, redis: Any, member: Any, published_not_show_listing: Any
+) -> None:
+    """Directive §16: SIX named capabilities, never one boolean. A buyer holding a real, ACTIVE
+    grant on THIS listing -- just not for UNREDACTED_IMAGES -- has never been approved for images
+    at all, and `has_capability`'s own single-capability check (Task 3) is what keeps the two
+    apart: a broader "does this buyer hold ANY grant" would leak images to a FINANCIALS-only
+    buyer."""
+    listing_id, row = published_not_show_listing
+    seller_id = _seller_id_of(conn, listing_id)
+    buyer_id, cookies, headers = member(roles=("buyer",), email="financials-only@example.org")
+    buyer = auth_headers(cookies, headers)
+    _grant(conn, listing_id, buyer_id, seller_id, level="FINANCIALS")
+
+    response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+    assert response.status_code == 200
+    assert hashlib.sha256(response.content).hexdigest() == row.redacted_sha256
+
+
+async def test_revocation_returns_the_buyer_to_the_redacted_derivative(
+    client: Any, conn: Any, redis: Any, member: Any, published_not_show_listing: Any
+) -> None:
+    """Directive §15: "After revocation, Buyer A must immediately lose authorization to retrieve
+    the confidential resource through protected APIs." `app.disclosure.requests.revoke` (Task 4) is
+    the one production writer of a REVOKED row; this proves Task 7's route re-reads the grant on
+    every request rather than caching an earlier answer -- the SAME buyer, the SAME listing, before
+    and after, through the real bytes route both times."""
+    from app.disclosure.requests import revoke
+
+    listing_id, row = published_not_show_listing
+    seller_id = _seller_id_of(conn, listing_id)
+    buyer_id, cookies, headers = member(roles=("buyer",), email="revoke-me@example.org")
+    buyer = auth_headers(cookies, headers)
+    request_id = _grant(conn, listing_id, buyer_id, seller_id)
+
+    url = f"/api/listings/{listing_id}/photos/1"
+    before = (await client.get(url, headers=buyer)).content
+    assert hashlib.sha256(before).hexdigest() == row.display_sha256
+
+    revoke(conn, request_id=request_id, seller_account_id=seller_id)
+
+    after = (await client.get(url, headers=buyer)).content
+    assert hashlib.sha256(after).hexdigest() == row.redacted_sha256
+    assert after != before
+
+
+async def test_the_json_list_and_detail_routes_now_reflect_a_grant(
+    client: Any, conn: Any, redis: Any, member: Any, published_not_show_listing: Any,
+) -> None:
+    """Task 7's own honest boundary, RETIRED by Task 8 of the per-buyer disclosure plan
+    (2026-09-18) exactly as its own docstring predicted: `serialise` -> `_photo_urls` passed
+    `authorized=False` UNCONDITIONALLY until Task 8 wired `has_capability`/
+    `authorized_capabilities_bulk` into the list and detail routes -- this is that wiring, proved
+    from the OTHER side of the seam Task 7 left. A grant that already unlocked the BYTES route
+    (proved above) now ALSO changes the URL the JSON payload names for the same photograph: both
+    carry the DISPLAY derivative's hash, not the redacted one. This is still not a leak in the
+    other direction either: the JSON's `?v=` is a cache key and never a selector (spec F,
+    `test_the_v_parameter_selects_nothing`), so it is the capability threaded through `serialise`
+    -- never the `?v=` value itself -- that decided which derivative the URL resolves to."""
+    listing_id, row = published_not_show_listing
+    seller_id = _seller_id_of(conn, listing_id)
+    buyer_id, cookies, headers = member(roles=("buyer",), email="grant-json-boundary@example.org")
+    buyer = auth_headers(cookies, headers)
+    _grant(conn, listing_id, buyer_id, seller_id)
+
+    detail = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={row.display_sha256[:12]}"]
+
+    # The SAME buyer, the SAME photograph, the BYTES route: authorized, unaffected by the JSON's
+    # own `?v=` (spec F: `?v=` is never read for resolution, proved for real above) -- and now the
+    # TWO routes agree about which derivative this buyer gets, rather than disagreeing by design.
+    bytes_response = await client.get(f"/api/listings/{listing_id}/photos/1", headers=buyer)
+    assert hashlib.sha256(bytes_response.content).hexdigest() == row.display_sha256
+
+    # A second buyer, same listing, same moment, NO grant: the two routes must still agree with
+    # EACH OTHER on the redacted derivative, exactly as the granted buyer's own pair agrees on the
+    # display one -- directive §7's isolation, restated at the JSON/bytes-route boundary Task 7
+    # could not reach yet.
+    _other_id, other_cookies, other_headers = member(roles=("buyer",), email="grant-json-boundary-b@example.org")
+    other = auth_headers(other_cookies, other_headers)
+    other_detail = (await client.get(f"/api/listings/{listing_id}", headers=other)).json()
+    assert other_detail["photos"] == [f"/api/listings/{listing_id}/photos/1?v={row.redacted_sha256[:12]}"]
+    other_bytes = await client.get(f"/api/listings/{listing_id}/photos/1", headers=other)
+    assert hashlib.sha256(other_bytes.content).hexdigest() == row.redacted_sha256
+
+
 # --- the owner's and the reviewer's own bytes routes (spec C.6) ----------------------------------
 
 

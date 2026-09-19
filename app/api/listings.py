@@ -38,6 +38,18 @@ blanks what the flags hide:
   returning it would hand back the hidden name in another spelling. Same posture as the address
   above: the flag nulls what it hides. **Task L6 therefore keys off `id`, never `slug`** (A-L5.1).
 
+**Since the per-buyer disclosure plan's Task 8 (2026-09-18), each flag above is a CEILING rather
+than the whole answer (directive §8, §24).** `location_disclosed`/`name_disclosed`/`rev_disclosed`
+still mean exactly what this section already says -- a seller-set precondition that must be true
+before *any* buyer can ever receive the value -- but a buyer additionally needs the matching
+capability (`EXACT_LOCATION`/`IDENTITY`/`FINANCIALS`) from an APPROVED `request` row before the
+field crosses into their own response. `list_listings`/`get_listing` compute the calling buyer's
+capabilities (one bulk query for a whole page, one single-listing query for the detail route --
+directive §23, `app.disclosure.access.authorized_capabilities`/`_bulk`) and `serialise` ANDs each
+flag against them; the flag being true discloses nothing to a buyer the seller has not separately
+approved. "Every seed sets both flags true" below therefore no longer means "every buyer sees the
+real name" -- it means "the ceiling is open for whichever buyer a seller approves."
+
 Every seed sets both flags true (D8, A-L5), so nothing John sees on QA changes; Wave 2b's sellers
 default to false, which is why both branches have to be right now rather than later.
 
@@ -58,18 +70,21 @@ from contextlib import closing
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
+from app.auth import sessions as S
 from app.auth.deps import require
 from app.cache import LIST_CACHE_PREFIX, sync_redis
 from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
+from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
+from app.disclosure.levels import capability_for_document_kind
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -80,6 +95,12 @@ router = APIRouter(prefix="/api")
 
 # Hoisted to a module-level constant, never wrapped (Global Constraint (g)).
 REQUIRE_LISTING_READ = require("listing.read")
+# Per-buyer disclosure plan Task 7: the FIRST of this module's three routes to need the caller's
+# own identity rather than a discarded `dependencies=[...]` guard -- `app/api/seller_listings.py`'s
+# own `Reader`, re-declared here from the SAME `REQUIRE_LISTING_READ` guard object rather than a
+# second `require("listing.read")`, because `deps.permission_of` resolves a route's permission by
+# the guard's object IDENTITY (`tests/api/test_listings.py::test_the_listings_routes_are_guarded_not_public`).
+Reader = Annotated[S.Principal, Depends(REQUIRE_LISTING_READ)]
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS_ROOT = ROOT / "seeds" / "hospitals" / "photos"
@@ -97,8 +118,19 @@ GEOCODE_DEDUPE_PREFIX = "geocode:"
 GEOCODE_DEDUPE_TTL = 600
 
 _SELECT = """
-SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
-       name_disclosed, rev_disclosed, identifiable_content_visibility,
+-- Per-buyer disclosure plan Task 8 (2026-09-18): `seller_id` is read here, ONCE per row, so the
+-- capability lookup (`app.disclosure.access.authorized_capabilities`/`_bulk`, called by the two
+-- routes below) never costs a second query to learn who a listing's own seller is -- and so the
+-- self-authorization guard those functions apply has a real value to check rather than always
+-- seeing None. `documents_disclosed` joins its three siblings for Task 9's own use -- the
+-- `documents_disclosed`/FINANCIALS-or-FLOOR_PLANS-or-FULL_CONFIDENTIAL ceiling `_documents` below
+-- applies to the very SELECT that put it here, so Task 9 costs no second query of its own either.
+-- Neither `seller_id` nor `documents_disclosed` is added to `serialise`'s OUTPUT directly --
+-- `seller_id` never has been and never should be (it is an internal account id, not part of the
+-- buyer contract), and `documents_disclosed` is a ceiling `_documents` consumes, not a fact a
+-- buyer is shown by name (the `documents` array it gates IS the buyer-facing fact).
+SELECT id, seller_id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
+       name_disclosed, rev_disclosed, documents_disclosed, identifiable_content_visibility,
        ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
        note, staff, services, facility, ownership, photos, photo_captions,
@@ -324,14 +356,21 @@ def photo_response(body: bytes, sha256: str, request: Request) -> Response:
     return Response(content=body, media_type="image/webp", headers={**PHOTO_HEADERS, "ETag": etag})
 
 
-def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any]) -> list[str | None]:
+def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any], *,
+                authorized: bool) -> list[str | None]:
     """One URL per slot, or None where the resolver refuses it (spec C.7 rows 3-4).
 
     Every decision here belongs to `buyer_variant`; this function's whole job is to hand it the
     listing's visibility and the photograph's own record and to turn its answer into a positional
     URL. The record comes from `_SELECT`'s `visible_photos` aggregate -- one query for the whole
     page, never a lookup per photograph -- and a seed PATH entry has no record at all, which is why
-    the entry and the inventory digest are passed too."""
+    the entry and the inventory digest are passed too.
+
+    `authorized` (per-buyer disclosure plan Task 7) is ONE bool for the WHOLE listing, threaded
+    straight through to every photograph's `buyer_variant` call: UNREDACTED_IMAGES is a listing-
+    level capability, not a per-photograph one, so the caller computes it once (Task 8's `serialise`
+    call, via `has_capability`/`authorized_capabilities_bulk`) and this function never asks the
+    database anything of its own."""
     visibility = str(row["identifiable_content_visibility"])
     aggregate = row["visible_photos"]
     digests = seed_digests()
@@ -342,12 +381,82 @@ def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any
             continue
         found = aggregate.get(entry)
         asset = None if found is None else record.delivery_row(entry, row["id"], found)
-        variant = buyer_variant(visibility, asset, entry, digests.get(entry))
+        variant = buyer_variant(visibility, asset, entry, digests.get(entry), authorized=authorized)
         out.append(None if variant is None else photo_url(listing_id, n, variant.sha256))
     return out
 
 
-def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceiling_open: bool) -> list[dict[str, Any]]:
+    """Every non-photo asset THIS CALLER could actually fetch through `read_document`
+    (`app/api/seller_listings.py`) -- directive §10's own "the JSON list must not advertise what
+    the bytes route will refuse."  The route's own `allowed` boolean is
+    `owner or staff or (documents_disclosed and published and has_capability(...))`; this list has
+    no notion of owner/staff at all (the buyer-facing `get_listing` route this feeds is not how a
+    seller or a reviewer reads their own listing -- they have `GET /api/seller/listings/{id}` and
+    `GET /api/admin/listings/{id}` for that), so it is exactly the buyer arm of that same boolean,
+    applied per document: `ceiling_open` is the listing's own `documents_disclosed` flag (directive
+    §8, §24) and `capabilities` is the SAME set `serialise`'s other fields already AND against their
+    own ceilings -- a document is listed only when BOTH hold, exactly as the bytes route requires
+    both to serve it.
+
+    Existence IS public once the seller opens the ceiling, which is the plan's own literal Step 3
+    and the product's own promise: step 7's approved copy reads "Buyers see the document titles and
+    can ask for access." Titles are how a buyer knows what to request; withholding them would leave
+    the request flow this whole subsystem exists to serve with nothing to point at. `ceiling_open`
+    is checked FIRST, and the query never runs when it is False, so a listing whose seller has kept
+    its documents locked lists nothing and costs nothing extra to serve.
+
+    Called once per single-listing read -- never from the list route, which has no document UI."""
+    if not ceiling_open:
+        return []
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, name, kind, content_type FROM listing_asset"
+                    " WHERE listing_id = %s AND kind <> 'photo' ORDER BY created_at", (listing_id,))
+        rows = cur.fetchall()
+    # NOT filtered by `capabilities` (controller ruling, 2026-09-19, correcting this task's own
+    # brief). Step 7's approved copy — which directive §17 declares CORRECT and preserves — reads
+    # "Buyers see the document titles and can ask for access." A buyer cannot ask for access to a
+    # document they cannot see exists, so filtering the TITLES makes that promise false and leaves
+    # the request flow with nothing to request. The ceiling (`documents_disclosed`) decides whether
+    # the LIST appears at all; the per-buyer grant decides whether `read_document` serves the BYTES.
+    # Directive §10's "do not expose the original merely because the buyer knows its URL" is about
+    # CONTENT, and that refusal lives in the bytes route, which Task 9 also built and tests.
+    # The TITLE is generic until this buyer holds the capability that opens the document (security
+    # review, 2026-09-19). `listing_asset.name` is the seller's own upload filename, kept verbatim
+    # by `app/api/seller_listings.py` bar path separators and length — so a packet saved as
+    # "Smith_Family_Veterinary_2023_Financials.pdf" or "123_Main_St_Floor_Plan.pdf" would publish the
+    # practice's identity or address to EVERY buyer with no grant at all, straight past
+    # `name_disclosed`/`location_disclosed`, which are independent booleans a seller can leave shut
+    # (migrations/016_listing.sql:25). That is the exact exposure this subsystem exists to prevent,
+    # arriving through a string the platform re-publishes rather than through a field it gates.
+    #
+    # The row is still LISTED — the 2026-09-19 ruling stands, a buyer must see a document exists to
+    # request it, and step 7's approved copy promises exactly that — so only the label changes.
+    return [{"id": str(r[0]), "kind": r[2], "content_type": r[3],
+             "name": r[1] if capability_for_document_kind(r[2]) in capabilities else _DOCUMENT_LABEL.get(r[2], "Document")}
+            for r in rows]
+
+
+#: What an ungranted buyer sees in place of the seller's own filename. Derived from the document's
+#: KIND, which is platform vocabulary rather than seller-supplied text, so it can carry no identity.
+_DOCUMENT_LABEL = {"financials": "Financial packet", "floor_plan": "Floor plan"}
+
+
+def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:
+    """One coordinate at the precision this caller has earned (directive §2, §11).
+
+    No ceiling -> None: the seller withheld their location and A25's "no point, no pin" stands.
+    Ceiling, no grant -> rounded to 2 decimal places, about 1.1 km: §11's "approximate map
+    representation", coarser than the catchment ring already drawn publicly around the listing.
+    Ceiling and grant -> the exact point."""
+    if not ceiling or value is None:
+        return None
+    return float(value) if exact else round(float(value), 2)
+
+
+def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
+             *, capabilities: frozenset[str] = frozenset(),
+             documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
     and point, an undisclosed name loses the name and the slug that spells it.
@@ -358,15 +467,52 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     not a leak to close here. Wave 2b's UI says so beside the two switches. Do not "fix" this by
     making one flag imply the other.
 
+    **Per-buyer disclosure plan Task 8 (2026-09-18): `capabilities` is a SECOND, independent gate,
+    ANDed against each flag rather than replacing it (directive §8, §24).** The default is the
+    EMPTY set -- fail closed (directive §19): a caller that passes no `capabilities` argument at
+    all gets the SAME redacted shape an unapproved buyer does, never the pre-Task-8 "ceiling alone
+    decides" behaviour, so a future caller that forgets to compute one cannot accidentally leak a
+    confidential field by omission.
+
     **Community data is optional (Task B7).** When provided (a CommunityRow from serve.community_rows),
-    the six fields are populated; absence means they remain null."""
-    disclosed = bool(row["location_disclosed"])
-    named = bool(row["name_disclosed"])
+    the six fields are populated; absence means they remain null.
+
+    **Per-buyer disclosure plan Task 9 (2026-09-18): `documents` is the buyer-facing document list**
+    (closing finding 9, the wizard-step audit's own name for this list being 100% fixture data
+    before this task) -- ALREADY filtered to what `read_document` would actually serve this caller
+    (`_documents`'s own docstring), so this parameter is never re-filtered here; `documents or []`
+    is only the "an absent list is not the same key error as a real empty one" guard `capabilities`'
+    own default already follows one field over."""
+    # Directive §2 and §11 split location into TWO tiers, and Task 8's first cut collapsed them
+    # into one (controller ruling, 2026-09-19, after CI caught it): §11 says "the public listing MAY
+    # USE generalized location, market area, city/region, APPROXIMATE MAP REPRESENTATION" while
+    # "exact location is confidential unless explicitly authorized" and exact COORDINATES must not
+    # reach an unauthenticated response. Gating the point itself on the grant gave the public tier
+    # NOTHING rather than something approximate, which drew no pin for any buyer on any listing --
+    # `tests/api/test_geo_wire.py` caught exactly that.
+    #
+    #   `ceiling`  the seller's own `location_disclosed` — nothing at all when false (A25's
+    #              "no point, no pin" is untouched, and an undisclosed listing stays off the map)
+    #   `disclosed` ceiling AND the per-buyer grant — the EXACT street, postcode, telephone and point
+    #
+    # With the ceiling open and no grant the buyer gets a COARSENED point (2 decimal places, about
+    # 1.1 km) — an approximate map representation, which is less precise than the ~8 km catchment
+    # ring the product already draws publicly around every listing, so it discloses nothing the
+    # buyer could not already infer.
+    ceiling = bool(row["location_disclosed"])
+    disclosed = ceiling and "EXACT_LOCATION" in capabilities
+    named = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
     # Spec C.7 rows 3-4, computed ONCE and read twice below: the two arrays are parallel, and a
     # caption must not describe a slot the resolver refused.
-    urls = _photo_urls(listing_id, photos, row)
+    #
+    # Per-buyer disclosure plan Task 8: `UNREDACTED_IMAGES` is a listing-level capability like the
+    # other three, so it is read from the SAME `capabilities` set the caller already computed,
+    # rather than asked for separately -- this replaces Task 7's own `authorized=False` placeholder
+    # (its comment said so: "Task 8 is what computes the caller's actual UNREDACTED_IMAGES
+    # capability ... and threads it in here").
+    urls = _photo_urls(listing_id, photos, row, authorized="UNREDACTED_IMAGES" in capabilities)
     captions = photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"])
 
     # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for
@@ -408,7 +554,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "zip": row["zip"] if disclosed else None,
         "phone": row["phone"] if disclosed else None,
         "hours": row["hours"],
-        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") else None,
+        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") and "FINANCIALS" in capabilities else None,
         "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
         "listed": relative_listed(row["listed_at"], now),
@@ -454,8 +600,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "geo_precision": row["geo_precision"],
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
-        "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,
-        "lng": float(row["lng"]) if disclosed and row["lng"] is not None else None,
+        "lat": _point(row["lat"], exact=disclosed, ceiling=ceiling),
+        "lng": _point(row["lng"], exact=disclosed, ceiling=ceiling),
         "location_disclosed": disclosed,
         # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
         # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
@@ -474,6 +620,11 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # photograph is delivered beside a null (spec F, "API response leakage").
         "photo_captions": [caption if url is not None else ""
                            for url, caption in zip(urls, captions, strict=True)],
+        # Per-buyer disclosure plan Task 9: every non-photo asset this SAME caller could fetch
+        # through `read_document` right now -- `_documents`'s own filter, already applied by the
+        # caller (`get_listing`) before this dict is built. `[]`, never `None`, for a caller that
+        # supplied nothing (`list_listings`, which renders no document UI at all).
+        "documents": documents or [],
     }
 
 
@@ -497,8 +648,8 @@ def _parse_limit(raw: str | None) -> int | None:
     return value if 1 <= value <= MAX_LIMIT else None
 
 
-@router.get("/listings", dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def list_listings(request: Request) -> Response:
+@router.get("/listings")
+async def list_listings(request: Request, principal: Reader) -> Response:
     limit = _parse_limit(request.query_params.get("limit"))
     if limit is None:
         return _error("BAD_REQUEST", "Invalid limit.", 400)
@@ -518,10 +669,19 @@ async def list_listings(request: Request) -> Response:
         except ValueError:
             return _error("BAD_REQUEST", "Invalid cursor.", 400)
 
-    # One key per (market, limit) — after I1 above, the two inputs that change a FIRST page. The
-    # list is published-only and carries no per-account field, so every member sees the same bytes
-    # and the cache is safe to share across principals; if a later task adds a per-account field to
-    # this payload, this key must gain the account id or the cache must go.
+    # One key per (market, limit, buyer) — after I1 above, the two market/limit inputs that change
+    # a FIRST page, PLUS the buyer's own account id since the per-buyer disclosure plan's Task 8
+    # (2026-09-18). This line used to read "the list is published-only and carries no per-account
+    # field, so every member sees the same bytes and the cache is safe to share across principals;
+    # if a later task adds a per-account field to this payload, this key must gain the account id
+    # or the cache must go" -- Task 8 is that later task: `serialise` now applies THIS caller's own
+    # capabilities to name/location/revenue/photos, so two buyers can receive two different bodies
+    # for the identical (market, limit). Without the account id here, a buyer holding an APPROVED
+    # grant would write their own disclosed value into a cache entry every OTHER buyer reads for up
+    # to `LIST_TTL_S` — "leave a field unguarded and it leaks to every buyer" at the cache layer
+    # rather than at the capability check itself. `drop_list_cache`/`drop_list_cache_quietly`
+    # (`app/cache.py`) need no change: both invalidate by a WILDCARD scan over the whole
+    # `listings:v1:*` prefix, which still matches every one of these longer keys.
     #
     # Only the first page is cached (review round 2, M2). `decode_cursor` accepts any ISO timestamp
     # paired with any UUID and nothing rate-limits this route, so a cacheable cursor page let one
@@ -539,7 +699,7 @@ async def list_listings(request: Request) -> Response:
     # run by hand in the api container, for which 60 s was a shorter wait than the `railway ssh`
     # session that seeded it.
     first_page = raw_cursor is None
-    cache_key = f"{LIST_CACHE_PREFIX}{market or ''}::{limit}"
+    cache_key = f"{LIST_CACHE_PREFIX}{market or ''}::{limit}::{principal.account_id}"
     # One binding for both ends of the cache (final review M9): the read below and the write at
     # the end of this function must not be able to reach two different clients.
     cache = sync_redis() if first_page else None
@@ -567,6 +727,15 @@ async def list_listings(request: Request) -> Response:
         # Task B7: Fetch community context data for the page in one batched query
         page_ids = [str(row["id"]) for row in page]
 
+        # Per-buyer disclosure plan Task 8 (directive §23): ONE extra query for the WHOLE page,
+        # never one per listing -- `authorized_capabilities_bulk` (Task 3) is built for exactly
+        # this call shape. `caps[listing_id]` is `frozenset()` for every listing this buyer holds
+        # no active grant for, which is what makes it safe to pass unconditionally below.
+        caps = authorized_capabilities_bulk(
+            conn, buyer_account_id=str(principal.account_id),
+            listings=[(str(row["id"]), row.get("seller_id")) for row in page],
+        )
+
         # Fetch active vintages and registry for community_rows
         with conn.cursor() as cur:
             cur.execute("SELECT dataset_key, vintage FROM active_vintage")
@@ -580,7 +749,8 @@ async def list_listings(request: Request) -> Response:
         community_data = community_rows(conn, page_ids, active=active, registry=registry)
 
     body = {
-        "items": [serialise(row, now, community=community_data.get(str(row["id"]))) for row in page],
+        "items": [serialise(row, now, community=community_data.get(str(row["id"])),
+                            capabilities=caps[str(row["id"])]) for row in page],
         "next_cursor": encode_cursor(page[-1]["listed_at"], UUID(str(page[-1]["id"]))) if more else None,
     }
     payload = json.dumps(body)
@@ -606,27 +776,35 @@ def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[str | None], str] | None:
-    """The `photos` AND the authoritative privacy setting of one published listing, or None when
-    there is no such listing.
+def _published_photos_and_visibility(conn: Any, listing_id: str) -> tuple[list[str | None], str, str | None] | None:
+    """The `photos`, the authoritative privacy setting, AND the seller's account id of one
+    published listing, or None when there is no such listing.
 
-    TWO columns, not `_SELECT`'s thirty-odd and its two PostGIS accessors (review round 2, M6): the
-    photo route uses nothing else, and a query that says what the route means cannot drift into
+    THREE columns, not `_SELECT`'s thirty-odd and its two PostGIS accessors (review round 2, M6):
+    the photo route uses nothing else, and a query that says what the route means cannot drift into
     reading something it should not. The setting is read in the SAME statement because spec C.7
     row 1 makes it the first input to every delivery decision — and a second query for it is a
-    second chance to be reading a different listing's."""
+    second chance to be reading a different listing's.
+
+    `seller_id` joined Task 7 of the per-buyer disclosure plan: `has_capability` takes it to refuse
+    treating a seller as their own buyer (`app/disclosure/access.py`'s own guard), and reading it
+    HERE keeps this a single statement rather than a second round trip that could answer for a
+    listing whose seller changed between the two reads (this product has no ownership-transfer
+    feature, but the shape matches every other read in this function on principle)."""
     parsed = _parsed_uuid(listing_id)
     if parsed is None:
         return None
-    rows = _rows(conn, "SELECT photos, identifiable_content_visibility FROM listing"
+    rows = _rows(conn, "SELECT photos, identifiable_content_visibility, seller_id FROM listing"
                        " WHERE id = %s AND status = 'published'", (parsed,))
     if not rows:
         return None
-    return photo_list(rows[0]["photos"]), str(rows[0]["identifiable_content_visibility"])
+    seller_id = rows[0]["seller_id"]
+    return (photo_list(rows[0]["photos"]), str(rows[0]["identifiable_content_visibility"]),
+            None if seller_id is None else str(seller_id))
 
 
-@router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def get_listing(listing_id: str) -> Response:
+@router.get("/listings/{listing_id}")
+async def get_listing(listing_id: str, principal: Reader) -> Response:
     with closing(sync_conn()) as conn, conn:
         row = _published(conn, listing_id)
     if row is None:
@@ -646,8 +824,19 @@ async def get_listing(listing_id: str) -> Response:
             registry = {r[0]: dict(zip(reg_cols, r)) for r in cur.fetchall()}
 
         community_data = community_rows(conn, [str(row["id"])], active=active, registry=registry)
+        # Per-buyer disclosure plan Task 8 (directive §23): ONE single-listing capability lookup —
+        # the detail route's own shape of the same authorization boundary the list route's bulk
+        # call uses.
+        caps = authorized_capabilities(conn, listing_id=str(row["id"]), seller_id=row.get("seller_id"),
+                                       buyer_account_id=str(principal.account_id))
+        # Task 9: the SAME connection and the SAME `caps`, before either closes -- one more indexed
+        # query (`listing_asset_kind_idx`), filtered to what this caller's own capabilities and the
+        # listing's `documents_disclosed` ceiling actually admit.
+        documents = _documents(conn, str(row["id"]), capabilities=caps,
+                               ceiling_open=bool(row.get("documents_disclosed")))
 
-    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"]))))
+    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"])),
+                                  capabilities=caps, documents=documents))
 
 
 def _object_bytes(key: str) -> bytes | None:
@@ -686,9 +875,8 @@ def _privacy_for(conn: Any, listing_id: str, entry: str) -> record.PrivacyRow | 
     return row if row is not None and str(row.listing_id) == str(listing_id) else None
 
 
-@router.api_route("/listings/{listing_id}/photos/{n}", methods=["GET", "HEAD"],
-                  dependencies=[Depends(REQUIRE_LISTING_READ)])
-async def get_listing_photo(listing_id: str, n: int, request: Request) -> Response:
+@router.api_route("/listings/{listing_id}/photos/{n}", methods=["GET", "HEAD"])
+async def get_listing_photo(listing_id: str, n: int, request: Request, principal: Reader) -> Response:
     """The ONE buyer bytes route. Every query parameter is ignored for resolution: `?variant=`,
     `?v=` and anything else a caller invents cannot change what this returns (directive 20,
     "alternate image endpoints").
@@ -699,17 +887,35 @@ async def get_listing_photo(listing_id: str, n: int, request: Request) -> Respon
     body" is a claim, and declaring both methods is what makes it true rather than a comment that
     says Starlette will handle it.
 
-    ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface."""
+    ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface.
+
+    **This is the door directive §9's last line is about**: "Direct access to the original asset
+    URL must NOT bypass authorization." A caller reaching this route by its exact positional URL —
+    guessed, bookmarked, or replayed — asks its OWN authorization here, every time, from the
+    database, never from anything the request carries; the URL names a POSITION (`n`), never a
+    storage key, and nothing about which bytes a prior request received changes what THIS one
+    resolves to. `principal` REPLACES the router-level `dependencies=[Depends(REQUIRE_LISTING_READ)]`
+    this route used to declare (Task 7 of the per-buyer disclosure plan) rather than sitting beside
+    it: both spellings are `Depends` on the SAME `REQUIRE_LISTING_READ` object, so keeping both
+    would make `route.dependant.dependencies` carry the guard twice and fail
+    `tests/api/test_listings.py::test_the_listings_routes_are_guarded_not_public`'s `guards == [...]`
+    pin — `app/api/seller_listings.py::read_document` is the existing precedent for a `Reader`
+    parameter being the route's ONLY guard."""
     with closing(sync_conn()) as conn, conn:
         found = _published_photos_and_visibility(conn, listing_id)
         if found is None:
             return _error("NOT_FOUND", "No such listing.", 404)
-        photos, visibility = found
+        photos, visibility, seller_id = found
         entry = photos[n - 1] if 1 <= n <= len(photos) else None
         if entry is None:
             return _error("NOT_FOUND", "No such photograph.", 404)
+        # Fails closed by construction (directive §19): `has_capability` returns False for every
+        # input it cannot prove authorized, so an absent/expired/wrong-capability grant reaches
+        # `buyer_variant` as `authorized=False` — the SAME answer this route always gave.
+        authorized = has_capability(conn, listing_id=listing_id, seller_id=seller_id,
+                                    buyer_account_id=str(principal.account_id), capability="UNREDACTED_IMAGES")
         variant = buyer_variant(visibility, _privacy_for(conn, listing_id, entry), entry,
-                                seed_digests().get(entry))
+                                seed_digests().get(entry), authorized=authorized)
         if variant is None:
             return _error("NOT_FOUND", "No such photograph.", 404)
         if not variant.from_disk:

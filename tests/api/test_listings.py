@@ -69,6 +69,26 @@ def _squashed(value: object) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
 
 
+def _grant(conn: Any, member: Any, listing_id: str, buyer_id: str, *, level: str = "FULL_CONFIDENTIAL") -> None:
+    """Per-buyer disclosure plan Task 8 (2026-09-18): a directly-INSERTed APPROVED `request` row,
+    `tests/api/test_buyer_photo_delivery.py::_grant`'s own shape. This file's tests are about
+    `serialise`'s OWN field-level gating (does a flag+capability pair reach the payload) — the
+    request/decide LIFECYCLE is already proved end to end by `tests/disclosure/test_requests.py`
+    and `tests/api/test_listings_disclosure.py` — so the grant is written straight at the table
+    those routes write, through a SECOND `member(...)` call rather than hand-inserting an `account`
+    row: `_insert`'s own listings (unlike `test_listings_disclosure.py`'s) carry no `seller_id` at
+    all, and `authorized_capabilities`'s own query never reads `seller_user_id` back (Task 3's own
+    docstring), so any real account satisfies the column's FK."""
+    seller_id, _cookies, _headers = member(("seller",), email=f"grant-seller-{uuid4().hex[:8]}@example.org")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status,"
+            " approved_disclosure_level, reviewed_at, reviewed_by)"
+            " VALUES (%s,%s,%s,'APPROVED',%s,now(),%s)",
+            (listing_id, buyer_id, seller_id, level, seller_id),
+        )
+
+
 async def test_anonymous_gets_the_generic_401_body(client: Any, conn: Any, redis: Any) -> None:
     r = await client.get("/api/listings")
     assert r.status_code == 401
@@ -172,11 +192,16 @@ async def test_an_undisclosed_location_hides_the_phone_number(
 async def test_a_disclosed_location_returns_the_phone_number(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
-    """The other half of A-L5.1 — every seeded hospital is this row."""
+    """The other half of A-L5.1 — every seeded hospital is this row.
+
+    Per-buyer disclosure plan Task 8 (2026-09-18): the ceiling (`disclosed=True`) is a
+    precondition now, not the whole answer — a buyer additionally needs the `EXACT_LOCATION`
+    capability (directive §8/§24), granted here directly (`_grant`)."""
     stored = "(512) 555-0187"
     listing_id = _insert(conn, disclosed=True, phone=stored)
-    _, cookies, headers = member()
+    buyer_id, cookies, headers = member()
     auth = auth_headers(cookies, headers)
+    _grant(conn, member, listing_id, buyer_id, level="EXACT_LOCATION")
     assert (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()["phone"] == stored
     assert (await client.get("/api/listings", headers=auth)).json()["items"][0]["phone"] == stored
 
@@ -184,10 +209,14 @@ async def test_a_disclosed_location_returns_the_phone_number(
 async def test_a_disclosed_name_is_returned_verbatim_on_both_endpoints(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
-    """A-L5: `name_disclosed` true is John's eighteen demo hospitals — the stored name, as stored."""
+    """A-L5: `name_disclosed` true is John's eighteen demo hospitals — the stored name, as stored.
+
+    Per-buyer disclosure plan Task 8 (2026-09-18): the ceiling alone no longer reaches a buyer
+    with no grant — this test now grants `IDENTITY` directly (`_grant`)."""
     listing_id = _insert(conn, name="Northside Animal Hospital", slug="northside_animal_hospital")
-    _, cookies, headers = member()
+    buyer_id, cookies, headers = member()
     auth = auth_headers(cookies, headers)
+    _grant(conn, member, listing_id, buyer_id, level="IDENTITY")
     one = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
     assert one["name"] == "Northside Animal Hospital"
     assert one["name_disclosed"] is True
@@ -458,8 +487,14 @@ def test_serialise_handles_photos_arriving_as_a_json_string() -> None:
 def test_serialise_omits_a_point_a_disclosed_listing_never_had() -> None:
     """`disclosed and lat is not None` — the combination `disclosed=True, geom NULL`. Every
     inserted row in this file has a point, so this arm is only reachable directly. A seller's
-    listing in Wave 2b will be exactly this shape before it is geocoded (pre-flight C2)."""
-    body = serialise(_row(lat=None, lng=None), datetime(2026, 9, 6, tzinfo=UTC))
+    listing in Wave 2b will be exactly this shape before it is geocoded (pre-flight C2).
+
+    Per-buyer disclosure plan Task 8 (2026-09-18): `capabilities` defaults to the empty set, which
+    fails closed exactly like every other caller that computes no capabilities — this test is about
+    the lat/lng None-safety branch specifically, so it grants `EXACT_LOCATION` directly to reach
+    it, matching the ceiling `_row()`'s own default already leaves open."""
+    body = serialise(_row(lat=None, lng=None), datetime(2026, 9, 6, tzinfo=UTC),
+                     capabilities=frozenset({"EXACT_LOCATION"}))
     assert body["lat"] is None and body["lng"] is None
     assert body["location_disclosed"] is True
     assert body["street"] == "1 Main St"
@@ -646,11 +681,23 @@ async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn:
     # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
     # listing must carry at least one real photograph — a card with none shows nothing at all.
     assert all(any(p for p in item["photos"]) for item in items)
-    assert all(item["lat"] is not None and item["lng"] is not None for item in items)
     assert {item["market"] for item in items} >= {"Dallas, TX", "Austin, TX", "Atlanta, GA"}
-    # A-L5: John's demo hospitals show their names on QA.
-    assert all(item["name_disclosed"] is True for item in items)
-    assert "6666 Dallas Veterinary Specialist Hospital" in {item["name"] for item in items}
+    # Per-buyer disclosure (Task 8, corrected 2026-09-19): the seeds' OWN ceiling is open (D8/A-L5,
+    # both flags true) and no buyer here holds a grant, so this caller gets the PUBLIC tier —
+    # directive §2/§11's "approximate map representation", the point coarsened to about 1.1 km —
+    # while the exact point and the real name stay behind a grant. Task 8's first cut withheld the
+    # point entirely, which drew no pin for anyone on any listing; `test_geo_wire.py` caught it.
+    # Every hospital must still appear ON the map, which is what a marketplace browse is for.
+    assert all(item["lat"] is not None and item["lng"] is not None for item in items), \
+        "an open ceiling must still put every seeded hospital on the map"
+    assert all(item["lat"] == round(item["lat"], 2) and item["lng"] == round(item["lng"], 2)
+               for item in items), "and at the approximate precision, not the exact one"
+    assert all(item["name_disclosed"] is False for item in items)
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing WHERE source = 'seed' AND geom IS NOT NULL")
+        assert cur.fetchone()[0] == 29, "the seeder must have written a real geocoded point for every hospital"
+        cur.execute("SELECT 1 FROM listing WHERE name = %s", ("6666 Dallas Veterinary Specialist Hospital",))
+        assert cur.fetchone() is not None, "the seeder must have written this hospital's real name"
 
 
 async def test_a_photograph_of_a_seeded_hospital_is_really_served(
@@ -724,11 +771,15 @@ async def test_a_disclosed_revenue_reaches_a_buyer_and_a_hidden_one_does_not(
 ) -> None:
     """D22 end to end (SL3 review L8). Every direct `serialise` test exercised the blanked arm and
     every planted row defaulted the flag off, so no test covered `rev` actually reaching a buyer —
-    which is what all eighteen demo hospitals do."""
+    which is what all eighteen demo hospitals do.
+
+    Per-buyer disclosure plan Task 8 (2026-09-18): the "shown" listing additionally needs the
+    buyer to hold `FINANCIALS` (directive §1's own example) — granted here directly (`_grant`)."""
     shown = _insert(conn)
     hidden = _insert(conn, rev_disclosed=False)
-    _, cookies, headers = member()
+    buyer_id, cookies, headers = member()
     auth = auth_headers(cookies, headers)
+    _grant(conn, member, shown, buyer_id, level="FINANCIALS")
 
     assert (await client.get(f"/api/listings/{shown}", headers=auth)).json()["rev"] == 1500000
     assert (await client.get(f"/api/listings/{hidden}", headers=auth)).json()["rev"] is None

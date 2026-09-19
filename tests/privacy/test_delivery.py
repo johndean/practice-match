@@ -97,6 +97,81 @@ def test_a_stale_flag_changes_nothing_the_buyer_sees() -> None:
     assert buyer_variant("NOT_SHOW", flagged, "x") == buyer_variant("NOT_SHOW", row, "x")
 
 
+#: --- Per-buyer disclosure plan (2026-09-18), Task 7: `buyer_variant` grows a buyer dimension ---
+#:
+#: `authorized` defaults False, and every test above this line omits the argument entirely -- which
+#: is the proof, not an assumption, that the live contract survives: `authorized=False` must be
+#: byte-for-byte the function this file already pinned, or the 176-cell matrix above would itself
+#: start failing. The tests below are the NEW dimension only.
+
+
+def test_not_show_with_authorization_serves_the_display_derivative() -> None:
+    """Directive §9, first half: "If a seller authorizes unredacted images for Buyer A: Buyer A may
+    receive the authorized version" -- stated with no further condition on the listing's own
+    NOT_SHOW ceiling. The escape hatch Task 7 adds: a buyer who holds UNREDACTED_IMAGES for this
+    listing receives display even while the listing is globally NOT_SHOW."""
+    row = _row("PUBLISHED", visible=True, redacted=True)
+    got = buyer_variant("NOT_SHOW", row, str(row.asset_id), authorized=True)
+    assert got == Variant(row.display_storage_key, "d" * 64, False)
+
+
+def test_not_show_without_authorization_still_serves_only_the_redacted_derivative() -> None:
+    """Directive §9, second half, in the SAME function the first half is tested in: "Buyer B must
+    continue receiving only the permitted redacted version." This is also exactly what the 176-cell
+    matrix above already proves for `authorized`'s default -- restated here, explicitly, as the
+    other half of the A/B pairing the directive states as one sentence."""
+    row = _row("PUBLISHED", visible=True, redacted=True)
+    got = buyer_variant("NOT_SHOW", row, str(row.asset_id), authorized=False)
+    assert got == Variant(row.redacted_storage_key, "b" * 64, False)
+
+
+def test_buyer_a_and_buyer_b_on_the_same_not_show_listing_at_the_same_moment_diverge_only_by_grant() -> None:
+    """Directive §7's own critical security test, at the level `buyer_variant` can state it: ONE
+    row, ONE listing, ONE moment, two calls that differ ONLY in `authorized` -- so a future edit
+    that collapses the two paths back into one answer breaks this single test rather than requiring
+    two separate ones to both be remembered and both be right."""
+    row = _row("PUBLISHED", visible=True, redacted=True)
+    buyer_a = buyer_variant("NOT_SHOW", row, str(row.asset_id), authorized=True)
+    buyer_b = buyer_variant("NOT_SHOW", row, str(row.asset_id), authorized=False)
+    assert buyer_a == Variant(row.display_storage_key, "d" * 64, False)
+    assert buyer_b == Variant(row.redacted_storage_key, "b" * 64, False)
+    assert buyer_a != buyer_b
+
+
+def test_show_discloses_the_display_derivative_regardless_of_authorization() -> None:
+    """The OTHER half of the live contract that has to survive: "SHOW -> the display derivative" is
+    unconditional, exactly as it is today -- SHOW already discloses to every buyer (directive §8,
+    "if it controls publication/redaction of listing assets, preserve that functionality where
+    appropriate"), so a per-buyer grant only ever WIDENS what NOT_SHOW would otherwise hide and
+    never narrows what SHOW already reveals. No QA listing is SHOW today (every seed and every
+    Wave-2b default is NOT_SHOW, per this module's own docstring), so this is a property proved
+    here rather than one any live photograph currently exercises."""
+    row = _row("PUBLISHED", visible=True, redacted=True)
+    with_grant = buyer_variant("SHOW", row, str(row.asset_id), authorized=True)
+    without_grant = buyer_variant("SHOW", row, str(row.asset_id), authorized=False)
+    expected = Variant(row.display_storage_key, "d" * 64, False)
+    assert with_grant == expected
+    assert without_grant == expected
+
+
+def test_an_authorized_buyer_gets_nothing_rather_than_a_fallback_when_display_is_not_ready() -> None:
+    """Directive §19: never a fallback to something else. `SCANNED` is ready for neither variant --
+    an authorized buyer on a NOT_SHOW listing whose display derivative has not finished processing
+    gets a null slot, NEVER the redacted derivative instead (a fallback nobody asked for) and never
+    a stale answer manufactured from readiness the row does not have."""
+    row = _row("SCANNED", visible=True, redacted=True)
+    assert buyer_variant("NOT_SHOW", row, str(row.asset_id), authorized=True) is None
+
+
+def test_a_seed_entry_ignores_authorization_entirely() -> None:
+    """Spec C.10: a seed photograph has no asset row and no `request` row to hold a grant against.
+    `authorized=True` changes nothing about it in either direction -- still the disk file under
+    SHOW, still nothing under NOT_SHOW -- which is what keeps every one of John's 29 demo hospitals'
+    approved-state pixels exactly where they are."""
+    assert buyer_variant("SHOW", None, "round-rock/1.webp", "a" * 64, authorized=True) == Variant("round-rock/1.webp", "a" * 64, True)
+    assert buyer_variant("NOT_SHOW", None, "round-rock/1.webp", "a" * 64, authorized=True) is None
+
+
 def test_the_buyer_url_is_positional_and_carries_twelve_characters_of_the_content_hash() -> None:
     """Spec F: the `?v=` is a CACHE KEY and never a selector, so it is the hash of the variant the
     server decided on -- twelve characters, which is what changes the URL when a mask moves."""

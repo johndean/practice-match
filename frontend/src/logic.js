@@ -413,6 +413,8 @@ class Component extends DCLogic {
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
     if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();
+    if (this.props.requests && me && me.state === "active") this.reloadRequests();
+    if (this.props.sellerRequests && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadInbox();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });
     this.loadAdmin();
@@ -1475,6 +1477,18 @@ class Component extends DCLogic {
     return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));
   }
 
+  reloadRequests() {
+    return this.props.requests.mine().then((rows) => this.setState({ myRequests: rows }), () => this.setState({ myRequests: [] }));
+  }
+
+  reloadInbox() {
+    return this.props.sellerRequests.inbox().then((rows) => this.setState({ myInbox: rows }), () => this.setState({ myInbox: [] }));
+  }
+
+  myReqs() {
+    return this.state.myRequests !== undefined ? this.state.myRequests : (this.props.requests ? [] : this.state.requests);
+  }
+
   // A40.3 (D-C53): the ONE place the admin screen's data is read. Called on arrival
   // (componentDidMount, A40.4), on an interactive sign-in by an account that may open the
   // screen (A40.5) and on the header nav's own door (A40.6). Before this only the first
@@ -1671,7 +1685,7 @@ class Component extends DCLogic {
   sellerVals() {
     const s = this.state;
     const isWizard = s.sellerView === "wizard";
-    const inbox = s.requests.filter((r) => r.pid === "p1" || r.pid === "p7" || r.pid === "p6");
+    const inbox = s.myInbox !== undefined ? s.myInbox : (this.props.sellerRequests ? [] : s.requests.filter((r) => r.pid === "p1" || r.pid === "p7" || r.pid === "p6"));
     return {
       isDash: !isWizard, isWizard: isWizard,
       heading: isWizard ? "Create a Listing" : "My Practice Listings",
@@ -1708,8 +1722,8 @@ class Component extends DCLogic {
           pillStyle: "flex: none; font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: " + tone[0] + "; background: " + tone[1] + "; border: 1px solid " + tone[2] + ";",
           isPending: r.status === "pending", isResolved: r.status !== "pending",
           resolvedNote: r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." : "You declined this request. The buyer was told you are not engaging further.",
-          accept: () => this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) })),
-          decline: () => this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) }))
+          accept: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "approve").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) }))),
+          decline: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "deny").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) })))
         };
       })
     };
@@ -1826,8 +1840,8 @@ class Component extends DCLogic {
   detail() {
     const s = this.state;
     const p = P.filter((x) => x.id === s.detailId)[0] || P[0];
-    const sent = s.sent.indexOf(p.id) > -1 || s.requests.some((r) => r.pid === p.id);
-    const req = s.requests.filter((r) => r.pid === p.id)[0];
+    const sent = s.sent.indexOf(p.id) > -1 || this.myReqs().some((r) => r.pid === p.id);
+    const req = this.myReqs().filter((r) => r.pid === p.id)[0];
     const unlocked = req && req.status === "accepted";
     const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable";
     const docIcon = (open) =>
@@ -2453,10 +2467,10 @@ class Component extends DCLogic {
       sendInterest: () => {
         if (!s.interestMsg.trim()) return this.setState({ interest: "error" });
         const p = P.filter((x) => x.id === s.detailId)[0];
-        this.setState({
+        (this.props.requests ? this.props.requests.create(s.detailId, s.interestMsg).then(() => this.reloadRequests(), () => {}) : Promise.resolve()) && this.setState({
           interest: "sent",
           sent: s.sent.concat([s.detailId]),
-          requests: [{ id: "n" + Date.now(), pid: s.detailId, buyer: s.me.name, status: "pending", when: "Today", msg: s.interestMsg }].concat(s.requests)
+          requests: this.props.requests ? s.requests : [{ id: "n" + Date.now(), pid: s.detailId, buyer: s.me.name, status: "pending", when: "Today", msg: s.interestMsg }].concat(s.requests)
         });
       },
       modal: {
@@ -2475,7 +2489,7 @@ class Component extends DCLogic {
       isRequests: s.screen === "requests",
       noRequests: s.requests.length === 0,
       goBrowseBtn: this.go("browse"),
-      reqList: s.requests.map((r) => {
+      reqList: this.myReqs().map((r) => {
         const p = P.filter((x) => x.id === r.pid)[0] || P[0];
         const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : "Declined";
         const tone = r.status === "pending" ? ["#003a70", "#deecf7", "#deecf7"] : r.status === "accepted" ? ["#ffffff", "#003a70", "#003a70"] : ["#494949", "#ffffff", "#494949"];
