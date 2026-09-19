@@ -2381,7 +2381,11 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
      "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
      "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty", "Forty-one", "Forty-two",
-     "Forty-three"))}
+     # A52 (2026-09-19) made forty-three families, and the discriminator below reads
+     # NUMBER_WORDS[family_count + 1] to prove the gate still fails on a count one too high — so
+     # the table must always run at least one word PAST the real count. Extended here for the
+     # fourth time (A18, A27, A24 are the three before it), the way each of those did.
+     "Forty-three", "Forty-four", "Forty-five"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
