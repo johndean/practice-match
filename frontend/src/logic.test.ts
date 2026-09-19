@@ -7180,3 +7180,148 @@ describe('the Market snapshot AREA card prefers the metro’s own published figu
       .toBe('The metro’s own figures, with the Census areas the map shades beneath them');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A53 (John's ruling, 2026-09-19) — a Revoke control on an already-approved row in the seller's
+// inbox, and a distinct "revoked" state on the buyer's side. Characterises the render values
+// directly: `sellerVals()`/`detail()`/`renderVals()` read whatever `state.myInbox`/
+// `state.myRequests` already holds, in the design's own status vocabulary — the same shape
+// `toDesignRow` produces (`src/requests/buyer.test.ts` covers that mapping on its own side).
+// ---------------------------------------------------------------------------------------
+describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked state', () => {
+  const ROW = (over: Record<string, unknown> = {}) => ({ id: 'r1', pid: 'p1', buyer: 'Dr. Rachel Mendes', status: 'pending', when: 'Aug 29', msg: 'Interested.', ...over });
+
+  describe('the seller\'s own inbox (sellerVals)', () => {
+    it('canRevoke is true only for an already-accepted row', () => {
+      const c: any = new Component({});
+      c.setState({
+        auth: true, screen: 'seller',
+        myInbox: [ROW({ id: 'r1', status: 'pending' }), ROW({ id: 'r2', status: 'accepted' }), ROW({ id: 'r3', status: 'declined' }), ROW({ id: 'r4', status: 'revoked' })]
+      });
+      expect(c.sellerVals().inbox.map((r: any) => r.canRevoke)).toEqual([false, true, false, false]);
+    });
+
+    it('the pill label reads "Revoked" for a revoked row, never "Declined" — the seller\'s own action, correctly named', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'revoked' })] });
+      expect(c.sellerVals().inbox[0].statusLabel).toBe('Revoked');
+    });
+
+    it('the pending/accepted/declined pill labels are byte for byte unchanged', () => {
+      const c: any = new Component({});
+      c.setState({
+        auth: true, screen: 'seller',
+        myInbox: [ROW({ id: 'r1', status: 'pending' }), ROW({ id: 'r2', status: 'accepted' }), ROW({ id: 'r3', status: 'declined' })]
+      });
+      expect(c.sellerVals().inbox.map((r: any) => r.statusLabel)).toEqual(['New', 'Engaged', 'Declined']);
+    });
+
+    it('resolvedNote reads the seller\'s own action honestly for a revoked row, and the accepted/declined sentences are byte for byte unchanged', () => {
+      const c: any = new Component({});
+      c.setState({
+        auth: true, screen: 'seller',
+        myInbox: [ROW({ id: 'r1', status: 'accepted' }), ROW({ id: 'r2', status: 'declined' }), ROW({ id: 'r3', status: 'revoked' })]
+      });
+      const [accepted, declined, revoked] = c.sellerVals().inbox;
+      expect(accepted.resolvedNote).toBe('You released the financial packet and floor plan to this buyer.');
+      expect(declined.resolvedNote).toBe('You declined this request. The buyer was told you are not engaging further.');
+      expect(revoked.resolvedNote).toBe('You revoked this buyer\'s access. The buyer no longer sees the financial packet or floor plan.');
+    });
+
+    it('revoke(), with an adapter, calls sellerRequests.revoke(id) and reloads the inbox on success', async () => {
+      const revoke = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([ROW({ id: 'r1', status: 'revoked' })]);
+      const c: any = new Component({ sellerRequests: { inbox, revoke } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'accepted' })] });
+      await c.sellerVals().inbox[0].revoke();
+      expect(revoke).toHaveBeenCalledWith('r1');
+      expect(inbox, 'reloads the inbox on success').toHaveBeenCalledTimes(1);
+      expect(c.state.myInbox[0].status).toBe('revoked');
+    });
+
+    it('revoke(), with an adapter, ALSO reloads the inbox when the server refuses — A52.4\'s own "reload on either settlement" rule', async () => {
+      const revoke = vi.fn().mockRejectedValue(new Error('This request is not approved.'));
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, revoke } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'accepted' })] });
+      await c.sellerVals().inbox[0].revoke();
+      expect(revoke).toHaveBeenCalledWith('r1');
+      expect(inbox, 'reloads the inbox even on a refusal').toHaveBeenCalledTimes(1);
+    });
+
+    it('revoke(), with NO adapter, is the design\'s own optimistic local transition, and the re-rendered row is honest', () => {
+      // The mapped inbox row (like the design's own accept/decline rows) carries no `id` at all —
+      // the callback closures capture `r.id` internally but the template never displays one — so
+      // the row is re-found by POSITION, not by an `id` field that does not survive the map.
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'seller' }); // the design's own r2/p7/accepted fixture
+      const idx = c.sellerVals().inbox.findIndex((r: any) => r.canRevoke);
+      expect(idx, 'the design\'s own fixture has exactly one accepted row').toBeGreaterThanOrEqual(0);
+      c.sellerVals().inbox[idx].revoke();
+      expect(c.state.requests.filter((x: any) => x.id === 'r2')[0].status).toBe('revoked');
+      const after = c.sellerVals().inbox[idx];
+      expect(after.statusLabel).toBe('Revoked');
+      expect(after.canRevoke, 'cannot revoke a request twice').toBe(false);
+    });
+  });
+
+  describe('the buyer\'s detail screen (detail())', () => {
+    it('unlocked correctly falls out for a revoked request — the document locks and the disclosure text re-lock for free', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'detail', detailId: 'p1', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'revoked' })] });
+      const d = c.detail();
+      const floorPlan = d.docs[1];
+      expect(floorPlan.name).toBe('Floor plan');
+      expect(floorPlan.isLocked, 'the floor plan re-locks once revoked').toBe(true);
+      expect(floorPlan.isOpen).toBe(false);
+      expect(d.disclosure).toContain('Documents marked locked open only with seller approval.');
+      expect(d.disclosure).not.toContain('You have been granted access');
+    });
+
+    it('sentLabel/sentNote read the fourth, honest word for a revoked request', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'detail', detailId: 'p1', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'revoked' })] });
+      const d = c.detail();
+      expect(d.sentLabel).toBe('Seller revoked your access');
+      expect(d.sentNote).toBe('The financial packet and floor plans are locked again.');
+    });
+
+    it('the accepted/declined/no-request sentLabel and sentNote are byte for byte unchanged', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'detail', detailId: 'p1', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'accepted' })] });
+      expect(c.detail().sentLabel).toBe('Seller accepted your request');
+      expect(c.detail().sentNote).toBe('Financial packet and floor plans are now open to you.');
+
+      c.setState({ myRequests: [ROW({ id: 'r2', pid: 'p1', status: 'declined' })] });
+      expect(c.detail().sentLabel).toBe('Seller declined this request');
+      expect(c.detail().sentNote).toBe('The seller is not engaging further on this listing.');
+
+      c.setState({ myRequests: [] });
+      expect(c.detail().sentLabel).toBe('Request sent — awaiting the seller');
+      expect(c.detail().sentNote).toBe('Sellers usually respond within a week.');
+    });
+  });
+
+  describe('the buyer\'s "My Requests" list (reqList)', () => {
+    it('a revoked request reads its own pill and hint, never "Declined"', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'requests', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'revoked' })] });
+      const row = c.renderVals().reqList[0];
+      expect(row.statusLabel).toBe('Access revoked');
+      expect(row.hint).toBe('The seller revoked your access. The financial packet and floor plan are locked again.');
+    });
+
+    it('the pending/accepted/declined labels and hints are byte for byte unchanged', () => {
+      const c: any = new Component({});
+      c.setState({
+        auth: true, screen: 'requests',
+        myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'pending' }), ROW({ id: 'r2', pid: 'p7', status: 'accepted' }), ROW({ id: 'r3', pid: 'p6', status: 'declined' })]
+      });
+      const rows = c.renderVals().reqList;
+      expect(rows.map((r: any) => r.statusLabel)).toEqual(['Awaiting seller', 'Seller engaged', 'Declined']);
+      expect(rows[0].hint).toBe('The seller has not responded yet. Nothing further is disclosed until they do.');
+      expect(rows[1].hint).toBe('Financial packet and floor plan are open to you on this listing.');
+      expect(rows[2].hint).toBe('This seller is not engaging further. The listing may already be under contract.');
+    });
+  });
+});

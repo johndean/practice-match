@@ -82,6 +82,9 @@ describe('makeSellerRequestsAdapter', () => {
     expect(denied.reply).toBe('Under contract with another buyer.');
   });
 
+  // A53 (John's ruling, 2026-09-19): REVOKED reads as the design's own fourth word, `"revoked"`,
+  // in the seller's own re-read inbox row too — not `"declined"`, which would misreport the
+  // seller's own action back to them.
   it('revoke() posts an empty JSON body to .../revoke, with the CSRF header', async () => {
     const { fn, calls } = fakeFetch({ status: 200, body: ROW({ status: 'REVOKED' }) });
     const adapter = makeSellerRequestsAdapter(fn);
@@ -90,7 +93,7 @@ describe('makeSellerRequestsAdapter', () => {
     expect(calls[0].init.method).toBe('POST');
     expect(calls[0].init.headers['X-CSRF-Token']).toBe('tok');
     expect(JSON.parse(calls[0].init.body!)).toEqual({});
-    expect(result.status).toBe('declined');
+    expect(result.status).toBe('revoked');
   });
 
   it('a refusal with the A5 envelope becomes a RequestError carrying the server\'s own code and message', async () => {

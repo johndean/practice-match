@@ -56,7 +56,7 @@ export interface DesignRequestRow {
   id: string;
   pid: string;
   buyer: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: 'pending' | 'accepted' | 'declined' | 'revoked';
   msg: string;
   // Optional, never absent-means-hidden: the design's own fixture omits it outright for a PENDING
   // row (`logic.js`'s `r1`), and `toDesignRow`'s design-shaped arm defaults a missing one to `''`
@@ -66,15 +66,18 @@ export interface DesignRequestRow {
   when: string;
 }
 
-/** The design's own three-word vocabulary (`logic.js`'s `sellerVals`/`reqList`: `"pending"` |
- *  `"accepted"` | `"declined"`), never the API's four. `REVOKED -> "declined"` is the plan's own
- *  documented default ("What needs a design ruling from John, and what is buildable now",
- *  2026-09-18-per-buyer-disclosure.md): V3 draws no fourth state for "approved, then revoked", and
- *  a revoked grant really is, honestly, a buyer this listing no longer discloses to — the same
- *  words a flatly denied one gets. A distinct "your access was revoked" sentence is recorded there
- *  as a later, separate, literal-copy amendment if John wants one; it is not invented here. */
+/** The design's own FOUR-word vocabulary (`logic.js`'s `sellerVals`/`detail`/`reqList`:
+ *  `"pending"` | `"accepted"` | `"declined"` | `"revoked"`), never the API's bare enum values
+ *  directly. Until A53 (John's ruling, 2026-09-19) `REVOKED` collapsed onto `"declined"` — the
+ *  plan's own documented default at the time ("What needs a design ruling from John, and what is
+ *  buildable now", 2026-09-18-per-buyer-disclosure.md), honest but not a sentence written for the
+ *  case. A53 composed the fourth word and the surfaces that read it (`frontend/tests/design-
+ *  amendments.ts`'s `A53_2`-`A53_6`), so this function now serves it: a revoked grant is
+ *  DIFFERENT from a flatly denied one — the buyer once had access and lost it — and the seller's
+ *  own re-read inbox row (`./seller.ts` shares this function) needs to say so about its own
+ *  action too, rather than reading "You declined this request" about a request it approved. */
 export function toDesignStatus(status: ApiRequestRow['status']): DesignRequestRow['status'] {
-  return status === 'APPROVED' ? 'accepted' : status === 'PENDING' ? 'pending' : 'declined';
+  return status === 'APPROVED' ? 'accepted' : status === 'PENDING' ? 'pending' : status === 'REVOKED' ? 'revoked' : 'declined';
 }
 
 /** `logic.js`'s own fixture date style ("Aug 29", `logic.js`'s `requests` literal) — an EXPLICIT

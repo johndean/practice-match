@@ -40,11 +40,14 @@ beforeEach(() => { document.cookie = 'pm_csrf=tok'; });
 afterEach(() => { document.cookie = 'pm_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT'; });
 
 describe('toDesignStatus', () => {
-  it('maps the API\'s four statuses onto the design\'s own three words, REVOKED as declined', () => {
+  // A53 (John's ruling, 2026-09-19): REVOKED gets its own fourth word rather than collapsing
+  // onto DENIED's "declined" — the two states read differently on both the buyer's own surfaces
+  // and the seller's own inbox (A53.2/A53.3's honest pill and resolvedNote for their own action).
+  it('maps the API\'s four statuses onto the design\'s own four words', () => {
     expect(toDesignStatus('PENDING')).toBe('pending');
     expect(toDesignStatus('APPROVED')).toBe('accepted');
     expect(toDesignStatus('DENIED')).toBe('declined');
-    expect(toDesignStatus('REVOKED')).toBe('declined');
+    expect(toDesignStatus('REVOKED')).toBe('revoked');
   });
 });
 
@@ -82,6 +85,16 @@ describe('toDesignRow', () => {
     const designRow = { id: 'r1', pid: 'p1', buyer: 'Dr. Rachel Mendes', status: 'pending' as const, msg: 'Interested in a phased transition.', when: 'Aug 29' };
     expect(toDesignRow(designRow).reply).toBe('');
   });
+
+  // A53: a revoke never sets `denial_reason` (`app/disclosure/requests.py::revoke` touches only
+  // `status`), so a revoked row's own reply is empty on the real adapter path — no reply is
+  // fabricated for an action the schema has no free-text field for, A52.6's own reasoning one
+  // status over.
+  it('a revoked row maps to the design\'s own fourth word and carries no fabricated reply', () => {
+    const row = toDesignRow(ROW({ status: 'REVOKED', denial_reason: null }));
+    expect(row.status).toBe('revoked');
+    expect(row.reply).toBe('');
+  });
 });
 
 describe('makeBuyerRequestsAdapter', () => {
@@ -111,7 +124,7 @@ describe('makeBuyerRequestsAdapter', () => {
   it('mine() reads /api/requests/mine with no CSRF header and no body, mapping every row', async () => {
     const { fn, calls } = fakeFetch({
       status: 200,
-      body: [ROW({ id: 'r1', status: 'PENDING' }), ROW({ id: 'r2', status: 'APPROVED' }), ROW({ id: 'r3', status: 'DENIED', denial_reason: 'Not engaging further.' })]
+      body: [ROW({ id: 'r1', status: 'PENDING' }), ROW({ id: 'r2', status: 'APPROVED' }), ROW({ id: 'r3', status: 'DENIED', denial_reason: 'Not engaging further.' }), ROW({ id: 'r4', status: 'REVOKED' })]
     });
     const adapter = makeBuyerRequestsAdapter(fn);
     const result = await adapter.mine();
@@ -120,7 +133,7 @@ describe('makeBuyerRequestsAdapter', () => {
     expect(calls[0].init.headers['X-CSRF-Token']).toBeUndefined();
     expect(calls[0].init.headers['Content-Type']).toBeUndefined();
     expect(calls[0].init.body).toBeUndefined();
-    expect(result.map((r) => r.status)).toEqual(['pending', 'accepted', 'declined']);
+    expect(result.map((r) => r.status)).toEqual(['pending', 'accepted', 'declined', 'revoked']);
     expect(result[2].reply).toBe('Not engaging further.');
   });
 
