@@ -497,6 +497,9 @@ describe('local design amendments (spec D15)', () => {
     // A50 was `feat/pet-rate-provenance`'s and is above this block since that branch merged
     // (Task RELEASE-0126, 2026-09-15).
     'A51.1', 'A51.2',
+    // A52 — per-buyer disclosure, frontend wiring (Task 14 of the 2026-09-18-per-buyer-disclosure
+    // plan, 2026-09-19). Seven literal edits, appended last, as every family is; none chained.
+    'A52.1', 'A52.2', 'A52.3', 'A52.4', 'A52.5', 'A52.6', 'A52.7',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -709,7 +712,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(400);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(407);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -8621,6 +8621,215 @@ const A51_2: Amendment = {
   count: 1
 };
 
+/**
+ * A52 — PER-BUYER DISCLOSURE, FRONTEND WIRING (Task 14 of
+ * docs/superpowers/plans/2026-09-18-per-buyer-disclosure.md; directive
+ * docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md §5, §6). The interest
+ * modal, "My Requests" and the seller dashboard's own buyer-request inbox — already drawn in this
+ * design, already reachable at approved states `interest-modal`, `requests`, `seller-dash` — read
+ * and write the real per-buyer access-request API (Tasks 1-13 of the same plan) instead of the
+ * design's own shared `s.requests` fixture, on ADAPTER PRESENCE and never on data: A16.1's rule,
+ * applied to a fixture this design has carried since before that family existed.
+ *
+ * Task 14's own brief called this "a SCRIPT-ONLY change inside logic.js ... not a
+ * LOCAL_AMENDMENTS.md entry any more than A16.1's own ternary is one." That reading does not
+ * survive contact with `frontend/tests/app-generated.test.ts:77`
+ * (`portLogic(readFileSync(DC))` must equal `src/logic.js` byte for byte) — `logic.js` is
+ * GENERATED from this file's own script block, and "script-only" in every amendment above has
+ * always meant "edits the script rather than the template, so it paints no pixels," never "is not
+ * an amendment" (A16.1 and A40.3-A40.6 are themselves amendments, both script-only, both listed
+ * in `LOCAL_AMENDMENTS.md`). Every one of the seven entries below is script-only in exactly that
+ * sense: none touches a template region, none moves a pixel, and each is measured to prove it.
+ *
+ * SEVEN literal edits, applied last, as every family is, and none chained: every `find` occurs
+ * exactly once in the current amended design (verified against `Practice Match V3.dc.html` as it
+ * stood after A51, before this family ran) and none was introduced by an earlier amendment's
+ * `replace` — `sellerVals`, `detail()`'s `sent`/`req` and `renderVals`'s `sendInterest`/`reqList`
+ * are pristine V3, untouched by any prior family, so no `consumes`/`supersedes` token is owed to
+ * one. A52.1 and A52.2 anchor on text A16.9/A16.23 and A16.17 introduced (the seller-listings
+ * load line and the `reloadListings()` method) but neither REMOVES a byte of it — both `replace`
+ * strings carry that text forward VERBATIM before adding new lines beside or after it — which is
+ * why AMEND-GUARD's line tier (every introduced line still present in the final file) is
+ * satisfied with no declaration: nothing anchored on is taken away.
+ *
+ * A52.1/A52.2 add the loader pair `reloadRequests`/`reloadInbox` (A16.17's own shape:
+ * `this.props.X.method().then(success, failure)`, both arms settling state, never throwing) and
+ * the one small helper `myReqs()` — the three-state ternary A16.1 already uses for `myListings`
+ * (`s.myRequests !== undefined ? s.myRequests : (this.props.requests ? [] : s.requests)`), pulled
+ * into ONE method because `detail()` and `renderVals()` are two different methods that both need
+ * it, in `openDraft`/`reloadListings`'s own precedent ("the two helpers every adapter path
+ * shares," A16.16/A16.17's own doc comment) rather than the ternary being typed three times.
+ * `reloadInbox()` is gated the SAME way `reloadListings()` already is — `this.props.perms.allowed
+ * ("page.seller")`, the identical role set `request.answer_own` carries in `app/auth/
+ * permissions.py` — because a seller's inbox is exactly as seller-only a concept as the listings
+ * dashboard beside it. `reloadRequests()` is not role-gated at all: `request.read_own` is held by
+ * BOTH buyer and seller roles, "My Requests" is shown to every signed-in account in this design's
+ * own nav array today (no `page.*` permission yet filters it, the still-open A40.1/A40.2 gap), and
+ * a refusal for an account that holds neither role settles to an empty list exactly as
+ * `loadAdmin()` already does for an account with no `page.admin` — the newest such loader in this
+ * design, and the one this family follows rather than A16.9's older pre-check style, since a
+ * buyer-or-seller check has no `page.*` permission to stand in for it the way `page.seller`
+ * already stands in for `request.answer_own`.
+ *
+ * A52.3/A52.4 wire the seller inbox: A16.1's own ternary shape for the ROWS (`s.myInbox !==
+ * undefined ? s.myInbox : (this.props.sellerRequests ? [] : <the design's own three-fixture-id
+ * filter>)`), and A16.8's own shape for the two ACTIONS — accept/decline call
+ * `this.props.sellerRequests.decide(r.id, "approve" | "deny")` and reload on EITHER settlement
+ * (one promise, one outcome either way, A-SL23 (4)'s own rule against a bare fulfilment handler
+ * with an unhandled rejection sibling), with the design's own optimistic `setState` kept as the
+ * no-adapter path exactly as A16.8 kept it for Pause/Republish/Withdraw. Neither adds a Revoke
+ * action: the plan's own "What needs a design ruling from John" section (per-buyer-disclosure
+ * plan) is explicit that V3 draws no third action on an already-accepted inbox row and composing
+ * one needs his ruling the way A41-A47 needed it for the admin spec, so this family wires
+ * accept/decline only — revoke stays reachable from Task 6's own route by any other caller.
+ *
+ * A52.5/A52.7 point `detail()`'s `sent`/`req` and `renderVals`'s `reqList` at the new `myReqs()`
+ * helper instead of `s.requests` directly, so the buyer's own "My Requests" screen, the detail
+ * screen's "already sent"/"seller accepted" state and the interest modal's own subtitle (which
+ * reads `this.detail()`) all agree about the SAME buyer's SAME requests, from the SAME adapter
+ * presence check, in one place. A52.6 gives the interest modal's "Send request" button the real
+ * `POST /api/requests` call, in A16.7's own `(promise-or-Promise.resolve()) && this.setState(...)`
+ * shape: the design's own transition to "Request sent" runs unconditionally and immediately (no
+ * flash of a stale form on a fast network), the real create fires in the background and reloads
+ * `myReqs()` on success, and a refusal is swallowed with NO invented copy — the modal's only
+ * existing error slot (`v.modal?.error`, `App.vue`) reads "Add a short message so the seller knows
+ * what you are asking for," which is specifically about an EMPTY message and would be a FALSE
+ * statement about a rejection for any other reason (`ALREADY_REQUESTED`, `SELF_REQUEST`, a rate
+ * limit); reusing it for a server refusal would be inventing a wrong reason, and there is no other
+ * surface in this design to put a right one on. The gap is recorded rather than papered over, in
+ * A16.8's own words for the identical situation one screen over ("The dashboard has no error
+ * surface of its own; that gap is recorded for John").
+ *
+ * THE FIVE PIECES OF COPY (directive §17, a Global Constraint the plan itself repeats: "The
+ * existing five pieces of copy promising buyer-specific disclosure are CORRECT ... Do not change
+ * the copy") are untouched by every entry below — not one `find`/`replace` pair here touches a
+ * template region or a quoted string a member reads; all seven edit the SCRIPT alone, and the
+ * status vocabulary each maps onto is the design's own three words (`"pending"`/`"accepted"`/
+ * `"declined"`), never a new one.
+ *
+ * ZERO approved states move and NONE of `baseline-manifest.json`'s thirteen frozen hashes moves —
+ * measured the A33 method, before and after, all PNG hashes diffed — which is what "script-only"
+ * has always meant here: a change that reaches no template paints no pixel.
+ */
+const PBD_UI = {
+  date: '2026-09-19',
+  ruling: "The intended Practice Match product behavior is CONFIRMED: PER-BUYER DISCLOSURE (directive docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md, John, 2026-09-18, recorded verbatim). Before approval: buyer sees only information authorized for public/redacted access, and may request additional information. After seller approval: buyer sees ONLY the disclosure level explicitly granted to that buyer. Another buyer who has not been approved must continue seeing the redacted/public version (directive §6). Seller dashboard must provide a buyer-access area (directive §5). Task 14 of docs/superpowers/plans/2026-09-18-per-buyer-disclosure.md: the interest modal, My Requests and the seller inbox read and write the real access-request API instead of the design's own shared requests fixture, on adapter presence and never on data."
+};
+
+/** A52.1 — the bootstrap loads the buyer's own requests and, for a seller, the inbox — beside the
+ *  seller-listings load it already runs there (A16.9/A16.23's own line, carried forward whole). */
+const A52_1: Amendment = {
+  id: 'A52.1', ...PBD_UI,
+  find: '    if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();\n',
+  replace: '    if (this.props.listings && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadListings();\n'
+    + '    if (this.props.requests && me && me.state === "active") this.reloadRequests();\n'
+    + '    if (this.props.sellerRequests && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadInbox();\n',
+  count: 1
+};
+
+/** A52.2 — the three helpers every reader below shares: the two loaders, A16.17's own
+ *  `reloadListings()` shape applied to `requests`/`sellerRequests`, and `myReqs()`, A16.1's own
+ *  three-state ternary pulled into one method because `detail()` and `renderVals()` both need it. */
+const A52_2: Amendment = {
+  id: 'A52.2', ...PBD_UI,
+  find: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n',
+  replace: '  reloadListings() {\n'
+    + '    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
+    + '  }\n'
+    + '\n'
+    + '  reloadRequests() {\n'
+    + '    return this.props.requests.mine().then((rows) => this.setState({ myRequests: rows }), () => this.setState({ myRequests: [] }));\n'
+    + '  }\n'
+    + '\n'
+    + '  reloadInbox() {\n'
+    + '    return this.props.sellerRequests.inbox().then((rows) => this.setState({ myInbox: rows }), () => this.setState({ myInbox: [] }));\n'
+    + '  }\n'
+    + '\n'
+    + '  myReqs() {\n'
+    + '    return this.state.myRequests !== undefined ? this.state.myRequests : (this.props.requests ? [] : this.state.requests);\n'
+    + '  }\n',
+  count: 1
+};
+
+/** A52.3 — the seller inbox's rows come from the seller's OWN buyer requests, and from nowhere
+ *  else once an adapter is present — A16.1's own ternary, applied to the design's three-fixture-id
+ *  filter rather than to `s.sellerListings`. */
+const A52_3: Amendment = {
+  id: 'A52.3', ...PBD_UI,
+  find: '    const inbox = s.requests.filter((r) => r.pid === "p1" || r.pid === "p7" || r.pid === "p6");',
+  replace: '    const inbox = s.myInbox !== undefined ? s.myInbox : (this.props.sellerRequests ? [] : s.requests.filter((r) => r.pid === "p1" || r.pid === "p7" || r.pid === "p6"));',
+  count: 1
+};
+
+/** A52.4 — Accept and Decline call the real decide route and reload on either settlement (one
+ *  promise, one rejection handler, A-SL23 (4)'s own rule); the design's own optimistic `setState`
+ *  stands as the no-adapter path, A16.8's own shape for Pause/Republish/Withdraw. No Revoke
+ *  action is added here — the plan's own "What needs a design ruling from John" section: V3 draws
+ *  no third action on an already-accepted row, and composing one needs his ruling. */
+const A52_4: Amendment = {
+  id: 'A52.4', ...PBD_UI,
+  find: '          accept: () => this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) })),\n'
+    + '          decline: () => this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) }))',
+  replace: '          accept: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "approve").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) }))),\n'
+    + '          decline: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "deny").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) })))',
+  count: 1
+};
+
+/** A52.5 — the detail screen's "already sent"/"seller accepted"/"seller declined" state (and the
+ *  interest modal's own subtitle, which reads `this.detail()`) come from the buyer's OWN real
+ *  requests through `myReqs()` (A52.2), never the shared design fixture, once an adapter is
+ *  present. */
+const A52_5: Amendment = {
+  id: 'A52.5', ...PBD_UI,
+  find: '    const sent = s.sent.indexOf(p.id) > -1 || s.requests.some((r) => r.pid === p.id);\n'
+    + '    const req = s.requests.filter((r) => r.pid === p.id)[0];',
+  replace: '    const sent = s.sent.indexOf(p.id) > -1 || this.myReqs().some((r) => r.pid === p.id);\n'
+    + '    const req = this.myReqs().filter((r) => r.pid === p.id)[0];',
+  count: 1
+};
+
+/** A52.6 — "Send request" posts the real access request (directive §6: "may ... request access to
+ *  additional confidential information"), in A16.7's own `(promise) && this.setState(...)` shape:
+ *  the design's own transition to "Request sent" runs immediately either way, the create fires in
+ *  the background and reloads `myReqs()` on success, and a refusal is swallowed rather than
+ *  reusing the modal's one existing error slot — that slot's own copy ("Add a short message so the
+ *  seller knows what you are asking for") is specifically about an EMPTY message and would state a
+ *  wrong reason for any other refusal, and no other surface exists on this screen to put a right
+ *  one on (the gap A16.8's own doc comment records for the seller dashboard, one screen over). */
+const A52_6: Amendment = {
+  id: 'A52.6', ...PBD_UI,
+  find: '      sendInterest: () => {\n'
+    + '        if (!s.interestMsg.trim()) return this.setState({ interest: "error" });\n'
+    + '        const p = P.filter((x) => x.id === s.detailId)[0];\n'
+    + '        this.setState({\n'
+    + '          interest: "sent",\n'
+    + '          sent: s.sent.concat([s.detailId]),\n'
+    + '          requests: [{ id: "n" + Date.now(), pid: s.detailId, buyer: s.me.name, status: "pending", when: "Today", msg: s.interestMsg }].concat(s.requests)\n'
+    + '        });\n'
+    + '      },',
+  replace: '      sendInterest: () => {\n'
+    + '        if (!s.interestMsg.trim()) return this.setState({ interest: "error" });\n'
+    + '        const p = P.filter((x) => x.id === s.detailId)[0];\n'
+    + '        (this.props.requests ? this.props.requests.create(s.detailId, s.interestMsg).then(() => this.reloadRequests(), () => {}) : Promise.resolve()) && this.setState({\n'
+    + '          interest: "sent",\n'
+    + '          sent: s.sent.concat([s.detailId]),\n'
+    + '          requests: this.props.requests ? s.requests : [{ id: "n" + Date.now(), pid: s.detailId, buyer: s.me.name, status: "pending", when: "Today", msg: s.interestMsg }].concat(s.requests)\n'
+    + '        });\n'
+    + '      },',
+  count: 1
+};
+
+/** A52.7 — the buyer's own "My Requests" list reads `myReqs()` (A52.2), never `s.requests`
+ *  directly, once an adapter is present. */
+const A52_7: Amendment = {
+  id: 'A52.7', ...PBD_UI,
+  find: '      reqList: s.requests.map((r) => {',
+  replace: '      reqList: this.myReqs().map((r) => {',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -8904,5 +9113,12 @@ export function amendments(): Amendment[] {
     // divider the pristine row already carries, not one A51.1 introduced. A50 was
     // `feat/pet-rate-provenance`'s and is above this block since that branch merged (Task
     // RELEASE-0126, 2026-09-15).
-    A51_1, A51_2];
+    A51_1, A51_2,
+    // A52 — per-buyer disclosure, frontend wiring (Task 14 of the 2026-09-18-per-buyer-disclosure
+    // plan). Appended last, as every family is. None is chained: every `find` occurs exactly once
+    // in the design as A51 left it, and none was introduced by an earlier amendment's `replace` —
+    // A52.1/A52.2 anchor on A16.9/A16.23's and A16.17's own lines but carry them forward whole,
+    // which is why neither owes a `consumes`/`supersedes` token. Definition order in this file
+    // matches this list (m8).
+    A52_1, A52_2, A52_3, A52_4, A52_5, A52_6, A52_7];
 }

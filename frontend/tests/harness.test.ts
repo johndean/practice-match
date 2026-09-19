@@ -6,6 +6,7 @@ import { designAdminUserCounts, designAdminUserRows, designAdminUsersBody } from
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody, designSummarySet } from './design-summary.mjs';
 import { designListingsBody } from './design-listings.mjs';
+import { designRequestRows, designRequestsBody } from './design-requests.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
 import { Component, P } from '../src/logic.js';
@@ -442,11 +443,29 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(submitStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
   });
 
-  it('names all four collections on the local app origin, on the port the run uses', () => {
+  it('names all six collections on the local app origin, on the port the run uses', () => {
     expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users', 'http://localhost:5473/api/admin/data-sources']);
+      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users', 'http://localhost:5473/api/admin/data-sources',
+        'http://localhost:5473/api/requests/mine', 'http://localhost:5473/api/seller/requests']);
     expect(collectionStubUrls({} as NodeJS.ProcessEnv))
-      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users', 'http://localhost:5173/api/admin/data-sources']);
+      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users', 'http://localhost:5173/api/admin/data-sources',
+        'http://localhost:5173/api/requests/mine', 'http://localhost:5173/api/seller/requests']);
+  });
+
+  // A52 (Task 14, per-buyer-disclosure): the buyer's own "My Requests" list, the detail screen's
+  // `sent`/`req`/`unlocked`, and the seller inbox all read this SAME array once their adapter is
+  // present, so one oracle answers both endpoints. Neither route paginates
+  // (`app/api/requests.py::list_my_requests`, `app/api/seller_requests.py::list_inbox`), unlike
+  // the seller/admin listings collections above.
+  it('serves the design\'s own three request rows as the bare array both routes really answer (Task 14)', () => {
+    const rows = JSON.parse(collectionStubBody('http://localhost:5473/api/requests/mine')) as unknown[];
+    expect(Array.isArray(rows), 'neither request route paginates').toBe(true);
+    expect(rows).toEqual(designRequestRows());
+    expect(rows).toHaveLength(3);
+    expect(collectionStubBody('http://localhost:5473/api/requests/mine')).toBe(designRequestsBody());
+    // The seller inbox's own pids (`p1`, `p7`, `p6`) are exactly the design's fixture's own, so
+    // the unfiltered array is the correct answer for this endpoint too.
+    expect(collectionStubBody('http://localhost:5473/api/seller/requests')).toBe(designRequestsBody());
   });
 
   it('serves every design seller fixture as one complete page (A-SL23 (2))', () => {

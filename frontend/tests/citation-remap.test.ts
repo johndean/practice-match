@@ -36,6 +36,10 @@ import {
  * pair and below A24.7 (the step-6 tile's `hasSrc`/`noSrc` split, the pill, the privacy line, the
  * preview strip and error slot, and the `startWizardPhotos` wiring) — so the pair moved a sixth
  * time (2544 -> 2566) and A24.7's 922 again did not.
+ * Then A52 (Task 14, per-buyer-disclosure plan, 2026-09-19) put TWO lines into `componentDidMount`
+ * (the `reloadRequests`/`reloadInbox` gates, A52.1) and TWELVE more beside `reloadListings()` (the
+ * three new helper methods, A52.2) — both above A24.7's own anchor and above the pair — so the
+ * pair moved a seventh time (2566 -> 2568) and A24.7's 922 again did not.
  * Each number
  * below was
  * re-derived from the merged design through `anchorLines` itself rather than read off a failure,
@@ -79,15 +83,15 @@ describe('the citation re-mapper', () => {
   // ---------------------------------------------------------------------------------------
   it('moves A24.4 and A25.3 by exactly what an insertion above them inserted', () => {
     const before = design.split('\n');
-    expect(before[2565]).toContain('areas: areaFc,');
-    expect(before[2566]).toContain('communities: comms.filter');
+    expect(before[2567]).toContain('areas: areaFc,');
+    expect(before[2568]).toContain('communities: comms.filter');
     for (const inserted of [1, 7, 400]) {
       const shifted = [...before.slice(0, 2000), ...Array.from({ length: inserted }, (_, i) => `// synthetic line ${i}`), ...before.slice(2000)].join('\n');
       const { md: next, unresolved } = remapCitations({ ...input, design: shifted });
       expect(unresolved).toEqual([]);
       const cited = (id: string) => Number(/V3:(\d+)/.exec(next.split('\n').find((r) => r.startsWith(`| ${id} |`)) ?? '')?.[1]);
-      expect(cited('A24.4'), `A24.4 after ${inserted} inserted line(s)`).toBe(2566 + inserted);
-      expect(cited('A25.3'), `A25.3 after ${inserted} inserted line(s)`).toBe(2567 + inserted);
+      expect(cited('A24.4'), `A24.4 after ${inserted} inserted line(s)`).toBe(2568 + inserted);
+      expect(cited('A25.3'), `A25.3 after ${inserted} inserted line(s)`).toBe(2569 + inserted);
     }
   });
 
@@ -187,8 +191,8 @@ describe('the citation re-mapper', () => {
     const pins: PinTable = { 'A98.2': { anchor: '      areas: areaFc,', offset: 3, why: 'fixture: fully-superseded, pinned beside a neighbouring anchor' } };
     const { md: next, unresolved, moves } = remapCitations({ ...input, md: row('A98.2', 'V3:1'), list: ghost, pins });
     expect(unresolved).toEqual([]);
-    expect(moves).toEqual([{ id: 'A98.2', from: 1, to: 2569, rung: 'pin' }]);
-    expect(next).toBe(row('A98.2', 'V3:2569'));
+    expect(moves).toEqual([{ id: 'A98.2', from: 1, to: 2571, rung: 'pin' }]);
+    expect(next).toBe(row('A98.2', 'V3:2571'));
   });
 
   it('a pin more than one line from every one of the entry\'s own anchors is refused, not silently moved', () => {
@@ -201,7 +205,7 @@ describe('the citation re-mapper', () => {
     const { unresolved, moves, md: next } = remapCitations({ ...input, md: row('A24.7', 'V3:1'), pins });
     expect(moves).toEqual([]);
     expect(next).toBe(row('A24.7', 'V3:1'));
-    expect(unresolved[0]).toMatch(/^A24\.7: the pin resolves to V3:2566, which is not within ±1 of any of this entry's own anchors \(922\) — check the pin's anchor and offset$/);
+    expect(unresolved[0]).toMatch(/^A24\.7: the pin resolves to V3:2568, which is not within ±1 of any of this entry's own anchors \(922\) — check the pin's anchor and offset$/);
   });
 
   it('an entry with ONE anchor is re-mapped whatever the row says, and a range keeps its span', () => {
