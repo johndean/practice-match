@@ -13,6 +13,13 @@
 // captured as is a buyer whose computed label IS the fixture's. Task I8a's third commit then
 // re-based ALL thirteen: the launch removal (A6.1–A6.6, A7.1–A7.2) took the prototype jump bar
 // off the top of every screen, so all 28 approved states moved by ruled design change (D-I8-6).
+// A53 (Task REVOKE-UI, John's ruling of 2026-09-19) then re-based ONE of the thirteen,
+// `seller-dash`: the family's own Revoke button (A53.1) renders on the screen's default fixture
+// accepted row, so its pixels changed by the same ruled composition every other family in
+// CLAUDE.md's amendment paragraph records — the other twelve, `requests` included, are unmoved,
+// measured the A33 method (baselines regenerated cold before and after A53, all 58 PNG and DOM
+// hashes diffed, and exactly `seller-dash`/`seller-dash-empty` — the second not among these
+// thirteen — differ).
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.

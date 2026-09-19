@@ -1189,6 +1189,11 @@
                     <template v-if="i?.isResolved">
                       <div style="margin-top: 12px; font-size: 12.5px; color: var(--color-steel);"><span v-if="__s(i?.resolvedNote) !== null" class="sc-interp">{{ __s(i?.resolvedNote) }}</span></div>
                     </template>
+                    <template v-if="i?.canRevoke">
+                      <div style="display: flex; gap: 8px; margin-top: 14px;">
+                        <button @click="i?.revoke" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Revoke</button>
+                      </div>
+                    </template>
                   </div>
                 </template>
                 <template v-if="v.seller?.inboxEmpty">

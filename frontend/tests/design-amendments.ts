@@ -8830,6 +8830,165 @@ const A52_7: Amendment = {
   count: 1
 };
 
+/**
+ * A53 — the seller's Revoke control on an already-approved inbox row, and the buyer's own
+ * distinct "revoked" state (Task REVOKE-UI, John's ruling of 2026-09-19, closing the two gaps
+ * A52's own paragraph named: "REVOKE IS NOT RENDERED, and that is a gap awaiting John's ruling
+ * rather than a decision" and "The buyer's own side maps REVOKED onto the design's own declined
+ * for the same reason — honest ... but not a sentence written for that case").
+ *
+ * Directive §5 (docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md): "For each
+ * request show: buyer identity; request date; listing; requested disclosure level; current
+ * status; approve action; deny action; revoke action when already approved." Directive §6: after
+ * approval a buyer sees the granted level; another, un-approved buyer keeps seeing the
+ * redacted/public version.
+ *
+ * THE FACT THAT UNBLOCKS THIS, verified against the running code before writing a line here (the
+ * brief's own instruction, since A36's identically-worded "REVOKE IS NOT RENDERED" ruling does
+ * NOT transfer): `app/auth/permissions.py`'s `REAUTH` is `{licence.decide, engine.activate,
+ * roles.grant, tokens.manage, users.revoke, signups.notify}` — the Admin Users tab's
+ * `users.revoke` is in it, and the seller-facing route this family wires
+ * (`POST /api/seller/requests/{id}/revoke`) is guarded by `request.answer_own`
+ * (`app/auth/permissions.py:24`, `frozenset({"seller"})`) alone, which is NOT a member; the
+ * route's own module doc names the same permission for exactly this reason. A button calling it
+ * completes its action with no step-up dialog, so composing one obeys
+ * `docs/superpowers/specs/2026-09-13-admin-control-surface-design.md` §1 rule 3 ("An action
+ * renders only if it completes") rather than violating it.
+ *
+ * COMPOSED FROM V3'S OWN ELEMENTS (the same §1 rule 1 process A8 and A41–A47 used): the Revoke
+ * button (A53.1) is the seller inbox card's own Decline button — same tag, same style string,
+ * the same `sc-if`/`hint-placeholder-val` idiom the card already carries twice — inserted as a
+ * THIRD, independent `sc-if` sibling gated on a new `canRevoke` flag (true only for an
+ * already-accepted row), rather than nested inside the existing `isResolved` block, so the
+ * engine's handling of nested `sc-if` is never in question. No new class, colour or layout: the
+ * button's style string and its row-wrapper style are both copied verbatim from the pending
+ * block's own Decline button and its own flex row.
+ *
+ * `revoke` (A53.3) calls the adapter's OWN, already-built `sellerRequests.revoke(id)`
+ * (`frontend/src/requests/seller.ts`, Task 6) and reloads the inbox on EITHER settlement, in
+ * A52.4's exact shape, which is A16.8's; the no-adapter path is the design's own optimistic
+ * `setState`, one door over.
+ *
+ * THE SHARED ADAPTER CHANGE THIS FAMILY DEPENDS ON, made in `frontend/src/requests/buyer.ts`
+ * itself and carrying NO amendment (A52's own ruling: the two adapters are app-only code the
+ * reference never receives, `frontend/src/market/boundaries.ts`'s own position): `toDesignStatus`
+ * now maps `REVOKED` onto a FOURTH design-vocabulary word, `"revoked"`, rather than collapsing it
+ * onto `"declined"` — which is what makes a revoked request distinguishable at all. Because
+ * `toDesignRow`/`toDesignStatus` are SHARED by both adapters (`seller.ts` imports them from
+ * `buyer.ts` rather than redeclaring them), the new word reaches BOTH the buyer's own reads and
+ * the seller's own inbox re-read after a revoke — so A53.2/A53.3 give the seller's OWN inbox row
+ * an honest `"Revoked"` pill and an honest `resolvedNote` too (without them, a seller who just
+ * clicked Revoke would read "You declined this request" about their own action on the very row
+ * they revoked, false in exactly the way D-C51/D-C53 exist to remove — a NEW gap this family
+ * would otherwise open by the fact of sharing one status mapper). A53.4 (`detail()`'s
+ * `sentLabel`/`sentNote`, directive §6's own two buyer states, the plan's "What needs a design
+ * ruling" section names by line) and A53.5/A53.6 (`reqList`, the buyer's My Requests screen, the
+ * plan's OTHER named surface) give the buyer's three read-only surfaces the fourth branch.
+ * `unlocked` (`req && req.status === "accepted"`) was CHECKED rather than changed: a revoked
+ * request's status is `"revoked"`, never `"accepted"`, so it already falls out on its own, and
+ * the document lock icons and the detail card's disclosure paragraph re-lock for free.
+ *
+ * COPY (directive §17 — the five existing sentences are correct and untouched; these are two NEW
+ * states with none): eight short pieces, composed in the voice of the line beside each, quoted
+ * verbatim in the task report. Each surface keeps ITS OWN existing singular/plural convention
+ * ("floor plan" on the seller inbox and My Requests, "floor plans" on the detail card, exactly as
+ * the design's own pre-existing accepted/declined sentences already differ) rather than
+ * unifying the two, which directive §17 does not ask for and this family does not do.
+ *
+ * NONE of the six is CHAINED: every `find` was counted (against both the pristine twin and the
+ * amended bundle before this family ran) and occurs exactly once, unmodified since pristine —
+ * A52's own seven entries came within a few lines of five of these six without touching any of
+ * them. Definition order in this file matches this list (m8): the template addition first, then
+ * the seller inbox's two render-value edits in the object literal's own top-to-bottom order, then
+ * the buyer's two surfaces in the same order.
+ *
+ * RE-BASING (the A33 method, measured rather than predicted — see the task report for the actual
+ * before/after hashes): unlike A52, this is a template change, so it is expected to move
+ * `seller-dash`, one of `baseline-manifest.json`'s thirteen frozen screens — its own default
+ * fixture (`r2`, `p7`, `accepted`) is exactly the row the new button now renders on. `requests`,
+ * the other frozen screen the plan names, is NOT expected to move: nothing in its own default
+ * fixture (`r1` pending, `r2` accepted, `r3` declined) is `"revoked"`, and the new ternary
+ * branches are unreached code until a row actually carries that word.
+ */
+const REVOKE_UI = {
+  date: '2026-09-19',
+  ruling: "John's ruling, 2026-09-19, closing the two gaps docs/superpowers/plans/2026-09-18-per-buyer-disclosure.md's \"What needs a design ruling from John, and what is buildable now\" section left open at Task 14: a Revoke control on an already-approved row in the seller's inbox (directive §5, docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md: \"revoke action when already approved\") and a distinct \"revoked\" state on the buyer's side (My Requests, the detail screen's sentLabel/sentNote), composed from V3's own elements under docs/superpowers/specs/2026-09-13-admin-control-surface-design.md §1 rule 1, the process the account screens (A8) and the admin surfaces (A41-A47) already used. Verified before building, per the brief's own instruction: app/auth/permissions.py's REAUTH is {licence.decide, engine.activate, roles.grant, tokens.manage, users.revoke, signups.notify}; the seller-facing revoke route (POST /api/seller/requests/{id}/revoke) is guarded by request.answer_own alone (frozenset({\"seller\"}), app/auth/permissions.py:24) and is not a member of REAUTH — unlike the Admin Users tab's users.revoke, so A36's own \"REVOKE IS NOT RENDERED\" reasoning does not transfer here: this button completes its action with no step-up dialog."
+};
+
+/** A53.1 — the Revoke button, composed from the inbox card's own Decline button and its own
+ *  pending-row flex wrapper, shown only when the row `canRevoke` (A53.3). A third, independent
+ *  `sc-if` sibling of `i.isResolved` rather than nested inside it. */
+const A53_1: Amendment = {
+  id: 'A53.1', ...REVOKE_UI,
+  find: '                    <sc-if value="{{ i.isResolved }}" hint-placeholder-val="{{ false }}">\n'
+    + '                      <div style="margin-top: 12px; font-size: 12.5px; color: var(--color-steel);">{{ i.resolvedNote }}</div>\n'
+    + '                    </sc-if>\n',
+  replace: '                    <sc-if value="{{ i.isResolved }}" hint-placeholder-val="{{ false }}">\n'
+    + '                      <div style="margin-top: 12px; font-size: 12.5px; color: var(--color-steel);">{{ i.resolvedNote }}</div>\n'
+    + '                    </sc-if>\n'
+    + '                    <sc-if value="{{ i.canRevoke }}" hint-placeholder-val="{{ false }}">\n'
+    + '                      <div style="display: flex; gap: 8px; margin-top: 14px;">\n'
+    + '                        <button onClick="{{ i.revoke }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Revoke</button>\n'
+    + '                      </div>\n'
+    + '                    </sc-if>\n',
+  count: 1
+};
+
+/** A53.2 — the seller inbox pill's label gains the fourth word, so it never reads "Declined" for
+ *  a row the seller themselves revoked. */
+const A53_2: Amendment = {
+  id: 'A53.2', ...REVOKE_UI,
+  find: '        const label = r.status === "pending" ? "New" : r.status === "accepted" ? "Engaged" : "Declined";\n',
+  replace: '        const label = r.status === "pending" ? "New" : r.status === "accepted" ? "Engaged" : r.status === "revoked" ? "Revoked" : "Declined";\n',
+  count: 1
+};
+
+/** A53.3 — the seller inbox row's `resolvedNote` gains the fourth branch, and the row gains
+ *  `canRevoke` and `revoke` (A53.1's own targets). Placed here, on a pristine line neither A52.3
+ *  nor A52.4 touched, rather than after `decline:`, so this entry owes neither a `consumes` nor a
+ *  `supersedes` token. */
+const A53_3: Amendment = {
+  id: 'A53.3', ...REVOKE_UI,
+  find: '          resolvedNote: r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." : "You declined this request. The buyer was told you are not engaging further.",\n',
+  replace: '          resolvedNote: r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." : r.status === "revoked" ? "You revoked this buyer\'s access. The buyer no longer sees the financial packet or floor plan." : "You declined this request. The buyer was told you are not engaging further.",\n'
+    + '          canRevoke: r.status === "accepted",\n'
+    + '          revoke: () => (this.props.sellerRequests ? this.props.sellerRequests.revoke(r.id).then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "revoked", reply: "Access revoked. The financial packet and floor plan are locked again." }) : x)) }))),\n',
+  count: 1
+};
+
+/** A53.4 — the buyer's detail screen (and the interest modal, which reads `this.detail()`) gains
+ *  the fourth `sentLabel`/`sentNote` branch, directive §6's own "another buyer ... redacted"
+ *  reading applied to the ONE buyer whose access was granted and then taken back. */
+const A53_4: Amendment = {
+  id: 'A53.4', ...REVOKE_UI,
+  find: '      sentLabel: unlocked ? "Seller accepted your request" : req && req.status === "declined" ? "Seller declined this request" : "Request sent — awaiting the seller",\n'
+    + '      sentNote: unlocked ? "Financial packet and floor plans are now open to you." : req && req.status === "declined" ? "The seller is not engaging further on this listing." : "Sellers usually respond within a week.",\n',
+  replace: '      sentLabel: unlocked ? "Seller accepted your request" : req && req.status === "revoked" ? "Seller revoked your access" : req && req.status === "declined" ? "Seller declined this request" : "Request sent — awaiting the seller",\n'
+    + '      sentNote: unlocked ? "Financial packet and floor plans are now open to you." : req && req.status === "revoked" ? "The financial packet and floor plans are locked again." : req && req.status === "declined" ? "The seller is not engaging further on this listing." : "Sellers usually respond within a week.",\n',
+  count: 1
+};
+
+/** A53.5 — the buyer's own "My Requests" pill gains the fourth word. */
+const A53_5: Amendment = {
+  id: 'A53.5', ...REVOKE_UI,
+  find: '        const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : "Declined";\n',
+  replace: '        const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : r.status === "revoked" ? "Access revoked" : "Declined";\n',
+  count: 1
+};
+
+/** A53.6 — "My Requests"' own hint sentence gains the fourth branch. */
+const A53_6: Amendment = {
+  id: 'A53.6', ...REVOKE_UI,
+  find: '          hint: r.status === "pending" ? "The seller has not responded yet. Nothing further is disclosed until they do." :\n'
+    + '                r.status === "accepted" ? "Financial packet and floor plan are open to you on this listing." :\n'
+    + '                "This seller is not engaging further. The listing may already be under contract.",\n',
+  replace: '          hint: r.status === "pending" ? "The seller has not responded yet. Nothing further is disclosed until they do." :\n'
+    + '                r.status === "accepted" ? "Financial packet and floor plan are open to you on this listing." :\n'
+    + '                r.status === "revoked" ? "The seller revoked your access. The financial packet and floor plan are locked again." :\n'
+    + '                "This seller is not engaging further. The listing may already be under contract.",\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9120,5 +9279,12 @@ export function amendments(): Amendment[] {
     // A52.1/A52.2 anchor on A16.9/A16.23's and A16.17's own lines but carry them forward whole,
     // which is why neither owes a `consumes`/`supersedes` token. Definition order in this file
     // matches this list (m8).
-    A52_1, A52_2, A52_3, A52_4, A52_5, A52_6, A52_7];
+    A52_1, A52_2, A52_3, A52_4, A52_5, A52_6, A52_7,
+    // A53 -- the seller's Revoke control on an already-approved inbox row, and the buyer's own
+    // distinct revoked state (Task REVOKE-UI, John's ruling of 2026-09-19, closing the two gaps
+    // A52's own paragraph named). Appended last, as every family is. None of the six is chained:
+    // every `find` occurs exactly once in the pristine twin, verified before this family was
+    // written. Definition order in this file matches this list (m8): the template addition
+    // first, then the seller inbox's two render-value edits, then the buyer's two surfaces.
+    A53_1, A53_2, A53_3, A53_4, A53_5, A53_6];
 }

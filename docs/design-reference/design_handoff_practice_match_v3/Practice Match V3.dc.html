@@ -1264,6 +1264,11 @@
                     <sc-if value="{{ i.isResolved }}" hint-placeholder-val="{{ false }}">
                       <div style="margin-top: 12px; font-size: 12.5px; color: var(--color-steel);">{{ i.resolvedNote }}</div>
                     </sc-if>
+                    <sc-if value="{{ i.canRevoke }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: flex; gap: 8px; margin-top: 14px;">
+                        <button onClick="{{ i.revoke }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Revoke</button>
+                      </div>
+                    </sc-if>
                   </div>
                 </sc-for>
                 <sc-if value="{{ seller.inboxEmpty }}" hint-placeholder-val="{{ false }}">
@@ -3476,7 +3481,7 @@ class Component extends DCLogic {
       inboxEmpty: inbox.length === 0,
       inbox: inbox.map((r) => {
         const p = P.filter((x) => x.id === r.pid)[0] || P[0];
-        const label = r.status === "pending" ? "New" : r.status === "accepted" ? "Engaged" : "Declined";
+        const label = r.status === "pending" ? "New" : r.status === "accepted" ? "Engaged" : r.status === "revoked" ? "Revoked" : "Declined";
         const tone = r.status === "pending" ? ["#003a70", "#deecf7", "#deecf7"] : r.status === "accepted" ? ["#ffffff", "#003a70", "#003a70"] : ["#494949", "#ffffff", "#494949"];
         return {
           buyer: r.buyer, meta: "Approved buyer · Texas license · asked about " + p.area,
@@ -3484,7 +3489,9 @@ class Component extends DCLogic {
           statusLabel: label,
           pillStyle: "flex: none; font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: " + tone[0] + "; background: " + tone[1] + "; border: 1px solid " + tone[2] + ";",
           isPending: r.status === "pending", isResolved: r.status !== "pending",
-          resolvedNote: r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." : "You declined this request. The buyer was told you are not engaging further.",
+          resolvedNote: r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." : r.status === "revoked" ? "You revoked this buyer's access. The buyer no longer sees the financial packet or floor plan." : "You declined this request. The buyer was told you are not engaging further.",
+          canRevoke: r.status === "accepted",
+          revoke: () => (this.props.sellerRequests ? this.props.sellerRequests.revoke(r.id).then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "revoked", reply: "Access revoked. The financial packet and floor plan are locked again." }) : x)) }))),
           accept: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "approve").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) }))),
           decline: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "deny").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) })))
         };
@@ -3627,8 +3634,8 @@ class Component extends DCLogic {
       photoHeroHint: this.practiceName(p) + " — exterior, street view",
       canRequest: !sent,
       alreadySent: sent,
-      sentLabel: unlocked ? "Seller accepted your request" : req && req.status === "declined" ? "Seller declined this request" : "Request sent — awaiting the seller",
-      sentNote: unlocked ? "Financial packet and floor plans are now open to you." : req && req.status === "declined" ? "The seller is not engaging further on this listing." : "Sellers usually respond within a week.",
+      sentLabel: unlocked ? "Seller accepted your request" : req && req.status === "revoked" ? "Seller revoked your access" : req && req.status === "declined" ? "Seller declined this request" : "Request sent — awaiting the seller",
+      sentNote: unlocked ? "Financial packet and floor plans are now open to you." : req && req.status === "revoked" ? "The financial packet and floor plans are locked again." : req && req.status === "declined" ? "The seller is not engaging further on this listing." : "Sellers usually respond within a week.",
       disclosure: "This seller is still operating the practice. Street address, practice name and staff names stay hidden until they approve your request. " +
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
       hasDemo: p.id !== "p8" && p.pop != null,
@@ -4254,7 +4261,7 @@ class Component extends DCLogic {
       goBrowseBtn: this.go("browse"),
       reqList: this.myReqs().map((r) => {
         const p = P.filter((x) => x.id === r.pid)[0] || P[0];
-        const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : "Declined";
+        const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : r.status === "revoked" ? "Access revoked" : "Declined";
         const tone = r.status === "pending" ? ["#003a70", "#deecf7", "#deecf7"] : r.status === "accepted" ? ["#ffffff", "#003a70", "#003a70"] : ["#494949", "#ffffff", "#494949"];
         return {
           title: p.type + " practice — " + p.area,
@@ -4264,6 +4271,7 @@ class Component extends DCLogic {
           statusLabel: label, when: r.when,
           hint: r.status === "pending" ? "The seller has not responded yet. Nothing further is disclosed until they do." :
                 r.status === "accepted" ? "Financial packet and floor plan are open to you on this listing." :
+                r.status === "revoked" ? "The seller revoked your access. The financial packet and floor plan are locked again." :
                 "This seller is not engaging further. The listing may already be under contract.",
           pillStyle: "display: inline-block; font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: " + tone[0] + "; background: " + tone[1] + "; border: 1px solid " + tone[2] + ";",
           open: () => this.setState({ screen: "detail", detailId: p.id })

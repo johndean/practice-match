@@ -13,12 +13,14 @@
  * this side never hides `seller_user_id` at all — a seller reading their own inbox is not
  * learning anything about themselves.
  *
- * `revoke` is wired here because Task 6's route exists and nothing should call an API this
- * codebase already has and leave it unreachable from TypeScript. The plan's own "What needs a
- * design ruling from John" section is explicit that only the SELLER-FACING BUTTON for revoke is
- * out of scope for Task 14 — V3 draws no third action on an already-accepted inbox row, and
- * composing one needs John's ruling the way A41–A47 needed his for the admin spec — not the
- * adapter method: `logic.js`'s own `sellerVals` wires `accept`/`decide` alone.
+ * `revoke` was wired here (Task 6) before the button that calls it existed: the plan's own "What
+ * needs a design ruling from John" section was explicit that only the SELLER-FACING BUTTON for
+ * revoke was out of scope for Task 14 — V3 drew no third action on an already-accepted inbox
+ * row, and composing one needed John's ruling the way A41–A47 needed his for the admin spec —
+ * never the adapter method, which nothing should leave unreachable from TypeScript merely
+ * because its caller had not been composed yet. A53 (John's ruling, 2026-09-19) composed that
+ * button (`frontend/tests/design-amendments.ts`'s `A53_1`/`A53_3`), so `logic.js`'s own
+ * `sellerVals` now wires `revoke` beside `accept`/`decide`.
  */
 import { csrfToken } from '../auth/api';
 import { type ApiRequestRow, type DesignRequestRow, toDesignRow } from './buyer';
