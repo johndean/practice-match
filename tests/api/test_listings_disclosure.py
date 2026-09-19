@@ -231,7 +231,12 @@ async def test_buyer_a_with_exact_location_and_buyer_b_without_diverge_at_the_sa
     a_body = (await client.get(f"/api/listings/{listing_id}", headers=a_headers)).json()
     b_body = (await client.get(f"/api/listings/{listing_id}", headers=b_headers)).json()
     assert a_body["street"] == "123 Main St" and a_body["lat"] is not None and a_body["lng"] is not None
-    assert b_body["street"] is None and b_body["lat"] is None and b_body["lng"] is None
+    # Buyer B keeps the PUBLIC tier: no street, and the point coarsened to ~1.1 km rather than
+    # withheld (directive §2/§11). The isolation that matters is that B's point is NOT A's.
+    assert b_body["street"] is None
+    assert (b_body["lat"], b_body["lng"]) == (round(a_body["lat"], 2), round(a_body["lng"], 2))
+    assert (b_body["lat"], b_body["lng"]) != (a_body["lat"], a_body["lng"]), \
+        "an approximate point must not equal the exact one this fixture grants Buyer A"
 
 
 @pytest.mark.asyncio

@@ -423,6 +423,18 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceil
     return [{"id": str(r[0]), "name": r[1], "kind": r[2], "content_type": r[3]} for r in rows]
 
 
+def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:
+    """One coordinate at the precision this caller has earned (directive §2, §11).
+
+    No ceiling -> None: the seller withheld their location and A25's "no point, no pin" stands.
+    Ceiling, no grant -> rounded to 2 decimal places, about 1.1 km: §11's "approximate map
+    representation", coarser than the catchment ring already drawn publicly around the listing.
+    Ceiling and grant -> the exact point."""
+    if not ceiling or value is None:
+        return None
+    return float(value) if exact else round(float(value), 2)
+
+
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
              *, capabilities: frozenset[str] = frozenset(),
              documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -452,7 +464,24 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     (`_documents`'s own docstring), so this parameter is never re-filtered here; `documents or []`
     is only the "an absent list is not the same key error as a real empty one" guard `capabilities`'
     own default already follows one field over."""
-    disclosed = bool(row["location_disclosed"]) and "EXACT_LOCATION" in capabilities
+    # Directive §2 and §11 split location into TWO tiers, and Task 8's first cut collapsed them
+    # into one (controller ruling, 2026-09-19, after CI caught it): §11 says "the public listing MAY
+    # USE generalized location, market area, city/region, APPROXIMATE MAP REPRESENTATION" while
+    # "exact location is confidential unless explicitly authorized" and exact COORDINATES must not
+    # reach an unauthenticated response. Gating the point itself on the grant gave the public tier
+    # NOTHING rather than something approximate, which drew no pin for any buyer on any listing --
+    # `tests/api/test_geo_wire.py` caught exactly that.
+    #
+    #   `ceiling`  the seller's own `location_disclosed` — nothing at all when false (A25's
+    #              "no point, no pin" is untouched, and an undisclosed listing stays off the map)
+    #   `disclosed` ceiling AND the per-buyer grant — the EXACT street, postcode, telephone and point
+    #
+    # With the ceiling open and no grant the buyer gets a COARSENED point (2 decimal places, about
+    # 1.1 km) — an approximate map representation, which is less precise than the ~8 km catchment
+    # ring the product already draws publicly around every listing, so it discloses nothing the
+    # buyer could not already infer.
+    ceiling = bool(row["location_disclosed"])
+    disclosed = ceiling and "EXACT_LOCATION" in capabilities
     named = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
@@ -552,8 +581,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "geo_precision": row["geo_precision"],
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
-        "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,
-        "lng": float(row["lng"]) if disclosed and row["lng"] is not None else None,
+        "lat": _point(row["lat"], exact=disclosed, ceiling=ceiling),
+        "lng": _point(row["lng"], exact=disclosed, ceiling=ceiling),
         "location_disclosed": disclosed,
         # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
         # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
