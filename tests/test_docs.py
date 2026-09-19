@@ -2119,6 +2119,19 @@ LISTING_WRITERS = {
         "set only `state` and `sqft` of the first group and never `type`, and raised "
         "`CheckViolation` twice before the fix (task-05-report.md's own RED transcripts) — and have "
         "nothing to do with the photo-readiness gate this map exists for.",
+    "tests/api/test_disclosure_isolation.py":
+        "Task 11 of the same plan (2026-09-18), directive §7's critical two-buyer security test. "
+        "`_seller_listing_with_everything_confidential` uploads a REAL photograph through the real "
+        "`POST /api/seller/listings/{id}/photos` route and plants a `SELLER_CONFIRMED` privacy row "
+        "on it with `tests/api/test_buyer_photo_delivery.py::_process` (that file's own shape: the "
+        "gate is met by the pipeline's state, not by anything this UPDATE names) and a real document "
+        "through the real multipart upload route WHILE THE LISTING IS STILL A DRAFT — "
+        "`tests/api/test_documents_disclosure.py`'s own reason: `EDIT_REENTERS_REVIEW` "
+        "(`app/api/seller_listings.py`) re-enters review on an edit to an already-published/paused "
+        "listing, so uploading after publish would silently undo the very `status = 'published'` "
+        "this fixture is building towards. ONE direct `UPDATE listing SET status = 'published', ...` "
+        "moves it onto the market last, once both uploads and the photo's privacy row are already in "
+        "place, never before.",
 }
 
 
