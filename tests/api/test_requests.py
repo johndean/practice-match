@@ -284,3 +284,27 @@ async def test_get_one_refuses_a_malformed_request_id(client, member) -> None:
     _bid, b_cookies, b_hdr = member(("buyer",), email="buyer-badreqid@example.org")
     response = await client.get("/api/requests/not-a-uuid", headers=auth_headers(b_cookies, b_hdr))
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_buyer_never_receives_the_sellers_internal_account_id(
+    client, conn, member,
+) -> None:
+    """Security review, 2026-09-19. `_COLUMNS` selects `seller_user_id` because the seller routes
+    need it; the buyer routes returned the whole row. `app/api/listings.py`'s own `_SELECT` comment
+    states the rule — an internal account id "never has been and never should be" part of the buyer
+    contract — and the listing routes honoured it while these newer routes did not."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="idleak-seller@x.org")
+    listing_id = await _seller_listing(conn, client, auth_headers(s_cookies, s_hdr))
+    _bid, b_cookies, b_hdr = member(("buyer",), email="idleak-buyer@x.org")
+    buyer = auth_headers(b_cookies, b_hdr)
+
+    created = await client.post("/api/requests", json={"listing_id": listing_id}, headers=buyer)
+    assert created.status_code == 201, created.text
+    assert "seller_user_id" not in created.json()
+
+    mine = (await client.get("/api/requests/mine", headers=buyer)).json()
+    assert mine and all("seller_user_id" not in row for row in mine)
+
+    one = (await client.get(f"/api/requests/{created.json()['id']}", headers=buyer)).json()
+    assert "seller_user_id" not in one

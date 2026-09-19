@@ -281,3 +281,35 @@ async def test_the_documents_array_shows_a_buyer_only_what_their_grant_covers(
         f"/api/seller/listings/{listing_id}/documents/{financial_id}", headers=buyer_headers)
     assert floor_plan_read.status_code == 200
     assert financial_read.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_ungranted_buyer_never_sees_the_sellers_own_filename(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """Security review, 2026-09-19. `listing_asset.name` is the seller's upload filename, kept
+    verbatim, so a packet saved as "Smith_Family_Veterinary_Financials.pdf" would publish the
+    practice's identity to every buyer with no grant — straight past `name_disclosed`, which is an
+    independent boolean the seller may well have left shut. The row still LISTS (a buyer must see a
+    document exists to request it); only the label is generic until the grant opens it."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="dleak-seller@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, _ids = await _listing_with_documents(
+        conn, client, seller_headers, kinds=("financials",))
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing_asset SET name = %s WHERE listing_id = %s AND kind <> 'photo'",
+                    ("Smith_Family_Veterinary_2023_Financials.pdf", listing_id))
+        cur.execute("UPDATE listing SET name_disclosed = false WHERE id = %s", (listing_id,))
+    _bid, b_cookies, b_hdr = member(("buyer",), email="dleak-buyer@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert len(body["documents"]) == 1, "the row must still be listed so the buyer can ask for it"
+    assert "Smith" not in body["documents"][0]["name"]
+    assert "Veterinary" not in body["documents"][0]["name"]
+    assert body["documents"][0]["name"] == "Financial packet"
+
+    # ...and the real filename arrives with the grant that opens the document.
+    await _approve(client, seller_headers, buyer_headers, listing_id, level="FINANCIALS")
+    granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert granted["documents"][0]["name"] == "Smith_Family_Veterinary_2023_Financials.pdf"

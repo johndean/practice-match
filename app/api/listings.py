@@ -84,6 +84,7 @@ from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
 from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
+from app.disclosure.levels import capability_for_document_kind
 from app.privacy import record
 from app.privacy.delivery import PHOTO_HEADERS, buyer_variant, photo_url
 from app.storage import ObjectStore
@@ -420,7 +421,25 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceil
     # the LIST appears at all; the per-buyer grant decides whether `read_document` serves the BYTES.
     # Directive §10's "do not expose the original merely because the buyer knows its URL" is about
     # CONTENT, and that refusal lives in the bytes route, which Task 9 also built and tests.
-    return [{"id": str(r[0]), "name": r[1], "kind": r[2], "content_type": r[3]} for r in rows]
+    # The TITLE is generic until this buyer holds the capability that opens the document (security
+    # review, 2026-09-19). `listing_asset.name` is the seller's own upload filename, kept verbatim
+    # by `app/api/seller_listings.py` bar path separators and length — so a packet saved as
+    # "Smith_Family_Veterinary_2023_Financials.pdf" or "123_Main_St_Floor_Plan.pdf" would publish the
+    # practice's identity or address to EVERY buyer with no grant at all, straight past
+    # `name_disclosed`/`location_disclosed`, which are independent booleans a seller can leave shut
+    # (migrations/016_listing.sql:25). That is the exact exposure this subsystem exists to prevent,
+    # arriving through a string the platform re-publishes rather than through a field it gates.
+    #
+    # The row is still LISTED — the 2026-09-19 ruling stands, a buyer must see a document exists to
+    # request it, and step 7's approved copy promises exactly that — so only the label changes.
+    return [{"id": str(r[0]), "kind": r[2], "content_type": r[3],
+             "name": r[1] if capability_for_document_kind(r[2]) in capabilities else _DOCUMENT_LABEL.get(r[2], "Document")}
+            for r in rows]
+
+
+#: What an ungranted buyer sees in place of the seller's own filename. Derived from the document's
+#: KIND, which is platform vocabulary rather than seller-supplied text, so it can carry no identity.
+_DOCUMENT_LABEL = {"financials": "Financial packet", "floor_plan": "Floor plan"}
 
 
 def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:

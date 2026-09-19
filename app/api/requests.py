@@ -109,9 +109,24 @@ def _valid_uuid(value: object) -> bool:
     return True
 
 
-def _serialisable(row: dict[str, Any]) -> dict[str, Any]:
-    """Deviation 2. `row` with every `datetime` value rendered as an ISO-8601 string."""
-    return {key: (value.isoformat() if isinstance(value, datetime) else value) for key, value in row.items()}
+#: Never sent to a buyer. `seller_user_id` is an internal account id, and `app/api/listings.py`'s
+#: own `_SELECT` comment states the rule this module has to follow too: such an id "never has been
+#: and never should be" part of the buyer contract. Found by the 2026-09-19 security review, which
+#: noted the listing routes honour that rule and these newer request routes did not.
+_BUYER_HIDDEN = ("seller_user_id",)
+
+
+def _serialisable(row: dict[str, Any], *, for_buyer: bool = False) -> dict[str, Any]:
+    """Deviation 2. `row` with every `datetime` value rendered as an ISO-8601 string.
+
+    `for_buyer` drops the internal columns above. The SELLER routes
+    (`app/api/seller_requests.py`) pass nothing and keep the whole row — a seller reading their own
+    inbox is not learning anything about themselves."""
+    out = {key: (value.isoformat() if isinstance(value, datetime) else value) for key, value in row.items()}
+    if for_buyer:
+        for key in _BUYER_HIDDEN:
+            out.pop(key, None)
+    return out
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
@@ -169,7 +184,7 @@ async def create_request(request: Request, principal: Requester) -> Response:
                        request=request)
     except Refusal as exc:
         return _refused(exc)
-    return JSONResponse(_serialisable(row), status_code=201)
+    return JSONResponse(_serialisable(row, for_buyer=True), status_code=201)
 
 
 @router.get("/requests/mine")
@@ -181,7 +196,7 @@ async def list_my_requests(principal: OwnRequestReader) -> Response:
     buyer's id."""
     with closing(sync_conn()) as conn, conn:
         rows = req.list_mine(conn, buyer_account_id=str(principal.account_id))
-    return JSONResponse([_serialisable(row) for row in rows])
+    return JSONResponse([_serialisable(row, for_buyer=True) for row in rows])
 
 
 @router.get("/requests/{request_id}")
@@ -196,4 +211,4 @@ async def get_my_request(request_id: str, principal: OwnRequestReader) -> Respon
             row = req.get_one(conn, request_id=request_id, buyer_account_id=str(principal.account_id))
     except Refusal as exc:
         return _refused(exc)
-    return JSONResponse(_serialisable(row))
+    return JSONResponse(_serialisable(row, for_buyer=True))
