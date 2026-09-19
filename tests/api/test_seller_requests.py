@@ -80,6 +80,92 @@ async def test_an_unauthenticated_caller_is_refused_on_the_inbox(client) -> None
     assert response.status_code == 401
 
 
+# --- the inbox: buyer identity (directive §5's own gap this task closes) -----------------------
+
+
+@pytest.mark.asyncio
+async def test_the_inbox_carries_the_requesting_buyers_identity(client, conn, member) -> None:
+    """Directive §5, verbatim: "For each request show: buyer identity." Before this, the inbox
+    served `buyer_user_id` alone — an opaque uuid, where the design's own fixture row reads
+    `buyer: "Dr. Rachel Mendes"` (`frontend/src/logic.js:275`) — so a seller was asked to approve
+    or deny disclosure of confidential financials to a UUID. `app.disclosure.requests.list_inbox`
+    now joins the requesting buyer's own account row for it, `app/api/admin_users.py`'s
+    `decided_by_name`/`granted_by_name` precedent, one table over."""
+    seller_headers, _buyer_headers, _listing_id, request_id, _buyer_id = await _pair(conn, client, member, "s-bname1@x.org", "b-bname1@x.org")
+    response = await client.get("/api/seller/requests", headers=seller_headers)
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["id"] == request_id
+    # "Dr. Rachel Mendes" is the `member` fixture's own literal `display_name` (`tests/api/conftest.py`).
+    assert rows[0]["buyer_name"] == "Dr. Rachel Mendes"
+    assert rows[0]["buyer_user_id"], "the id itself stays -- buyer_name is additive, not a replacement"
+
+
+@pytest.mark.asyncio
+async def test_a_second_sellers_inbox_never_carries_another_sellers_buyers_identity(client, conn, member) -> None:
+    """The leak this task's own new join could introduce, proved with two DISTINCT names so a leak
+    reads as literal cross-contamination in the response body rather than a coincidence of the
+    `member` fixture's own shared "Dr. Rachel Mendes" default — every account the fixture makes
+    carries that same literal, so a same-named check here would pass whether or not the join is
+    genuinely scoped to the calling seller's own rows. Seller Y's own request (a real buyer, a real
+    name) proves the join still WORKS; the absence of seller X's buyer's name proves it is scoped,
+    the property `test_a_sellers_inbox_never_lists_another_sellers_requests`
+    (`tests/api/test_disclosure_idor.py`) already proves for the ROW and this test proves again for
+    the NAME the new join reads off it."""
+    _sx_headers, _bx_headers, _listing_x, _request_x, buyer_x_id = await _pair(
+        conn, client, member, "leak-seller-x@x.org", "leak-buyer-x@x.org",
+    )
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET display_name = %s WHERE id = %s", ("Dr. Xavier Ortiz", buyer_x_id))
+
+    seller_y_headers, _by_headers, listing_y, request_y, buyer_y_id = await _pair(
+        conn, client, member, "leak-seller-y@x.org", "leak-buyer-y@x.org",
+    )
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET display_name = %s WHERE id = %s", ("Dr. Yolanda Ives", buyer_y_id))
+
+    response = await client.get("/api/seller/requests", headers=seller_y_headers)
+    assert response.status_code == 200
+    assert "Dr. Xavier Ortiz" not in response.text, "seller Y's inbox must never carry seller X's buyer's identity"
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["id"] == request_y and rows[0]["listing_id"] == listing_y
+    assert rows[0]["buyer_name"] == "Dr. Yolanda Ives"
+
+
+@pytest.mark.asyncio
+async def test_an_unnamed_buyer_renders_the_honest_email_fallback(client, conn, member) -> None:
+    """"Do not fabricate a placeholder person" (this task's own brief): a buyer who has signed up
+    and never yet submitted an application has no `display_name` at all
+    (`app/api/applications.py`'s own `COALESCE(display_name, ...)` is the only writer of that
+    column), and `list_inbox` falls back to that same account's own `email` — a real identity
+    already on file — rather than showing the seller `None`, an empty string, or a name nobody
+    gave."""
+    seller_headers, _buyer_headers, _listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-bname2@x.org", "b-bname2@x.org")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET display_name = NULL WHERE id = %s", (buyer_id,))
+    response = await client.get("/api/seller/requests", headers=seller_headers)
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["id"] == request_id
+    assert rows[0]["buyer_name"] == "b-bname2@x.org"
+    assert rows[0]["buyer_name"] not in (None, ""), "never None, empty, or a fabricated name"
+
+
+@pytest.mark.asyncio
+async def test_a_buyers_own_view_never_carries_a_buyer_name_field_either(client, conn, member) -> None:
+    """The mirror of this task's own rule ("do not add seller identity to the buyer's payload"):
+    `req.list_mine`/`req.get_one` are UNTOUCHED — only `list_inbox` was given the join — so a
+    buyer's own reads carry no `buyer_name` at all, not even their own, exactly as they already
+    carry no `seller_user_id`
+    (`test_a_buyer_never_receives_the_sellers_internal_account_id`, `tests/api/test_requests.py`,
+    predating and unedited by this task)."""
+    _seller_headers, buyer_headers, _listing_id, request_id, _buyer_id = await _pair(conn, client, member, "s-bname3@x.org", "b-bname3@x.org")
+    mine = (await client.get("/api/requests/mine", headers=buyer_headers)).json()
+    assert mine and all("buyer_name" not in row for row in mine)
+    one = (await client.get(f"/api/requests/{request_id}", headers=buyer_headers)).json()
+    assert "buyer_name" not in one
+
+
 # --- decide: approve --------------------------------------------------------------------------
 
 

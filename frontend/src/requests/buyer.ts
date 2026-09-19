@@ -25,11 +25,18 @@ import { csrfToken } from '../auth/api';
 /** One `request` row, exactly as `app/disclosure/requests.py::_row` serialises it. A buyer's own
  *  reads (`GET /api/requests/mine`, the response `POST /api/requests` answers) never carry
  *  `seller_user_id` — `app/api/requests.py`'s `_BUYER_HIDDEN` — which is why that field is not
- *  declared here at all; a seller's own inbox row (`./seller.ts`) is the same shape plus it. */
+ *  declared here at all; a seller's own inbox row (`./seller.ts`) is the same shape plus it AND
+ *  `buyer_name` — directive §5's "buyer identity": `app.disclosure.requests.list_inbox` alone
+ *  joins the requesting buyer's own account row for it, falling back to that account's email where
+ *  it has no display name set. A buyer's own reads have no business naming the buyer to
+ *  themselves, so neither carries this field, which is why it is declared OPTIONAL here rather
+ *  than moved to a second, seller-only interface — one row shape still serves both readers,
+ *  `toDesignRow` below included. */
 export interface ApiRequestRow {
   id: string;
   listing_id: string;
   buyer_user_id: string;
+  buyer_name?: string;
   status: 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
   message: string | null;
   requested_disclosure_level: string;
@@ -112,7 +119,10 @@ export function toDesignRow(row: ApiRequestRow | DesignRequestRow): DesignReques
   return {
     id: row.id,
     pid: row.listing_id,
-    buyer: row.buyer_user_id,
+    // `buyer_name` is the seller inbox's own served identity (directive §5) and is absent on a
+    // buyer's own reads (`ApiRequestRow`'s own doc comment) — where it is absent, this keeps the
+    // UUID it has always shown rather than inventing a name.
+    buyer: row.buyer_name || row.buyer_user_id,
     status: toDesignStatus(row.status),
     msg: row.message || '',
     reply: row.denial_reason || '',

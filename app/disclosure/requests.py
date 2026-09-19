@@ -80,12 +80,48 @@ def list_mine(conn: Any, *, buyer_account_id: str) -> list[dict[str, Any]]:
                 for row in cur.fetchall()]
 
 
+#: `list_inbox` alone joins the buyer's own account row: directive §5's "buyer identity" is what a
+#: seller's inbox was missing (`GET /api/seller/requests` served `buyer_user_id`, an opaque uuid,
+#: and nothing else -- the design's own fixture reads `buyer: "Dr. Rachel Mendes"`,
+#: `frontend/src/logic.js:275`), and is what `list_mine`/`get_one`/`create` -- the buyer's own reads
+#: two functions below -- have no business carrying about the caller themselves, so only this list
+#: exists: `_COLUMNS`' own thirteen, spelled out with the `r.` qualifier the JOIN requires, plus the
+#: two account columns the name is read from.
+#:
+#: Mirrors `app/api/admin_users.py::LIST_SQL`'s own `d.display_name`/`gb.display_name` joins -- one
+#: account row, one display name, the identical "an id nobody can read" problem that entry names
+#: verbatim -- with the one thing that precedent does not do for its own PRIMARY name cell
+#: (`frontend/src/admin/users.ts`'s `item.name`, read straight off `a.display_name`, no fallback):
+#: `request.buyer_user_id` is `NOT NULL REFERENCES account(id) ON DELETE CASCADE`
+#: (`migrations/096_request.sql`), so the JOIN always finds a row, but `account.display_name`
+#: itself is nullable -- a buyer who has signed up and never yet submitted an application has none
+#: at all (`app/api/applications.py`'s own `COALESCE(display_name, ...)` is the only writer) -- so
+#: `list_inbox` below falls back to that same account's `email`, a real identity already on file,
+#: rather than showing a seller nothing, "None", or a name nobody gave.
+_INBOX_COLUMNS = (
+    "r.id, r.listing_id, r.buyer_user_id, r.seller_user_id, r.message, r.status,"
+    " r.requested_disclosure_level, r.approved_disclosure_level, r.requested_at, r.reviewed_at,"
+    " r.reviewed_by, r.denial_reason, r.expires_at, b.display_name, b.email"
+)
+
+
 def list_inbox(conn: Any, *, seller_account_id: str) -> list[dict[str, Any]]:
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {_COLUMNS} FROM request WHERE seller_user_id = %s ORDER BY requested_at DESC", (seller_account_id,))
+        cur.execute(
+            f"SELECT {_INBOX_COLUMNS} FROM request r JOIN account b ON b.id = r.buyer_user_id"
+            f" WHERE r.seller_user_id = %s ORDER BY r.requested_at DESC",
+            (seller_account_id,),
+        )
         names = [d[0] for d in cur.description]
-        return [{name: (str(value) if name.endswith("_id") or name in ("id", "reviewed_by") else value) for name, value in zip(names, row, strict=True)}
-                for row in cur.fetchall()]
+        rows = []
+        for values in cur.fetchall():
+            row = {name: (str(value) if name.endswith("_id") or name in ("id", "reviewed_by") else value)
+                   for name, value in zip(names, values, strict=True)}
+            name = (row.pop("display_name") or "").strip()
+            email = row.pop("email")
+            row["buyer_name"] = name or email
+            rows.append(row)
+        return rows
 
 
 def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id: str, required_status: str) -> None:

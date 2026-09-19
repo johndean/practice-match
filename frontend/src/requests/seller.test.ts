@@ -39,10 +39,22 @@ describe('makeSellerRequestsAdapter', () => {
     expect(calls[0].init.method).toBe('GET');
     expect(calls[0].init.headers['X-CSRF-Token']).toBeUndefined();
     expect(calls[0].init.headers['Content-Type']).toBeUndefined();
+    // Neither ROW() here sets `buyer_name` (an older payload shape, or the API's own fallback
+    // path finding nothing to prefer) — the design's UUID-carrying default, unchanged.
     expect(result.map((r) => ({ id: r.id, status: r.status, buyer: r.buyer }))).toEqual([
       { id: 'r1', status: 'pending', buyer: 'b1' },
       { id: 'r2', status: 'accepted', buyer: 'b1' }
     ]);
+  });
+
+  it('inbox() shows the buyer\'s served identity instead of the UUID, directive §5 (buyer identity)', async () => {
+    const { fn } = fakeFetch({
+      status: 200,
+      body: [ROW({ id: 'r1', buyer_user_id: 'b1', buyer_name: 'Dr. Rachel Mendes' })]
+    });
+    const adapter = makeSellerRequestsAdapter(fn);
+    const result = await adapter.inbox();
+    expect(result[0].buyer).toBe('Dr. Rachel Mendes');
   });
 
   it('decide() posts the bare action to approve, with the CSRF header', async () => {
