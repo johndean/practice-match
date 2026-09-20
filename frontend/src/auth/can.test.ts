@@ -16,11 +16,23 @@ describe('can() mirrors the server matrix', () => {
     expect(can('account.self', me([], 'pending'))).toBe(true);
   });
   it('roles unlock exactly the table', () => {
-    expect(can('seller.apply', me(['buyer']))).toBe(true);
+    // Ruling D-C59 (2026-09-20): `seller.apply` moved off `buyer` entirely — a seller now signs up
+    // separately, gated on account state (`app/api/applications.py`), never on this permission.
+    // Nobody but `admin` holds it any more.
+    expect(can('seller.apply', me(['buyer']))).toBe(false);
     expect(can('seller.apply', me(['seller']))).toBe(false);
+    expect(can('seller.apply', me(['admin']))).toBe(true);
     expect(can('users.decide', me(['staff']))).toBe(true);
     expect(can('engine.activate', me(['staff']))).toBe(false);
     expect(can('engine.activate', me(['admin']))).toBe(true);
+  });
+
+  it('a seller holds no buyer request acts, and a buyer holds no seller.apply (D-C59)', () => {
+    expect(can('request.create', me(['seller']))).toBe(false);
+    expect(can('request.read_own', me(['seller']))).toBe(false);
+    expect(can('request.answer_own', me(['seller']))).toBe(true);   // the seller's OWN inbox, unaffected
+    expect(can('request.create', me(['buyer']))).toBe(true);
+    expect(can('request.read_own', me(['buyer']))).toBe(true);
   });
 
   // MARKET_DATA_PUBLIC widens `market.read` for ANONYMOUS visitors only — it is the one arm of

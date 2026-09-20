@@ -48,7 +48,7 @@ RETURNING id
 
 
 def _seller(member: Any, email: str = "sl4-seller@example.org") -> tuple[Any, dict[str, str], dict[str, str]]:
-    return member(roles=("buyer", "seller"), email=email)
+    return member(roles=("seller",), email=email)
 
 
 async def _create(client: Any, cookies: dict[str, str], headers: dict[str, str]) -> str:

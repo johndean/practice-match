@@ -48,6 +48,22 @@ async def _applicant(client, member, email="p@example.org"):
     return aid, cookies
 
 
+def _legacy_open_seller_application(conn, member, email):
+    """Ruling D-C59 (2026-09-20) retires the shape this simulates: a seller application submitted
+    while the account was ALREADY `active` (an approved buyer). `POST /api/applications` no longer
+    produces it (`applications.APPLY_STATES` refuses an active account outright — proved in
+    `tests/api/test_applications.py`), but the admin tab must still handle a row of this shape
+    gracefully if one predates the ruling — the ruling's own "Open" question, which this codebase
+    does not answer either way. The INSERT below stands in for what `submit()` used to write, so a
+    test reading it is testing REAL tab logic against a REAL row shape rather than one invented for
+    the test. Returns `(account_id, cookies, headers)`."""
+    aid, cookies, hdr = member(("buyer",), email=email)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO application (account_id, kind, fields, status) VALUES (%s,'seller',%s,'pending')",
+                    (aid, json.dumps(SELLER_FIELDS)))
+    return aid, cookies, hdr
+
+
 async def test_staff_lists_pending_and_views_are_audited(client, conn, member):
     aid, _ = await _applicant(client, member)
     sid, scookies, _shdr = member(("staff",), email="staff@example.org")
@@ -178,8 +194,7 @@ async def test_admin_users_lists_every_account_in_every_state_and_role_including
 async def test_admin_users_paginates_by_cursor_and_filters_by_kind(client, conn, member):
     _one, _ = await _applicant(client, member, email="one@example.org")
     _two, _ = await _applicant(client, member, email="two@example.org")
-    seller, scookies, shdr = member(("buyer",), email="seller-app@example.org")
-    await client.post("/api/applications", headers=auth_headers(scookies, shdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    seller, _scookies, _shdr = _legacy_open_seller_application(conn, member, "seller-app@example.org")
     _admin, cookies, _hdr = member(("admin",), email="pager@example.org")
 
     first = (await client.get("/api/admin/users?limit=1", headers=auth_headers(cookies))).json()
@@ -247,8 +262,7 @@ async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(
     decision" this module already decides `decide`'s own application lookup with."""
     pending, _ = await _applicant(client, member, email="open-pending@example.org")
     needs_review, _ = await _applicant(client, member, email="open-needs-review@example.org")
-    _seller, scookies, shdr = member(("buyer",), email="open-seller@example.org")
-    await client.post("/api/applications", headers=auth_headers(scookies, shdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    _seller, _scookies, _shdr = _legacy_open_seller_application(conn, member, "open-seller@example.org")
     _admin, cookies, hdr = member(("admin",), email="counter@example.org")
     assert (await client.post(f"/api/admin/users/{needs_review}/decide", headers=auth_headers(cookies, hdr),
                               json={"action": "request_info", "note": "Which hospital?"})).status_code == 200
@@ -256,9 +270,12 @@ async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(
     every = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
     assert {i["state"] for i in every["items"]} >= {"pending", "needs_review"}
     # THREE, not two (fix round 1, review Important 1): `open-seller@example.org` is an `active`
-    # account carrying a pending SELLER application, and the tab shows that row with the applicant's
-    # own buttons, so the badge counts it. Before the ruling the count read `account.state` alone
-    # and called this queue two deep while three rows were waiting.
+    # account carrying a pending SELLER application — a shape ruling D-C59 (2026-09-20) retires
+    # going forward (`_legacy_open_seller_application` simulates it directly, since `submit()` no
+    # longer produces it) — and the tab shows that row with the applicant's own buttons, so the
+    # badge counts it. Before the ORIGINAL ruling the count read `account.state` alone and called
+    # this queue two deep while three rows were waiting; this pins that `DECIDABLE_STATES` still
+    # counts the retired shape correctly if a row of it exists.
     assert every["counts"] == {"open": 3, "total": 4}
     for query in ("?state=pending", "?kind=seller", "?role=admin", "?limit=1"):
         narrowed = (await client.get(f"/api/admin/users{query}", headers=auth_headers(cookies))).json()
@@ -279,15 +296,19 @@ async def test_an_open_seller_application_on_an_active_account_is_in_the_open_qu
     a decision, whatever its own state.
 
     `total` is unchanged and still counts ACCOUNTS: it is the size of the table, not of the queue.
+
+    Ruling D-C59 (2026-09-20) retires "a seller applies from an account that is already active" as
+    something `POST /api/applications` will produce going forward (proved in
+    `test_applications.py`'s own regression case) — the row here is built directly, the way
+    `submit()` itself used to, because `admin_users.decide` keeps a NARROWED version of this exact
+    override for a row of that shape already open when the ruling ships (its own "Open" question).
     """
-    seller, scookies, shdr = member(("buyer",), email="seller-applicant@example.org")
     _admin, cookies, hdr = member(("admin",), email="counts-admin@example.org")
 
     before = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
-    assert before["counts"] == {"open": 0, "total": 2}
+    assert before["counts"] == {"open": 0, "total": 1}
 
-    assert (await client.post("/api/applications", headers=auth_headers(scookies, shdr),
-                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+    seller, _scookies, _shdr = _legacy_open_seller_application(conn, member, "seller-applicant@example.org")
 
     body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
     row = next(i for i in body["items"] if i["account_id"] == str(seller))
@@ -406,11 +427,15 @@ async def test_a_declined_seller_application_is_served_as_declined_on_an_account
     <the decline date> by staff reviewer <the colleague who declined it>."
 
     This pins the PAYLOAD, so the frontend case that stops printing it is anchored to a row the
-    API really serves rather than to a hand-written fixture."""
+    API really serves rather than to a hand-written fixture.
+
+    Ruling D-C59 (2026-09-20) retires "a seller applies from an account that is already active" as
+    something `POST /api/applications` will produce going forward, but `admin_users.decide` keeps a
+    NARROWED version of this exact override for a row of that shape already open when the ruling
+    ships (its own "Open" question) — `_legacy_open_seller_application` builds that row directly,
+    the way `submit()` itself used to."""
     _sid, scookies, shdr = member(("staff",), email="decline-staff@example.org")
-    bid, bcookies, bhdr = member(("buyer",), email="declined-seller@example.org")
-    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
-                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+    bid, _bcookies, _bhdr = _legacy_open_seller_application(conn, member, "declined-seller@example.org")
     assert (await client.post(f"/api/admin/users/{bid}/decide", headers=auth_headers(scookies, shdr),
                               json={"action": "decline", "note": "Ownership unclear"})).status_code == 200
 
@@ -436,11 +461,14 @@ async def test_a_suspended_or_revoked_account_is_not_decidable_and_is_not_in_the
 
     So the open application governs the row only where `decide` will act on it. This pins that set
     from the API's own side: every action the tab offers such a row is ACCEPTED, and the badge
-    counts only rows it renders as decidable."""
+    counts only rows it renders as decidable.
+
+    Ruling D-C59 (2026-09-20): `_legacy_open_seller_application` builds the "active account, open
+    seller application" row directly, the way `submit()` itself used to — `POST /api/applications`
+    refuses to produce it any more (proved in `test_applications.py`), but `decide`'s own narrowed
+    override keeps this exact scenario decidable for a row already open when the ruling ships."""
     _sid, scookies, shdr = member(("staff",), email="suspend-staff@example.org")
-    seller, bcookies, bhdr = member(("buyer",), email="suspended-applicant@example.org")
-    assert (await client.post("/api/applications", headers=auth_headers(bcookies, bhdr),
-                              json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
+    seller, _bcookies, _bhdr = _legacy_open_seller_application(conn, member, "suspended-applicant@example.org")
 
     open_queue = (await client.get("/api/admin/users?limit=200", headers=auth_headers(scookies))).json()
     assert open_queue["counts"]["open"] == 1, "the active seller applicant IS decidable"
@@ -509,7 +537,14 @@ async def test_the_detail_view_carries_applications_grants_and_refuses_an_unknow
 async def test_every_decision_transition_and_its_refusals(client, conn, member):
     """The transition table end to end: the refusals (`reinstate` from `pending`, an unknown
     action, an unknown account) and the rows the brief's own tests never reach — `reinstate`, and a
-    seller decision, which leaves the account `active` and mails the seller template."""
+    seller decision, which (ruling D-C59, 2026-09-20) now moves the account through the SAME table
+    a buyer's does and mails the seller template.
+
+    The seller applicant here is a FRESH verified account, not an already-approved buyer: under
+    D-C59 a buyer can no longer apply to become a seller at all (`test_applications.py`'s own
+    regression proof), so `roles == ["buyer", "seller"]` — this test's own assertion before the
+    ruling — is now the exact account shape the database refuses to create
+    (`migrations/100_role_exclusivity.sql`)."""
     _sid, scookies, shdr = member(("staff",), email="staff@example.org")
 
     def decide(target, action, note=""):
@@ -522,30 +557,33 @@ async def test_every_decision_transition_and_its_refusals(client, conn, member):
     assert (await decide(aid, "decline", "Not eligible")).json()["state"] == "declined"
     assert (await decide(aid, "approve")).status_code == 409          # `declined` is not an approvable state
 
-    bid, bcookies, bhdr = member(("buyer",), email="both@example.org")
-    await client.post("/api/applications", headers=auth_headers(bcookies, bhdr), json={"kind": "seller", "fields": SELLER_FIELDS})
-    assert (await decide(bid, "approve")).json() == {"state": "active", "roles": ["buyer", "seller"]}
-    assert (await decide(bid, "suspend", "Complaint")).json()["state"] == "suspended"
-    assert (await decide(bid, "reinstate")).json() == {"state": "active", "roles": ["buyer", "seller"]}
+    sid, scookies2, shdr2 = member((), state="verified", email="fresh-seller@example.org")
+    await client.post("/api/applications", headers=auth_headers(scookies2, shdr2), json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert (await decide(sid, "approve")).json() == {"state": "active", "roles": ["seller"]}
+    assert (await decide(sid, "suspend", "Complaint")).json()["state"] == "suspended"
+    assert (await decide(sid, "reinstate")).json() == {"state": "active", "roles": ["seller"]}
     with conn.cursor() as cur:
-        cur.execute("SELECT template FROM email_outbox ORDER BY id")
-        assert [x[0] for x in cur.fetchall()] == ["application_received", "application_declined",
-                                                  "seller_application_received", "seller_application_approved", "account_suspended"]
+        cur.execute("SELECT template FROM email_outbox WHERE to_email='fresh-seller@example.org' ORDER BY id")
+        assert [x[0] for x in cur.fetchall()] == ["seller_application_received", "seller_application_approved", "account_suspended"]
 
 
-async def test_a_seller_decision_never_moves_the_account_out_of_active(client, conn, member):
-    """A seller applies from an account that is ALREADY `active`, so the account state is not the
-    application's state machine: `request_info` and `decline` move the APPLICATION and leave the
-    account (and its buyer role) exactly where they were."""
+async def test_a_seller_decisions_move_the_account_exactly_like_a_buyers_now(client, conn, member):
+    """Ruling D-C59 (2026-09-20) REMOVES the decision table's own seller override — a seller used
+    to apply from an account that was ALREADY `active` (an approved buyer), so the account state
+    was not the application's state machine at all, and `request_info`/`decline` moved only the
+    APPLICATION, leaving the account exactly where it was. A seller now applies from `verified`,
+    exactly like a buyer, and moves through `pending`/`needs_review` with it — so the SAME two
+    decisions now move the account too, symmetrically, and `roles` stays `[]` throughout (the
+    account is never granted `seller` until `approve`, which this test does not reach)."""
     _sid, scookies, shdr = member(("staff",), email="staff@example.org")
-    bid, bcookies, bhdr = member(("buyer",), email="seller-decline@example.org")
+    bid, bcookies, bhdr = member((), state="verified", email="seller-decline@example.org")
     await client.post("/api/applications", headers=auth_headers(bcookies, bhdr), json={"kind": "seller", "fields": SELLER_FIELDS})
     info = await client.post(f"/api/admin/users/{bid}/decide", headers=auth_headers(scookies, shdr),
                              json={"action": "request_info", "note": "Send the deed"})
-    assert info.json() == {"state": "active", "roles": ["buyer"]}
+    assert info.json() == {"state": "needs_review", "roles": []}
     r = await client.post(f"/api/admin/users/{bid}/decide", headers=auth_headers(scookies, shdr),
                           json={"action": "decline", "note": "Ownership unclear"})
-    assert r.json() == {"state": "active", "roles": ["buyer"]}
+    assert r.json() == {"state": "declined", "roles": []}
     with conn.cursor() as cur:
         cur.execute("SELECT status, decision_note, info_request FROM application WHERE kind='seller'")
         assert cur.fetchone() == ("declined", "Ownership unclear", None)
@@ -555,9 +593,16 @@ async def test_a_seller_decision_never_moves_the_account_out_of_active(client, c
 
 async def test_a_decision_on_an_account_with_no_application_still_moves_the_state(client, conn, member):
     """Suspend and revoke are ACCOUNT actions, not application ones: there need be no application
-    row at all, and `revoke` takes every grant with it."""
-    _sid, scookies, shdr = member(("staff",), email="staff@example.org")
-    mid, _c, _h = member(("buyer", "seller"), email="noapp@example.org")
+    row at all, and `revoke` takes every grant with it.
+
+    `("seller", "staff")`, not `("buyer", "seller")` (ruling D-C59 makes the latter impossible to
+    grant one account) — proving revoke strips a MEMBER role and a STAFF role together is, if
+    anything, a stronger version of "every grant" than the original pair was. The actor is `admin`
+    rather than `staff` for the reason the pair changed: `PrivilegedTarget` refuses a staff actor
+    on a staff-holding target, and only `admin` may revoke one — `_refuse_unsafe_target`'s own
+    rule, unrelated to this ruling and unchanged by it."""
+    _sid, scookies, shdr = member(("admin",), email="admin-noapp@example.org")
+    mid, _c, _h = member(("seller", "staff"), email="noapp@example.org")
     await client.post("/api/auth/reauth", headers=auth_headers(scookies, shdr), json={"password": PW})
     r = await client.post(f"/api/admin/users/{mid}/decide", headers=auth_headers(scookies, shdr),
                           json={"action": "revoke", "note": "Left the profession"})
@@ -750,9 +795,11 @@ def test_seed_persona_seeds_the_three_oracle_personas_whose_labels_the_design_sh
     the design's copy does not change, so the oracle persona for the 19 buyer-family states is a
     BUYER: `labels.role_label({"buyer"}, "StartUp Club")` reproduces that string letter for letter.
 
-    `seller@` (buyer + seller) serves the seller dashboard and the four wizard states, and
-    `design@` (all four roles) the four Admin states — those nine show their own account's label,
-    which is why their baselines move once and are re-frozen (D-I8-8).
+    `seller@` (seller ALONE, since ruling D-C59, 2026-09-20 — it was `buyer + seller`, exactly the
+    account shape that ruling forbids) serves the seller dashboard and the four wizard states, and
+    `design@` (staff + admin, since the same ruling — it was all four roles) the four Admin states
+    — those nine show their own account's label, which is why their baselines move once and are
+    re-frozen (D-I8-8).
 
     All four carry the SAME display name and affiliation, so `name` and `initials` are constant
     across the whole suite and only `role` varies with what the account may actually open."""
@@ -766,7 +813,9 @@ def test_seed_persona_seeds_the_three_oracle_personas_whose_labels_the_design_sh
 
     expected = {
         "buyer@practice-match.test": ("buyer",),
-        "seller@practice-match.test": ("buyer", "seller"),
+        # Ruling D-C59 (2026-09-20): `seller` ALONE — `("buyer", "seller")` is exactly the account
+        # shape that ruling forbids, and `migrations/100_role_exclusivity.sql` now refuses it.
+        "seller@practice-match.test": ("seller",),
         # Ruling D-C54 (2026-09-13): the fourth member, whose ONLY grant is `admin`. Its computed
         # label is `design@`'s own — `role_label` reads the grants it knows about and one `admin`
         # is enough for it — which is part of why the defect hid behind a header that looked right.
@@ -791,7 +840,7 @@ def test_seed_persona_seeds_the_three_oracle_personas_whose_labels_the_design_sh
             expected_label = role_label(frozenset(granted), affiliation)
             assert expected_label == {
                 "buyer@practice-match.test": "Approved buyer · StartUp Club",
-                "seller@practice-match.test": "Approved buyer and seller · StartUp Club",
+                "seller@practice-match.test": "Approved seller · StartUp Club",
                 "admin@practice-match.test": "VIN Foundation admin · StartUp Club",
                 seed_persona.PERSONA_EMAIL: "VIN Foundation admin · StartUp Club",
             }[email], (email, expected_label)
@@ -852,7 +901,9 @@ def test_seed_persona_upserts_the_design_account_and_never_prints_its_password(c
         cur.execute("SELECT id, password_hash, display_name, affiliation_label, state FROM account WHERE email=%s", (seed_persona.PERSONA_EMAIL,))
         aid, hashed, name, affiliation, state = cur.fetchone()
         cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL ORDER BY role", (aid,))
-        assert [r[0] for r in cur.fetchall()] == ["admin", "buyer", "seller", "staff"]
+        # Ruling D-C59 (2026-09-20): `staff` + `admin` only — `design@` held all four roles before,
+        # which is exactly the buyer+seller shape the ruling forbids on one account.
+        assert [r[0] for r in cur.fetchall()] == ["admin", "staff"]
         cur.execute("SELECT count(*), max(status) FROM application WHERE account_id=%s", (aid,))
         assert cur.fetchone() == (1, "approved")
     assert (name, affiliation, state) == ("Dr. Rachel Mendes", "StartUp Club", "active")
@@ -1647,9 +1698,15 @@ async def test_the_admin_floor_does_not_fire_when_the_revoked_account_holds_no_a
     """The other side of that change, and what stops it being over-broad: rule 3 is about ADMIN
     grants, not about `revoke`. An ordinary member is revoked exactly as before — including when
     the acting staff member is the only administrative account in the deployment, where a naive
-    `removing_admin=True` for every revoke would have refused with `LAST_ADMIN`."""
+    `removing_admin=True` for every revoke would have refused with `LAST_ADMIN`.
+
+    `("buyer",)`, not `("buyer", "seller")` (ruling D-C59 makes the latter impossible on one
+    account, and the target must stay a genuinely ORDINARY, non-privileged member — `("buyer",
+    "staff")` would instead trip `PrivilegedTarget`, a staff actor being refused on another staff
+    account, which is a different rule than the one this test is about) — one role proves the same
+    "ordinary member" point the two never actually needed."""
     _sid, scookies, shdr = member(("staff",), email="lone-staff@example.org")
-    ordinary, _c, _h = member(("buyer", "seller"), email="ordinary@example.org")
+    ordinary, _c, _h = member(("buyer",), email="ordinary@example.org")
     await _reauth(client, scookies, shdr)
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
@@ -1900,3 +1957,57 @@ async def test_the_users_list_and_the_detail_agree_on_which_application_is_lates
     detail = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
     assert detail["application"]["id"] == high            # `submitted_at DESC, id DESC`
     assert row["kind"] == detail["application"]["kind"]   # ...and the list says the same
+
+
+# --- Ruling D-C59's two application-layer doors -------------------------------------------------
+# `migrations/100_role_exclusivity.sql`'s trigger is the AUTHORITY on buyer/seller exclusivity, and
+# it holds however `role_grant` is written. These two tests cover the two places `admin_users.py`
+# grants a role DIRECTLY and pre-checks with `_role_conflict` so the caller sees a clean 409 rather
+# than the trigger's raw constraint violation surfacing as a 500. Both guards shipped untested —
+# `RoleConflict.__init__` and both `raise` sites were the only uncovered lines in `app/` — and an
+# untested guard is exactly the kind that quietly stops working.
+
+
+async def test_granting_seller_to_an_account_that_holds_buyer_is_refused(client, conn, member):
+    """The `grants` door (ruling D-C59). Both directions of `_EXCLUSIVE_ROLE`, because the table is
+    symmetric and a one-directional guard would pass a one-directional test."""
+    _aid, acookies, ahdr = member(("admin",), email="admin-dc59@example.org")
+    await client.post("/api/auth/reauth", headers=auth_headers(acookies, ahdr), json={"password": PW})
+
+    buyer_id, _bc, _bh = member(("buyer",), email="buyer-dc59@example.org")
+    r = await client.post(f"/api/admin/users/{buyer_id}/grants", headers=auth_headers(acookies, ahdr),
+                          json={"role": "seller", "grant": True, "reason": "D-C59"})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "ROLE_CONFLICT"
+    assert "seller" in r.json()["error"]["message"] and "buyer" in r.json()["error"]["message"]
+
+    seller_id, _sc, _sh = member(("seller",), email="seller-dc59@example.org")
+    r2 = await client.post(f"/api/admin/users/{seller_id}/grants", headers=auth_headers(acookies, ahdr),
+                           json={"role": "buyer", "grant": True, "reason": "D-C59"})
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["error"]["code"] == "ROLE_CONFLICT"
+
+    # The refusal left NO grant behind on either account — a 409 that still wrote the row would be
+    # the defect this guard exists to prevent, and the status code alone would not have caught it.
+    with conn.cursor() as cur:
+        cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL", (buyer_id,))
+        assert [x[0] for x in cur.fetchall()] == ["buyer"]
+        cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL", (seller_id,))
+        assert [x[0] for x in cur.fetchall()] == ["seller"]
+
+
+async def test_approving_a_legacy_seller_application_for_a_buyer_is_refused(client, conn, member):
+    """The `decide`/`approve` door (ruling D-C59). The row this drives is the LEGACY shape the
+    ruling retires — a seller application on an account that is already an approved buyer, which
+    `POST /api/applications` can no longer produce — so this is the guard doing exactly the job it
+    was written for: a row that predates the ruling must be refused cleanly, not approved into the
+    account the ruling forbids and not crashed on."""
+    aid, _c, _h = _legacy_open_seller_application(conn, member, "legacy-dc59@example.org")
+    _sid, scookies, shdr = member(("staff",), email="staff-dc59@example.org")
+    r = await client.post(f"/api/admin/users/{aid}/decide", headers=auth_headers(scookies, shdr),
+                          json={"action": "approve", "note": ""})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "ROLE_CONFLICT"
+    with conn.cursor() as cur:
+        cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL", (aid,))
+        assert [x[0] for x in cur.fetchall()] == ["buyer"]

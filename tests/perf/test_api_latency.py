@@ -453,7 +453,7 @@ async def test_a_sellers_redacted_photograph_is_served_within_the_photo_budget(
     from app.privacy import redacted_key
     from tests.api.conftest import _jpeg_bytes, auth_headers
 
-    _, cookies, headers = member(roles=("buyer", "seller"), email="perf-seller@example.org")
+    _, cookies, headers = member(roles=("seller",), email="perf-seller@example.org")
     signed = auth_headers(cookies, headers)
     created = await origin_client.post("/api/seller/listings", headers=signed)
     assert created.status_code == 201, created.text

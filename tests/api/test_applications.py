@@ -47,34 +47,55 @@ async def test_required_fields_and_affirmation(client, conn, member):
     assert r.status_code == 422 and "intent" in r.json()["error"]["message"] and "affirm" in r.json()["error"]["message"]
 
 
-async def test_seller_application_requires_the_buyer_role(client, conn, member):
-    _aid, cookies, hdr = member(("buyer",))
+async def test_seller_application_is_gated_on_account_state_like_a_buyers(client, conn, member):
+    """Ruling D-C59 (2026-09-20): a seller signs up separately, gated on ACCOUNT STATE in the
+    buyer branch's own shape — never on `seller.apply` (`app/auth/permissions.py` no longer grants
+    it to any ordinary role at all). Renamed from `test_seller_application_requires_the_buyer_role`,
+    whose own premise — a buyer applies to become a seller too — is exactly the account shape the
+    ruling forbids: it is proved a REFUSAL below instead."""
+    # A fresh, confirmed, role-less account may apply to sell — the ONLY route left.
+    _aid, cookies, hdr = member((), state="verified", email="fresh-seller@example.org")
     ok = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
     assert ok.status_code == 202
-    _aid2, cookies2, hdr2 = member((), state="verified", email="nobuyer@example.org")
-    assert (await client.post("/api/applications", headers=auth_headers(cookies2, hdr2),
-                              json={"kind": "seller", "fields": {}})).status_code == 403
+    # An unverified account is refused exactly as a buyer's would be — the SAME 409, and no more
+    # a `NotABuyer` 403 (that class no longer exists: nobody is a buyer or is not one here).
+    _aid2, cookies2, hdr2 = member((), state="unverified", email="unconfirmed-seller@example.org")
+    unconfirmed = await client.post("/api/applications", headers=auth_headers(cookies2, hdr2), json={"kind": "seller", "fields": {}})
+    assert unconfirmed.status_code == 409 and unconfirmed.json()["error"]["code"] == "STATE"
+    # THE CORE REGRESSION PROOF: an ALREADY-APPROVED buyer can no longer apply to also become a
+    # seller — the exact pathway that used to manufacture the buyer+seller account the ruling
+    # forbids (approval never demotes an account, so it kept both roles forever).
+    _aid3, cookies3, hdr3 = member(("buyer",), email="already-buyer@example.org")
+    already_buyer = await client.post("/api/applications", headers=auth_headers(cookies3, hdr3),
+                                      json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert already_buyer.status_code == 409 and already_buyer.json()["error"]["code"] == "STATE"
+    # ...and the mirror image: an already-approved SELLER can no longer apply to become a buyer.
+    _aid4, cookies4, hdr4 = member(("seller",), email="already-seller@example.org")
+    already_seller = await client.post("/api/applications", headers=auth_headers(cookies4, hdr4),
+                                       json={"kind": "buyer", "fields": FIELDS})
+    assert already_seller.status_code == 409 and already_seller.json()["error"]["code"] == "STATE"
 
 
 # --- supplemental (not in the brief's Step 1 — John's 100 % line-AND-branch ruling) ---
 
 
-async def test_a_seller_application_leaves_the_account_active_and_queues_its_own_template(client, conn, member):
-    """A seller applies from an ALREADY approved buyer account: `account.state` must stay `active`
-    (moving it to `pending` would strip every role on the next request), and the outbox row is the
-    seller template, not the buyer one."""
-    aid, cookies, hdr = member(("buyer",), email="seller-apply@example.org")
+async def test_a_fresh_seller_application_moves_the_account_to_pending_and_queues_its_own_template(client, conn, member):
+    """Ruling D-C59: a seller application now moves the account exactly as a buyer's does — the
+    reasoning that used to keep it `active` ("moving it to `pending` would strip every role on the
+    next request") no longer applies, because a fresh seller applicant holds no role to strip. The
+    outbox row is the seller's own template, never the buyer one."""
+    aid, cookies, hdr = member((), state="verified", email="seller-apply@example.org")
     assert (await client.post("/api/applications", headers=auth_headers(cookies, hdr),
                               json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
     with conn.cursor() as cur:
-        cur.execute("SELECT state FROM account WHERE id=%s", (aid,)); assert cur.fetchone() == ("active",)
+        cur.execute("SELECT state FROM account WHERE id=%s", (aid,)); assert cur.fetchone() == ("pending",)
         cur.execute("SELECT template FROM email_outbox"); assert [row[0] for row in cur.fetchall()] == ["seller_application_received"]
         cur.execute("SELECT action, target_type FROM audit_log WHERE action='applications.submit'")
         assert cur.fetchone() == ("applications.submit", "application")
 
 
 async def test_a_seller_application_states_its_own_required_fields(client, conn, member):
-    _aid, cookies, hdr = member(("buyer",), email="seller-missing@example.org")
+    _aid, cookies, hdr = member((), state="verified", email="seller-missing@example.org")
     r = await client.post("/api/applications", headers=auth_headers(cookies, hdr),
                           json={"kind": "seller", "fields": {"practice_name": "Cedar Park Animal Hospital"}})
     assert r.status_code == 422
@@ -109,10 +130,12 @@ async def test_an_over_large_fields_object_is_refused_by_the_schema(client, conn
 
 
 async def test_a_second_seller_application_while_one_is_open_is_refused(client, conn, member):
-    """The duplicate guard, on the kind that can reach it: a seller applies from an account that
-    stays `active`, so the state check above lets the second submission through to here (a second
-    BUYER application is stopped one step earlier — the account is `pending` by then)."""
-    _aid, cookies, hdr = member(("buyer",), email="twice@example.org")
+    """The duplicate guard, on the kind that can reach it: a seller application moves the account
+    to `pending` on submission now (ruling D-C59), same as a buyer's — so the SAME state check that
+    stops a second BUYER application one step earlier (the account is already `pending`) stops a
+    second SELLER one too, and this is now the same case as `test_a_second_seller_application...`'s
+    sibling for buyer would be, not a separately-reached duplicate-row check."""
+    _aid, cookies, hdr = member((), state="verified", email="twice@example.org")
     assert (await client.post("/api/applications", headers=auth_headers(cookies, hdr),
                               json={"kind": "seller", "fields": SELLER_FIELDS})).status_code == 202
     again = await client.post("/api/applications", headers=auth_headers(cookies, hdr),
@@ -296,8 +319,14 @@ async def test_one_open_application_per_account(client, conn, member):
 async def test_the_open_application_rule_is_per_account_not_per_kind(client, conn, member):
     """`decide` acts on the account's latest OPEN application whatever its kind, so two open rows
     of different kinds would make a staff decision ambiguous. One open row per ACCOUNT (spec
-    §Lifecycle, amended 2026-09-07), not one per kind as the check read before I5c."""
-    aid, cookies, hdr = member(("buyer",), email="cross-kind@example.org")
+    §Lifecycle, amended 2026-09-07), not one per kind as the check read before I5c.
+
+    The account is `verified` (ruling D-C59's own APPLY_STATES), not `("buyer",)`: an ALREADY
+    active buyer is refused by the account-STATE gate before this check is ever reached — proved
+    separately above — so a `verified` account with an open row planted directly (bypassing
+    `submit`, the way a genuine race between two open rows of different kinds would have to arise
+    today) is what actually exercises the PER-ACCOUNT rule this test is about."""
+    aid, cookies, hdr = member((), state="verified", email="cross-kind@example.org")
     with conn.cursor() as cur:
         cur.execute("INSERT INTO application (account_id, kind, fields, status) VALUES (%s,'buyer',%s,'needs_review')",
                     (aid, json.dumps(FIELDS)))
@@ -355,44 +384,64 @@ async def test_the_legacy_operator_bearer_names_no_account_and_cannot_answer(cli
 
 
 async def test_applications_me_falls_back_to_the_latest_closed_row_when_nothing_is_open(client, conn, member):
-    """No open row: `current` is the newest row there is (the approved buyer application), and the
-    rows behind it are the history — a row is never in both."""
-    aid, cookies, hdr, buyer_id = await _open_application(client, member, "closed-only@example.org")
+    """No open row: `current` is the newest row there is, and the rows behind it are the history —
+    a row is never in both.
+
+    Ruling D-C59: the two closed rows here are SELLER then BUYER, not buyer-then-seller as before —
+    an APPROVED application grants a role and ends the account's applying days for good, so the
+    only way one account still legally closes two DIFFERENT-kind applications is a DECLINE first
+    (which leaves the account exactly as role-less as it started, `declined` being in
+    `applications.APPLY_STATES`) and the OTHER kind second. Declined-then-approved, not
+    approved-then-declined, is the only order left that is not itself the outlawed account."""
+    aid, cookies, hdr, seller_id = await _open_application(client, member, "closed-only@example.org",
+                                                            kind="seller", fields=SELLER_FIELDS)
     staff = _staff(member)
     await _decide(client, staff, aid, "request_info", "Which practice?")
-    await client.post(f"/api/applications/{buyer_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": "Cedar Park"})
+    await client.post(f"/api/applications/{seller_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": "Cedar Park"})
+    await _decide(client, staff, aid, "decline", "Not this year.")  # role-less, back to `declined`
+
+    buyer = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
+    assert buyer.status_code == 202
     await _decide(client, staff, aid, "approve", "")
-    seller = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
-    assert seller.status_code == 202
-    await _decide(client, staff, aid, "decline", "Not this year.")
 
     body = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
-    assert body["current"]["id"] == seller.json()["id"] and body["current"]["kind"] == "seller" and body["current"]["status"] == "declined"
-    assert [(h["kind"], h["status"], h["decision"]) for h in body["history"]] == [("buyer", "approved", "approve")]
+    assert body["current"]["id"] == buyer.json()["id"] and body["current"]["kind"] == "buyer" and body["current"]["status"] == "approved"
+    assert [(h["kind"], h["status"], h["decision"]) for h in body["history"]] == [("seller", "declined", "decline")]
     assert body["history"][0]["answer"] == "Cedar Park"
     # A-S4: `fields` travels on every entry, not only on `current` — one row shape, both lists.
-    assert body["history"][0]["fields"] == FIELDS
-    assert body["current"]["fields"] == SELLER_FIELDS
+    assert body["history"][0]["fields"] == SELLER_FIELDS
+    assert body["current"]["fields"] == FIELDS
 
 
-async def test_a_seller_answer_leaves_the_account_active_and_queues_the_seller_template(client, conn, member):
-    """A seller application reaches `needs_review` from an account that stays `active` (the
-    decision table's seller override). Answering it must not move the account to `pending` — that
-    would strip the buyer role on the very next request."""
-    aid, cookies, hdr = member(("buyer",), email="seller-answer@example.org")
+async def test_a_seller_answer_moves_the_account_to_pending_and_queues_the_seller_template(client, conn, member):
+    """Ruling D-C59: a seller answer moves the account exactly as a buyer's does now — the decision
+    table's own seller override (`admin_users.decide`) is REMOVED, so `request_info` puts the
+    account in `needs_review` alongside the application, and answering returns it to `pending`
+    alongside the application, for either kind alike. Renamed from
+    `test_a_seller_answer_leaves_the_account_active_and_queues_the_seller_template`, whose own
+    premise no longer holds."""
+    aid, cookies, hdr = member((), state="verified", email="seller-answer@example.org")
     r = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
     assert r.status_code == 202
     app_id = r.json()["id"]
-    await _decide(client, _staff(member), aid, "request_info", "Which practice?")
+    staff = _staff(member)
+    await _decide(client, staff, aid, "request_info", "Which practice?")
     assert _one(conn, "SELECT status FROM application WHERE id=%s", (app_id,)) == ("needs_review",)
+    assert _one(conn, "SELECT state FROM account WHERE id=%s", (aid,)) == ("needs_review",)
 
     answered = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr),
                                  json={"answer": "Cedar Park Animal Hospital"})
     assert answered.status_code == 200 and answered.json() == {"status": "pending"}
     me = (await client.get("/api/me", headers=auth_headers(cookies))).json()
-    assert me["state"] == "active" and me["roles"] == ["buyer"]
+    assert me["state"] == "pending" and me["roles"] == []
     template, key = _one(conn, "SELECT template, idempotency_key FROM email_outbox ORDER BY id DESC LIMIT 1")
     assert template == "seller_application_received" and key.endswith(f":{app_id}:2")
+
+    # ...and approving it now grants the SELLER role and activates the account — the end-to-end
+    # proof that a fresh seller application is functional, not merely accepted at the gate.
+    await _decide(client, staff, aid, "approve", "")
+    approved = (await client.get("/api/me", headers=auth_headers(cookies))).json()
+    assert approved["state"] == "active" and approved["roles"] == ["seller"]
 
 
 async def test_every_applicant_audit_action_is_in_the_applications_namespace(client, conn, member):
@@ -454,7 +503,7 @@ async def test_a_suspended_or_revoked_account_cannot_answer(client, conn, member
 
 async def test_a_suspended_or_revoked_account_cannot_re_apply(client, conn, member):
     """M1, the other half — a regression pin rather than a new guard: `submit` has always had an
-    explicit allowed-from set (`BUYER_APPLY_STATES`), and a re-application must stay inside it."""
+    explicit allowed-from set (`APPLY_STATES`), and a re-application must stay inside it."""
     for state in ("suspended", "revoked"):
         aid, cookies, hdr = member((), state="declined", email=f"{state}-reapplies@example.org")
         with conn.cursor() as cur:
@@ -472,15 +521,20 @@ async def test_a_suspended_or_revoked_account_cannot_re_apply(client, conn, memb
 
 
 async def test_a_declined_seller_re_application_is_audited_as_a_re_application(client, conn, member):
-    """L1. The flag used to key on the ACCOUNT state, which a declined seller decision never
-    changes — a seller applies from `active` and stays there — so an auditor counting
-    re-applications undercounted every seller one. It keys on "this kind's latest row is
-    `declined`" instead, which is true of both kinds."""
-    aid, cookies, hdr = member(("buyer",), email="seller-reapply@example.org")
+    """L1. The flag keys on "this kind's latest row is `declined`", which is true of both kinds —
+    written when a declined SELLER decision left the account `active` (the decision table's own
+    seller override) while a declined BUYER decision moved it to `declined`, so an auditor counting
+    re-applications by ACCOUNT state alone undercounted every seller one.
+
+    Ruling D-C59 (2026-09-20) removes that override: a declined seller decision now moves the
+    account to `declined` exactly as a buyer's always did, so the two kinds are symmetric here too
+    — this test now proves the SAME fact it always did (the flag keys on the ROW, not on account
+    state) without a divergent account-state assertion to carry it."""
+    aid, cookies, hdr = member((), state="verified", email="seller-reapply@example.org")
     first = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
     assert first.status_code == 202
     await _decide(client, _staff(member), aid, "decline", "Not this year.")
-    assert _one(conn, "SELECT state FROM account WHERE id=%s", (aid,)) == ("active",)  # a seller decision never moves it
+    assert _one(conn, "SELECT state FROM account WHERE id=%s", (aid,)) == ("declined",)  # role-less, symmetric with buyer now
 
     again = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
     assert again.status_code == 202 and again.json()["id"] != first.json()["id"]

@@ -124,7 +124,7 @@ describe('reference-server.mjs', () => {
   // value has to answer identically the second time too — otherwise `updateHtml` would hand React
   // a different template than the one it mounted.
   it('answers the same bytes on a second request for a ?props= URL carrying an object', async () => {
-    const query = `props=${encodeURIComponent(JSON.stringify({ me: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] } }))}`;
+    const query = `props=${encodeURIComponent(JSON.stringify({ me: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved seller · StartUp Club', initials: 'RM', state: 'active', roles: ['seller'] } }))}`;
     const first = await (await fetch(`${base}/?${query}`)).text();
     const second = await (await fetch(`${base}/?${query}`)).text();
     expect(second).toBe(first);

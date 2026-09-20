@@ -745,7 +745,7 @@ async def test_another_sellers_photograph_is_a_404_and_never_a_403(
     one -- a listing that is not yours should not be confirmed to exist."""
     listing_id, row = await _listing_with_a_processed_photograph(
         client, conn, store, seller, visibility="NOT_SHOW")
-    _aid, cookies, headers = member(roles=("buyer", "seller"), email="p9-other-seller@example.org")
+    _aid, cookies, headers = member(roles=("seller",), email="p9-other-seller@example.org")
     other = auth_headers(cookies, headers)
     refused = await client.get(
         f"/api/seller/listings/{listing_id}/photos/{row.asset_id}?variant=original", headers=other)

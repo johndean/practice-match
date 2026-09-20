@@ -685,7 +685,7 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     // `labels.role_label({'buyer'}, 'StartUp Club')` and against the design file itself, in both
     // languages; this is the harness side of the same fact.
     expect(PERSONAS.buyer.role).toBe('Approved buyer · StartUp Club');
-    expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
+    expect(PERSONAS.seller.role).toBe('Approved seller · StartUp Club');
     expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
     // D-C54: `admin@` computes the SAME label as `design@` — `labels.role_label` reads the grants
     // it knows about and one `admin` is enough for it. The two accounts differ only in the matrix,

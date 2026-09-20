@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { crc32, deflateSync } from 'node:zlib';
-import { appOrigin, guard, signInAs } from './harness';
+import { appOrigin, expectApiStatus, guard, signInAs } from './harness';
 
 // ---------------------------------------------------------------------------------------
 // The seller's listing lifecycle, end to end, against the real API — controller amendment
@@ -124,6 +124,19 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   test('a seller creates a listing, fills every step and submits it for review', async ({ page }) => {
     guard(page);
     await signInAs(page, 'seller', '/seller');
+    // D-C59 (2026-09-20): a seller no longer holds `request.read_own` (buyer and seller are now
+    // mutually exclusive roles), so `logic.js`'s unconditional `componentDidMount` bootstrap
+    // (`this.props.requests && me && me.state === "active"` -- no role term, since before this
+    // ruling BOTH buyer and seller held the permission) now asks `GET /api/requests` on every
+    // seller boot and is correctly refused. `reloadRequests()`'s own rejection arm already turns
+    // that into `myRequests: []` with no visible effect -- `myReqs()` is read by the buyer-facing
+    // screens only, and this seller persona never reaches one -- so this is the harmless, correct
+    // consequence of the narrower permission, not a defect: armed here rather than in `logic.js`
+    // (generated, never hand-edited) or as a standing allowance (this is one page, one boot, one
+    // refusal, exactly what `expectApiStatus`'s one-shot arming is for). `expectApiStatus` needs
+    // a page that has already navigated (it reads `page.url()`), so it is armed here rather than
+    // before `signInAs`, on the same reasoning `smoke.spec.ts`'s own `browseWith` records.
+    expectApiStatus(page, 403);
     await expect(button(page, 'Create a listing')).toBeVisible();
 
     // 1. "Create a listing" CREATES one (A16.14): a real POST, a real row, the wizard on step 1.
@@ -273,6 +286,19 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   test('a seller adds a photograph with a caption, and the preview counts it', async ({ page }) => {
     guard(page);
     await signInAs(page, 'seller', '/seller');
+    // D-C59 (2026-09-20): a seller no longer holds `request.read_own` (buyer and seller are now
+    // mutually exclusive roles), so `logic.js`'s unconditional `componentDidMount` bootstrap
+    // (`this.props.requests && me && me.state === "active"` -- no role term, since before this
+    // ruling BOTH buyer and seller held the permission) now asks `GET /api/requests` on every
+    // seller boot and is correctly refused. `reloadRequests()`'s own rejection arm already turns
+    // that into `myRequests: []` with no visible effect -- `myReqs()` is read by the buyer-facing
+    // screens only, and this seller persona never reaches one -- so this is the harmless, correct
+    // consequence of the narrower permission, not a defect: armed here rather than in `logic.js`
+    // (generated, never hand-edited) or as a standing allowance (this is one page, one boot, one
+    // refusal, exactly what `expectApiStatus`'s one-shot arming is for). `expectApiStatus` needs
+    // a page that has already navigated (it reads `page.url()`), so it is armed here rather than
+    // before `signInAs`, on the same reasoning `smoke.spec.ts`'s own `browseWith` records.
+    expectApiStatus(page, 403);
 
     const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
     await button(page, 'Create a listing').click();
@@ -360,6 +386,19 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   test('a seller re-describes a seeded photograph by clicking its tile', async ({ page }) => {
     guard(page);
     await signInAs(page, 'seller', '/seller');
+    // D-C59 (2026-09-20): a seller no longer holds `request.read_own` (buyer and seller are now
+    // mutually exclusive roles), so `logic.js`'s unconditional `componentDidMount` bootstrap
+    // (`this.props.requests && me && me.state === "active"` -- no role term, since before this
+    // ruling BOTH buyer and seller held the permission) now asks `GET /api/requests` on every
+    // seller boot and is correctly refused. `reloadRequests()`'s own rejection arm already turns
+    // that into `myRequests: []` with no visible effect -- `myReqs()` is read by the buyer-facing
+    // screens only, and this seller persona never reaches one -- so this is the harmless, correct
+    // consequence of the narrower permission, not a defect: armed here rather than in `logic.js`
+    // (generated, never hand-edited) or as a standing allowance (this is one page, one boot, one
+    // refusal, exactly what `expectApiStatus`'s one-shot arming is for). `expectApiStatus` needs
+    // a page that has already navigated (it reads `page.url()`), so it is armed here rather than
+    // before `signInAs`, on the same reasoning `smoke.spec.ts`'s own `browseWith` records.
+    expectApiStatus(page, 403);
 
     const mine = await page.evaluate(() =>
       fetch('/api/seller/listings?limit=200', { credentials: 'same-origin' }).then((r) => r.json())) as
@@ -416,6 +455,19 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   test('Edit on a seeded hospital shows its own seeded values, not the design\'s fixture ones', async ({ page }) => {
     guard(page);
     await signInAs(page, 'seller', '/seller');
+    // D-C59 (2026-09-20): a seller no longer holds `request.read_own` (buyer and seller are now
+    // mutually exclusive roles), so `logic.js`'s unconditional `componentDidMount` bootstrap
+    // (`this.props.requests && me && me.state === "active"` -- no role term, since before this
+    // ruling BOTH buyer and seller held the permission) now asks `GET /api/requests` on every
+    // seller boot and is correctly refused. `reloadRequests()`'s own rejection arm already turns
+    // that into `myRequests: []` with no visible effect -- `myReqs()` is read by the buyer-facing
+    // screens only, and this seller persona never reaches one -- so this is the harmless, correct
+    // consequence of the narrower permission, not a defect: armed here rather than in `logic.js`
+    // (generated, never hand-edited) or as a standing allowance (this is one page, one boot, one
+    // refusal, exactly what `expectApiStatus`'s one-shot arming is for). `expectApiStatus` needs
+    // a page that has already navigated (it reads `page.url()`), so it is armed here rather than
+    // before `signInAs`, on the same reasoning `smoke.spec.ts`'s own `browseWith` records.
+    expectApiStatus(page, 403);
 
     const mine = await page.evaluate(() =>
       fetch('/api/seller/listings?limit=200', { credentials: 'same-origin' }).then((r) => r.json())) as
@@ -498,6 +550,19 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   test('admin decides the seller\'s submitted listing, and the seller\'s dashboard reflects it', async ({ page, browser }) => {
     guard(page);
     await signInAs(page, 'seller', '/seller');
+    // D-C59 (2026-09-20): a seller no longer holds `request.read_own` (buyer and seller are now
+    // mutually exclusive roles), so `logic.js`'s unconditional `componentDidMount` bootstrap
+    // (`this.props.requests && me && me.state === "active"` -- no role term, since before this
+    // ruling BOTH buyer and seller held the permission) now asks `GET /api/requests` on every
+    // seller boot and is correctly refused. `reloadRequests()`'s own rejection arm already turns
+    // that into `myRequests: []` with no visible effect -- `myReqs()` is read by the buyer-facing
+    // screens only, and this seller persona never reaches one -- so this is the harmless, correct
+    // consequence of the narrower permission, not a defect: armed here rather than in `logic.js`
+    // (generated, never hand-edited) or as a standing allowance (this is one page, one boot, one
+    // refusal, exactly what `expectApiStatus`'s one-shot arming is for). `expectApiStatus` needs
+    // a page that has already navigated (it reads `page.url()`), so it is armed here rather than
+    // before `signInAs`, on the same reasoning `smoke.spec.ts`'s own `browseWith` records.
+    expectApiStatus(page, 403);
 
     const ADMIN_NAME = 'Flow Spec Admin Decision Hospital';
     // A city unique to this RUN, not merely this test: the admin queue is real, shared data on a

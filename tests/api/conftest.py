@@ -104,8 +104,13 @@ def seller(member):
     """A signed-in seller's request headers: the Cookie header plus the CSRF pair, ready to pass as
     `headers=seller`. Three personas rather than one `member(...)` call per test, because every
     suite from Task P2 on needs the same three and a per-test call would mint a new account (and a
-    new rate-limit bucket) each time."""
-    _account_id, cookies, headers = member(roles=("buyer", "seller"), email="idp-seller@example.org")
+    new rate-limit bucket) each time.
+
+    `roles=("seller",)`, not `("buyer", "seller")` — ruling D-C59 (2026-09-20) makes that pair
+    impossible to grant one account (`migrations/100_role_exclusivity.sql`'s trigger refuses it),
+    and no consumer of this fixture ever exercised the buyer half: every one of them is testing
+    SELLER-side behaviour (listing ownership, photo delivery, admin review), never a buyer act."""
+    _account_id, cookies, headers = member(roles=("seller",), email="idp-seller@example.org")
     return auth_headers(cookies, headers)
 
 

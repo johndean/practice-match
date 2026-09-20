@@ -6,10 +6,22 @@ Four MEMBER accounts, all named Dr. Rachel Mendes of the StartUp Club, differing
 are allowed to open — because since amendment A5.4 the account menu renders `/api/me`'s computed
 `role`, so the account decides what the header says (A-I8.2 / D-I8-8):
 
-    buyer@   role buyer            → "Approved buyer · StartUp Club"            the design's own fixture text
-    seller@  roles buyer + seller  → "Approved buyer and seller · StartUp Club"  the seller dashboard and wizard
-    design@  all four roles        → "VIN Foundation admin · StartUp Club"       the VIN Foundation Admin screens
-    admin@   role admin ALONE      → "VIN Foundation admin · StartUp Club"       ruling D-C54, below
+    buyer@   role buyer          → "Approved buyer · StartUp Club"      the design's own fixture text
+    seller@  role seller ALONE   → "Approved seller · StartUp Club"     the seller dashboard and wizard
+    design@  roles staff + admin → "VIN Foundation admin · StartUp Club" the VIN Foundation Admin screens
+    admin@   role admin ALONE    → "VIN Foundation admin · StartUp Club" ruling D-C54, below
+
+Ruling D-C59 (John, 2026-09-20, verbatim: "a buyer can not be a seller and a seller can not be a
+buyer"; spec docs/superpowers/specs/2026-09-20-account-role-exclusivity-ruling.md) is why `seller@`
+is `seller` ALONE now, and why `design@` no longer holds `buyer` or `seller` at all: both used to
+hold both, which is precisely the account shape the ruling forbids, and `migrations/
+100_role_exclusivity.sql`'s trigger would refuse this script's own INSERTs under the old shape.
+`design@` loses BOTH member roles rather than one of them — holding either would be legal on its
+own, but `admin` already carries every permission either one does (D-C54's structural superset), so
+there is nothing a literal `buyer` or `seller` grant would add, and dropping only one would be an
+arbitrary choice with no reason behind it. `design@`'s computed label is unaffected either way:
+`role_label` reads `admin` first in its `elif` chain, so "VIN Foundation admin · StartUp Club" is
+the fixture's own string with four roles or with two.
 
 `buyer@` is the oracle persona for the nineteen buyer-family states precisely because
 `labels.role_label({"buyer"}, "StartUp Club")` reproduces the design's fixture string letter for
@@ -97,7 +109,12 @@ sys.path.insert(0, str(ROOT))
 PERSONA_EMAIL = "design@practice-match.test"          # RFC 6761 `.test`: never deliverable, by design
 PERSONA_NAME = "Dr. Rachel Mendes"
 PERSONA_AFFILIATION = "StartUp Club"
-PERSONA_ROLES = ("buyer", "seller", "staff", "admin")
+# Ruling D-C59 (2026-09-20): NOT `("buyer", "seller", "staff", "admin")` any more — that shape is
+# exactly the buyer+seller account the ruling forbids, and `migrations/100_role_exclusivity.sql`'s
+# trigger now refuses to grant it. `admin`'s structural superset (D-C54) already carries every
+# permission `buyer`/`seller` do, so dropping both costs this persona no capability; `staff` stays
+# because nothing about this ruling touches it.
+PERSONA_ROLES = ("staff", "admin")
 DEFAULT_PASSWORD = "design-persona-quiet-lantern-42"
 # A-I8.2 / D-I8-8: the three member personas whose labels the design's own header shows. Same name and
 # affiliation as `design@` — only the grants differ, so `name` and `initials` are constant across the
@@ -108,7 +125,10 @@ DEFAULT_PASSWORD = "design-persona-quiet-lantern-42"
 # either way, and only the matrix knows the two accounts open different doors.
 ORACLE_PERSONAS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("buyer@practice-match.test", ("buyer",)),
-    ("seller@practice-match.test", ("buyer", "seller")),
+    # Ruling D-C59 (2026-09-20): `seller` ALONE, not `("buyer", "seller")` — a buyer+seller account
+    # is exactly what the ruling forbids, and this script's own INSERT would now be refused by
+    # `migrations/100_role_exclusivity.sql`'s trigger if it asked for both.
+    ("seller@practice-match.test", ("seller",)),
     ("admin@practice-match.test", ("admin",)),
 )
 # D-I8-4: one row per gate state the harness has to reach. No role grants and no `application`

@@ -15,13 +15,18 @@ def P(*roles, state="active"):
 
 
 def test_matrix_matches_the_spec_table():
-    # `seller.apply` and `page.seller` carry `admin` since ruling D-C54 (2026-09-13): the admin role
-    # is a superset of the whole table, applied structurally at the foot of `permissions.py`. The
-    # rows are still written here as the spec's own holders PLUS that one rule, so a row that lost
-    # its real holder would still fail — `tests/auth/test_matrix.py` pins the rule itself.
+    # `page.seller` carries `admin` since ruling D-C54 (2026-09-13): the admin role is a superset
+    # of the whole table, applied structurally at the foot of `permissions.py`. The rows are still
+    # written here as the spec's own holders PLUS that one rule, so a row that lost its real holder
+    # would still fail — `tests/auth/test_matrix.py` pins the rule itself.
+    #
+    # `seller.apply` is `admin` ALONE since ruling D-C59 (2026-09-20): it moved off `buyer`
+    # entirely — a seller now signs up separately, gated on account state, never on this
+    # permission (`app/api/applications.py`) — so `admin`'s own structural union is the whole of
+    # its holder set. `tests/auth/test_role_exclusivity.py` pins the ruling's database mechanism.
     assert PM.MATRIX["page.gate"] == frozenset(PM.ROLES)
     assert PM.MATRIX["market.read"] == frozenset({"buyer", "seller", "staff", "admin"})
-    assert PM.MATRIX["seller.apply"] == frozenset({"buyer", "admin"})
+    assert PM.MATRIX["seller.apply"] == frozenset({"admin"})
     assert PM.MATRIX["page.seller"] == frozenset({"seller", "admin"})
     assert PM.MATRIX["users.decide"] == frozenset({"staff", "admin"})
     assert PM.MATRIX["engine.activate"] == frozenset({"admin"}) and "engine.activate" in PM.REAUTH

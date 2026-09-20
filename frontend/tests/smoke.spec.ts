@@ -867,7 +867,9 @@ test.describe('harness: the design persona signs in against the real API (A-I7)'
       fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json() as Promise<{ email: string; roles: string[] }>)
     );
     expect(me.email).toBe('design@practice-match.test');
-    expect(me.roles).toEqual(['admin', 'buyer', 'seller', 'staff']);
+    // Ruling D-C59 (2026-09-20): `design@` holds `staff` + `admin` now, not all four roles — the
+    // old shape held `buyer` and `seller` on one account, exactly what the ruling forbids.
+    expect(me.roles).toEqual(['admin', 'staff']);
   });
 });
 
@@ -2491,6 +2493,18 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
   // and `needs-review@practice-match.test`, which `harness.ts`'s own personas sign in AS to reach
   // the "under review" gate, so deciding one here would change what `account-flows.spec.ts` sees.
   // The route itself is exercised end to end by `tests/api/test_admin_users.py`.
+  //
+  // `Decline`, not `Approve` (ruling D-C59, 2026-09-20): this row's account already holds `buyer`
+  // (the legacy shape the comment above `SELLER_APPLICANT` describes), and the database now
+  // refuses to grant `seller` alongside an active `buyer`
+  // (`migrations/100_role_exclusivity.sql`) — `admin_users.decide`'s own `_role_conflict` answers
+  // that refusal cleanly for `approve` specifically (`tests/api/test_admin_users.py`'s own
+  // coverage), so a MOCK claiming approve succeeded here would assert an outcome the real route
+  // cannot produce. `decline` is untouched by the ruling (it grants no role) and is still exactly
+  // what `admin_users.decide`'s narrowed legacy override accepts for this row
+  // (`tests/api/test_admin_users.py::test_a_declined_seller_application_is_served_as_declined_on_an_account_still_active`
+  // pins the real response this stub now matches), so it is what proves the SAME browser-mechanics
+  // point (real CSRF header, real cookie, real reload) honestly.
   // -----------------------------------------------------------------------------------------
   test('the decision the browser really sends is accepted, and the reload renders the new state', async ({ page }) => {
     await prepare(page);
@@ -2499,7 +2513,7 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     const sent: { method: string; csrf: string | undefined; body: unknown }[] = [];
     await serveAccounts(page, {
       queue: () => ({
-        items: [{ ...SELLER_APPLICANT[0], application_status: decided ? 'approved' : 'pending' }],
+        items: [{ ...SELLER_APPLICANT[0], application_status: decided ? 'declined' : 'pending' }],
         counts: { open: decided ? 0 : 1, total: 1 }
       })
     });
@@ -2511,23 +2525,32 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
         body: JSON.parse(request.postData() ?? 'null')
       });
       decided = true;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer', 'seller'] }) });
+      // `roles: ['buyer']`, unchanged: a decline writes no `role_grant` row, on this account or any
+      // other — the legacy override's own point (`app/api/admin_users.py`'s `decide`).
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'active', roles: ['buyer'] }) });
     });
     await signInAs(page, 'design', '/admin');
     await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    // `decline` is in `NOTE_REQUIRED` (`app/api/admin_users.py`), so the design's own note prompt
+    // must be answered before anything is sent — `ui.needsNote`'s dialog, accepted here exactly as
+    // a reviewer would type into it.
+    page.once('dialog', (d) => void d.accept('Ownership unclear'));
+    await page.getByRole('button', { name: 'Decline', exact: true }).click();
     await expect.poll(() => sent).toHaveLength(1);
 
     const cookie = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
     expect(sent[0].method).toBe('POST');
-    expect(sent[0].body).toEqual({ action: 'approve', note: '' });
+    expect(sent[0].body).toEqual({ action: 'decline', note: 'Ownership unclear' });
     // The real header, against the real cookie the real browser is holding — `csrfToken()`'s whole
     // job, and the one thing a unit test with a stubbed `document.cookie` cannot say.
     expect(cookie?.value, 'the session carries no csrf cookie to send').toBeTruthy();
     expect(sent[0].csrf).toBe(cookie?.value);
 
-    // 200 → reload → the row's NEW state on screen: "Approved", and the badge down to nothing.
+    // 200 → reload → the row's state on screen: still "Approved" (the ACCOUNT's own pill — it
+    // really is an approved buyer, `users.ts`'s `provenance`/`PILLS` fallback for a row with
+    // nothing open — `openStatus` returns `null` once `declined` is no longer in `OPEN_STATUSES`),
+    // and the badge down to nothing.
     await expect(page.getByText('Approved', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toHaveCount(1);
     // A queue of nothing is a NUMBER, not silence: A36.4/A36.5 unmount the pill where the API sent

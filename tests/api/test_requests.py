@@ -77,10 +77,17 @@ async def test_a_buyer_can_request_access(client, conn, member) -> None:
 
 @pytest.mark.asyncio
 async def test_a_buyer_cannot_request_access_to_their_own_listing(client, conn, member) -> None:
-    _sid, s_cookies, s_hdr = member(("seller",), email="seller2@example.org")
-    seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_id = await _seller_listing(conn, client, seller_headers)
-    response = await client.post("/api/requests", headers=seller_headers, json={"listing_id": listing_id})
+    """Ruling D-C59 (2026-09-20) narrows `request.create` to `{"buyer", "admin"}` — a plain
+    `("seller",)` account no longer holds it at all, so it can no longer REACH this route to prove
+    the SELF_REQUEST business rule (`app/api/requests.py`'s own guard would refuse it with a 403
+    at the permission layer, before the handler's self-ownership check ever runs — a stronger and
+    less interesting refusal than the one this test is about). `admin` is the one role left that
+    can both own a listing (`listing.manage_own`, D-C54's superset) and hold `request.create`
+    (this ruling's own structural union), so it is what reaches the SAME business rule now."""
+    _sid, s_cookies, s_hdr = member(("admin",), email="admin-self-request@example.org")
+    admin_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _seller_listing(conn, client, admin_headers)
+    response = await client.post("/api/requests", headers=admin_headers, json={"listing_id": listing_id})
     assert response.status_code == 422 and response.json()["error"]["code"] == "SELF_REQUEST"
 
 
@@ -265,18 +272,24 @@ async def test_get_one_refuses_a_request_that_belongs_to_another_buyer(client, c
 
 @pytest.mark.asyncio
 async def test_get_one_refuses_the_listing_s_own_seller_too(client, conn, member) -> None:
-    """The same IDOR case at the seller's own door: `request.read_own` is a role permission BOTH
-    buyer and seller hold (a seller can also be a buyer of someone else's listing), so the route
-    guard alone cannot tell them apart — the row-ownership check inside `req.get_one`
-    (`buyer_user_id = the caller`) is what has to refuse the listing's own seller reading a buyer's
-    request through this, the BUYER's door. `GET /api/seller/requests` (Task 6) is the seller's own."""
+    """The IDOR case at the seller's own door — narrowed by ruling D-C59 (2026-09-20). Before that
+    ruling `request.read_own` was a role permission BOTH buyer and seller held (a seller could also
+    be a buyer of someone else's listing), so the route guard alone could not tell them apart, and
+    the row-ownership check inside `req.get_one` (`buyer_user_id = the caller`) was what had to
+    refuse the listing's own seller reading a buyer's request through this, the BUYER's door.
+
+    `request.read_own` is `{"buyer", "admin"}` now — a plain `("seller",)` account holds it
+    NOWHERE — so the route guard itself refuses a seller here, a full step earlier and a stronger
+    refusal (403, not 404) than the row-ownership check gave it before. `GET /api/seller/requests`
+    (Task 6) is the seller's own door for its own inbox; buyer-vs-buyer IDOR on THIS door is proved
+    separately, above, and is unaffected."""
     _sid, s_cookies, s_hdr = member(("seller",), email="seller5b@example.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id = await _seller_listing(conn, client, seller_headers)
     _a, a_cookies, a_hdr = member(("buyer",), email="buyera5b@example.org")
     created = await client.post("/api/requests", headers=auth_headers(a_cookies, a_hdr), json={"listing_id": listing_id})
     response = await client.get(f"/api/requests/{created.json()['id']}", headers=seller_headers)
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

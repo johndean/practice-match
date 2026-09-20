@@ -19,8 +19,22 @@ MATRIX: dict[str, frozenset[str]] = {
     "page.browse": _MEMBERS, "listing.read": _MEMBERS,
     "market.read": _MEMBERS,                     # + anonymous while MARKET_DATA_PUBLIC (`allowed`, below — not `effective_roles`, which never reads a setting)
     "layer.google_live": _MEMBERS, "layer.satellite": _MEMBERS,
-    "request.create": frozenset({"buyer", "seller"}), "request.read_own": frozenset({"buyer", "seller"}),
-    "seller.apply": frozenset({"buyer"}),
+    # Ruling D-C59 (John, 2026-09-20, verbatim: "a buyer can not be a seller and a seller can not
+    # be a buyer"; spec docs/superpowers/specs/2026-09-20-account-role-exclusivity-ruling.md).
+    # `request.create`/`request.read_own` are the BUYER's own acts — sending a disclosure request
+    # and reading the ones already sent — and under the ruling a seller has no requests of their
+    # own to send or read; `seller` drops out of both. `request.answer_own` (below), the seller's
+    # OWN inbox, is a different act on a different door and is unaffected.
+    "request.create": frozenset({"buyer"}), "request.read_own": frozenset({"buyer"}),
+    # `seller.apply` MOVES OFF `buyer` under the same ruling. It used to be the ONLY route to
+    # becoming a seller — approve a buyer's seller application and the account keeps BOTH roles
+    # forever, since `decide` never demotes an account — which is exactly the shape the ruling
+    # forbids. `app/api/applications.py`'s seller branch no longer asks this permission at all: it
+    # is gated on ACCOUNT STATE, in the buyer branch's own shape, because a permission cannot do
+    # that job (`effective_roles` gives every account `applicant`, which discriminates nothing —
+    # the spec's own measurement). No ordinary role holds `seller.apply` any more; `admin` still
+    # does, structurally, through the union below — D-C54 stands and this ruling does not touch it.
+    "seller.apply": frozenset(),
     "page.seller": frozenset({"seller"}), "listing.manage_own": frozenset({"seller"}), "request.answer_own": frozenset({"seller"}),
     "page.admin": _STAFF, "users.review": _STAFF, "users.decide": _STAFF,
     # Split from "users.review" in I5 fix round 1 (John, 2026-09-07). Spec §4 audits "viewing an
@@ -150,11 +164,14 @@ def may_mint(role: str, minter_roles: frozenset[str]) -> bool:
     can be refused. The guard is what keeps that true if `tokens.manage` ever widens.
 
     Compared over `ADMINISTRATIVE` rather than over the whole permission set because the matrix is
-    not a ladder: `buyer`/`seller` carry `request.create`, `request.read_own`, `seller.apply`,
-    `page.seller`, `listing.manage_own` and `request.answer_own`, which `staff` does not hold, so a
-    plain subset test would refuse a staff minter the `k6-qa`/`e2e-qa`/`deploy-verify` tokens the
+    not a ladder: `buyer` carries `request.create` and `request.read_own`, and `seller` carries
+    `page.seller`, `listing.manage_own` and `request.answer_own` — none of which `staff` holds — so
+    a plain subset test would refuse a staff minter the `k6-qa`/`e2e-qa`/`deploy-verify` tokens the
     spec names. A buyer token is not more powerful than the staff member who minted it, only
     different; escalation here means administrative reach, and that is exactly what this compares.
+    (Ruling D-C59, 2026-09-20, moved `seller.apply` off both roles entirely — nobody but `admin`
+    holds it now, which happens to make it `ADMINISTRATIVE` too — so it is no longer one of the
+    permissions this paragraph's example reads from; the rule itself is unchanged.)
 
     Ruling D-C54 (2026-09-13) made `admin` a superset, so an ADMIN minter would now satisfy a plain
     subset test as well — today `tokens.manage` is admin-only, so an admin is the only minter there

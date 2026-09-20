@@ -693,9 +693,14 @@ export function throwawayEmail(purpose: string, run: string, n: number): string 
  * constants. Keep the shape, or that pin stops seeing them.
  */
 export const PERSONAS = {
-  design: { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] },
+  // Ruling D-C59 (John, 2026-09-20): `design@` is `staff` + `admin` now, not all four roles — the
+  // old shape held `buyer` and `seller` on one account, exactly what the ruling forbids. Its
+  // computed label is unaffected: `role_label` reads `admin` first in its `elif` chain either way.
+  design: { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'staff'] },
   buyer: { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] },
-  seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
+  // Ruling D-C59: `seller` ALONE — `['buyer', 'seller']` is the account shape the ruling forbids,
+  // and `migrations/100_role_exclusivity.sql` now refuses to grant it.
+  seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved seller · StartUp Club', initials: 'RM', state: 'active', roles: ['seller'] },
   // Ruling D-C54 (John, 2026-09-13): an account whose ONLY grant is `admin` — the shape his own
   // account has, and the one `design@`'s four roles can never express. Its computed label is
   // `design@`'s own, which is part of why the defect hid: the header reads "VIN Foundation admin"
