@@ -147,14 +147,19 @@ def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
     pass a plain subset test too; `ADMINISTRATIVE` is still what this rule is ABOUT, and still what
     would hold if `tokens.manage` ever widened to `staff`.)"""
     # L3: the expected set spelled out, not the implementation's own expression restated (which
-    # would have been true of any matrix). Nineteen rows today — every one of them staff/admin only.
+    # would have been true of any matrix). Twenty rows today — every one of them staff/admin only.
+    # `seller.apply` joined on 2026-09-20 (ruling D-C59): it moved off `buyer` entirely (nobody but
+    # `admin` holds it now), which structurally makes it `<= _STAFF` for the first time — a side
+    # effect of closing the buyer-to-seller pathway, not an independent widening of who may mint
+    # what (`test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does`'s own rule is
+    # unchanged; a buyer/seller token never carried this permission to begin with).
     assert PM.ADMINISTRATIVE == frozenset({
         "abuse.investigate", "audit.read", "data_sources.read", "engine.activate", "licence.decide",
         "listing.publish", "listing.review", "page.admin", "permissions.read", "request.oversee",
-        "roles.grant", "signups.export", "signups.notify", "signups.read", "tokens.manage",
-        "users.decide", "users.review", "users.revoke", "users.view_detail",
+        "roles.grant", "seller.apply", "signups.export", "signups.notify", "signups.read",
+        "tokens.manage", "users.decide", "users.review", "users.revoke", "users.view_detail",
     })
-    assert len(PM.ADMINISTRATIVE) == 19
+    assert len(PM.ADMINISTRATIVE) == 20
     assert "market.read" not in PM.ADMINISTRATIVE and "request.create" not in PM.ADMINISTRATIVE
 
     admin, staff = frozenset({"admin"}), frozenset({"staff"})
@@ -232,7 +237,10 @@ def test_the_admin_role_holds_every_permission_in_the_matrix():
     # the assertion above a statement about `admin` rather than about every role.
     for perm in ("listing.manage_own", "page.seller", "request.answer_own", "request.create", "request.read_own", "seller.apply"):
         assert "staff" not in PM.MATRIX[perm], perm
-    assert PM.MATRIX["seller.apply"] == frozenset({"buyer", "admin"})
+    # `seller.apply` is `{"admin"}` alone since ruling D-C59 (2026-09-20) moved it off `buyer` —
+    # D-C54's own superset still stands, which is the one thing this test is about; the ruling
+    # itself is `tests/auth/test_role_exclusivity.py`'s and `test_permissions.py`'s to pin.
+    assert PM.MATRIX["seller.apply"] == frozenset({"admin"})
     assert PM.MATRIX["page.seller"] == frozenset({"seller", "admin"})
     # The ruling changes the matrix and nothing beside it: the step-up list and the token subtraction
     # are what they were.
@@ -256,3 +264,34 @@ def test_an_admin_only_account_reaches_the_two_screens_john_was_locked_out_of():
     assert PM.allowed("page.seller", staff) is False and PM.allowed("request.read_own", staff) is False
     suspended = S.Principal(uuid4(), "suspended", frozenset({"admin"}), None, "session", "h")
     assert PM.allowed("page.seller", suspended) is False and PM.allowed("page.admin", suspended) is False
+
+
+# --- ruling D-C59, 2026-09-20 (John, verbatim): "a buyer can not be a seller and a seller can not
+# be a buyer" ---
+
+
+def test_a_seller_holds_no_buyer_acts_and_a_buyer_holds_no_seller_apply():
+    """`request.create`/`request.read_own` were `{"buyer", "seller"}` — a seller could send and
+    read its OWN disclosure requests, which the ruling says a seller has no requests of its own to
+    have. `seller.apply` was `{"buyer"}` — the only route to becoming a seller was to be an
+    approved buyer, which is exactly the account the ruling forbids (approval never demotes, so the
+    account kept both roles forever). All three now name no ordinary role at all; `admin` still
+    holds them, structurally, through D-C54's own union — that ruling stands and this one does not
+    touch it."""
+    assert PM.MATRIX["request.create"] == frozenset({"buyer", "admin"})
+    assert PM.MATRIX["request.read_own"] == frozenset({"buyer", "admin"})
+    assert PM.MATRIX["seller.apply"] == frozenset({"admin"})
+    # The seller's OWN inbox is a different door and is untouched.
+    assert PM.MATRIX["request.answer_own"] == frozenset({"seller", "admin"})
+
+    seller = S.Principal(uuid4(), "active", frozenset({"seller"}), None, "session", "h")
+    assert PM.allowed("request.create", seller) is False
+    assert PM.allowed("request.read_own", seller) is False
+    assert PM.allowed("request.answer_own", seller) is True   # unaffected
+    buyer = S.Principal(uuid4(), "active", frozenset({"buyer"}), None, "session", "h")
+    assert PM.allowed("seller.apply", buyer) is False
+    assert PM.allowed("request.create", buyer) is True         # unaffected
+    admin = S.Principal(uuid4(), "active", frozenset({"admin"}), None, "session", "h")
+    assert PM.allowed("seller.apply", admin) is True
+    assert PM.allowed("request.create", admin) is True
+    assert PM.allowed("request.read_own", admin) is True

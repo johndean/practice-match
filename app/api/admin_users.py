@@ -107,12 +107,24 @@ APPLICATION_KINDS = ("buyer", "seller")
 OPEN_STATUSES = ("pending", "needs_review")
 APPLICATION_ACTIONS = ("approve", "decline", "request_info")
 # The account states `decide` will act on an APPLICATION from: `TRANSITIONS`' union over
-# `APPLICATION_ACTIONS` plus `active`, the state a SELLER application is decided from and to
-# (`_seller_decision` below). Read by `COUNTS_SQL` and mirrored in `frontend/src/admin/users.ts`,
-# pinned by equality in `tests/test_docs.py` (fix round 2, re-review Important 2 and Minor 2): a
-# suspended or revoked account keeps a STALE open application for ever — neither `suspend` nor
-# `revoke` is an application action, so `decide` never closes the row — and outside this set that
-# row is not something a reviewer can decide, so it is neither rendered as one nor counted as one.
+# `APPLICATION_ACTIONS`. Read by `COUNTS_SQL` and mirrored in `frontend/src/admin/users.ts`, pinned
+# by equality in `tests/test_docs.py` (fix round 2, re-review Important 2 and Minor 2): a suspended
+# or revoked account keeps a STALE open application for ever — neither `suspend` nor `revoke` is an
+# application action, so `decide` never closes the row — and outside this set that row is not
+# something a reviewer can decide, so it is neither rendered as one nor counted as one.
+#
+# `active` stays in the tuple under ruling D-C59 (2026-09-20; spec docs/superpowers/specs/
+# 2026-09-20-account-role-exclusivity-ruling.md), which NARROWS what used to produce it rather than
+# retiring it outright: a seller application used to be decided from and to `active` unconditionally
+# (`_seller_decision`, below) because a seller applied from an account that was ALREADY an approved
+# buyer. A seller now applies from `verified`/`declined`, exactly like a buyer, and moves through
+# `pending`/`needs_review` with it, so a NEW seller application is never `active` while open — but
+# `_seller_decision`'s own override SURVIVES, narrowed to an account that is ALREADY `active` at
+# decide time, for the shape the ruling's own "Open" section leaves open: an in-flight seller
+# application submitted before this ruling shipped. `decline`/`request_info` still work on such a
+# row; `approve` is refused separately, by `_role_conflict`, if granting the role would violate
+# `migrations/100_role_exclusivity.sql`'s trigger. `active` is therefore still exactly as
+# load-bearing as it always was, for a strictly smaller set of rows.
 DECIDABLE_STATES = ("active", "pending", "needs_review")
 NOTE_REQUIRED = ("decline", "request_info", "suspend", "revoke")
 # The decision table (spec §4). `revoke` is reachable from every state but `revoked` itself.
@@ -244,6 +256,21 @@ class StateConflict(AuthError):
         super().__init__()
 
 
+class RoleConflict(AuthError):
+    """Ruling D-C59 (John, 2026-09-20, verbatim: "a buyer can not be a seller and a seller can not
+    be a buyer"; spec docs/superpowers/specs/2026-09-20-account-role-exclusivity-ruling.md).
+    `migrations/100_role_exclusivity.sql`'s trigger is the authority; this is the clean refusal a
+    caller sees instead of that trigger's own raw constraint violation, from the two doors that
+    grant a role directly — an application `approve` (`decide`) and a direct grant (`grants`)."""
+
+    status = 409
+    code = "ROLE_CONFLICT"
+
+    def __init__(self, role: str, other: str) -> None:
+        self.message = f"this account already holds {other} and cannot also hold {role} (ruling D-C59)"
+        super().__init__()
+
+
 class Decision(BaseModel):
     action: str = Field(max_length=32)
     note: str = Field(default="", max_length=MAX_NOTE)
@@ -264,6 +291,28 @@ class TokenIn(BaseModel):
 def _roles(cur: Any, account_id: UUID) -> list[str]:
     cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL ORDER BY role", (account_id,))
     return [r[0] for r in cur.fetchall()]
+
+
+# Ruling D-C59: the ONE pair the ruling names. `staff`/`admin` have no exclusive partner and are
+# never looked up below.
+_EXCLUSIVE_ROLE = {"buyer": "seller", "seller": "buyer"}
+
+
+def _role_conflict(cur: Any, account_id: UUID, role: str) -> str | None:
+    """The OTHER role of `role`'s exclusive pair that this account already holds actively, or
+    `None`. A pre-check, not the enforcement — `migrations/100_role_exclusivity.sql`'s trigger is
+    that, on every write to `role_grant` however it is reached — so this exists only to answer a
+    clean `RoleConflict` (409) from the two callers that grant a role directly, rather than let
+    their INSERT hit the trigger and surface as an unhandled 500. Safe to run as a plain SELECT,
+    not `FOR UPDATE`: both callers already hold the account row locked (`decide`'s own `FOR UPDATE`
+    above; `grants`' own, below), which is what serialises two decisions about the same account —
+    the trigger's advisory lock is keyed the same way and closes the race between accounts this
+    lock does not reach."""
+    other = _EXCLUSIVE_ROLE.get(role)
+    if other is None:
+        return None
+    cur.execute("SELECT 1 FROM role_grant WHERE account_id=%s AND role=%s AND revoked_at IS NULL", (account_id, other))
+    return other if cur.fetchone() is not None else None
 
 
 def _grants(cur: Any, account_id: UUID) -> list[dict[str, str]]:
@@ -428,9 +477,13 @@ def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | Non
 # buttons from its OPEN APPLICATION where it has one and from its own `account.state` where it has
 # none, so the count is that same union. Each half is load-bearing on its own:
 #
-#   * the application half, because a SELLER applies from an account that is already `active`
-#     (`api/applications.py`: "moving it to `pending` would strip every role on the next request"),
-#     so a row with three live decision buttons was not in the number that tells a reviewer to look;
+#   * the application half, because a SELLER used to apply from an account that was already
+#     `active` (`api/applications.py`: "moving it to `pending` would strip every role on the next
+#     request"), so a row with three live decision buttons was not in the number that tells a
+#     reviewer to look. Ruling D-C59 (2026-09-20) retires that shape going forward — see
+#     `DECIDABLE_STATES`'s own note, above — but the union this shape justified stays: the OTHER
+#     bullet below is independently load-bearing, and narrowing this one buys nothing now that
+#     `active` costs nothing to leave in `DECIDABLE_STATES`;
 #   * the state half, because `scripts/seed_persona.py` seeds `pending@practice-match.test` in state
 #     `pending` with NO `application` row at all, and that account is live on QA.
 #
@@ -625,14 +678,34 @@ def decide(
                         ORDER BY submitted_at DESC, id DESC LIMIT 1""", (account_id, list(OPEN_STATUSES)))
         application = cur.fetchone()
         kind = application[1] if application is not None else "buyer"
-        if kind == "seller" and action in APPLICATION_ACTIONS:
-            # A seller applies from an account that is ALREADY `active`. The application has a
-            # state machine; the account does not move with it — demoting an approved buyer to
-            # `pending` would strip every role on their next request.
+        # Ruling D-C59 (2026-09-20) NARROWS this override rather than removing it. A NEW seller
+        # application no longer produces the shape it exists for at all: a seller now applies from
+        # `verified`/`declined` and moves through `pending`/`needs_review` exactly like a buyer
+        # (`applications.py`'s `APPLY_STATES`, now shared), so a fresh seller application is
+        # decided through the STANDARD table below with no branch here — its account is
+        # `pending`/`needs_review`, never `active`, until the moment `approve` makes it so. The
+        # override survives, narrowed to `state == "active"`, for exactly the shape the ruling's
+        # own "Open" section leaves open: a seller application submitted while the account was
+        # ALREADY active, before this ruling shipped (`tests/api/test_admin_users.py`'s
+        # `_legacy_open_seller_application` simulates it directly, since `submit()` refuses to
+        # produce it any more). `decline`/`request_info` still work on such a row — neither writes
+        # a `role_grant` row — and `approve` is caught separately, below, by `_role_conflict`: the
+        # database would refuse granting `seller` to an account that already holds `buyer`
+        # actively, and that check answers a clean refusal for THAT ONE ACTION rather than making
+        # the other two unreachable as well.
+        if kind == "seller" and action in APPLICATION_ACTIONS and state == "active":
             allowed_from, to = frozenset({"active"}), "active"
         if state not in allowed_from:
             raise StateConflict(action, state)
         if action == "approve":
+            # The database is the authority (`migrations/100_role_exclusivity.sql`'s trigger): no
+            # account may hold both `buyer` and `seller` active at once. This is the FRIENDLY half
+            # — a plain, already-locked SELECT (the account row is `FOR UPDATE` above), so granting
+            # the excluded role answers a clean 409 here instead of a raw constraint violation
+            # surfacing as a 500 out of the INSERT below.
+            conflict = _role_conflict(cur, account_id, kind)
+            if conflict is not None:
+                raise RoleConflict(kind, conflict)
             cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                         (account_id, kind, actor_account))
         if action == "revoke":
@@ -721,6 +794,13 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
                                   self_forbidden=False, removing_admin=not body.grant and body.role == "admin")
             before = _roles(cur, account_id)
             if body.grant:
+                # Ruling D-C59: the same clean pre-check `decide`'s own `approve` branch takes,
+                # ahead of the same trigger — this door grants ANY role directly, with no
+                # application in between, so it is reachable from a fresh account exactly as
+                # readily as `decide` is.
+                conflict = _role_conflict(cur, account_id, body.role)
+                if conflict is not None:
+                    raise RoleConflict(body.role, conflict)
                 cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                             (account_id, body.role, actor_account))
             else:

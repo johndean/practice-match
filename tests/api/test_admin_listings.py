@@ -20,7 +20,7 @@ async def _draft(client: Any, member: Any) -> tuple[str, dict[str, str]]:
     """A seller's part-filled draft, and the seller's own signed headers — one account per test, so
     a caller that also needs the OWNER does not create them a second time (`account.email` is
     unique)."""
-    _, cookies, headers = member(roles=("buyer", "seller"), email="al-seller@example.org")
+    _, cookies, headers = member(roles=("seller",), email="al-seller@example.org")
     signed = auth_headers(cookies, headers)
     response = await client.post("/api/seller/listings", headers=signed)
     assert response.status_code == 201, response.text
@@ -103,15 +103,18 @@ def test_the_matrix_and_route_guard_tests_still_pass_with_listing_publish_audite
     SL9 merge (2026-09-09): `main`'s Task I5d joined `REAUTH` with `signups.notify` (the launch
     mail is at least as consequential as a revocation) independently of this plan, which is why
     the set below and `ADMINISTRATIVE`'s count (16 before that merge, matching the three `signups.*`
-    permissions it also added — `tests/auth/test_matrix.py`'s own 19-element pin is the same
-    number, read the same way) both carry it now; `listing.publish` joining `AUDITED` moved
-    neither."""
+    permissions it also added — `tests/auth/test_matrix.py`'s own pin is the same number, read the
+    same way) both carry it now; `listing.publish` joining `AUDITED` moved neither.
+
+    The count moved again on 2026-09-20 (ruling D-C59): `seller.apply` moved off `buyer` entirely,
+    which structurally makes it `<= _STAFF` for the first time — `19` became `20`, unrelated to
+    this plan and to `listing.publish`, which is still the one thing this test is about."""
     from app.auth import permissions as PM
 
     assert "listing.publish" in PM.AUDITED
     assert "listing.review" not in PM.AUDITED and "listing.manage_own" not in PM.AUDITED
     assert PM.REAUTH == frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke", "signups.notify"})
-    assert "listing.publish" in PM.ADMINISTRATIVE and len(PM.ADMINISTRATIVE) == 19
+    assert "listing.publish" in PM.ADMINISTRATIVE and len(PM.ADMINISTRATIVE) == 20
 
 
 async def _staff(client: Any, member: Any) -> dict[str, str]:
@@ -237,7 +240,7 @@ async def test_the_queue_says_when_each_listing_last_moved_and_who_moved_it(
     submitted = await item()
     assert submitted["status"] == "in_review"
     # The seller's own submit is the audit row that put it here, and the seller's own roles say so.
-    assert submitted["status_changed_by"] == "buyer,seller"
+    assert submitted["status_changed_by"] == "seller"
     assert submitted["status_changed_at"] is not None
     assert submitted["listed_at"] is not None
 
@@ -264,7 +267,7 @@ async def test_the_queue_says_when_each_listing_last_moved_and_who_moved_it(
                               headers=signed)).status_code == 200
     paused = await item()
     assert paused["status"] == "paused"
-    assert paused["status_changed_by"] == "buyer,seller"
+    assert paused["status_changed_by"] == "seller"
 
 
 async def test_a_listing_no_audit_row_has_ever_named_carries_nulls_rather_than_a_guess(

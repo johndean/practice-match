@@ -112,7 +112,7 @@ cannot be drawn with a stale `—` in this column.
 **§4 addendum (2026-09-13, ruling D-C54).** Two consequences of the superset, accepted rather than
 fixed (Task ADMIN-SUPERSET fix round 1, review Informational 1/2) and written here in the same words
 as `docs/RUNBOOK-identity.md` §4, which is the operator-facing twin of this section: an `api_token`
-minted for the `admin` role now also carries the six member actions the superset added, exactly as a
+minted for the `admin` role now also carries the five member actions the superset added, exactly as a
 human admin's session does — the two refusals a token meets whatever role it carries are unchanged
 by this ruling: `tokens.manage` (`TOKEN_DENIED`), and every step-up action (`REAUTH`:
 `engine.activate`, `licence.decide`, `roles.grant`, `signups.notify`, `tokens.manage`,

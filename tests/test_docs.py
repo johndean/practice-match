@@ -1883,41 +1883,55 @@ def test_the_identity_spec_names_one_reauth_refusal_set_in_section_3_and_section
 
 APPLICATIONS_PRE_D_C54_SELLER_RULE = "already `active` with the buyer role"
 
-# Review Minor 1: the citation is INSIDE the pinned clause. It used to be a separate module-wide
-# `"D-C54" in prose`, which the `NotABuyer` docstring 72 lines above satisfied on its own, so the
-# comment could lose its citation with the test still green and its failure message still claiming
-# otherwise.
-APPLICATIONS_RULED_SELLER_RULE = (
+# The D-C54-era rule (2026-09-13) is ITSELF now retired by ruling D-C59 (2026-09-20, spec
+# docs/superpowers/specs/2026-09-20-account-role-exclusivity-ruling.md): a seller application no
+# longer refuses on a PERMISSION at all, so this phrase is exactly as stale as the pre-D-C54 one
+# above, and both are checked absent together below.
+APPLICATIONS_PRE_D_C59_SELLER_RULE = (
     "already `active` and allowed `seller.apply` — the buyer role, or `admin`, which has held every "
     "permission the buyer role does since ruling D-C54 (2026-09-13)"
 )
 
+# Review Minor 1 (2026-09-13), carried forward under D-C59: the citation is INSIDE the pinned
+# clause. It used to be a separate module-wide `"D-C54" in prose` (then `"D-C59" in prose`), which
+# an unrelated mention elsewhere in the file could satisfy on its own, so the comment could lose
+# its citation with the test still green and its failure message still claiming otherwise.
+APPLICATIONS_RULED_SELLER_RULE = (
+    'widened to BOTH kinds under ruling D-C59 (John, 2026-09-20, verbatim: "a buyer can not be a '
+    'seller and a seller can not be a buyer ... a seller signs up separately"'
+)
 
-def test_the_seller_application_comment_states_the_ruled_rule_and_not_the_pre_d_c54_one():
-    """Task SUPERSET-MINORS, re-review Minor 2. `app/api/applications.py`'s `seller.apply` branch
-    carried a THIRD copy of the pre-D-C54 rule — "A seller application is made from an account that
-    is already `active` with the buyer role" — one line above the `NotABuyer` docstring the hotfix
-    had already corrected for the same reason. Since ruling D-C54 (2026-09-13) that branch refuses
-    on the PERMISSION (`PM.allowed("seller.apply", principal)`), which `admin` holds too, so the
-    comment stated a rule the code beneath it no longer applies and the next reader of this handler
-    would have learned the wrong one.
 
-    A grep rather than a behaviour: the behaviour is pinned already (`tests/auth/test_matrix.py`
-    proves `admin` holds every permission, `tests/api/test_applications.py` exercises the branch).
-    What drifted is the prose, so the prose is what this watches — the arrangement
-    `test_persona_password_keychain_storage_is_one_fact_in_every_document` uses, old phrase absent
-    and new phrase present, so neither half can come back alone. Comment markers are stripped and
-    whitespace collapsed before comparing, because a soft-wrapped comment carries a `#` into the
-    middle of its own sentence."""
+def test_the_seller_application_comment_states_the_ruled_d_c59_rule_and_not_an_earlier_one():
+    """Task SUPERSET-MINORS, re-review Minor 2 (2026-09-13) — renamed and widened under ruling
+    D-C59 (2026-09-20), which retires the D-C54-era rule this test used to pin as CURRENT.
+
+    `app/api/applications.py`'s seller-application gate carried, in turn, a pre-D-C54 rule ("A
+    seller application is made from an account that is already `active` with the buyer role"), then
+    a D-C54 rule ("already `active` and allowed `seller.apply` — the buyer role, or `admin` ...").
+    Ruling D-C59 retires the SECOND one too: a seller application no longer refuses on a permission
+    at all — it is gated on account state, in the buyer branch's own shape — so a comment stating
+    either earlier rule would teach the next reader of this handler something the code beneath it no
+    longer does.
+
+    A grep rather than a behaviour: the behaviour is pinned already (`tests/auth/test_role_exclusivity.py`
+    and `tests/api/test_applications.py` exercise it directly). What drifted is the prose, so the
+    prose is what this watches — the arrangement `test_persona_password_keychain_storage_is_one_
+    fact_in_every_document` uses, every stale phrase absent and the current one present, so neither
+    half can come back alone. Comment markers are stripped and whitespace collapsed before
+    comparing, because a soft-wrapped comment carries a `#` into the middle of its own sentence."""
     source = (ROOT / "app" / "api" / "applications.py").read_text()
     prose = _collapse_whitespace(re.sub(r"(?m)^\s*#\s?", "", source))
-    assert APPLICATIONS_PRE_D_C54_SELLER_RULE not in prose, (
-        "app/api/applications.py still states the pre-D-C54 seller-application rule "
-        f"({APPLICATIONS_PRE_D_C54_SELLER_RULE!r}) — `admin` holds `seller.apply` too since 2026-09-13"
-    )
+    for stale, why in (
+        (APPLICATIONS_PRE_D_C54_SELLER_RULE, "`admin` holds `seller.apply` too since 2026-09-13 (D-C54)"),
+        (APPLICATIONS_PRE_D_C59_SELLER_RULE, "`seller.apply` moved off `buyer` entirely since 2026-09-20 (D-C59)"),
+    ):
+        assert stale not in prose, (
+            f"app/api/applications.py still states a stale seller-application rule ({stale!r}) — {why}"
+        )
     assert APPLICATIONS_RULED_SELLER_RULE in prose, (
-        "app/api/applications.py does not state the ruled seller-application rule, citation and all "
-        f"({APPLICATIONS_RULED_SELLER_RULE!r})"
+        "app/api/applications.py does not state the ruled D-C59 seller-application rule, citation "
+        f"and all ({APPLICATIONS_RULED_SELLER_RULE!r})"
     )
 
 

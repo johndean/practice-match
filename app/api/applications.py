@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth import audit, flags
-from app.auth import permissions as PM
 from app.auth import sessions as S
 from app.auth.deps import AuthError, Unauthenticated, require
 from app.cache import sync_redis
@@ -43,20 +42,28 @@ ATTESTATION = {"buyer": "affirm", "seller": "ownership_attestation"}
 TEMPLATE = {"buyer": "application_received", "seller": "seller_application_received"}
 # A `pending`/`needs_review` row is the one under review; anything else is history.
 OPEN_STATUSES = ("pending", "needs_review")
-# The applicant's path back (John's ruling, 2026-09-07; spec §Lifecycle, amended). The account
-# states from which a BUYER application may be opened: `verified` is the first application,
-# `declined` is the re-apply. A SELLER application is opened from `active` and is governed by
-# `seller.apply` instead — a declined seller may re-apply with no state change at all.
-BUYER_APPLY_STATES = ("verified", "declined")
+# The applicant's path back (John's ruling, 2026-09-07; spec §Lifecycle, amended) — widened to
+# BOTH kinds under ruling D-C59 (John, 2026-09-20, verbatim: "a buyer can not be a seller and a
+# seller can not be a buyer ... a seller signs up separately"; spec docs/superpowers/specs/
+# 2026-09-20-account-role-exclusivity-ruling.md). The account states from which EITHER kind of
+# application may be opened: `verified` is the first application, `declined` is the re-apply —
+# exactly the buyer's own shape from before this ruling, now shared. A seller application used to
+# be opened from `active`, gated on the PERMISSION `seller.apply` (which only an approved buyer
+# held) rather than on account state; that is precisely what manufactured the buyer+seller account
+# the ruling forbids, since approval never demoted the account and a permission cannot do this job
+# in the first place (`effective_roles` gives EVERY account `applicant`, active or not, so it
+# discriminates nothing — the spec's own measurement). State is the only honest gate, for both
+# kinds alike: a fresh account that has confirmed its email and holds no role yet.
+APPLY_STATES = ("verified", "declined")
 MAX_ANSWER = 4_000
-# The ACCOUNT state each kind's answer is allowed FROM — the explicit allowed-from set every other
-# transition in this wave has and this one lacked (review M1). A buyer application in
-# `needs_review` belongs to an account in `needs_review`; a seller application in `needs_review`
-# belongs to an account that stayed `active` (the decision table's seller override). Those are the
-# only two states a `needs_review` row can coexist with, so this is an exact allow-list rather than
-# a denylist — and `suspended`/`revoked`, which `decide` reaches WITHOUT closing the application
-# row, can no longer be walked back out of by answering it.
-ANSWER_FROM = {"buyer": "needs_review", "seller": "active"}
+# The ACCOUNT state an answer is allowed FROM, now the SAME for both kinds under ruling D-C59: a
+# buyer or seller application alike moves the account to `pending` on submission and to
+# `needs_review` on `request_info` (`admin_users.decide`'s ONE transition table, no seller
+# override any more), so a `needs_review` application row and a `needs_review` account are the
+# same fact for either kind, exactly as this was already true for a buyer's. Before this ruling a
+# seller stayed `active` throughout — the decision table's own seller override — so the two kinds
+# needed two different states here; removing the override removed the need for two.
+ANSWER_FROM = "needs_review"
 # The three audit actions an applicant's own routes write, in ONE namespace (controller ruling,
 # 2026-09-07 — `application.submit`, singular, was renamed while it was still free: Wave 2a has
 # never been deployed, so no audit row anywhere carries the old name). Named as constants because
@@ -121,15 +128,6 @@ class AnswerState(AuthError):
     message = "This application is not waiting for an answer."
 
 
-class NotABuyer(AuthError):
-    """Spec §4: `seller.apply` belongs to the `buyer` role, and — since ruling D-C54, 2026-09-13,
-    the admin role is a superset of the whole matrix — to `admin` as well; selling starts by being
-    an approved buyer, or by holding the role that holds every permission a buyer does."""
-
-    code = "FORBIDDEN"
-    message = "Only approved buyers, or admins, may apply to sell."
-
-
 class ApplicationIn(BaseModel):
     kind: str = Field(max_length=32)
     fields: dict[str, Any]
@@ -191,16 +189,11 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                 # a 500 on a credential path. The refusal is the generic anonymous 401.
                 raise Unauthenticated
             email, state = cast("str", row[0]), cast("str", row[1])
-            # A buyer application opens at `verified` and moves the account to `pending`. A seller
-            # application is made from an account that is already `active` and allowed
-            # `seller.apply` — the buyer role, or `admin`, which has held every permission the
-            # buyer role does since ruling D-C54 (2026-09-13) — and leaves the account exactly
-            # where it is: moving it to `pending` would strip every role on the next request
-            # (`permissions.effective_roles`).
-            if body.kind == "buyer" and state not in BUYER_APPLY_STATES:
+            # Ruling D-C59: a buyer or seller application alike opens at `verified` (or re-opens at
+            # `declined`) and moves the account to `pending` below — the buyer branch's own shape,
+            # now shared by both kinds, in place of the old permission check.
+            if state not in APPLY_STATES:
                 raise ApplicationState
-            if body.kind == "seller" and not PM.allowed("seller.apply", principal):
-                raise NotABuyer
             _validate(body.kind, body.fields)
             # One open row per ACCOUNT, not per kind (spec §Lifecycle, amended): `admin_users.decide`
             # acts on "the account's latest open application" whatever its kind, so a second open
@@ -211,8 +204,11 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                 raise ApplicationState
             # A RE-APPLICATION is "this kind's latest row was declined" — a new row, with the
             # declined one kept as history (John's ruling, 2026-09-07). Keyed on the ROW rather
-            # than on `account.state` (review L1): a declined seller decision leaves the account
-            # `active`, so an account-state test undercounted every seller re-application.
+            # than on `account.state`: before ruling D-C59 a declined SELLER decision left the
+            # account `active` (the decision table's own seller override, now removed), which is
+            # what undercounted every seller re-application; a declined application moves the
+            # account to `declined` for both kinds alike now, but keying on the row's own history
+            # stays the simpler, uniform rule regardless of what account.state happens to do.
             cur.execute("""SELECT status FROM application WHERE account_id=%s AND kind=%s
                             ORDER BY submitted_at DESC, id DESC LIMIT 1""", (principal.account_id, body.kind))
             latest = cur.fetchone()
@@ -224,6 +220,13 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
             if body.kind == "buyer":
                 cur.execute("UPDATE account SET state='pending', display_name=COALESCE(display_name, %s) WHERE id=%s",
                             (str(body.fields["name"]).strip(), principal.account_id))
+            else:
+                # A seller application collects no personal name (`SELLER_REQUIRED` names the
+                # PRACTICE, never the applicant), so there is nothing here to seed `display_name`
+                # from — it is left exactly as it is, which for a fresh account is NULL, a state
+                # this product already renders elsewhere (the seller dashboard's own "Untitled
+                # listing" idiom, one surface over).
+                cur.execute("UPDATE account SET state='pending' WHERE id=%s", (principal.account_id,))
         enqueue(conn, to=email, template=TEMPLATE[body.kind], params={},
                 idempotency_key=f"{principal.account_id}:{TEMPLATE[body.kind]}:{app_id}")
         audit.write(conn, actor=principal, action=REAPPLY_ACTION if reapplying else SUBMIT_ACTION,
@@ -232,9 +235,9 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
     # says `verified`; the account no longer does — spec §3's S4: a principal cache is DELETED on
     # any change, never waited out. Deleting it while the row change was still uncommitted left a
     # window in which a concurrent resolve read the OLD state and re-cached it for the full
-    # `sessions.CACHE_TTL` (review L5).
-    if body.kind == "buyer":
-        S.invalidate_account(sync_redis(), principal.account_id)
+    # `sessions.CACHE_TTL` (review L5). Ruling D-C59 removed the one kind that used to leave the
+    # account untouched — BOTH kinds move it now — so this is unconditional.
+    S.invalidate_account(sync_redis(), principal.account_id)
     return {"id": str(app_id), "status": "pending"}
 
 
@@ -269,16 +272,18 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
                 raise NotFound
             kind, status = cast("str", application[0]), cast("str", application[1])
             # BOTH halves, and the same uniform 409 either way: the row must be waiting for an
-            # answer, and the account must be in the state that row implies (review M1).
-            if status != "needs_review" or state != ANSWER_FROM[kind]:
+            # answer, and the account must be in the state that row implies (review M1). One
+            # constant for both kinds since ruling D-C59 (2026-09-20) removed the seller override
+            # that used to leave a seller applicant's account `active` throughout — a buyer or
+            # seller application in `needs_review` now belongs to an account in `needs_review`
+            # alike.
+            if status != "needs_review" or state != ANSWER_FROM:
                 raise AnswerState
             cur.execute("""UPDATE application SET answer=%s, answered_at=now(), resubmitted_at=now(), status='pending'
                             WHERE id=%s""", (body.answer, application_id))
-            if kind == "buyer":
-                # Only a buyer application moves the ACCOUNT, exactly as in `submit`: a seller
-                # applies from an `active` account, and demoting it to `pending` would strip every
-                # role on the next request (`permissions.effective_roles`).
-                cur.execute("UPDATE account SET state='pending' WHERE id=%s", (principal.account_id,))
+            # Ruling D-C59: both kinds move the ACCOUNT now, exactly as in `submit` — neither kind
+            # is left `active` mid-application any more, so there is no role left to strip.
+            cur.execute("UPDATE account SET state='pending' WHERE id=%s", (principal.account_id,))
             # `n` = which submission of this row this is, for the outbox idempotency cause. The row
             # carries one `resubmitted_at` rather than a counter, so the count comes from the
             # append-only audit trail: one `applications.answer` row per PREVIOUS re-submission,
@@ -292,9 +297,9 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
         audit.write(conn, actor=principal, action=ANSWER_ACTION, target_type="application",
                     target_id=application_id, before={"status": status}, after={"status": "pending", "kind": kind},
                     request=request)
-    # AFTER the commit, for the reason `submit` above records (review L5).
-    if kind == "buyer":
-        S.invalidate_account(sync_redis(), principal.account_id)
+    # AFTER the commit, for the reason `submit` above records (review L5). Unconditional under
+    # ruling D-C59, for the same reason `submit`'s own call is: both kinds move the account now.
+    S.invalidate_account(sync_redis(), principal.account_id)
     return {"status": "pending"}
 
 

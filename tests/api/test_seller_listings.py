@@ -24,7 +24,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _seller(member: Any) -> tuple[Any, dict[str, str], dict[str, str]]:
-    return member(roles=("buyer", "seller"), email="sl-seller@example.org")
+    # `("seller",)`, not `("buyer", "seller")` — ruling D-C59 (2026-09-20) makes that pair
+    # impossible on one account (`migrations/100_role_exclusivity.sql`), and every test in this
+    # module exercises SELLER-side behaviour alone.
+    return member(roles=("seller",), email="sl-seller@example.org")
 
 
 async def _create(client: Any, cookies: dict[str, str], headers: dict[str, str]) -> str:
@@ -79,7 +82,7 @@ async def test_the_seller_prefix_does_not_collide_with_the_buyer_detail_route(cl
 async def test_the_dashboard_lists_only_this_sellers_listings_in_every_status(client: Any, conn: Any, member: Any) -> None:
     """D9's GET. Every status, newest-touched first — `listing_owner_idx`'s own order."""
     mine, cookies, headers = _seller(member)
-    other, other_cookies, other_headers = member(roles=("buyer", "seller"), email="sl-other@example.org")
+    other, other_cookies, other_headers = member(roles=("seller",), email="sl-other@example.org")
     first = await _create(client, cookies, headers)
     second = await _create(client, cookies, headers)
     await _create(client, other_cookies, other_headers)
@@ -98,7 +101,7 @@ async def test_a_non_owner_gets_404_on_every_single_listing_route(client: Any, c
     """D7: 404, never 403 — a listing that is not yours should not be confirmed to exist."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
-    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-thief@example.org")
+    _, thief_cookies, thief_headers = member(roles=("seller",), email="sl-thief@example.org")
     signed = auth_headers(thief_cookies, thief_headers)
     for response in (
         await client.get(f"/api/seller/listings/{listing_id}", headers=signed),
@@ -781,7 +784,7 @@ async def test_the_unowned_404_is_byte_identical_to_the_missing_404(client: Any,
 
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
-    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-thief2@example.org")
+    _, thief_cookies, thief_headers = member(roles=("seller",), email="sl-thief2@example.org")
     signed = auth_headers(thief_cookies, thief_headers)
 
     unowned = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
@@ -1158,7 +1161,7 @@ async def test_a_non_owner_cannot_submit_or_transition_another_sellers_listing(
 ) -> None:
     """D7, on the two new routes: 404, never 403."""
     listing_id, _signed = await _ready(client, member)
-    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-thief@example.org")
+    _, thief_cookies, thief_headers = member(roles=("seller",), email="sl-thief@example.org")
     stolen = auth_headers(thief_cookies, thief_headers)
     for response in (
         await client.post(f"/api/seller/listings/{listing_id}/submit", headers=stolen),
@@ -1351,7 +1354,7 @@ async def test_claiming_is_idempotent_and_never_reaches_another_sellers_row(
     claim carries the owner predicate every other write in this module carries, so it can only ever
     touch the row the request already proved is the caller's."""
     account_id, cookies, headers = _seller(member)
-    other, _other_cookies, _other_headers = member(roles=("buyer", "seller"), email="sl-a-sl21-other@example.org")
+    other, _other_cookies, _other_headers = member(roles=("seller",), email="sl-a-sl21-other@example.org")
     mine = _seed_listing(conn, account_id)
     theirs = _seed_listing(conn, other)
     signed = auth_headers(cookies, headers)
@@ -1548,7 +1551,7 @@ async def test_a_non_owner_gets_404_on_the_positional_caption_route(client: Any,
     """D7: 404, never 403."""
     account_id, _cookies, _headers = _seller(member)
     listing_id = _seed_listing(conn, account_id, photos=["a/1.webp"])
-    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-sl7b-thief@example.org")
+    _, thief_cookies, thief_headers = member(roles=("seller",), email="sl-sl7b-thief@example.org")
     response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": "x"},
                                   headers=auth_headers(thief_cookies, thief_headers))
     assert response.status_code == 404

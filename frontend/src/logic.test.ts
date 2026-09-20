@@ -6256,7 +6256,11 @@ describe('A33.2 — the margin caveat counts the bands', () => {
 // back to the design's five fixture rows.
 // ---------------------------------------------------------------------------------------
 describe('logic.js — the admin data loads whenever an admin arrives (A40.3–A40.6, D-C53)', () => {
-  const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] };
+  // Ruling D-C59 (2026-09-20): `design@` holds `staff` + `admin` now, not all four roles — the
+  // roles array is cosmetic in this describe block (permissions come from the `perms` mock below,
+  // never from this array), but the fixture should not go on naming an account shape the database
+  // refuses to grant.
+  const STAFF = { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'staff'] };
   const ROWS = [['a listing row'], ['another']];
   // A39 (D-C53): `list()` answers a PAGE — the rows the table renders and the number its tab
   // badges — because both come from one request and neither may ever be shown beside the other's
@@ -6950,7 +6954,9 @@ describe('A34 — one vocabulary: every figure names its own geography, from one
 describe('logic.js — an admin-only account reaches its own listings on boot (A16.23, D-C54)', () => {
   const flush = () => new Promise((r) => setTimeout(r, 0));
   const ADMIN_ONLY = { email: 'admin@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin'] };
-  const SELLER = { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] };
+  // Ruling D-C59 (2026-09-20): `seller@` holds `seller` alone now — `['buyer', 'seller']` is the
+  // account shape the ruling forbids.
+  const SELLER = { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved seller · StartUp Club', initials: 'RM', state: 'active', roles: ['seller'] };
   const perms = (held: string[]) => ({ allowed: (p: string) => held.includes(p) });
   const listings = (rows: unknown[] = []) => {
     const calls: string[] = [];

@@ -119,7 +119,7 @@ Practice and the Admin screens, and granting it the other three buys it nothing.
 
 Two consequences of the superset, recorded rather than surprised at later (Task ADMIN-SUPERSET fix
 round 1, review Informational 1/2): an `api_token` minted for the `admin` role now also carries the
-six member actions the superset added, exactly as a human admin's session does — the two refusals a
+five member actions the superset added, exactly as a human admin's session does — the two refusals a
 token meets whatever role it carries are unchanged by this ruling: `tokens.manage` (`TOKEN_DENIED`),
 and every step-up action (`REAUTH`: `engine.activate`, `licence.decide`, `roles.grant`,
 `signups.notify`, `tokens.manage`, `users.revoke`), which a token has no password to

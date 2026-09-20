@@ -20,6 +20,26 @@
 // measured the A33 method (baselines regenerated cold before and after A53, all 58 PNG and DOM
 // hashes diffed, and exactly `seller-dash`/`seller-dash-empty` — the second not among these
 // thirteen — differ).
+// Ruling D-C59 (John, 2026-09-20 — "a buyer can not be a seller and a seller can not be a
+// buyer") then re-based FIVE: `seller-dash` and the four `wizard-*`. No template or script in
+// the design bundle changed — `scripts/seed_persona.py`'s `seller@practice-match.test` persona
+// changed, from `roles=("buyer","seller")` (exactly the account shape the ruling forbids, which
+// `migrations/100_role_exclusivity.sql`'s trigger now refuses to grant) to `roles=("seller",)` —
+// so the account menu these five screens render renders "Approved seller · StartUp Club" rather
+// than "Approved buyer and seller · StartUp Club", the SAME A5.4/A-I8.2 mechanism the I8a re-base
+// above used for the identical reason one ruling earlier. Measured the A33 method: baselines were
+// regenerated cold before and after (a git stash of the ruling's own diff, and a database with
+// and without migration 100 applied, since a persistent dev database does not un-apply a
+// migration just because the working tree reverts it), and all 58 PNG and DOM hashes diffed.
+// EIGHT states differ in total — `seller-dash`, `seller-dash-empty`, `wizard-step-1`,
+// `wizard-step-7`, `wizard-preview`, `wizard-done`, `wizard-step-6-photos`, `wizard-step-6-review`
+// — every one of them a screen captured as the `seller` persona and no other; `seller-dash-empty`,
+// `wizard-step-6-photos` and `wizard-step-6-review` are not among these thirteen and carry no
+// entry here. The other FIVE of the thirteen — `mobile-list`, `mobile-detail`, `detail`,
+// `requests` and all four `admin-*` (captured as `design`, whose computed label is unchanged:
+// `role_label` reads `admin` first in its own `elif` chain regardless of whether `design@` holds
+// two roles or four) — are unmoved, which is the proof the ruling reached the seller persona's
+// label and nothing else.
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.
