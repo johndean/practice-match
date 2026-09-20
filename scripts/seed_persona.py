@@ -96,7 +96,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -263,6 +263,33 @@ def target_of(dsn: str) -> str:
     return f"{parts.path.lstrip('/') or '?'} on {parts.hostname or '?'}"
 
 
+def reconcile_roles(cur: Any, account_id: UUID, wanted: tuple[str, ...]) -> None:
+    """Revoke every ACTIVE grant on `account_id` that is not in `wanted`, before `wanted` is
+    granted (ruling D-C59, John 2026-09-20, and his follow-up of 2026-09-21: "update/reseed the 3
+    role accounts to be proper (leave Johndean@vin.com as is").
+
+    Until this existed the seed only ever GRANTED. That was harmless while `ORACLE_PERSONAS` only
+    ever grew, and became two problems the day the ruling made `seller@` seller-only:
+
+      1. A database seeded BEFORE the ruling keeps its stale `buyer` grant for ever, because
+         nothing revokes it — so QA carries an account the product can no longer create.
+      2. Re-seeding such a database FAILS. `migrations/100_role_exclusivity.sql`'s trigger is
+         BEFORE INSERT, so it fires before `role_grant_active_idx` resolves the `ON CONFLICT DO
+         NOTHING`, and the re-grant of `seller` raises on the `buyer` that is still active.
+
+    SCOPE. Called only with an account id the seed itself just upserted from its own persona list,
+    so it can reach no other account — John's own is not a persona and is not touched. That is a
+    property of the CALLERS, and `tests/scripts/test_seed_persona_restores.py` pins it with an
+    outsider holding the very pair the ruling forbids and coming through unchanged.
+
+    REVOKED, never deleted: `revoked_at` is how the Admin > Users tab shows who held what and when,
+    and a seed that erased that history would be lying about the account's past.
+    """
+    cur.execute("""UPDATE role_grant SET revoked_at = now()
+                    WHERE account_id = %s AND revoked_at IS NULL AND NOT (role = ANY(%s))""",
+                (account_id, list(wanted)))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from app.auth import audit
     from app.auth import passwords as P
@@ -299,6 +326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # `email_token` delete below. Built from the ids the upserts RETURN rather than from a
         # second query, so it can never name an account these ten emails do not.
         fixture_ids: list[UUID] = [account_id]
+        reconcile_roles(cur, account_id, PERSONA_ROLES)
         for role in PERSONA_ROLES:
             cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                         (account_id, role, account_id))
@@ -319,6 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                              RETURNING id""", (email, hashed, PERSONA_NAME, PERSONA_AFFILIATION))
             oracle_id = cast("tuple[UUID]", cur.fetchone())[0]
             fixture_ids.append(oracle_id)
+            reconcile_roles(cur, oracle_id, roles)
             for role in roles:
                 cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                             (oracle_id, role, account_id))

@@ -378,3 +378,59 @@ def test_the_seed_names_the_database_it_is_about_to_rewrite_and_no_credential(co
     # …and it really is the FIRST line, so a wrong target is at the top of the run log rather than
     # under ten addresses.
     assert printed.index(first) == 0
+
+
+OUTSIDER_EMAIL = "johndean-lookalike@vin.com"   # stands in for John's own account: NOT a persona
+
+
+def test_the_seed_reconciles_a_personas_roles_and_leaves_a_non_persona_account_alone(conn, monkeypatch):
+    """Ruling D-C59 (John, 2026-09-20) and his follow-up of 2026-09-21: "update/reseed the 3 role
+    accounts to be proper (leave Johndean@vin.com as is".
+
+    `ORACLE_PERSONAS` already names the post-ruling roles — `seller@` is `("seller",)`, `design@`
+    is `("staff","admin")` — but the seed only ever GRANTED, never revoked, so a database seeded
+    before the ruling keeps its stale `buyer` grant for ever and re-seeding cannot mend it. Worse,
+    re-seeding such a database FAILS outright: `migrations/100_role_exclusivity.sql`'s trigger is
+    BEFORE INSERT, so it fires before `role_grant_active_idx` can resolve the `ON CONFLICT DO
+    NOTHING`, and the re-grant of `seller` raises on the stale `buyer` that is still active.
+
+    THE SCOPE IS THE SEED'S OWN PERSONAS AND NOTHING ELSE. The outsider below holds the very pair
+    the ruling forbids and MUST come through untouched — that is John's "leave Johndean@vin.com as
+    is", and it is the half of this behaviour that a reconcile written as a blanket sweep would
+    silently get wrong.
+
+    The legacy state is built with the trigger disabled, because the product can no longer create
+    it — the same reason `tests/api/test_admin_users.py::_legacy_open_seller_application` inserts
+    its row by hand. Disabling it here is how a pre-migration database is simulated honestly."""
+    monkeypatch.setenv("PERSONA_PASSWORD", PERSONA_PW)
+    _run_seed()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM account WHERE email = 'seller@practice-match.test'")
+        seller_id = cur.fetchone()[0]
+        cur.execute("""INSERT INTO account (email, password_hash, state) VALUES (%s,'!x','active')
+                       RETURNING id""", (OUTSIDER_EMAIL,))
+        outsider_id = cur.fetchone()[0]
+        cur.execute("ALTER TABLE role_grant DISABLE TRIGGER role_grant_exclusivity")
+        cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'buyer',%s)",
+                    (seller_id, seller_id))
+        for role in ("buyer", "seller"):
+            cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s)",
+                        (outsider_id, role, outsider_id))
+        cur.execute("ALTER TABLE role_grant ENABLE TRIGGER role_grant_exclusivity")
+
+    _run_seed()
+
+    with conn.cursor() as cur:
+        cur.execute("""SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL
+                        ORDER BY role""", (seller_id,))
+        assert [r[0] for r in cur.fetchall()] == ["seller"], \
+            "the persona's stale buyer grant is revoked, so the account matches ORACLE_PERSONAS"
+        cur.execute("""SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL
+                        ORDER BY role""", (outsider_id,))
+        assert [r[0] for r in cur.fetchall()] == ["buyer", "seller"], \
+            "an account the seed does not own keeps every role it had — John's own account is not a persona"
+        # Revoked, not deleted: the grant's history is how an admin sees who held what and when.
+        cur.execute("""SELECT count(*) FROM role_grant
+                        WHERE account_id=%s AND role='buyer' AND revoked_at IS NOT NULL""", (seller_id,))
+        assert cur.fetchone()[0] == 1

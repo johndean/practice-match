@@ -44,6 +44,10 @@ def test_qa_allowlist_suppresses_everyone_else(conn, monkeypatch):
 def test_failure_backs_off_then_fails_and_suppressed_addresses_are_refused(conn, monkeypatch):
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", ""); monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500, json={"message": "boom"}))))
+    # Spec §5's own four numbers, as literals. The loop below reads `MT.BACKOFF` for its expectation
+    # as well as its behaviour, so it cannot notice the table being wrong — this is the one place
+    # the tiers are checked against the spec rather than against themselves.
+    assert MT.BACKOFF == (60, 600, 3600, 21600), "spec §5: retries at 1 min, 10 min, 1 h, 6 h"
     _queue(conn)
     # Spec §5: "retries at 1 min, 10 min, 1 h, 6 h, then failed" — so FIVE failures, the first four
     # of them re-queued with BACKOFF[attempt-1] and only the fifth terminal (controller ruling,
@@ -56,7 +60,20 @@ def test_failure_backs_off_then_fails_and_suppressed_addresses_are_refused(conn,
             cur.execute("SELECT status, attempts, EXTRACT(EPOCH FROM next_attempt_at - now()) FROM email_outbox"); status, n, secs = cur.fetchone()
         assert n == attempt, (attempt, n)
         if attempt <= len(MT.BACKOFF):
-            assert status == "queued" and abs(float(secs) - MT.BACKOFF[attempt - 1]) < 5, (attempt, status, secs)
+            # `secs` is `BACKOFF[n] - (wall-clock elapsed since send_due() stamped the row)`, read
+            # by a SECOND statement, so it can only ever be SMALLER than the tier — a symmetric
+            # +/-5 s window was the wrong shape and flaked under load (one observed failure during a
+            # concurrent Playwright run, 2026-09-20). The bounds are asymmetric for that reason: the
+            # UPPER one stays tight, since only a backward clock step can push `secs` past the tier,
+            # and the LOWER one is generous enough that no plausible load can cross it. It still
+            # WHAT THIS DOES AND DOES NOT CATCH, measured by perturbation rather than asserted:
+            # applying the wrong tier fails it (forcing `delay_s=BACKOFF[0]` gives 59.99 where 600
+            # is expected), but SWAPPING THE TABLE ITSELF DOES NOT — the expectation reads the same
+            # `MT.BACKOFF` the code does, so both sides move together. The tier VALUES are pinned
+            # by the assertion below instead, against the spec sentence quoted above.
+            assert status == "queued", (attempt, status, secs)
+            assert MT.BACKOFF[attempt - 1] - 120 < float(secs) <= MT.BACKOFF[attempt - 1] + 5, \
+                (attempt, status, secs, MT.BACKOFF[attempt - 1])
         else:
             assert status == "failed", (attempt, status)
     assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0, "retried": 0}   # a `failed` row is never picked up again
