@@ -652,7 +652,13 @@ export const SCREENS: Screen[] = [
   // (a tile click, once its handler exists) rather than inserting a new one — which is what
   // keeps every other entry's position, and every citation below this file, stable across both
   // tasks.
-  { name: 'wizard-step-6-review', steps: wizardWithPhoto }
+  { name: 'wizard-step-6-review', steps: wizardWithPhoto },
+  // A55 (D-C61, 2026-09-21) — the "selling needs its own account" gate a signed-in buyer reaches
+  // by clicking "List a Practice" (`frontend/src/router/sync.ts`'s `guard`, app-only, sends it
+  // here instead of the "unavailable" refusal). Appended at the end of the array, at its own
+  // position, an ADDITION rather than a re-base — the same reason `wizard-step-6-review` above is
+  // here rather than beside its siblings.
+  { name: 'gate-seller-needed', steps: async (p) => { await reach(p, { gate: 'seller-needed', persona: 'buyer' }); } }
 ];
 
 /**

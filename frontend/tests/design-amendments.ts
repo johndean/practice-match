@@ -7065,7 +7065,7 @@ const A35_7: Amendment = {
  *  doors for every account, while the app renders the account's own. Approved states are captured
  *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
  *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
- *  the filter moved 28 of the 58 approved states — every DOM and pixel capture of a member screen
+ *  the filter moved 28 of the 59 approved states — every DOM and pixel capture of a member screen
  *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
  *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
  *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
@@ -8989,6 +8989,191 @@ const A53_6: Amendment = {
   count: 1
 };
 
+/**
+ * A55 — ruling D-C61 (John, 2026-09-21, verbatim, on seeing every nav link rendered for every
+ * account): "where is the permission page matrix so VIN FOUNDATION admin can define by roles what
+ * links are acutally visible to each user and role? Right now all the links are visible to
+ * everyone, and shows message not accessible to the user, seems logical if we know that why are we
+ * even showing the link to begin with???" THE PRINCIPLE, narrower than "hide what is not granted":
+ * a link is either HIDDEN, because nothing useful sits behind it for this viewer, or it LEADS
+ * SOMEWHERE REAL. "Show it and refuse the click" is the state this ruling removes.
+ *
+ * `A40.1`/`A40.2` are the RESERVED, UNWRITTEN ids for exactly this work (CLAUDE.md's own A40
+ * paragraph) — built, MEASURED and HELD because the oracle could not be told what the app knew:
+ * the reference is driven by `?props=` alone and gets no `perms` adapter, so hiding the admin door
+ * there moved 28 of the 59 approved states and seven of `baseline-manifest.json`'s thirteen frozen
+ * hashes with nothing ruled to pay that cost. He has now ruled it. This family is A55, and it does
+ * two things, asymmetrically, because the ruling is asymmetric:
+ *
+ * ONE. The VIN Foundation Admin door is HIDDEN from an account `page.admin` refuses — the SAME
+ * seam `loadAdmin()` already reads (`this.props.perms`, A40's own adapter, real and unconditional
+ * in the app) — plus a TENTH declared prototype prop, `startPerms` (A16.11a's mechanism, the same
+ * reason A9 and A54 each needed one): a plain JSON object of permission string to boolean, so the
+ * reference can be told what the app's REAL generated matrix already answered without a role test
+ * written in the design itself (A40.4's own retirement of `(me.roles || []).some(...)` is not
+ * reopened — `startPerms` carries an ANSWER, never a role list to re-derive one from).
+ *
+ * TWO. "List a Practice" is deliberately NEVER hidden — the general principle's own stated
+ * exception. Under D-C59 a seller signs up on a SEPARATE account (`seller.apply` is
+ * `frozenset()`), so a prospective seller has no account at all yet; hiding the door would delete
+ * the last in-product signpost that selling exists. It stays visible for everyone, signed in or
+ * out, and instead STOPS REFUSING: `frontend/src/router/sync.ts`'s `guard`/`refusedScreen` (app-only
+ * code, no amendment, `A24.14`'s own position) give the `seller` screen its own two destinations —
+ * signed out, the sign-up card that already exists (A8's family); signed in without `page.seller`,
+ * the NEW gate card below — while a seller or admin (D-C54's superset) reaches the dashboard
+ * exactly as before.
+ *
+ * COMPOSITION, inventing nothing (A55.6): the new gate card is the "unavailable" status card's own
+ * head (kicker, title, grey `#f5f5f5` header) and body-paragraph styles, in the account cards' own
+ * outer shell, with the SAME `text-align: center; font-size: 14px; color: #494949;` link idiom
+ * every "Back to sign in" line already uses — and the link is `goSignup`, which A5's own sign-in
+ * card declared and NO template has ever read (dead on arrival, not deleted, since A28's dead-code
+ * rule needs zero readers on BOTH targets and this one gains a reader here). No new element,
+ * colour or class. It is its OWN `sc-if`, not one more `statusMap` entry, because `gateStatus`'s
+ * shared footer always carries a second button — `goSignin`, which SIGNS OUT — and John rejected
+ * exactly that ("puts a destructive-feeling action on an explanatory screen"), and rejected jumping
+ * straight to sign-up too ("reads as a bug"): the account stays signed in, and the click is a
+ * link, not a button, to a card the visitor chooses to open.
+ *
+ * SIX literal edits, none of them template-only in isolation: A55.1 widens `startGate`'s enum
+ * (CONSUMES A8.8a, whose own `replace` is the exact 13-value array this becomes 14); A55.2 splices
+ * `startPerms` into the escaped `data-props` JSON after `startWizardPhotos`; A55.3 changes `go()`'s
+ * signed-out branch for `screen === "seller"` alone (CONSUMES A26.9a, whose own `replace` is the
+ * exact line this edits — every OTHER screen's `"signin"` is untouched); A55.4 filters the header
+ * nav's own array on `canAdmin` (adapter first, `startPerms` second, the design's fixtures and
+ * every account that DOES hold `page.admin` keeping every pixel); A55.5 declares the new gate's
+ * boolean beside its five siblings, last, as A9 declared `gateAnswer` last; A55.6 is the card
+ * itself, appended after `gateAnswer`'s own block for the same reason.
+ *
+ * THE RE-BASING, MEASURED (the A33/A40 method — see the task report for the actual before/after
+ * hashes rather than this prediction): every desktop capture whose signed-in persona lacks
+ * `page.admin` loses the Admin door from its header, which the spec predicts at 28 of the 58
+ * approved states and seven of the thirteen frozen hashes (`detail`, `requests`, `seller-dash`,
+ * the four `wizard-*`) — the exact set A40's own held measurement already named, now finally
+ * spent. The four `admin-*` frozen screens and the two phone-frame captures are unaffected: the
+ * phone frame renders its own header (A14's own proof) and the admin screens are captured as the
+ * all-roles design persona, which holds `page.admin` regardless. The new gate card is ONE
+ * appended approved state — an addition, never a re-base.
+ */
+const A55 = {
+  date: '2026-09-21',
+  ruling: 'ruling D-C61 (John, 2026-09-21): "no link may lead to a refusal" — the VIN Foundation Admin door is hidden from an account page.admin refuses; "List a Practice" stays visible to everyone and stops refusing instead, gated by frontend/src/router/sync.ts (app-only, no amendment).'
+};
+
+/** A55.1 — `startGate`'s enum gains `"seller-needed"`, the new gate value a signed-in account
+ *  without `page.seller` lands on (D-C61's second arm) — the reference's only way to reach it,
+ *  since it has no router and no adapter. Consumes A8.8a, whose own `replace` is this exact
+ *  13-value array. */
+const A55_1: Amendment = {
+  id: 'A55.1', ...A55,
+  find: '&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;]',
+  replace: '&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;,&quot;seller-needed&quot;]',
+  count: 1
+};
+
+/** A55.2 — the TENTH declared prototype prop, `startPerms`: a plain JSON object of permission
+ *  string to boolean, spliced into the escaped `data-props` JSON immediately after
+ *  `startWizardPhotos` with the same `&quot;` escaping as its neighbours (A16.11a's mechanism, the
+ *  same reason A9 and A54 each needed one). The reference is driven by `?props=` alone and gets no
+ *  `perms` adapter, so this is the ONLY way it can be told what the app's real generated matrix
+ *  already answered for the signed-in account. `app.setup.js` declares it too, because
+ *  `app-generated.test.ts` requires that file to declare everything the design does; the app never
+ *  passes it — it always carries the real `perms` adapter instead (A55.4). */
+const STARTPERMS_ENTRY = '&quot;startPerms&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Permissions on load&quot;}';
+const A55_2: Amendment = {
+  id: 'A55.2', ...A55,
+  find: STARTWIZARDPHOTOS_ENTRY, replace: `${STARTWIZARDPHOTOS_ENTRY},${STARTPERMS_ENTRY}`, count: 1
+};
+
+/** A55.3 — `go()`'s signed-out branch sends a visitor who asked for `"seller"` to the sign-up card
+ *  that already exists (A8's family) instead of the generic sign-in one — D-C61's first arm
+ *  ("Signed out → the seller sign-up card"). Every other screen's `"signin"` default is untouched.
+ *  Consumes A26.9a, whose own `replace` is this exact line. */
+const A55_3: Amendment = {
+  id: 'A55.3', ...A55,
+  find: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  replace: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: screen === "seller" ? "signup" : "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+/** A55.4 — the header nav's own admin row is filtered out for an account `page.admin` refuses:
+ *  ADAPTER PRESENCE first (`this.props.perms`, A40's own seam, real and unconditional in the app),
+ *  `startPerms` second (the reference's only way in), and — with neither, the Claude Design
+ *  preview — every door, exactly as before. "List a Practice" carries no such term at all: D-C61's
+ *  own ruling is that it is never hidden, so only the `admin` key can ever be removed. Nothing in
+ *  the design states a role test of its own; `can()`/`MATRIX` (`src/auth/can.ts`,
+ *  `src/auth/permissions.ts`) stay the one place the matrix is read. */
+const A55_4: Amendment = {
+  id: 'A55.4', ...A55,
+  find: '    const nav = [\n'
+    + '      { key: "browse", label: "Browse Practices" },\n'
+    + '      { key: "requests", label: "My Requests" },\n'
+    + '      { key: "seller", label: "List a Practice" },\n'
+    + '      { key: "admin", label: "VIN Foundation Admin" }\n'
+    + '    ].map((n) => ({\n',
+  replace: '    const canAdmin = this.props.perms ? this.props.perms.allowed("page.admin") : (this.props.startPerms ? !!this.props.startPerms["page.admin"] : true);\n'
+    + '    const nav = [\n'
+    + '      { key: "browse", label: "Browse Practices" },\n'
+    + '      { key: "requests", label: "My Requests" },\n'
+    + '      { key: "seller", label: "List a Practice" },\n'
+    + '      { key: "admin", label: "VIN Foundation Admin" }\n'
+    + '    ].filter((n) => n.key !== "admin" || canAdmin).map((n) => ({\n',
+  count: 1
+};
+
+/** A55.5 — the boolean the new gate card's `sc-if` reads, in the same shape and the same place as
+ *  its five siblings (`gateSignup`, `gateForgot`, `gateReset`, `gateInvite`, `gateAnswer`), added
+ *  last as A9 added `gateAnswer` last. */
+const A55_5: Amendment = {
+  id: 'A55.5', ...A55,
+  find: '      gateAnswer: s.screen === "gate" && s.gate === "answer",\n',
+  replace: '      gateAnswer: s.screen === "gate" && s.gate === "answer",\n'
+    + '      gateSellerNeeded: s.screen === "gate" && s.gate === "seller-needed",\n',
+  count: 1
+};
+
+/** A55.6 — the new gate card itself (D-C61's second arm: "selling needs its own account, with a
+ *  link to seller sign-up"), appended after `gateAnswer`'s own block as A8 appended each of its
+ *  own cards last, and composed ENTIRELY from V3's own elements — nothing invented: the outer
+ *  shell is every account card's own identical div; the header, kicker and title are
+ *  `status.headStyle`/`status.kicker`/`status.title`'s own three declarations, byte for byte (the
+ *  "unavailable" card's own idiom — this is its sibling, a signed-in account with the wrong
+ *  permission, not a form); the body paragraph is `status.body`'s own style; the link below it is
+ *  the SAME link idiom every account card's "Back to sign in" line uses, at the SAME
+ *  `margin-top: 20px` the status card's own meta block uses for the identical role (space below
+ *  the body paragraph). The link itself is `goSignup` — already declared, never read by any
+ *  template until now, so it gains a reader here rather than being deleted as an orphan. It
+ *  touches neither `auth` nor `screen`: the account stays signed in, John's own explicit ruling
+ *  ("nothing is destroyed"), and there is deliberately no second, "Sign out" button —
+ *  `gateStatus`'s shared footer always carries one (`goSignin`, which DOES sign out), and John
+ *  rejected exactly that action here, which is why this is its OWN `sc-if` rather than one more
+ *  `statusMap` entry. */
+const A55_6: Amendment = {
+  id: 'A55.6', ...A55,
+  find: '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signout" onClick="{{ goSignOut }}">Sign out</a></div>\n'
+    + '                </div>\n'
+    + '              </div>\n'
+    + '            </sc-if>\n',
+  replace: '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signout" onClick="{{ goSignOut }}">Sign out</a></div>\n'
+    + '                </div>\n'
+    + '              </div>\n'
+    + '            </sc-if>\n'
+    + '\n'
+    + '            <sc-if value="{{ gateSellerNeeded }}" hint-placeholder-val="{{ false }}">\n'
+    + '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">\n'
+    + '                <div style="padding: 22px 26px; background: #f5f5f5; color: #494949;">\n'
+    + '                  <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;">Access</div>\n'
+    + '                  <div style="font-family: var(--rf-display); font-size: 22px; font-weight: 800; margin-top: 5px; text-transform: uppercase; letter-spacing: .02em;">Selling needs its own account</div>\n'
+    + '                </div>\n'
+    + '                <div style="padding: 24px 26px 26px;">\n'
+    + '                  <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">Buyer and seller accounts are always separate. Create a seller account to list a practice — you will stay signed in here.</p>\n'
+    + '                  <div style="text-align: center; font-size: 14px; color: #494949; margin-top: 20px;"><a href="#signup" onClick="{{ goSignup }}">Create a seller account</a></div>\n'
+    + '                </div>\n'
+    + '              </div>\n'
+    + '            </sc-if>\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9286,5 +9471,12 @@ export function amendments(): Amendment[] {
     // every `find` occurs exactly once in the pristine twin, verified before this family was
     // written. Definition order in this file matches this list (m8): the template addition
     // first, then the seller inbox's two render-value edits, then the buyer's two surfaces.
-    A53_1, A53_2, A53_3, A53_4, A53_5, A53_6];
+    A53_1, A53_2, A53_3, A53_4, A53_5, A53_6,
+    // A55 -- ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21). Appended last, as
+    // every family is. A55.1 consumes A8.8a and A55.3 consumes A26.9a (both declared in
+    // LOCAL_AMENDMENTS.md's own "What changes" column); A55.2 and A55.4-A55.6 are unchained --
+    // A55.2 splices after A20.4d's own line without removing it, and A55.4/A55.5/A55.6 all take
+    // pristine text no earlier entry touched. Definition order in this file matches this list
+    // (m8). (A54, ruling D-C60, lands on main the same day and merges in ahead of this position.)
+    A55_1, A55_2, A55_3, A55_4, A55_5, A55_6];
 }

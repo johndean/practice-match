@@ -52,7 +52,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c.state.screen).toBe('seller');
   });
 
-  it('renderVals exposes the four nav items with the design labels, plus the signed-in flags', () => {
+  it('renderVals exposes the four nav items with the design labels, plus the signed-in flags, when nothing says the account cannot open one of them', () => {
     const v = c.renderVals();
     expect(v.nav.map((n: any) => n.label)).toEqual(['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']);
     expect(v.signedIn).toBe(false);
@@ -60,18 +60,66 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   });
 
   // ---------------------------------------------------------------------------------------
-  // A40.1/A40.2 (D-C53, 2026-09-13) — RESERVED AND HELD, so this case still reads four.
+  // D-C61 (John, 2026-09-21, verbatim: "why are we even showing the link to begin with???") —
+  // "no link may lead to a refusal." A40.1/A40.2 (D-C53, 2026-09-13) were RESERVED and then HELD
+  // for exactly the reason this family (A55) exists to fix: the reference has no `perms` adapter
+  // and no router, so it could not be told what the app already knew, and hiding the door there
+  // would have moved 28 of the 59 approved states with no oracle to check them against. `A40.1`
+  // and `A40.2` stay reserved and unwritten; this is A55, and the missing piece is the tenth
+  // declared prototype prop, `startPerms` — the reference's only way to be handed the app's own
+  // computed answer (never a role test written here; `can()`/`MATRIX` stay the one place the
+  // matrix is read).
   //
-  // "A door that refuses is not shown" was implemented here (`perm: "page.admin"` on the admin row,
-  // `perm: "page.seller"` on "List a Practice", the array filtered through `this.props.perms`) and
-  // then held: the REFERENCE receives no adapter and renders all four doors for every account, so
-  // the filter moved 28 of the 58 approved states and seven of the thirteen frozen hashes. The
-  // measurement is in `design-amendments.ts`'s own A40 block and in the task report; making the
-  // oracle agree needs a ninth declared prototype prop and a ruled re-pin, which is not this
-  // task's to decide. Until it is ruled, the header shows a buyer the Admin door and the ROUTER
-  // refuses the click (`refusedScreen`) — a visible door onto the design's own "not available to
-  // your account" gate, never the admin shell.
+  // "List a Practice" is the other half of the ruling and deliberately behaves DIFFERENTLY: it is
+  // NEVER filtered out of `nav` (D-C59 — a seller signs up on a separate account, so hiding the
+  // door would delete the last in-product signpost that selling exists at all). Only what happens
+  // on the CLICK changes, which is `frontend/src/router/sync.test.ts`'s "D-C61" describe block —
+  // `go()`'s own signed-out branch and the new "seller-needed" gate card below are this file's
+  // half of that.
   // ---------------------------------------------------------------------------------------
+  it('hides the admin door when startPerms says the account may not open it — "List a Practice" stays', () => {
+    const buyerRef = new Component({ startPerms: { 'page.admin': false } });
+    expect(buyerRef.renderVals().nav.map((n: any) => n.label)).toEqual(['Browse Practices', 'My Requests', 'List a Practice']);
+  });
+
+  it('shows the admin door when startPerms says the account may open it', () => {
+    const staffRef = new Component({ startPerms: { 'page.admin': true } });
+    expect(staffRef.renderVals().nav.map((n: any) => n.label)).toContain('VIN Foundation Admin');
+  });
+
+  it('with neither a perms adapter nor startPerms at all (the Claude Design preview) every door still shows', () => {
+    expect(c.renderVals().nav.map((n: any) => n.label)).toContain('VIN Foundation Admin');
+  });
+
+  it('a real perms adapter (the app) wins over startPerms, and is asked at RENDER time, not snapshotted once', () => {
+    let mayAdmin = false;
+    const withAdapter = new Component({ perms: { allowed: (p: string) => p === 'page.admin' && mayAdmin }, startPerms: { 'page.admin': true } });
+    expect(withAdapter.renderVals().nav.map((n: any) => n.label)).not.toContain('VIN Foundation Admin');
+    mayAdmin = true;
+    expect(withAdapter.renderVals().nav.map((n: any) => n.label)).toContain('VIN Foundation Admin');
+  });
+
+  it('go() sends a signed-out visitor who asked for "seller" to the sign-up card, not the plain sign-in one', () => {
+    c.go('seller')();
+    expect(c.state).toMatchObject({ screen: 'gate', gate: 'signup', auth: false });
+  });
+
+  it('go() still sends every OTHER signed-out screen to the plain sign-in card', () => {
+    c.go('browse')();
+    expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin' });
+    c.setState({ screen: 'gate', gate: 'signin' });
+    c.go('admin')();
+    expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin' });
+  });
+
+  it('the "selling needs its own account" gate card renders for gate "seller-needed", is not the shared status card, and its link goes to sign-up without touching auth', () => {
+    c.setState({ auth: true, screen: 'gate', gate: 'seller-needed' });
+    const v = c.renderVals();
+    expect(v.gateSellerNeeded).toBe(true);
+    expect(v.gateStatus).toBe(false);
+    v.goSignup();
+    expect(c.state).toMatchObject({ gate: 'signup', auth: true });
+  });
 
   it('adminVals renders the four tabs and switches the row set with adminTab', () => {
     expect(c.adminVals().tabs.map((t: any) => t.label)).toEqual(['Users', 'Listings', 'Requests', 'Data Sources']);

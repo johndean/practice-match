@@ -77,11 +77,22 @@ export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', 
 // no bearing on a route permission — no ROUTE_PERMS value is `market.read`, since Browse V3
 // (spec D3) is ONE screen guarded by `page.browse` and the market-data COLUMN inside it calls
 // `can('market.read', me, { marketDataPublic })` for itself in I8.
+// D-C61 (John, 2026-09-21): "no link may lead to a refusal." "List a Practice" (screen `seller`)
+// is the one route this ruling names by exception — D-C59 makes selling a SEPARATE account, so a
+// prospective seller reaching this route has no way to already hold `page.seller`, and the design
+// has no "not your account" treatment for it worth reusing (`unavailable` is a dead end: "write to
+// the VIN Foundation"). Both branches below give it its OWN, real destination instead of the
+// generic one every other member route still gets: signed out, the sign-up card that already
+// exists (A8's family) rather than the plain sign-in card; signed in without the permission, the
+// design's new "seller-needed" gate card (A55.5/A55.6) rather than "unavailable". Neither branch
+// touches any OTHER screen's mapping — a buyer clicking "VIN Foundation Admin" (now hidden from
+// the nav entirely, `frontend/src/logic.test.ts`'s D-C61 cases) still lands on "unavailable" if
+// reached by a typed URL, which is the router's existing defence and not a link.
 export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>, ctx?: { me: Me | null }): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
   if (!patch.screen || patch.screen === 'gate') return { apply: patch, pending: null };
-  if (!state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+  if (!state.auth) return { apply: { screen: 'gate', gate: patch.screen === 'seller' ? 'signup' : 'signin' } as Partial<RoutedState>, pending: patch };
   const perm = ROUTE_PERMS[patch.screen];
-  if (ctx && perm && !can(perm, ctx.me)) return { apply: { screen: 'gate', gate: 'unavailable' } as Partial<RoutedState>, pending: null };   // A-I7: no context -> the prototype's rule
+  if (ctx && perm && !can(perm, ctx.me)) return { apply: { screen: 'gate', gate: patch.screen === 'seller' ? 'seller-needed' : 'unavailable' } as Partial<RoutedState>, pending: null };   // A-I7: no context -> the prototype's rule
   return { apply: patch, pending: null };
 }
 

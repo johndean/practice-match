@@ -2399,7 +2399,10 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # NUMBER_WORDS[family_count + 1] to prove the gate still fails on a count one too high — so
      # the table must always run at least one word PAST the real count. Extended here for the
      # fourth time (A18, A27, A24 are the three before it), the way each of those did.
-     "Forty-three", "Forty-four", "Forty-five"))}
+     # A55 (2026-09-21, ruling D-C61) makes forty-five families, and A54 (D-C60, merging the same
+     # day) is expected to add a forty-sixth — extended here for the fifth time, two words past
+     # forty-five so the merge does not need its own extension.
+     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

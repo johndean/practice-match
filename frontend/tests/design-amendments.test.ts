@@ -504,6 +504,10 @@ describe('local design amendments (spec D15)', () => {
     // distinct revoked state (Task REVOKE-UI, John's ruling of 2026-09-19). Six literal edits,
     // appended last, as every family is; none chained.
     'A53.1', 'A53.2', 'A53.3', 'A53.4', 'A53.5', 'A53.6',
+    // A55 — ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21). Six literal edits,
+    // appended last, as every family is. A55.1 consumes A8.8a and A55.3 consumes A26.9a (both
+    // declared in LOCAL_AMENDMENTS.md); A55.2/A55.4/A55.5/A55.6 are unchained.
+    'A55.1', 'A55.2', 'A55.3', 'A55.4', 'A55.5', 'A55.6',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -716,7 +720,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(413);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(419);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -797,12 +801,18 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'layerPalette']);
-    // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'startPerms', 'layerPalette']);
+    // A8.8a widened the enum to every gate value the account screens add; A55.1 (D-C61) adds the
+    // fourteenth, "seller-needed". The shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',
-      options: ['signin', 'apply', 'pending', 'rejected', 'signup', 'check-email', 'verify-expired', 'forgot', 'reset', 'reset-expired', 'invite', 'answer', 'unavailable'],
+      options: ['signin', 'apply', 'pending', 'rejected', 'signup', 'check-email', 'verify-expired', 'forgot', 'reset', 'reset-expired', 'invite', 'answer', 'unavailable', 'seller-needed'],
       default: '', tsType: 'string', section: 'Prototype', label: 'Start on gate state'
+    });
+    // A55.2 (D-C61, 2026-09-21): the tenth declared prototype prop, `startPerms` — the reference's
+    // only way to be told what the app's real `perms` adapter already answered.
+    expect(declared.startPerms).toEqual({
+      editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Permissions on load'
     });
     // A5.7: the account the reference is handed, so its header matches the app's. `null` must
     // survive the round trip — `support.js` copies a default only `if (v !== void 0)`, so a
@@ -1416,8 +1426,9 @@ describe('local design amendments (spec D15)', () => {
       expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
     }
     // 24 before Task S4; the five account form cards (A8.7) each carry the gate card's own
-    // 20 px title, and a heading is a heading — the census counts them too.
-    expect(seen).toBe(29);
+    // 20 px title (29), and A55.6's new "seller-needed" gate card carries the status card's own
+    // 22 px title, byte for byte — a heading is a heading, and the census counts it too (30).
+    expect(seen).toBe(30);
   });
   // M4/M6 (re-review): the `find`-count contract had no explicit expectation anywhere — the
   // general guard is `applyAmendments`' own `throw`, reachable only through the byte-identity
