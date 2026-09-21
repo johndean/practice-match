@@ -2166,6 +2166,19 @@ LISTING_WRITERS = {
         "this fixture is building towards. ONE direct `UPDATE listing SET status = 'published', ...` "
         "moves it onto the market last, once both uploads and the photo's privacy row are already in "
         "place, never before.",
+    "tests/disclosure/test_notify.py":
+        "ruling D-C62's own suite (2026-09-21), the same fixture shape as `test_access.py`/"
+        "`test_requests.py` above: `_listing` INSERTs directly as `published` with no `photos`, so "
+        "the photo-readiness trigger has nothing to refuse, and the `zip`/`est`/`price`/`sqft` it "
+        "supplies satisfy `listing_submittable_ck`/`listing_publishable_ck` alone. It needs a "
+        "listing only to hang a `request` row and its decision off; `app.disclosure.notify` reads "
+        "the row's `name`/`name_disclosed`/`area` and never its gate columns.",
+    "tests/api/test_seller_requests.py":
+        "ruling D-C62's own privacy tests, added to Task 6's existing suite (declared above via "
+        "`_pair`/`_seller_listing`). Their two direct statements set `name`/`name_disclosed` on an "
+        "already-published row to stage the confidential/disclosed cases `app.disclosure.notify` "
+        "reads — neither names `status`, so the trigger (BEFORE UPDATE **OF status**) does not "
+        "fire on either.",
 }
 
 

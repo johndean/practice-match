@@ -59,6 +59,7 @@ from app.auth.limits import ACCESS_REQUEST_DECIDE, hit
 from app.cache import sync_redis
 from app.db import sync_conn
 from app.disclosure import requests as req
+from app.disclosure.notify import notify_decision
 
 router = APIRouter(prefix="/api/seller")
 
@@ -137,6 +138,11 @@ async def decide_request(request_id: str, request: Request, principal: Answerer)
                 reason=reason if action == "deny" else None,
                 request=request,
             )
+            # Ruling D-C62 (2026-09-21): the buyer is told, inside the SAME transaction as the
+            # decision and its audit row — a decision cannot commit without its mail, or vice
+            # versa (`app.disclosure.notify`'s own docstring for the privacy guarantee this
+            # depends on: composed from `authorized_capabilities`, asked AFTER this write).
+            notify_decision(conn, row=row)
     except Refusal as exc:
         return _refused(exc)
     return JSONResponse(_serialisable(row))
@@ -156,6 +162,8 @@ async def revoke_request(request_id: str, request: Request, principal: Answerer)
             row = req.revoke(conn, request_id=request_id, seller_account_id=str(principal.account_id))
             audit.write(conn, actor=principal, action="access.revoked", target_type="request",
                        target_id=request_id, after=_audit_after(row), request=request)
+            # Ruling D-C62 (2026-09-21): same transaction, same reasoning as `decide_request` above.
+            notify_decision(conn, row=row)
     except Refusal as exc:
         return _refused(exc)
     return JSONResponse(_serialisable(row))

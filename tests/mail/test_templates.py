@@ -46,18 +46,18 @@ def test_application_received_uses_the_design_copy():
 # --- supplemental (not in the brief's Step 1 — the spec's escaping/no-pixel rules, and branches) ---
 
 
-def test_the_eighteen_keys_are_exactly_the_ones_the_outbox_accepts():
-    """Was `test_the_seventeen_keys_…` (fourteen, then `test_the_fourteen_keys_…`) until this
-    merge added the seller lifecycle's three (`listing_submitted`/`listing_published`/
-    `listing_declined`) and Task I5d's one-off `launch_announcement` to the same fourteen-template
-    base. `app.mail.outbox.TEMPLATES` is the gate on the REQUEST path (a typo there is refused at
+def test_the_twenty_one_keys_are_exactly_the_ones_the_outbox_accepts():
+    """Was `test_the_eighteen_keys_…` (seventeen, fourteen before that) until ruling D-C62
+    (2026-09-21) added the three disclosure-decision notices (`access_approved`/`access_denied`/
+    `access_revoked`, `app.disclosure.notify`) to the same eighteen-template base.
+    `app.mail.outbox.TEMPLATES` is the gate on the REQUEST path (a typo there is refused at
     enqueue time) and this module is what the WORKER renders. Two lists, one truth: a key added to
     one and not the other is either a row that can never be rendered or a template nothing can
     reach, and both would sit undetected until a real person failed to get an email."""
     from app.mail.outbox import TEMPLATES as ACCEPTED
 
     assert set(TP.TEMPLATES) == set(ACCEPTED)
-    assert len(TP.TEMPLATES) == 18
+    assert len(TP.TEMPLATES) == 21
 
 
 def test_the_launch_announcement_keeps_the_pages_promise_and_carries_a_link():
@@ -219,3 +219,70 @@ def test_listing_declined_carries_the_reviewers_reason_and_escapes_it():
     assert "submit it again" in r.text
     assert "<img" not in r.html and "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in r.html
     assert '<img src=x onerror="alert(1)">' in r.text
+
+
+# --- ruling D-C62 (2026-09-21): the three disclosure-decision notices --------------------------
+#
+# `app.disclosure.notify` is the one caller of these three, and it composes `name`/`link` from
+# `app.disclosure.access.authorized_capabilities`, never from the listing row directly \u2014 see that
+# module's own docstring. What is proved HERE, at the template layer, is narrower and structural:
+# `access_denied` and `access_revoked` declare NO `name` param at all, so there is no hole in
+# either body a practice name (or anything else about the listing) could ever be interpolated
+# into, whatever a future caller passes. `access_approved` is the only one of the three with a
+# `name` hole, and it is the caller's job (proved in `tests/disclosure/test_notify.py`) to fill it
+# only when authorized.
+
+
+def test_access_denied_and_access_revoked_declare_no_name_param():
+    """The structural half of the privacy rule: even a careless caller cannot smuggle a practice
+    name into either of these two bodies, because neither template has a place for one."""
+    assert TP.TEMPLATES["access_denied"].params == ("link",)
+    assert TP.TEMPLATES["access_revoked"].params == ("link",)
+    assert "{name}" not in TP.TEMPLATES["access_denied"].text
+    assert "{name}" not in TP.TEMPLATES["access_denied"].html
+    assert "{name}" not in TP.TEMPLATES["access_revoked"].text
+    assert "{name}" not in TP.TEMPLATES["access_revoked"].html
+
+
+def test_access_denied_carries_no_financial_or_document_language():
+    r = TP.render("access_denied", {"link": "https://qa.foundation.vin/requests"}, base_url="https://qa.foundation.vin")
+    for word in ("revenue", "financ", "document", "floor plan"):
+        assert word not in r.text.lower() and word not in r.html.lower()
+    assert "https://qa.foundation.vin/requests" in r.text
+
+
+def test_access_revoked_says_access_ended_and_restates_nothing_it_covered():
+    r = TP.render("access_revoked", {"link": "https://qa.foundation.vin/requests"}, base_url="https://qa.foundation.vin")
+    assert "ended" in r.text
+    for word in ("revenue", "financ", "document", "floor plan"):
+        assert word not in r.text.lower() and word not in r.html.lower()
+
+
+def test_access_approved_names_no_figure_and_attaches_nothing():
+    """"the mail still carries no financial figures, no document contents and no attachment" —
+    the one place this template is ALLOWED to say the word "financial" is its own reassurance that
+    none is included, so this checks for an actual figure (a `$` amount) and for the shape of an
+    attachment reference, not for the word itself."""
+    r = TP.render("access_approved", {"name": "a listing", "link": "https://qa.foundation.vin/practices/p1"},
+                  base_url="https://qa.foundation.vin")
+    assert "$" not in r.text and "$" not in r.html
+    assert "attach" not in r.text.lower() and "attach" not in r.html.lower()
+    assert "https://qa.foundation.vin/practices/p1" in r.text
+
+
+def test_access_approved_renders_the_name_it_is_given():
+    """The template itself does no gating \u2014 that is `app.disclosure.notify`'s job \u2014 so it must
+    render whatever `name` its caller supplies, verbatim (escaped in the HTML part)."""
+    r = TP.render("access_approved", {"name": "Blue Sky Veterinary Clinic", "link": "https://qa.foundation.vin/practices/p1"},
+                  base_url="https://qa.foundation.vin")
+    assert "Blue Sky Veterinary Clinic" in r.text and "Blue Sky Veterinary Clinic" in r.html
+
+
+def test_none_of_the_three_disclosure_notices_names_the_seller():
+    """`_BUYER_HIDDEN`'s rule (spec, `LOCAL_AMENDMENTS`'s own vocabulary for this class of
+    concern): a buyer's mail never carries the seller's identity, only the practice's."""
+    for key, params in (("access_approved", {"name": "a listing", "link": "https://qa.foundation.vin/practices/p1"}),
+                        ("access_denied", {"link": "https://qa.foundation.vin/requests"}),
+                        ("access_revoked", {"link": "https://qa.foundation.vin/requests"})):
+        assert "seller_name" not in TP.TEMPLATES[key].params
+        assert "seller" not in TP.TEMPLATES[key].params

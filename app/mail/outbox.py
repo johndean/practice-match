@@ -32,6 +32,11 @@ TEMPLATES = frozenset({
     # transactional — nobody did anything to cause it — which is why it is sent from an admin
     # action, once per address, and never again (`interest_signup.launch_mailed_at`).
     "launch_announcement",
+    # The nineteenth through twenty-first (ruling D-C62, 2026-09-21): a buyer's own disclosure
+    # request, granted, denied or revoked (`app.disclosure.notify`) — the same "who changed what
+    # and when" the audit row already records, mailed to the buyer alone; never the seller, who
+    # performed the act.
+    "access_approved", "access_denied", "access_revoked",
 })
 
 INSERT = """INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES (%s,%s,%s,%s)
