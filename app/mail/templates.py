@@ -133,29 +133,37 @@ _LISTING_DECLINED = (
 )
 
 # --- ruling D-C62 (2026-09-21): the three disclosure-request decisions -------------------------
+# ruling 1, the same day, on reading this first draft: a denial or revoke that names nothing
+# leaves a buyer with several outstanding requests unable to tell WHICH was declined, so both now
+# carry `{name}` and `{requested}` too.
 #
 # `app.disclosure.notify` is the ONE caller of these three, and it composes every value below from
 # `app.disclosure.access.authorized_capabilities` (called AFTER the decision is written), never
 # from the listing row directly — see that module's own docstring for the full account. What that
-# means for THIS file: `access_denied` and `access_revoked` declare no `name` param at all (a
-# denied or revoked request holds no active grant, so there is nothing authorized to name), and
-# `access_approved`'s `name` is filled with the design's own anonymised label
-# (`app.api.listings.anonymised_name`) unless the listing's `name_disclosed` ceiling is open AND
-# this buyer's approved level covers `IDENTITY` — the identical two-part gate
-# `app.api.listings.serialise` computes for the listing payload itself. None of the three ever
-# carries a financial figure, a document title or an exact location; a grant is a link to the
-# listing page, not a copy of what it now shows.
+# means for THIS file: `access_denied` and `access_revoked` now declare a `name` param too, but it
+# is safe BY CONSTRUCTION rather than by this file's judgement — `_buyer_facing_name`
+# (`app.disclosure.notify`) can only ever fill it with the design's own anonymised label
+# (`app.api.listings.anonymised_name`) for these two statuses, because neither DENIED nor REVOKED
+# can produce an `'APPROVED'` row for `authorized_capabilities` to match, so `capabilities` is
+# always `frozenset()` there and the two-part gate below always takes the fallback branch.
+# `access_approved`'s `name` is filled with that SAME anonymised label unless the listing's
+# `name_disclosed` ceiling is open AND this buyer's approved level covers `IDENTITY` — the
+# identical two-part gate `app.api.listings.serialise` computes for the listing payload itself.
+# `requested` is the buyer's own act (the date they asked) and discloses nothing about the seller.
+# None of the three ever carries a financial figure, a document title or an exact location; a
+# grant is a link to the listing page, not a copy of what it now shows.
 _ACCESS_GRANTED = (
     "A seller has approved your request for additional access to {name} on Practice Match. "
     "Sign in to see what is newly available."
 )
 _ACCESS_DENIED = (
-    "A seller has decided not to approve your request for additional access to a listing on "
-    "Practice Match at this time."
+    "A seller has decided not to approve your request for additional access to {name}, requested "
+    "{requested}, on Practice Match at this time."
 )
 _ACCESS_REVOKED = (
-    "A seller has ended your previously approved access to additional details for a listing on "
-    "Practice Match. You can no longer see the information that access included."
+    "A seller has ended your previously approved access to additional details for {name}, "
+    "requested {requested}, on Practice Match. You can no longer see the information that access "
+    "included."
 )
 
 TEMPLATES: dict[str, Template] = {
@@ -310,13 +318,13 @@ TEMPLATES: dict[str, Template] = {
         html=_p(_ACCESS_DENIED)
              + _p("You can review your requests, and ask again if circumstances change.")
              + _link_block("View your requests"),
-        params=("link",),
+        params=("name", "requested", "link"),
     ),
     "access_revoked": Template(
         subject="Your Practice Match access to a listing has ended",
         text=_ACCESS_REVOKED + "\n\n{link}",
         html=_p(_ACCESS_REVOKED) + _link_block("View your requests"),
-        params=("link",),
+        params=("name", "requested", "link"),
     ),
     # Task I5d (John, 2026-09-08). The Coming Soon page's own promise is the specification:
     # "One message, when it launches. Nothing else, and never shared." and "Leave your email and

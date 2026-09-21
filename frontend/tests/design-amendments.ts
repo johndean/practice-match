@@ -9407,6 +9407,120 @@ const A56_3: Amendment = {
   count: 1
 };
 
+/**
+ * A57 — two copy rulings from John, 2026-09-21, on reading the disclosure notification templates
+ * built for D-C62/ruling 1 (`app/disclosure/notify.py`, `app/mail/templates.py`): "'withdrew' and
+ * 'withdrawed' are terms that should be used" — correct English is withdraw/withdrew/withdrawn,
+ * and this is stakeholder-facing copy. A53's own eight new pieces of copy (Task REVOKE-UI,
+ * 2026-09-19) are exactly the words this reaches.
+ *
+ * SCOPE IS USER-FACING WORDS ONLY, and the ruling itself draws the line A36's own "REVOKE IS NOT
+ * RENDERED" already drew one feature over: the REVOKED status VALUE (`request.status`'s CHECK
+ * constraint, `migrations/096_request.sql`), the `revoke()` function
+ * (`app/disclosure/requests.py`, `frontend/src/requests/seller.ts`) and the `/revoke` route (`POST
+ * /api/seller/requests/{id}/revoke`) are untouched — a schema/identifier rename for no
+ * user-visible gain is not what was ruled. `frontend/src/admin/users.ts`'s own "revoke" words are
+ * a DIFFERENT feature (an admin revoking an ACCOUNT's role, `permissions.REAUTH`'s `users.revoke`)
+ * and are not in scope either — measured: this bundle's own admin-users fixture row carries the
+ * identical substring, `A("Revoke", "danger")`, and none of the seven `find`s below reaches it.
+ *
+ * THE LOWERCASE "revoked" IS JUDGED AND KEPT, deliberately, not overlooked: `status: "revoked"`
+ * (A53.3's own optimistic-update fallback, the no-adapter path) sits beside `status: "accepted"`
+ * and `status: "declined"` in the SAME object literal, and every `r.status === "revoked"`/
+ * `req.status === "revoked"` comparison this bundle carries reads the identical internal enum
+ * value the backend's `REVOKED` status answers — never displayed on its own; a member reads
+ * "Revoked"/"Withdrawn" (A57.2/A57.6), never the bare lowercase word. Renaming it would be the
+ * identifier rename the scope rule above refuses, one property value over, so every occurrence is
+ * left byte for byte.
+ *
+ * SEVEN of A53's eight new sentences carry the word and are corrected here (A57.1-A57.7, one per
+ * A53 sub-entry, A53.3 taken twice on two of its three introduced lines); the eighth, `sentNote`'s
+ * "The financial packet and floor plans are locked again." (A53.4), carries no "revoke" word at
+ * all and needed none. The `access_revoked` mail template's own wording (`app/mail/templates.py`)
+ * was checked too and needed no change: its body has always read "ended" and "no longer see",
+ * never "revoked" — `git show HEAD:app/mail/templates.py` confirms the pristine committed version
+ * already reads that way.
+ *
+ * Each entry is CHAINED on the one A53.x entry whose own introduced line it edits, declared on
+ * that entry's own `LOCAL_AMENDMENTS.md` row (`Consumes A53.<n>`) rather than here, following the
+ * file's own convention (A54.1-A54.2's rows, one column over) that the token lives beside the
+ * plain-English "what changes" rather than inside the shared `ruling` string every sub-entry of a
+ * family repeats verbatim.
+ */
+const A57 = {
+  date: '2026-09-21',
+  ruling: 'John, 2026-09-21, on reading the disclosure notification templates: "\'withdrew\' and \'withdrawed\' are terms that should be used" — correct English is withdraw/withdrew/withdrawn, and this is stakeholder-facing copy. Scope is user-facing words only: the REVOKED status value, the revoke() function, the /revoke route and every other identifier are untouched, and frontend/src/admin/users.ts\'s own "revoke" words (an admin revoking an ACCOUNT\'s role, a different feature) are not in scope either. Every lowercase "revoked" — the design\'s own internal status word beside "pending"/"accepted"/"declined" — is left exactly as it is: it is compared and assigned, never read.'
+};
+
+/** A57.1 — the seller inbox's Revoke button (A53.1) becomes Withdraw, the imperative verb the
+ *  seller dashboard already uses for the identical listing-lifecycle action ("pause, republish and
+ *  withdraw", A16). Consumes A53.1. */
+const A57_1: Amendment = {
+  id: 'A57.1', ...A57,
+  find: 'border-radius: 6px; cursor: pointer;">Revoke</button>',
+  replace: 'border-radius: 6px; cursor: pointer;">Withdraw</button>',
+  count: 1
+};
+
+/** A57.2 — the seller inbox pill's fourth word (A53.2) becomes Withdrawn, the past participle
+ *  paired with the noun labels beside it ("New", "Engaged", "Declined"). Consumes A53.2. */
+const A57_2: Amendment = {
+  id: 'A57.2', ...A57,
+  find: 'r.status === "revoked" ? "Revoked" : "Declined"',
+  replace: 'r.status === "revoked" ? "Withdrawn" : "Declined"',
+  count: 1
+};
+
+/** A57.3 — the seller inbox row's `resolvedNote` (A53.3, first of its two consumed lines): "You
+ *  revoked this buyer's access." becomes "You withdrew this buyer's access." (simple past tense,
+ *  matching the ternary's own "You released…"/"You declined…" siblings). Consumes A53.3. */
+const A57_3: Amendment = {
+  id: 'A57.3', ...A57,
+  find: '"You revoked this buyer\'s access.',
+  replace: '"You withdrew this buyer\'s access.',
+  count: 1
+};
+
+/** A57.4 — the seller inbox row's no-adapter `revoke` fallback (A53.3, second of its two consumed
+ *  lines): "Access revoked." becomes "Access withdrawn." (past participle, read only on the
+ *  demo/reference path — a real revoke sets no `denial_reason` at all). Consumes A53.3. */
+const A57_4: Amendment = {
+  id: 'A57.4', ...A57,
+  find: 'reply: "Access revoked.',
+  replace: 'reply: "Access withdrawn.',
+  count: 1
+};
+
+/** A57.5 — the buyer's `detail()` `sentLabel` (A53.4): "Seller revoked your access" becomes
+ *  "Seller withdrew your access" (simple past tense, matching the ternary's own "Seller accepted
+ *  your request"/"Seller declined this request" siblings). Consumes A53.4. */
+const A57_5: Amendment = {
+  id: 'A57.5', ...A57,
+  find: '"Seller revoked your access"',
+  replace: '"Seller withdrew your access"',
+  count: 1
+};
+
+/** A57.6 — the buyer's own "My Requests" pill (A53.5): "Access revoked" becomes "Access
+ *  withdrawn", the same past-participle pairing A57.1/A57.2 give the seller's own two words.
+ *  Consumes A53.5. */
+const A57_6: Amendment = {
+  id: 'A57.6', ...A57,
+  find: '"Access revoked" : "Declined"',
+  replace: '"Access withdrawn" : "Declined"',
+  count: 1
+};
+
+/** A57.7 — "My Requests"' own hint sentence (A53.6): "The seller revoked your access." becomes
+ *  "The seller withdrew your access." (simple past tense, matching A57.5's own sentLabel).
+ *  Consumes A53.6. */
+const A57_7: Amendment = {
+  id: 'A57.7', ...A57,
+  find: '"The seller revoked your access.',
+  replace: '"The seller withdrew your access.',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9729,5 +9843,6 @@ export function amendments(): Amendment[] {
     // so it must run after both. A56.1 and A56.3 take pristine text (`sets.activity` and the
     // "activity" tab's own badge literal), untouched by any earlier family. Definition order in
     // this file matches this list (m8).
-    A56_1, A56_2, A56_3];
+    A56_1, A56_2, A56_3,
+    A57_1, A57_2, A57_3, A57_4, A57_5, A57_6, A57_7];
 }

@@ -7255,10 +7255,10 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       expect(c.sellerVals().inbox.map((r: any) => r.canRevoke)).toEqual([false, true, false, false]);
     });
 
-    it('the pill label reads "Revoked" for a revoked row, never "Declined" — the seller\'s own action, correctly named', () => {
+    it('the pill label reads "Withdrawn" for a revoked row, never "Declined" — the seller\'s own action, correctly named (A57.2)', () => {
       const c: any = new Component({});
       c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'revoked' })] });
-      expect(c.sellerVals().inbox[0].statusLabel).toBe('Revoked');
+      expect(c.sellerVals().inbox[0].statusLabel).toBe('Withdrawn');
     });
 
     it('the pending/accepted/declined pill labels are byte for byte unchanged', () => {
@@ -7279,7 +7279,7 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       const [accepted, declined, revoked] = c.sellerVals().inbox;
       expect(accepted.resolvedNote).toBe('You released the financial packet and floor plan to this buyer.');
       expect(declined.resolvedNote).toBe('You declined this request. The buyer was told you are not engaging further.');
-      expect(revoked.resolvedNote).toBe('You revoked this buyer\'s access. The buyer no longer sees the financial packet or floor plan.');
+      expect(revoked.resolvedNote).toBe('You withdrew this buyer\'s access. The buyer no longer sees the financial packet or floor plan.');
     });
 
     it('revoke(), with an adapter, calls sellerRequests.revoke(id) and reloads the inbox on success', async () => {
@@ -7314,7 +7314,7 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       c.sellerVals().inbox[idx].revoke();
       expect(c.state.requests.filter((x: any) => x.id === 'r2')[0].status).toBe('revoked');
       const after = c.sellerVals().inbox[idx];
-      expect(after.statusLabel).toBe('Revoked');
+      expect(after.statusLabel).toBe('Withdrawn');
       expect(after.canRevoke, 'cannot revoke a request twice').toBe(false);
     });
   });
@@ -7332,11 +7332,11 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       expect(d.disclosure).not.toContain('You have been granted access');
     });
 
-    it('sentLabel/sentNote read the fourth, honest word for a revoked request', () => {
+    it('sentLabel/sentNote read the fourth, honest word for a revoked request (A57.5)', () => {
       const c: any = new Component({});
       c.setState({ auth: true, screen: 'detail', detailId: 'p1', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'revoked' })] });
       const d = c.detail();
-      expect(d.sentLabel).toBe('Seller revoked your access');
+      expect(d.sentLabel).toBe('Seller withdrew your access');
       expect(d.sentNote).toBe('The financial packet and floor plans are locked again.');
     });
 
@@ -7357,12 +7357,12 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
   });
 
   describe('the buyer\'s "My Requests" list (reqList)', () => {
-    it('a revoked request reads its own pill and hint, never "Declined"', () => {
+    it('a revoked request reads its own pill and hint, never "Declined" (A57.6/A57.7)', () => {
       const c: any = new Component({});
       c.setState({ auth: true, screen: 'requests', myRequests: [ROW({ id: 'r1', pid: 'p1', status: 'revoked' })] });
       const row = c.renderVals().reqList[0];
-      expect(row.statusLabel).toBe('Access revoked');
-      expect(row.hint).toBe('The seller revoked your access. The financial packet and floor plan are locked again.');
+      expect(row.statusLabel).toBe('Access withdrawn');
+      expect(row.hint).toBe('The seller withdrew your access. The financial packet and floor plan are locked again.');
     });
 
     it('the pending/accepted/declined labels and hints are byte for byte unchanged', () => {
