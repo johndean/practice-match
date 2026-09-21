@@ -41,7 +41,7 @@ twice for the same decision collides on the outbox's own `idempotency_key` UNIQU
 (`ON CONFLICT DO NOTHING`) rather than mailing the buyer twice."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from app.api.listings import anonymised_name
 from app.config import settings
@@ -67,9 +67,14 @@ def _buyer_facing_name(conn: Any, *, listing_id: str, seller_id: str | None, buy
     with conn.cursor() as cur:
         cur.execute("SELECT name, name_disclosed, area FROM listing WHERE id = %s", (listing_id,))
         row = cur.fetchone()
-    if row is None:
-        return "a listing"
-    name, name_disclosed, area = row
+    # UNGUARDED, and that is measured rather than careless. `request.listing_id` is
+    # `NOT NULL REFERENCES listing(id) ON DELETE CASCADE` (migrations/096_request.sql:15) and this
+    # runs inside the decide transaction holding that request row, so the listing cannot be
+    # absent: a concurrent delete would have to cascade THIS REQUEST away first, and it cannot
+    # while the row is held. A `row is None` arm here was dead code that no test could reach
+    # honestly, and the bundle's own rule is to delete such a branch rather than defend a state
+    # the schema forbids — a guard nobody can exercise reads as "this can happen" and it cannot.
+    name, name_disclosed, area = cast("tuple[Any, Any, Any]", row)
     capabilities = authorized_capabilities(conn, listing_id=listing_id, seller_id=seller_id, buyer_account_id=buyer_account_id)
     if bool(name_disclosed) and "IDENTITY" in capabilities:
         return str(name)

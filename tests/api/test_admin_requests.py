@@ -198,6 +198,35 @@ async def test_a_malformed_cursor_is_refused(client, member) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_cursor_that_splits_but_does_not_parse_is_refused(client, member) -> None:
+    """`_keyset` refuses in TWO places and the test above only reached the first: a cursor with no
+    separator raises before the `try` block is entered. These are the halves that need a separator
+    to be reached at all — a timestamp that is not a timestamp, and an id that is not a UUID —
+    and each must be refused as a bad cursor rather than reaching SQL as a literal."""
+    _staff_id, staff_cookies, staff_hdr = member(("staff",), email="staff-admreq-cursor@example.org")
+    headers = auth_headers(staff_cookies, staff_hdr)
+    for cursor in ("not-a-date|3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                   "2026-09-21T00:00:00Z|not-a-uuid"):
+        response = await client.get(f"/api/admin/requests?cursor={cursor}", headers=headers)
+        assert response.status_code == 422, (cursor, response.text)
+        assert response.json()["error"]["code"] == "BAD_CURSOR", (cursor, response.text)
+
+
+@pytest.mark.asyncio
+async def test_a_limit_that_is_not_a_number_is_refused(client, member) -> None:
+    """`limit` reaches `int()` after this guard, so a non-decimal value must be refused HERE or it
+    raises a ValueError inside the handler and becomes a 500. `isdecimal()` is the guard, which
+    also rejects a negative sign — `-1` is not a number this route accepts, and the clamp below
+    would silently have turned it into 1."""
+    _staff_id, staff_cookies, staff_hdr = member(("staff",), email="staff-admreq-limit@example.org")
+    headers = auth_headers(staff_cookies, staff_hdr)
+    for bad in ("abc", "-1", "1.5", ""):
+        response = await client.get(f"/api/admin/requests?limit={bad}", headers=headers)
+        assert response.status_code == 422, (bad, response.text)
+        assert response.json()["error"]["code"] == "BAD_FILTER", (bad, response.text)
+
+
+@pytest.mark.asyncio
 async def test_a_bad_status_filter_is_refused(client, member) -> None:
     _staff_id, staff_cookies, staff_hdr = member(("staff",), email="staff-admreq8@example.org")
     response = await client.get("/api/admin/requests?status=NOT_A_STATUS", headers=auth_headers(staff_cookies, staff_hdr))
