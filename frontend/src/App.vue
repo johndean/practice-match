@@ -288,6 +288,19 @@
                 </div>
               </div>
             </template>
+
+            <template v-if="v.gateSellerNeeded">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: #f5f5f5; color: #494949;">
+                  <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;">Access</div>
+                  <div style="font-family: var(--rf-display); font-size: 22px; font-weight: 800; margin-top: 5px; text-transform: uppercase; letter-spacing: .02em;">Selling needs its own account</div>
+                </div>
+                <div style="padding: 24px 26px 26px;">
+                  <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">Buyer and seller accounts are always separate. Create a seller account to list a practice — you will stay signed in here.</p>
+                  <div style="text-align: center; font-size: 14px; color: #494949; margin-top: 20px;"><a href="#signup" @click="v.goSignup">Create a seller account</a></div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -1767,6 +1780,14 @@ const props = defineProps({
   // and `startAnswerNote` use — otherwise the pixel gate compares the app's real seeded reason
   // against the design's own hard-coded fallback and never agrees. The app never passes it.
   startDeclineNote: { type: String, default: '' },
+  // A55.2 (D-C61, 2026-09-21): the eleventh declared prototype prop, `startPerms` — a plain JSON
+  // object of permission string to boolean (e.g. `{ "page.admin": false }`), the reference's only
+  // way to be told what the app's real `perms` adapter already answered for the signed-in
+  // account, since the reference receives no adapter at all. `null` is "nothing was handed over",
+  // which leaves the header nav's own admin door showing (the design's own default, byte for
+  // byte). The app never passes it — it always carries the real `perms` adapter below, which the
+  // design prefers whenever it is present (A55.4).
+  startPerms: { type: Object, default: null },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

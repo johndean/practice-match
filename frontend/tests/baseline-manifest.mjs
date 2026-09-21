@@ -40,6 +40,22 @@
 // `role_label` reads `admin` first in its own `elif` chain regardless of whether `design@` holds
 // two roles or four) — are unmoved, which is the proof the ruling reached the seller persona's
 // label and nothing else.
+// Ruling D-C61 (John, 2026-09-21 — "no link may lead to a refusal", amendment family A55) then
+// re-based SEVEN: `detail`, `requests`, `seller-dash` and the four `wizard-*` — every one of the
+// thirteen captured as a `buyer` or `seller` persona (`page.admin` false for both), whose header
+// now omits the VIN Foundation Admin door (A55.4, gated on `startPerms`/`this.props.perms`). This
+// is the EXACT set A40's own held measurement named in 2026-09-13 ("the filter moved 28 of the 58
+// approved states and seven of baseline-manifest.json's thirteen frozen hashes"), now finally
+// spent under the ruling that pays for it. Measured the A33 method: baselines were regenerated
+// cold before and after (a git stash of this branch's own diff) and all 59 PNG and DOM hashes
+// diffed — THIRTY approved states move in total (two more than A40's 28-state prediction, both
+// approved states appended to `screens.ts` after A40's 2026-09-13 measurement and captured as a
+// non-admin persona: `seller-dash-empty` and `browse-recenter-location` — not a leak, the array
+// simply grew), and `gate-seller-needed` is appended, an addition rather than a re-base. The other
+// SIX of the thirteen — `mobile-list`, `mobile-detail` (the phone frame renders its own header,
+// A14's own proof) and all four `admin-*` (captured as `design`, which holds `page.admin`
+// regardless) — are unmoved, which is the proof the ruling reached exactly the header's own nav
+// array and nothing else.
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.

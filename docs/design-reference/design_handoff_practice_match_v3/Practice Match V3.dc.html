@@ -359,6 +359,19 @@
                 </div>
               </div>
             </sc-if>
+
+            <sc-if value="{{ gateSellerNeeded }}" hint-placeholder-val="{{ false }}">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: #f5f5f5; color: #494949;">
+                  <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;">Access</div>
+                  <div style="font-family: var(--rf-display); font-size: 22px; font-weight: 800; margin-top: 5px; text-transform: uppercase; letter-spacing: .02em;">Selling needs its own account</div>
+                </div>
+                <div style="padding: 24px 26px 26px;">
+                  <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">Buyer and seller accounts are always separate. Create a seller account to list a practice — you will stay signed in here.</p>
+                  <div style="text-align: center; font-size: 14px; color: #494949; margin-top: 20px;"><a href="#signup" onClick="{{ goSignup }}">Create a seller account</a></div>
+                </div>
+              </div>
+            </sc-if>
           </div>
         </div>
 
@@ -1769,7 +1782,7 @@
 </div>
 
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;prototypeBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Show prototype jump bar&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;gate&quot;,&quot;browse&quot;,&quot;detail&quot;,&quot;requests&quot;,&quot;seller&quot;,&quot;admin&quot;],&quot;default&quot;:&quot;gate&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Screen on load&quot;},&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;},&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;},&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;},&quot;startNotice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Sign-in notice on load&quot;},&quot;startAnswerNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Applicant answer note on load&quot;},&quot;startMyListings&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Seller listings on load&quot;},&quot;startWizardPhotos&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Wizard photographs on load&quot;},&quot;startDeclineNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Declined applicant note on load&quot;},&quot;layerPalette&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;distinct&quot;,&quot;cool&quot;,&quot;colorblind&quot;],&quot;default&quot;:&quot;distinct&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Market data&quot;,&quot;label&quot;:&quot;Data layer palette&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;prototypeBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Show prototype jump bar&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;gate&quot;,&quot;browse&quot;,&quot;detail&quot;,&quot;requests&quot;,&quot;seller&quot;,&quot;admin&quot;],&quot;default&quot;:&quot;gate&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Screen on load&quot;},&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;},&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;,&quot;seller-needed&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;},&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;},&quot;startNotice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Sign-in notice on load&quot;},&quot;startAnswerNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Applicant answer note on load&quot;},&quot;startMyListings&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Seller listings on load&quot;},&quot;startWizardPhotos&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Wizard photographs on load&quot;},&quot;startDeclineNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Declined applicant note on load&quot;},&quot;startPerms&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Permissions on load&quot;},&quot;layerPalette&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;distinct&quot;,&quot;cool&quot;,&quot;colorblind&quot;],&quot;default&quot;:&quot;distinct&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Market data&quot;,&quot;label&quot;:&quot;Data layer palette&quot;}}">
 const P = [
   { id:"p1", area:"Cedar Park", type:"Small animal", price:1450000, rev:2100000, docs:3, rooms:5, sqft:4200, bldg:"Included", lat:30.5052, lng:-97.8203, est:1998, listed:"3 days ago", status:"published",
     pop:"81,900", growth:"+14.2% since 2015", income:"$118,400", hh:"27,600 households", note:"Owner retiring after 27 years; open to a six-month transition.", staff:"3 DVMs, 4 licensed technicians, 6 support staff", hours:"Mon–Fri 7:30–6, Sat 8–1", services:"Wellness, dentistry, soft-tissue surgery, in-house lab, digital radiography", facility:"Freestanding building on a 0.6-acre corner lot, remodeled 2019.", ownership:"Sole proprietor (S-corp)" },
@@ -2208,7 +2221,7 @@ class Component extends DCLogic {
   }
 
   go = (screen) => () => {
-    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
+    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: screen === "seller" ? "signup" : "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
     if (screen === "admin") this.loadAdmin();
     if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });
     return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
@@ -3707,12 +3720,13 @@ class Component extends DCLogic {
     const s = this.state;
     const list = this.filtered();
     const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
+    const canAdmin = this.props.perms ? this.props.perms.allowed("page.admin") : (this.props.startPerms ? !!this.props.startPerms["page.admin"] : true);
     const nav = [
       { key: "browse", label: "Browse Practices" },
       { key: "requests", label: "My Requests" },
       { key: "seller", label: "List a Practice" },
       { key: "admin", label: "VIN Foundation Admin" }
-    ].map((n) => ({
+    ].filter((n) => n.key !== "admin" || canAdmin).map((n) => ({
       label: n.label,
       go: this.go(n.key),
       goMenu: () => { this.setState({ navMenu: false }); this.go(n.key)(); },
@@ -3902,6 +3916,7 @@ class Component extends DCLogic {
       gateReset: s.screen === "gate" && s.gate === "reset",
       gateInvite: s.screen === "gate" && s.gate === "invite",
       gateAnswer: s.screen === "gate" && s.gate === "answer",
+      gateSellerNeeded: s.screen === "gate" && s.gate === "seller-needed",
       signupForm: { email: s.signup.email, pw: s.signup.pw, error: !!s.signup.error, errorText: s.signup.error },
       setSignupEmail: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { email: e.target.value, error: "" }) })),
       setSignupPw: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { pw: e.target.value, error: "" }) })),

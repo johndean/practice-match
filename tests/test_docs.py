@@ -2419,10 +2419,10 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # NUMBER_WORDS[family_count + 1] to prove the gate still fails on a count one too high — so
      # the table must always run at least one word PAST the real count. Extended here for the
      # fourth time (A18, A27, A24 are the three before it), the way each of those did.
-     "Forty-three", "Forty-four", "Forty-five",
-     # A54 (2026-09-21) made forty-five families. Extended a fifth time, with the same one-word
-     # headroom the fourth extension left and the discriminator case's own KeyError found empty.
-     "Forty-six", "Forty-seven"))}
+     # A54 (D-C60) and A55 (D-C61) both merged 2026-09-21, making forty-six families together
+     # (forty-four plus one each) — extended here for the fifth time, one word past forty-six so
+     # the discriminator case's own `family_count + 1` lookup has the headroom it needs.
+     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

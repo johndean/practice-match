@@ -603,11 +603,12 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     expect(c.state.screen).toBe('seller');
   });
 
-  it('sends a signed-in account that does not hold the route permission to the unavailable gate', async () => {
+  it('sends a signed-in account that does not hold the route permission to the seller-needed gate (D-C61: never "unavailable" for this one screen)', async () => {
     // `page.seller` is `["seller"]` only, so a buyer-only account is allowed nowhere near the
     // seller dashboard. Driven IN SESSION (signed in first, then navigate), which is the path
     // `guard` is consulted on — see the recorded gap at the bottom of this block for the one
-    // path it is not.
+    // path it is not. D-C61 (2026-09-21): "List a Practice" never refuses a click, so this lands
+    // on the design's own "selling needs its own account" gate rather than "unavailable".
     const { c, router } = await setup('/', BUYER);
     c.setState({ auth: true });
     await flush(); await nextTick();
@@ -615,7 +616,7 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     await router.push('/seller');
     await flush(); await nextTick();
     expect(c.state.screen).toBe('gate');
-    expect(c.state.gate).toBe('unavailable');
+    expect(c.state.gate).toBe('seller-needed');
     expect(router.currentRoute.value.fullPath, 'the URL settles to the gate: nothing is pending, so nothing holds it open').toBe('/');
   });
 
@@ -764,7 +765,7 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     expect(c.state.gate, 'and never the unavailable gate').not.toBe('unavailable');
   });
 
-  it('leaves the staff-only account refused exactly as before — D-C54 names one role', async () => {
+  it('leaves the staff-only account refused exactly as before — D-C54 names one role (D-C61: onto the seller-needed gate, never a bare refusal)', async () => {
     const STAFF_ONLY: Me = { ...MEMBER, role: 'VIN Foundation staff', roles: ['staff'] };
     const { c, router } = await setup('/browse', STAFF_ONLY);
     c.setState({ auth: true });
@@ -773,7 +774,7 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     c.go('seller')();
     await flush(); await nextTick();
     expect(c.state.screen).toBe('gate');
-    expect(c.state.gate, 'page.seller is ["admin","seller"]; staff is neither').toBe('unavailable');
+    expect(c.state.gate, 'page.seller is ["admin","seller"]; staff is neither').toBe('seller-needed');
     expect(router.currentRoute.value.fullPath).toBe('/');
   });
 

@@ -440,7 +440,7 @@ class Component extends DCLogic {
   }
 
   go = (screen) => () => {
-    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
+    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: screen === "seller" ? "signup" : "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
     if (screen === "admin") this.loadAdmin();
     if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });
     return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
@@ -1939,12 +1939,13 @@ class Component extends DCLogic {
     const s = this.state;
     const list = this.filtered();
     const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
+    const canAdmin = this.props.perms ? this.props.perms.allowed("page.admin") : (this.props.startPerms ? !!this.props.startPerms["page.admin"] : true);
     const nav = [
       { key: "browse", label: "Browse Practices" },
       { key: "requests", label: "My Requests" },
       { key: "seller", label: "List a Practice" },
       { key: "admin", label: "VIN Foundation Admin" }
-    ].map((n) => ({
+    ].filter((n) => n.key !== "admin" || canAdmin).map((n) => ({
       label: n.label,
       go: this.go(n.key),
       goMenu: () => { this.setState({ navMenu: false }); this.go(n.key)(); },
@@ -2134,6 +2135,7 @@ class Component extends DCLogic {
       gateReset: s.screen === "gate" && s.gate === "reset",
       gateInvite: s.screen === "gate" && s.gate === "invite",
       gateAnswer: s.screen === "gate" && s.gate === "answer",
+      gateSellerNeeded: s.screen === "gate" && s.gate === "seller-needed",
       signupForm: { email: s.signup.email, pw: s.signup.pw, error: !!s.signup.error, errorText: s.signup.error },
       setSignupEmail: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { email: e.target.value, error: "" }) })),
       setSignupPw: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { pw: e.target.value, error: "" }) })),

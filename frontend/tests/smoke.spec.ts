@@ -59,14 +59,18 @@ test.describe('smoke', () => {
   });
 
   // ---------------------------------------------------------------------------------------
-  // Task ADMIN-GATE (D-C53, 2026-09-13): a buyer never reaches the Admin screen, in a real
-  // browser and on the path the header nav takes. The buyer persona is the one John's four admin
+  // Task ADMIN-GATE (D-C53, 2026-09-13) proved a buyer never reaches the Admin SCREEN, by a typed
+  // URL or by the header-nav click. Ruling D-C61 (John, 2026-09-21 — "no link may lead to a
+  // refusal") goes one step further: the DOOR itself is now hidden from an account `page.admin`
+  // refuses (amendment A55.4), which is what A40.1/A40.2 were reserved, built, MEASURED and HELD
+  // for in 2026-09-13 (the filter moved 28 approved states and seven frozen hashes with nothing
+  // ruled to pay that cost — he has now ruled it). The buyer persona is the one John's four admin
   // screenshots were taken as; `signInAs` reuses the run's memoised `buyer@` session, so this
   // spends no sign-in of its own.
   //
-  // The DOOR is still shown — A40.1/A40.2 are reserved and held (see `design-amendments.ts`'s A40
-  // block: the filter moves 28 approved states and seven frozen hashes, which is a ruling). What
-  // is proved here is that clicking it lands on the design's own gate and never on the shell.
+  // A typed URL is still refused — that is the router's own defence, not a link, and D-C61 does
+  // not reach it — so this case is unchanged in what it proves, only in why it still matters:
+  // it is the fallback for the door the nav no longer shows at all.
   // ---------------------------------------------------------------------------------------
   test('a buyer who reaches for /admin gets the design\'s own unavailable gate, never the admin shell (D-C53)', async ({ page }) => {
     await prepare(page);
@@ -76,12 +80,59 @@ test.describe('smoke', () => {
     await expect(page.getByRole('heading', { name: 'VIN Foundation Admin' }), 'the admin shell must not render').toHaveCount(0);
   });
 
-  test('and the header\'s own Admin button is refused the same way — the path that bypassed the guard', async ({ page }) => {
+  // D-C61's own case: the button is not merely refused, it is not RENDERED — "why are we even
+  // showing the link to begin with" is the ruling's own question, and the answer is that the app
+  // no longer does. Replaces the old "click it and get refused" proof, which cannot run any more
+  // (there is nothing to click).
+  test('and the header shows a buyer no Admin door at all — not merely a refused one (D-C61)', async ({ page }) => {
     await prepare(page);
+    const errors = trapErrors(page);
     await signInAs(page, 'buyer', '/browse');
-    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
-    await expect(page.getByText('This page is not available to your account')).toBeVisible();
-    await expect(page, 'a refused screen never reaches the address bar').toHaveURL(/\/$/);
+    await expect(page.getByRole('button', { name: 'VIN Foundation Admin' }), 'D-C61: the door itself is hidden, not shown-and-refused').toHaveCount(0);
+    // The menu form (< 1050px) carries the same array — collapsed here at the design's own
+    // desktop viewport rather than resized, since `navExpanded`/`navCollapsed` share `nav`.
+    await page.setViewportSize({ width: 1000, height: 940 });
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await expect(page.getByRole('button', { name: 'VIN Foundation Admin' }), 'the collapsed menu reads the same filtered array').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'My Requests' })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // D-C61's OTHER arm: "List a Practice" is never hidden (D-C59 — a seller signs up on a
+  // separate account, so hiding the door would delete the last in-product signpost that selling
+  // exists), and it must never refuse either. Signed out it opens the sign-up card that already
+  // exists (A8's family); signed in as a buyer it opens the NEW "selling needs its own account"
+  // gate (A55.6) rather than "This page is not available to your account", and the link on that
+  // card reaches the same sign-up card without touching the session.
+  // ---------------------------------------------------------------------------------------
+  test('"List a Practice" always leads somewhere real, never a refusal (D-C61)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+
+    // Signed OUT the header nav renders nothing at all (`navExpanded`/`navCollapsed` both need
+    // `auth`) — a "List a Practice" link a signed-out visitor followed from elsewhere (a
+    // bookmark, a marketing page) is the ruled case, proved the same way the pre-existing
+    // "unavailable" cases are: by the deep link's own destination.
+    await page.goto('/seller');
+    await expect(page.getByText('Request Access', { exact: true })).toBeVisible();
+    await expect(page.getByText('Start with the email and password you will sign in with.')).toBeVisible();
+    await expect(page.getByText('This page is not available to your account')).toHaveCount(0);
+
+    await signInAs(page, 'buyer', '/browse');
+    await expect(page.getByRole('button', { name: 'List a Practice', exact: true }).first(), 'the door itself is never hidden').toBeVisible();
+    await page.getByRole('button', { name: 'List a Practice', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText('Selling needs its own account')).toBeVisible();
+    await expect(page.getByText('This page is not available to your account'), 'never the generic refusal').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Sign out' }), 'no sign-out action on this card').toHaveCount(0);
+
+    await page.getByRole('link', { name: 'Create a seller account' }).click();
+    await expect(page.getByText('Request Access', { exact: true })).toBeVisible();
+    await expect(page.getByText('Start with the email and password you will sign in with.')).toBeVisible();
+    // Still signed in — the click is a link the visitor chooses, nothing was destroyed.
+    await expect(page.getByRole('button', { name: 'List a Practice', exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------------------
@@ -170,13 +221,14 @@ test.describe('smoke', () => {
   // The other half of the ruling, and the reason it is one role and not "privilege": D-C53's own
   // case must stay green. A buyer is still refused the Admin screen — asserted above — and here a
   // buyer is still refused nothing it used to hold, i.e. the ruling widened `admin` and nobody else.
+  // The Admin door itself is D-C61's own case now (hidden rather than clicked-and-refused, above),
+  // so what is left to prove here is that My Requests is unaffected by either ruling.
   test('and the buyer keeps exactly the doors it had — D-C54 widened one role', async ({ page }) => {
     await prepare(page);
     await signInAs(page, 'buyer', '/browse');
     await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
     await expect(page).toHaveURL(/\/requests$/);
-    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
-    await expect(page.getByText('This page is not available to your account')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'VIN Foundation Admin' }), 'D-C61: hidden, not merely refused').toHaveCount(0);
   });
 
   // ---------------------------------------------------------------------------------------

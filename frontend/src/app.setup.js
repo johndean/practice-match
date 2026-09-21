@@ -68,6 +68,14 @@ const props = defineProps({
   // and `startAnswerNote` use — otherwise the pixel gate compares the app's real seeded reason
   // against the design's own hard-coded fallback and never agrees. The app never passes it.
   startDeclineNote: { type: String, default: '' },
+  // A55.2 (D-C61, 2026-09-21): the eleventh declared prototype prop, `startPerms` — a plain JSON
+  // object of permission string to boolean (e.g. `{ "page.admin": false }`), the reference's only
+  // way to be told what the app's real `perms` adapter already answered for the signed-in
+  // account, since the reference receives no adapter at all. `null` is "nothing was handed over",
+  // which leaves the header nav's own admin door showing (the design's own default, byte for
+  // byte). The app never passes it — it always carries the real `perms` adapter below, which the
+  // design prefers whenever it is present (A55.4).
+  startPerms: { type: Object, default: null },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

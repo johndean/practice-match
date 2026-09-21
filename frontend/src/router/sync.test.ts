@@ -205,6 +205,57 @@ describe('refusedScreen (the state-driven half of the same guard)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------
+// D-C61 (John, 2026-09-21) — "no link may lead to a refusal." "List a Practice" stays visible to
+// everyone (D-C61's own ruling: hiding it would remove the last in-product signpost that selling
+// exists, under D-C59's separate-account rule), so the door itself is never filtered — only what
+// the click DOES changes: signed out, it leads to the sign-up card that already exists, never the
+// generic sign-in one; signed in without `page.seller`, it leads to a NEW gate ("seller-needed")
+// rather than the "unavailable" refusal every OTHER unheld route still gets. Both arms are
+// app-only code (`guard`/`refusedScreen` are what the design's own `go()` cannot see — it has no
+// router), so there is no design amendment here; the design-side change (the new gate CARD and
+// the admin door's own hiding) is `frontend/src/logic.test.ts`'s.
+// ---------------------------------------------------------------------------------------
+describe('the seller screen never refuses a click (D-C61)', () => {
+  const buyer = { id: '1', email: 'b@x.io', name: 'B', role: 'Approved buyer', initials: 'B', state: 'active', roles: ['buyer'], affiliation_label: null };
+  const seller = { ...buyer, id: '2', role: 'Approved seller', roles: ['seller'] };
+
+  it('signed out + "seller" → the sign-up card, not the generic sign-in one, with the route remembered', () => {
+    expect(guard({ ...base, auth: false }, { screen: 'seller' }, { me: null }))
+      .toEqual({ apply: { screen: 'gate', gate: 'signup' }, pending: { screen: 'seller' } });
+  });
+
+  it('every OTHER signed-out member route is unaffected — still the plain sign-in card', () => {
+    expect(guard({ ...base, auth: false }, { screen: 'browse' }, { me: null }))
+      .toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'browse' } });
+    expect(guard({ ...base, auth: false }, { screen: 'admin' }, { me: null }))
+      .toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'admin' } });
+  });
+
+  it('signed in as a buyer (no page.seller) + "seller" → the new "selling needs its own account" gate, nothing pending', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'seller' }, { me: buyer }))
+      .toEqual({ apply: { screen: 'gate', gate: 'seller-needed' }, pending: null });
+  });
+
+  it('every OTHER refused route is unaffected — still "unavailable"', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'admin' }, { me: buyer }))
+      .toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
+  });
+
+  it('signed in as a seller (or admin, D-C54\'s superset) + "seller" → applies directly, unchanged', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'seller' }, { me: seller }))
+      .toEqual({ apply: { screen: 'seller' }, pending: null });
+  });
+
+  it('refusedScreen — the header-nav-click path — lands a signed-in buyer on the same new gate', () => {
+    expect(refusedScreen({ ...base, auth: true, screen: 'seller' }, { me: buyer })).toEqual({ screen: 'gate', gate: 'seller-needed' });
+  });
+
+  it('refusedScreen says nothing for a seller who already holds the page', () => {
+    expect(refusedScreen({ ...base, auth: true, screen: 'seller' }, { me: seller })).toBeNull();
+  });
+});
+
 describe('needsPatch / sameLocation', () => {
   it('needsPatch is false when state already matches', () =>
     expect(needsPatch({ ...base, screen: 'browse' }, { screen: 'browse' })).toBe(false));

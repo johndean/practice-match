@@ -796,18 +796,42 @@ describe('referenceUrl — the design\'s own props, injected per request (A-I8 /
   // carries, and `startNotice` is the one that decides whether the sign-in card shows a message.
   // It is always `''` until Task S5 gives `reach()` a `notice` option; naming it is what stops a
   // notice state, once S5 adds one, leaking into the next capture.
-  it('always serves the design at "/" and names all eight injectable prototype props on every request', () => {
+  it('always serves the design at "/" and names all nine injectable prototype props on every request', () => {
     const url = referenceUrl();
     expect(url.startsWith('/?props=')).toBe(true);
-    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '' });
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: null });
   });
 
   it('names the screen and hands over that state\'s own account, for every member family', () => {
-    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '' });
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: { 'page.admin': false } });
     expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });
     expect(props(referenceUrl({ screen: 'admin' }))).toMatchObject({ startScreen: 'admin', me: PERSONAS.design });
+  });
+
+  // D-C61 (A55.2, 2026-09-21): `startPerms` is the reference's only way to be told what the app's
+  // real `perms` adapter already answered — computed through the SAME matrix (`can()`), never
+  // re-derived from `roles` here. `null` exactly where the target names no persona at all.
+  //
+  // `gate-unavailable` and `gate-seller-needed` are DELIBERATELY not `null` despite `me` itself
+  // being withheld on both (found RED on DOM parity, "child count 4 ≠ 3": the app's real buyer
+  // account correctly hid the admin button while the reference — startPerms null, defaulting to
+  // "show" — did not). Both buy `auth` through `referenceScreen`'s own `startScreen: 'browse'`
+  // trick, so the header nav renders regardless of whether `me` is withheld, and `startPerms`
+  // must still name the real account behind the gate.
+  it('startPerms mirrors what the real matrix answers for each persona, including where me is withheld but auth is bought anyway', () => {
+    expect(props(referenceUrl({ screen: 'browse' })).startPerms).toEqual({ 'page.admin': false });      // buyer
+    expect(props(referenceUrl({ screen: 'seller' })).startPerms).toEqual({ 'page.admin': false });       // seller
+    expect(props(referenceUrl({ screen: 'admin' })).startPerms).toEqual({ 'page.admin': true });         // design (admin+staff)
+    expect(props(referenceUrl()).startPerms).toBeNull();
+    expect(props(referenceUrl({ gate: 'signin' })).startPerms).toBeNull();
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' })).startPerms).toEqual({ 'page.admin': false });
+    expect(props(referenceUrl({ gate: 'seller-needed', persona: 'buyer' })).startPerms).toEqual({ 'page.admin': false });
+    // The two OTHER withheld-me cases never buy auth, so nav never renders — startPerms is inert,
+    // but still computed from the real persona rather than snapped to null.
+    expect(props(referenceUrl({ gate: 'answer', persona: 'needsReview' })).startPerms).toEqual({ 'page.admin': false });
+    expect(props(referenceUrl({ gate: 'apply', persona: 'declined' })).startPerms).toEqual({ 'page.admin': false });
   });
 
   it('hands over an applicant for the two status gates, where the account IS the state', () => {
@@ -1296,7 +1320,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
 
   it('reaches the four form cards and the three status cards through startGate alone', () => {
     for (const gate of ['signup', 'forgot', 'reset', 'invite', 'verify-expired', 'reset-expired'] as const) {
-      expect(props(referenceUrl({ gate })), gate).toEqual({ startScreen: 'gate', startGate: gate, startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '' });
+      expect(props(referenceUrl({ gate })), gate).toEqual({ startScreen: 'gate', startGate: gate, startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: null });
     }
   });
 
@@ -1310,17 +1334,21 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
   // `needs_review` account maps to the "under review" card — so passing `me` here would put the
   // reference on the wrong card. Nothing is lost: an applicant's `auth` is false on both targets,
   // and the gate screen's header is driven by `auth` alone.
+  // `startPerms` is NOT withheld with `me`: it is computed from the real persona regardless (D-C61),
+  // even though this gate never buys `auth` and so never renders anything it could affect.
   it('withholds the account for the answer card, and carries the note through A9.1\'s prop', () => {
     const p = props(referenceUrl({ gate: 'answer', persona: 'needsReview', note: NEEDS_REVIEW_INFO_REQUEST }));
-    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST, startMyListings: null, startDeclineNote: '' });
+    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST, startMyListings: null, startDeclineNote: '', startPerms: { 'page.admin': false } });
   });
 
   // The app captures this one SIGNED IN — a buyer who deep-linked a route their access does not
   // include — and no `me` can buy `auth: true` on a gate screen (an active account overrides the
   // gate and lands on Browse). `startScreen` sets `auth`; `startGate` then puts it back on the
   // gate; and the design's own fixture identity is, letter for letter, `buyer@`'s computed label.
+  // `startPerms` is NOT withheld with `me` (D-C61, found RED on DOM parity): the nav renders
+  // regardless, and the real buyer account behind this gate really does lack `page.admin`.
   it('buys the signed-in header for the unavailable card through startScreen, with no account', () => {
-    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '' });
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: { 'page.admin': false } });
     expect(referenceScreen({ gate: 'unavailable', persona: 'buyer' })).toBe('browse');
     expect(referencePersona({ gate: 'unavailable', persona: 'buyer' })).toBeNull();
   });
@@ -1335,7 +1363,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
 
   it('drives the five notice states through startNotice, with the spec\'s own copy', () => {
     for (const key of Object.keys(NOTICES) as Array<keyof typeof NOTICES>) {
-      expect(props(referenceUrl({ gate: 'signin', notice: key })), key).toEqual({ startScreen: 'gate', startGate: 'signin', startViewport: 'desktop', me: null, startNotice: NOTICES[key], startAnswerNote: '', startMyListings: null, startDeclineNote: '' });
+      expect(props(referenceUrl({ gate: 'signin', notice: key })), key).toEqual({ startScreen: 'gate', startGate: 'signin', startViewport: 'desktop', me: null, startNotice: NOTICES[key], startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: null });
     }
   });
 

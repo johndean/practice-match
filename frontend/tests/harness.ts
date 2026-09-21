@@ -12,6 +12,10 @@ import { designListingsBody } from './design-listings.mjs';
 import { designRequestsBody } from './design-requests.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
+// D-C61 (A55.2): the ONE matrix, read the same way the app reads it — never re-derived from
+// `roles` here, which is exactly the "second copy" mistake A40.4 retired from the design itself.
+import { can } from '../src/auth/can';
+import type { Me } from '../src/auth/me';
 
 /** `app.api.market.MAX_BBOX_DEG`, the span cap the boundary route refuses on — stated in
  *  `docs/integrations/market-data-api.md` and pinned against this copy by
@@ -1230,7 +1234,10 @@ export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
 // ---------------------------------------------------------------------------------------
 
 export type ReachGate = 'signin' | 'apply' | 'pending' | 'rejected' | 'signup' | 'check-email'
-  | 'verify-expired' | 'forgot' | 'reset' | 'reset-expired' | 'invite' | 'answer' | 'unavailable';
+  | 'verify-expired' | 'forgot' | 'reset' | 'reset-expired' | 'invite' | 'answer' | 'unavailable'
+  // D-C61 (A55.1, 2026-09-21): a signed-in account without `page.seller` reaches this by clicking
+  // "List a Practice" — the design's new gate card, not the generic "unavailable" refusal.
+  | 'seller-needed';
 
 export interface ReachTarget {
   /** The prototype screen. Anything but `gate` needs a session on the app. */
@@ -1319,7 +1326,7 @@ const isReapply = (target: ReachTarget): boolean => target.gate === 'apply' && t
  * `state.me` stays the design's own fixture identity, which by the A-I8.2 invariant is
  * letter-for-letter `buyer@`'s computed label: the account the app captures this state as.
  */
-const SIGNED_IN_GATES = new Set<ReachGate>(['unavailable']);
+const SIGNED_IN_GATES = new Set<ReachGate>(['unavailable', 'seller-needed']);
 
 /** The `startScreen` the reference is given — `browse` where the capture must be signed in. */
 export function referenceScreen(target: ReachTarget = {}): NonNullable<ReachTarget['screen']> {
@@ -1343,12 +1350,38 @@ export function referencePersona(target: ReachTarget = {}): PersonaKey | null {
  * it — with all six prototype props named on every request, so no state inherits a value another
  * state set.
  */
+/**
+ * D-C61 (A55.2, 2026-09-21): the `startPerms` prop — what the app's real `perms` adapter would
+ * answer for this persona, computed through the SAME generated matrix the app reads (`can()` over
+ * `src/auth/permissions.ts`) rather than re-derived from `roles` here, so the reference and the app
+ * cannot disagree about who may see the header's Admin door. `null` for a signed-out visitor:
+ * `navExpanded` is false without `auth`, so there is nothing to filter yet.
+ *
+ * DELIBERATELY fed the UNWITHHELD persona (`personaFor`, not `referencePersona`) — found RED on
+ * `gate-unavailable` and `gate-seller-needed` (DOM parity: the app's real buyer account correctly
+ * hides the admin button, "child count 4 ≠ 3"). `referencePersona` withholds `me` on both so an
+ * ACTIVE account cannot override the gate they exist to demonstrate — a problem specific to the
+ * ACCOUNT OBJECT — but `auth` is bought anyway (`referenceScreen`'s own `startScreen: 'browse'`
+ * trick), so the header nav renders regardless of whether `me` is withheld, and the account
+ * BEHIND that gate is not ambiguous: `gate-unavailable`'s and `gate-seller-needed`'s own captures
+ * both name a real persona (`buyer`) via `target.persona`, which `personaFor` reads directly.
+ * Every OTHER withheld case (`answer`, the declined re-apply) never buys `auth` at all, so its
+ * nav never renders and this value is inert there.
+ */
+export function referencePerms(persona: PersonaKey | null): Record<string, boolean> | null {
+  const p = referenceMe(persona);
+  if (!p) return null;
+  const me: Me = { id: '', email: p.email, name: p.name, role: p.role, initials: p.initials, state: p.state, roles: [...p.roles], affiliation_label: null };
+  return { 'page.admin': can('page.admin', me) };
+}
+
 export function referenceUrl(target: ReachTarget = {}): string {
+  const persona = referencePersona(target);
   return `/?props=${encodeURIComponent(JSON.stringify({
     startScreen: referenceScreen(target),
     startGate: target.gate ?? '',
     startViewport: target.viewport ?? 'desktop',
-    me: referenceMe(referencePersona(target)),
+    me: referenceMe(persona),
     // A8.8b / A9.1: the two message props. Always named, so a notice or a note cannot leak from
     // one capture into the next.
     startNotice: target.notice ? NOTICES[target.notice] : '',
@@ -1358,7 +1391,8 @@ export function referenceUrl(target: ReachTarget = {}): string {
     startMyListings: target.myListings ?? null,
     // A54.4/A54.5 (ruling D-C60): the declined applicant's own real decline reason, so the
     // reference agrees with the app's real seeded persona instead of the design's own fallback.
-    startDeclineNote: target.declineNote ?? ''
+    startDeclineNote: target.declineNote ?? '',
+    startPerms: referencePerms(personaFor(target))
   }))}`;
 }
 
@@ -1377,7 +1411,10 @@ const GATE_ROUTE: Partial<Record<ReachGate, (token: string) => string>> = {
   // the API and the next capture must not gamble on it having been left unused.
   reset: (token) => `/reset?token=${token}`,
   invite: (token) => `/accept-invite?token=${token}`,
-  unavailable: () => '/admin'
+  unavailable: () => '/admin',
+  // D-C61: the same click as "List a Practice" — a signed-in buyer's own real route, refused by
+  // the real `page.seller` check into the design's new gate card rather than "unavailable".
+  'seller-needed': () => '/seller'
 };
 
 /** The URL each notice state's REAL flow starts at. The submit itself is `submitNotice`. */
