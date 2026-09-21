@@ -812,15 +812,26 @@ describe('referenceUrl — the design\'s own props, injected per request (A-I8 /
 
   // D-C61 (A55.2, 2026-09-21): `startPerms` is the reference's only way to be told what the app's
   // real `perms` adapter already answered — computed through the SAME matrix (`can()`), never
-  // re-derived from `roles` here. `null` exactly where `me` is `null`: there is nothing to filter
-  // on a screen `navExpanded` does not even render nav for.
-  it('startPerms mirrors what the real matrix answers for each persona, and is null wherever me is', () => {
+  // re-derived from `roles` here. `null` exactly where the target names no persona at all.
+  //
+  // `gate-unavailable` and `gate-seller-needed` are DELIBERATELY not `null` despite `me` itself
+  // being withheld on both (found RED on DOM parity, "child count 4 ≠ 3": the app's real buyer
+  // account correctly hid the admin button while the reference — startPerms null, defaulting to
+  // "show" — did not). Both buy `auth` through `referenceScreen`'s own `startScreen: 'browse'`
+  // trick, so the header nav renders regardless of whether `me` is withheld, and `startPerms`
+  // must still name the real account behind the gate.
+  it('startPerms mirrors what the real matrix answers for each persona, including where me is withheld but auth is bought anyway', () => {
     expect(props(referenceUrl({ screen: 'browse' })).startPerms).toEqual({ 'page.admin': false });      // buyer
     expect(props(referenceUrl({ screen: 'seller' })).startPerms).toEqual({ 'page.admin': false });       // seller
     expect(props(referenceUrl({ screen: 'admin' })).startPerms).toEqual({ 'page.admin': true });         // design (admin+staff)
     expect(props(referenceUrl()).startPerms).toBeNull();
     expect(props(referenceUrl({ gate: 'signin' })).startPerms).toBeNull();
-    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' })).startPerms).toBeNull();        // withheld persona
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' })).startPerms).toEqual({ 'page.admin': false });
+    expect(props(referenceUrl({ gate: 'seller-needed', persona: 'buyer' })).startPerms).toEqual({ 'page.admin': false });
+    // The two OTHER withheld-me cases never buy auth, so nav never renders — startPerms is inert,
+    // but still computed from the real persona rather than snapped to null.
+    expect(props(referenceUrl({ gate: 'answer', persona: 'needsReview' })).startPerms).toEqual({ 'page.admin': false });
+    expect(props(referenceUrl({ gate: 'apply', persona: 'declined' })).startPerms).toEqual({ 'page.admin': false });
   });
 
   it('hands over an applicant for the two status gates, where the account IS the state', () => {
@@ -1323,17 +1334,21 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
   // `needs_review` account maps to the "under review" card — so passing `me` here would put the
   // reference on the wrong card. Nothing is lost: an applicant's `auth` is false on both targets,
   // and the gate screen's header is driven by `auth` alone.
+  // `startPerms` is NOT withheld with `me`: it is computed from the real persona regardless (D-C61),
+  // even though this gate never buys `auth` and so never renders anything it could affect.
   it('withholds the account for the answer card, and carries the note through A9.1\'s prop', () => {
     const p = props(referenceUrl({ gate: 'answer', persona: 'needsReview', note: NEEDS_REVIEW_INFO_REQUEST }));
-    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST, startMyListings: null, startDeclineNote: '', startPerms: null });
+    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST, startMyListings: null, startDeclineNote: '', startPerms: { 'page.admin': false } });
   });
 
   // The app captures this one SIGNED IN — a buyer who deep-linked a route their access does not
   // include — and no `me` can buy `auth: true` on a gate screen (an active account overrides the
   // gate and lands on Browse). `startScreen` sets `auth`; `startGate` then puts it back on the
   // gate; and the design's own fixture identity is, letter for letter, `buyer@`'s computed label.
+  // `startPerms` is NOT withheld with `me` (D-C61, found RED on DOM parity): the nav renders
+  // regardless, and the real buyer account behind this gate really does lack `page.admin`.
   it('buys the signed-in header for the unavailable card through startScreen, with no account', () => {
-    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: null });
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null, startDeclineNote: '', startPerms: { 'page.admin': false } });
     expect(referenceScreen({ gate: 'unavailable', persona: 'buyer' })).toBe('browse');
     expect(referencePersona({ gate: 'unavailable', persona: 'buyer' })).toBeNull();
   });

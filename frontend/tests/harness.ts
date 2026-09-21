@@ -1354,9 +1354,19 @@ export function referencePersona(target: ReachTarget = {}): PersonaKey | null {
  * D-C61 (A55.2, 2026-09-21): the `startPerms` prop — what the app's real `perms` adapter would
  * answer for this persona, computed through the SAME generated matrix the app reads (`can()` over
  * `src/auth/permissions.ts`) rather than re-derived from `roles` here, so the reference and the app
- * cannot disagree about who may see the header's Admin door. `null` for a signed-out visitor (and
- * every withheld persona `referencePersona` already returns `null` for): `navExpanded` is false
- * without `auth`, so there is nothing to filter yet.
+ * cannot disagree about who may see the header's Admin door. `null` for a signed-out visitor:
+ * `navExpanded` is false without `auth`, so there is nothing to filter yet.
+ *
+ * DELIBERATELY fed the UNWITHHELD persona (`personaFor`, not `referencePersona`) — found RED on
+ * `gate-unavailable` and `gate-seller-needed` (DOM parity: the app's real buyer account correctly
+ * hides the admin button, "child count 4 ≠ 3"). `referencePersona` withholds `me` on both so an
+ * ACTIVE account cannot override the gate they exist to demonstrate — a problem specific to the
+ * ACCOUNT OBJECT — but `auth` is bought anyway (`referenceScreen`'s own `startScreen: 'browse'`
+ * trick), so the header nav renders regardless of whether `me` is withheld, and the account
+ * BEHIND that gate is not ambiguous: `gate-unavailable`'s and `gate-seller-needed`'s own captures
+ * both name a real persona (`buyer`) via `target.persona`, which `personaFor` reads directly.
+ * Every OTHER withheld case (`answer`, the declined re-apply) never buys `auth` at all, so its
+ * nav never renders and this value is inert there.
  */
 export function referencePerms(persona: PersonaKey | null): Record<string, boolean> | null {
   const p = referenceMe(persona);
@@ -1382,7 +1392,7 @@ export function referenceUrl(target: ReachTarget = {}): string {
     // A54.4/A54.5 (ruling D-C60): the declined applicant's own real decline reason, so the
     // reference agrees with the app's real seeded persona instead of the design's own fallback.
     startDeclineNote: target.declineNote ?? '',
-    startPerms: referencePerms(persona)
+    startPerms: referencePerms(personaFor(target))
   }))}`;
 }
 
