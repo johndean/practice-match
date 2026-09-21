@@ -56,6 +56,20 @@
 // A14's own proof) and all four `admin-*` (captured as `design`, which holds `page.admin`
 // regardless) — are unmoved, which is the proof the ruling reached exactly the header's own nav
 // array and nothing else.
+// Amendment family A57 (John, 2026-09-21 — "'withdrew' and 'withdrawed' are terms that should be
+// used", read over A53's eight new pieces of copy) then re-based ONE of the thirteen again,
+// `seller-dash`: its default fixture's accepted row (`r2`, `p7`) carries the SAME `canRevoke`
+// button A53.1 put there, and A57.1 renames its text from "Revoke" to "Withdraw" — the one string
+// on this screen the family's seven entries reach, since no approved state's default fixture ever
+// carries a request whose `status` actually IS `"revoked"` (A57.2-A57.7's own branches are
+// unreached pixels, e2e-only). Measured the A33 method: baselines were regenerated cold before and
+// after (`git stash push` of this family's own two source files, `design-amendments.ts` and
+// `LOCAL_AMENDMENTS.md`, regenerating the bundle between runs) and all 59 PNG and DOM hashes
+// diffed — exactly TWO approved states move, `seller-dash` and `seller-dash-empty` (the second not
+// among these thirteen, appended after A40's own 2026-09-13 measurement), both by the identical
+// single-node diff (`"Revoke"` -> `"Withdraw"`, confirmed by diffing the DOM snapshot JSON
+// directly). The other TWELVE of the thirteen are unmoved, which is the proof the ruling reached
+// exactly the seller inbox's own button text and nothing else.
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.

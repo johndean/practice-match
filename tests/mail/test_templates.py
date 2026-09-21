@@ -222,40 +222,49 @@ def test_listing_declined_carries_the_reviewers_reason_and_escapes_it():
 
 
 # --- ruling D-C62 (2026-09-21): the three disclosure-decision notices --------------------------
+# ruling 1, the same day, on reading this first draft: a buyer with several outstanding requests
+# could not tell WHICH was declined, so `access_denied`/`access_revoked` now carry `name` and
+# `requested` too (consumes the "declare NO `name` param at all" design this comment used to
+# describe).
 #
-# `app.disclosure.notify` is the one caller of these three, and it composes `name`/`link` from
-# `app.disclosure.access.authorized_capabilities`, never from the listing row directly \u2014 see that
-# module's own docstring. What is proved HERE, at the template layer, is narrower and structural:
-# `access_denied` and `access_revoked` declare NO `name` param at all, so there is no hole in
-# either body a practice name (or anything else about the listing) could ever be interpolated
-# into, whatever a future caller passes. `access_approved` is the only one of the three with a
-# `name` hole, and it is the caller's job (proved in `tests/disclosure/test_notify.py`) to fill it
-# only when authorized.
+# `app.disclosure.notify` is the one caller of these three, and it composes `name`/`requested`/
+# `link` from `app.disclosure.access.authorized_capabilities`, never from the listing row directly
+# \u2014 see that module's own docstring. What is proved HERE, at the template layer, is narrower and
+# structural: all three templates now have a `name` hole, but it is `tests/disclosure/test_notify.py`
+# that proves the one thing that makes it safe \u2014 that `access_denied`/`access_revoked` can only
+# ever be filled with the ANONYMISED label, never the practice's real name. What this file checks
+# is that the templates render correctly given whatever their one caller hands them.
 
 
-def test_access_denied_and_access_revoked_declare_no_name_param():
-    """The structural half of the privacy rule: even a careless caller cannot smuggle a practice
-    name into either of these two bodies, because neither template has a place for one."""
-    assert TP.TEMPLATES["access_denied"].params == ("link",)
-    assert TP.TEMPLATES["access_revoked"].params == ("link",)
-    assert "{name}" not in TP.TEMPLATES["access_denied"].text
-    assert "{name}" not in TP.TEMPLATES["access_denied"].html
-    assert "{name}" not in TP.TEMPLATES["access_revoked"].text
-    assert "{name}" not in TP.TEMPLATES["access_revoked"].html
+def test_access_denied_and_access_revoked_declare_a_name_and_requested_param():
+    """Ruling 1: both bodies now have a place for the listing's (anonymised) label and the date
+    the buyer asked, so a buyer with several outstanding requests can tell which one this mail is
+    about. The PRIVACY half of this is not this test's job \u2014 `tests/disclosure/test_notify.py`
+    proves the composer can never fill either `name` with the real practice name."""
+    assert TP.TEMPLATES["access_denied"].params == ("name", "requested", "link")
+    assert TP.TEMPLATES["access_revoked"].params == ("name", "requested", "link")
+    assert "{name}" in TP.TEMPLATES["access_denied"].text
+    assert "{requested}" in TP.TEMPLATES["access_denied"].text
+    assert "{name}" in TP.TEMPLATES["access_revoked"].text
+    assert "{requested}" in TP.TEMPLATES["access_revoked"].text
 
 
 def test_access_denied_carries_no_financial_or_document_language():
-    r = TP.render("access_denied", {"link": "https://qa.foundation.vin/requests"}, base_url="https://qa.foundation.vin")
+    r = TP.render("access_denied", {"name": "Austin Veterinary", "requested": "September 20", "link": "https://qa.foundation.vin/requests"},
+                  base_url="https://qa.foundation.vin")
     for word in ("revenue", "financ", "document", "floor plan"):
         assert word not in r.text.lower() and word not in r.html.lower()
     assert "https://qa.foundation.vin/requests" in r.text
+    assert "Austin Veterinary" in r.text and "September 20" in r.text
 
 
 def test_access_revoked_says_access_ended_and_restates_nothing_it_covered():
-    r = TP.render("access_revoked", {"link": "https://qa.foundation.vin/requests"}, base_url="https://qa.foundation.vin")
+    r = TP.render("access_revoked", {"name": "Austin Veterinary", "requested": "September 20", "link": "https://qa.foundation.vin/requests"},
+                  base_url="https://qa.foundation.vin")
     assert "ended" in r.text
     for word in ("revenue", "financ", "document", "floor plan"):
         assert word not in r.text.lower() and word not in r.html.lower()
+    assert "Austin Veterinary" in r.text and "September 20" in r.text
 
 
 def test_access_approved_names_no_figure_and_attaches_nothing():

@@ -9,11 +9,16 @@ THE PRIVACY RULE this whole family exists to prove: composed from
 `app.disclosure.access.authorized_capabilities`, asked fresh AFTER the decision, never from the
 listing row directly. A denied or revoked request holds no active grant at all — that function's
 own SQL matches `status = 'APPROVED'` alone — so `access_denied`/`access_revoked` can never carry
-the practice's real name BY CONSTRUCTION, not merely because this module chooses not to pass one.
-Only `access_approved` can ever receive one, and only when the listing's own `name_disclosed`
-ceiling is open AND the approved level covers `IDENTITY` — the identical two-part gate
-`app.api.listings.serialise` computes for the listing payload itself
-(`named = name_disclosed and "IDENTITY" in capabilities`).
+the practice's REAL name BY CONSTRUCTION, not merely because this module chooses not to pass one.
+
+Ruling 1 (2026-09-21, on reading the first draft) gives both a `name` param too — a buyer with
+several outstanding requests could not otherwise tell WHICH was declined — but `_buyer_facing_name`
+can only ever fill it with the design's own ANONYMISED label for either status, never the string
+in `listing.name`: neither DENIED nor REVOKED can produce the `'APPROVED'` row
+`authorized_capabilities` requires. Only `access_approved` can ever receive the practice's real
+name, and only when the listing's own `name_disclosed` ceiling is open AND the approved level
+covers `IDENTITY` — the identical two-part gate `app.api.listings.serialise` computes for the
+listing payload itself (`named = name_disclosed and "IDENTITY" in capabilities`).
 """
 from __future__ import annotations
 
@@ -168,25 +173,37 @@ def test_a_revocation_never_names_the_practice_either(conn) -> None:
     assert "Revoked Practice Name" not in rendered
 
 
-def test_a_denied_or_revoked_decision_never_composes_a_name_param_at_all(conn) -> None:
-    """The structural half of the privacy rule, at the COMPOSER'S output rather than at the
-    template renderer: `notify_decision`'s params for a deny or a revoke are EXACTLY `{"link": …}`
-    -- no `name` key, whatever value it might hold -- so a future edit cannot leak a name through
-    this door even by adding one to a template's own param list later. Proved by perturbation in
-    the implementation report (`app/disclosure/notify.py`'s `else` branch edited to also compose
-    one, this test re-run, the real failure captured, then reverted) rather than carried in the
-    suite as a standing monkeypatch, since the params dict itself -- not only the rendered mail --
-    is what a future reader must never be able to smuggle a name into."""
+def test_a_denied_or_revoked_decision_always_composes_the_anonymised_label_never_the_real_name(conn) -> None:
+    """Ruling 1 (John, 2026-09-21, on reading the first draft): a denial or revoke now composes a
+    `name` param too -- a buyer with several outstanding requests could not otherwise tell WHICH
+    was declined -- so the structural half of the privacy rule moves from "no `name` key at all" to
+    "the `name` key can only ever hold the ANONYMISED label". Proved here at the COMPOSER'S own
+    output, not only at the rendered body (`test_a_denial_on_a_confidential_listing_never_names_the_
+    practice_anywhere_in_the_rendered_mail`/`test_a_revocation_never_names_the_practice_either`
+    above cover that half and are unchanged by this ruling): the listing is given its own real,
+    DISCLOSED name and even a FULL_CONFIDENTIAL grant before the revoke -- the most permissive case
+    there is -- and `params["name"]` is still `app.api.listings.anonymised_name`'s label and never
+    the string stored in `listing.name`. Proved by perturbation in the implementation report
+    (`_buyer_facing_name` edited to return the raw `name` unconditionally, this test re-run, the
+    real failure captured, then reverted) rather than carried in the suite as a standing
+    monkeypatch, since it is `authorized_capabilities` answering `frozenset()` for these two
+    statuses -- not this test -- that makes the real name unreachable."""
+    from app.api.listings import anonymised_name
+
     seller, buyer = _account(conn, "s-shape1@x.org"), _account(conn, "b-shape1@x.org")
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
         buyer_email = cur.fetchone()[0]
     listing = _listing(conn, seller, name="Shape Pin Clinic", name_disclosed=True)
+    expected_label = anonymised_name("Austin")  # `_listing()`'s own fixed `area`
     request_id = _pending_request(conn, listing, buyer, seller)
 
     denied = req.decide(conn, request_id=request_id, seller_account_id=seller, action="deny", disclosure_level=None, reason=None)
     N.notify_decision(conn, row=denied)
-    assert set(_outbox_row(conn, buyer_email)["params"]) == {"link"}
+    denied_params = _outbox_row(conn, buyer_email)["params"]
+    assert set(denied_params) == {"name", "requested", "link"}
+    assert denied_params["name"] == expected_label
+    assert denied_params["name"] != "Shape Pin Clinic"
 
     with conn.cursor() as cur:
         cur.execute("DELETE FROM email_outbox WHERE to_email = %s", (buyer_email,))
@@ -196,7 +213,10 @@ def test_a_denied_or_revoked_decision_never_composes_a_name_param_at_all(conn) -
     with conn.cursor() as cur:
         cur.execute("DELETE FROM email_outbox WHERE to_email = %s", (buyer_email,))
     N.notify_decision(conn, row=revoked)
-    assert set(_outbox_row(conn, buyer_email)["params"]) == {"link"}
+    revoked_params = _outbox_row(conn, buyer_email)["params"]
+    assert set(revoked_params) == {"name", "requested", "link"}
+    assert revoked_params["name"] == expected_label
+    assert revoked_params["name"] != "Shape Pin Clinic"
 
 
 # --- a grant names the practice only when BOTH the ceiling and the capability are open ----------

@@ -15,10 +15,14 @@ asked FRESH after the decision, never from the listing row directly:
 * Deny and revoke leave the buyer with NO active grant for this listing at all --
   `authorized_capabilities`'s own `_ACTIVE_GRANT_SQL` matches `status = 'APPROVED'` alone, and a
   denied or revoked request is never in that status -- so asking it after either of those two
-  decisions always answers `frozenset()`. `access_denied`/`access_revoked`
-  (`app/mail/templates.py`) declare no `name` param at all, so there is nowhere for the practice's
-  identity to go even if a future edit tried to pass one; the practice's real name can only ever
-  reach `access_approved`, and only through `_buyer_facing_name` below.
+  decisions always answers `frozenset()`. Ruling 1 (2026-09-21, on reading the first draft) gives
+  `access_denied`/`access_revoked` (`app/mail/templates.py`) a `name` param too -- a buyer with
+  several outstanding requests could not otherwise tell WHICH was declined -- but it is safe BY
+  CONSTRUCTION rather than by this module's judgement: `_buyer_facing_name` below is the ONLY
+  place either template's `name` is filled, and it can never answer the practice's real name for
+  either status, since neither can ever produce the `'APPROVED'` row `authorized_capabilities`
+  requires. The real name can only ever reach `access_approved`, still only through
+  `_buyer_facing_name`.
 * `_buyer_facing_name` mirrors `app.api.listings.serialise`'s own two-part gate
   (`named = name_disclosed and "IDENTITY" in capabilities`) rather than trusting either half
   alone: the listing's `name_disclosed` ceiling (directive §8's "did the seller ever permit this
@@ -61,9 +65,11 @@ def _buyer_facing_name(conn: Any, *, listing_id: str, seller_id: str | None, buy
     """The practice's real name, or the design's own anonymised fallback -- `app.api.listings`'s
     own `named = name_disclosed and "IDENTITY" in capabilities` gate, asked fresh here rather than
     assumed from the caller. Reading `capabilities` AFTER the decision is what makes this safe for
-    `access_denied`/`access_revoked` too, should a future caller ever reuse it there: neither
+    `access_denied`/`access_revoked` too, now that ruling 1 (2026-09-21) reuses it there: neither
     status can produce an `'APPROVED'` row for `authorized_capabilities` to match, so `capabilities`
-    is always `frozenset()` and the fallback is the only value either could ever receive."""
+    is always `frozenset()` and the fallback is the only value either could ever receive. This
+    docstring anticipated exactly that reuse before either caller existed, and reading it fresh
+    per call -- rather than trusting a value the caller already had -- is what proved it sound."""
     with conn.cursor() as cur:
         cur.execute("SELECT name, name_disclosed, area FROM listing WHERE id = %s", (listing_id,))
         row = cur.fetchone()
@@ -81,6 +87,12 @@ def _buyer_facing_name(conn: Any, *, listing_id: str, seller_id: str | None, buy
     return anonymised_name(str(area))
 
 
+def _requested_on(value: Any) -> str:
+    """The date the BUYER made the request, in the admin tab's own "August 12" style. Their own
+    act, so it discloses nothing about the seller or the listing."""
+    return f"{value:%B} {value.day}"
+
+
 def notify_decision(conn: Any, *, row: dict[str, Any]) -> None:
     """Enqueues the one mail `row["status"]` earns. `row` is whatever
     `app.disclosure.requests.decide`/`.revoke` just returned -- already carrying `status`,
@@ -95,10 +107,23 @@ def notify_decision(conn: Any, *, row: dict[str, Any]) -> None:
         return
     to = found[0]
     listing_id = row["listing_id"]
+    # John's ruling of 2026-09-21, on reading the first draft: a denial that names nothing leaves a
+    # buyer with several outstanding requests unable to tell WHICH was declined. Every template now
+    # carries the label and the date, and both are safe BY CONSTRUCTION rather than by judgement:
+    #
+    #   * the label is `_buyer_facing_name`, the same capability-gated function all three now share.
+    #     For DENIED and REVOKED `authorized_capabilities` can only answer `frozenset()` -- neither
+    #     status produces an `'APPROVED'` row for it to match -- so those two provably receive the
+    #     anonymised label and never the practice's real name. That is the reuse this helper's own
+    #     docstring anticipated and proved sound before any caller existed.
+    #   * the anonymised label is what the buyer ALREADY sees on the listing card before asking for
+    #     anything, so it discloses nothing a refusal could be said to have withheld.
+    #   * the date is the buyer's OWN act. It cannot disclose anything about the seller.
+    name = _buyer_facing_name(conn, listing_id=listing_id, seller_id=row.get("seller_user_id"), buyer_account_id=row["buyer_user_id"])
+    requested = _requested_on(row["requested_at"])
     params: dict[str, Any]
     if template == "access_approved":
-        name = _buyer_facing_name(conn, listing_id=listing_id, seller_id=row.get("seller_user_id"), buyer_account_id=row["buyer_user_id"])
         params = {"name": name, "link": f"{settings.link_base_url}/practices/{listing_id}"}
     else:
-        params = {"link": f"{settings.link_base_url}/requests"}
+        params = {"name": name, "requested": requested, "link": f"{settings.link_base_url}/requests"}
     enqueue(conn, to=to, template=template, params=params, idempotency_key=f"{row['id']}:{template}")

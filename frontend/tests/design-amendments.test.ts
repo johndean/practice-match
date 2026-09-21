@@ -519,6 +519,13 @@ describe('local design amendments (spec D15)', () => {
     // Requests tab's real data. Appended last, as every family is. A56.2 is CHAINED on A38.2's
     // own accumulated `loadAdmin` body; A56.1 and A56.3 take pristine text.
     'A56.1', 'A56.2', 'A56.3',
+    // A57 — two copy rulings, John, 2026-09-21: "'withdrew' and 'withdrawed' are terms that
+    // should be used", read over A53's eight new pieces of copy. Each entry is CHAINED on the
+    // one A53.x entry whose own introduced line it edits (declared per entry in
+    // LOCAL_AMENDMENTS.md): A57.1 consumes A53.1, A57.2 consumes A53.2, A57.3 and A57.4 both
+    // consume A53.3 (its two separately-introduced lines), A57.5 consumes A53.4, A57.6 consumes
+    // A53.5 and A57.7 consumes A53.6.
+    'A57.1', 'A57.2', 'A57.3', 'A57.4', 'A57.5', 'A57.6', 'A57.7',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -731,7 +738,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(427);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(434);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

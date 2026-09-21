@@ -2447,7 +2447,10 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # the discriminator case's own `family_count + 1` lookup has the headroom it needs.
      # A56 (Task ADMIN-REQUESTS, 2026-09-21) made forty-seven families — extended here for the
      # sixth time, one word past forty-seven.
-     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven", "Forty-eight"))}
+     # A57 (two copy rulings, 2026-09-21) made forty-eight families — extended here for the
+     # seventh time, one word past forty-eight.
+     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven", "Forty-eight",
+     "Forty-nine"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
