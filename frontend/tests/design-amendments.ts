@@ -9307,6 +9307,106 @@ const A55_6: Amendment = {
   count: 1
 };
 
+/** ------------------------------------------------------------------------------------------
+ *  A56 — Task ADMIN-REQUESTS (2026-09-21). The two prerequisites
+ *  `docs/superpowers/specs/2026-09-21-request-oversight-thread-design.md` names for ruling
+ *  D-C63's staff oversight thread — which this family does NOT build, per that spec's own scope
+ *  note ("the thread itself is NOT" the job here): `request.oversee` (`app/auth/permissions.py:52`,
+ *  `_STAFF`) gets its first call site (`GET /api/admin/requests`), and the Admin > Requests tab
+ *  stops being fixture-only. `admin/users.ts`'s own shape, applied one tab over, and A36's own
+ *  precedent for what the ledger needs: an adapter-presence ternary so the tab renders the loaded
+ *  queue or NO rows, never the design's four fixture rows, whatever the API answered, and a badge
+ *  fed by a real count.
+ *
+ *  The spec's own prose reserves the id `A37` for this family (`loadAdmin`'s own in-file comment,
+ *  introduced by A40.3, says so too: "A36 (Users), A37 (Requests) and A38 (Data Sources) each add
+ *  theirs below"). `A37` collided with unmerged work on another branch by the time this task
+ *  started; the controller verified it free and assigned `A56` instead, which is why this family's
+ *  id disagrees with that one in-file comment's placeholder name — a documentation staleness this
+ *  family does not correct (editing prose no test reads is not this task's brief), not a defect.
+ *
+ *  Unlike A36/A38, this tab has NO Action column at all (`columns: ["Request", "Practice",
+ *  "Status", "Age"]` — no fifth "Decision"/"Action" header the way Users and Listings have):
+ *  staff do not decide a disclosure request, the seller does
+ *  (`app/api/seller_requests.py::decide_request`), so `toRequestRows` (`admin/requests.ts`)
+ *  produces four cells with no action button in any of them, and there is no reload-after-decision
+ *  seam for this tab to carry the way A36.2's `list(() => this.loadAdmin())` does.
+ *
+ *  Three literal edits. A56.1 is A36.1's own ternary, applied to the `activity` tab's rows —
+ *  chained on nothing, since no earlier family has touched this tab at all (confirmed: no `find`
+ *  anywhere above this block mentions `sets.activity`, `adminRequestRows` or `adminRequests`).
+ *  A56.2 is the `loadAdmin` line A40.3's own comment reserved, CHAINED on A38.2's output — it has
+ *  to run after both A36.2 and A38.2, whose own lines it carries forward whole and appends after,
+ *  the same reason A38.2 itself runs after A36.2. A56.3 is the badge, A36.3's own shape: the
+ *  design's own literal "2" stands as the no-adapter answer (the reference and the Claude Design
+ *  preview keep it byte for byte), and with an adapter present but no count yet the pill is "" —
+ *  A39.3a/A39.3b's shared `sc-if`, one template serving all four tabs, unmounts it exactly as it
+ *  already does for Users and Listings. Definition order in this file matches the list below (m8).
+ *  ------------------------------------------------------------------------------------------ */
+const RULING_ADMIN_REQUESTS = "the two prerequisites for ruling D-C63's staff oversight thread "
+  + '(docs/superpowers/specs/2026-09-21-request-oversight-thread-design.md): `request.oversee` '
+  + 'gets its first call site and the Admin > Requests tab stops being fixture-only (Task '
+  + 'ADMIN-REQUESTS, 2026-09-21)';
+
+/** The design's own four Requests ("activity" tab) rows, byte for byte — the text A56.1 wraps
+ *  and carries forward unchanged, held once here so the `find` and the `replace` cannot differ
+ *  by a character. */
+const A56_ACTIVITY_ROWS = '          [cell("Dr. Rachel Mendes", "Asked for a phased transition plan"), cell("Small animal — Cedar Park", "Dr. James Whitfield"), cell(null, null, "Awaiting seller", "warn"), cell("6 days", "Reminder sent")],\n'
+  + '          [cell("Dr. Rachel Mendes", "Asked for production by doctor"), cell("Small animal — Lakeway", "Dr. Ann Kessler"), cell(null, null, "Engaged", "ok"), cell("14 days", "Packet released")],\n'
+  + '          [cell("Dr. Owen Sandoval", "Asked about overnight staffing"), cell("Emergency — East Austin", "Bright Star ER LLC"), cell(null, null, "Declined", "bad"), cell("21 days", "Under contract elsewhere")],\n'
+  + '          [cell("Dr. Lisa Guerra", "Three requests in one day"), cell("Multiple listings", "Volume pattern flagged automatically"), cell(null, null, "Review", "info"), cell("2 days", "No action yet")]\n';
+
+/** A56.1 — the Requests tab's rows come from the disclosure-request queue, and from nowhere else
+ *  once an adapter is present. A36.1's own reasoning, one tab over: a LOADED empty queue is a
+ *  real answer and must empty the table, and where the array is not there at all, who is asking
+ *  decides — the app renders zero rows whatever the API answered, and the reference and the
+ *  Claude Design preview keep the design's own fixture. `s.adminRequestRows` is written by
+ *  A56.2's loader alone. */
+const A56_1: Amendment = {
+  id: 'A56.1', date: '2026-09-21',
+  ruling: RULING_ADMIN_REQUESTS,
+  find: '        rows: [\n' + A56_ACTIVITY_ROWS + '        ]\n      },',
+  replace: '        rows: s.adminRequestRows !== undefined ? s.adminRequestRows : (this.props.adminRequests ? [] : [\n' + A56_ACTIVITY_ROWS + '        ])\n      },',
+  count: 1
+};
+
+/** A56.2 — the Requests load, in `loadAdmin`'s own seam (A40.3's own comment: "A36 (Users), A37
+ *  (Requests) and A38 (Data Sources) each add ONE line" — this is that line, under the id the
+ *  controller actually assigned; see the family note above). CHAINED on A38.2's output: this
+ *  entry's `find` is the accumulated three-line body A36.2 and A38.2 already left behind, carried
+ *  forward byte for byte with the Requests load appended after it. Nothing of A36 or A38 is
+ *  consumed.
+ *
+ *  No reload callback is handed to `list()` the way A36.2 hands `() => this.loadAdmin()` to
+ *  `adminUsers.list(...)`: this tab has no per-row decision that could need one (module note),
+ *  so `admin/requests.ts`'s own `AdminRequestsAdapter.list()` takes no argument at all. */
+const A56_2: Amendment = {
+  id: 'A56.2', date: '2026-09-21',
+  ruling: RULING_ADMIN_REQUESTS,
+  find: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n'
+    + '    if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));\n'
+    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));\n',
+  replace: '    if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));\n'
+    + '    if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));\n'
+    + '    if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));\n'
+    + '    if (this.props.adminRequests) loads.push(this.props.adminRequests.list().then((r) => { if (token === this._adminLoad) this.setState({ adminRequestRows: r.rows, adminRequestCounts: r.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminRequestRows: [], adminRequestCounts: null }); }));\n',
+  count: 1
+};
+
+/** A56.3 — the badge is the pending queue the API counted, and the design's literal "2" only
+ *  where nobody is asking. A36.3's own shape: with an adapter and no count yet the badge is ""
+ *  (A39.3a/A39.3b's shared `sc-if` then unmounts the pill, one template serving all four tabs),
+ *  and once `s.adminRequestCounts` is set the pill shows `pending` — every request still
+ *  `PENDING` over the WHOLE table, the one status still waiting on a seller to act
+ *  (`app/api/admin_requests.py::queue_counts`). */
+const A56_3: Amendment = {
+  id: 'A56.3', date: '2026-09-21',
+  ruling: RULING_ADMIN_REQUESTS,
+  find: '        { key: "activity", label: "Requests", count: "2" },\n',
+  replace: '        { key: "activity", label: "Requests", count: s.adminRequestCounts ? String(s.adminRequestCounts.pending) : (this.props.adminRequests ? "" : "2") },\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9622,5 +9722,12 @@ export function amendments(): Amendment[] {
     // LOCAL_AMENDMENTS.md's own "What changes" column); A55.2 consumes A54.4 (declared the same
     // way); A55.4-A55.6 are unchained -- each takes pristine text no earlier entry touched.
     // Definition order in this file matches this list (m8).
-    A55_1, A55_2, A55_3, A55_4, A55_5, A55_6];
+    A55_1, A55_2, A55_3, A55_4, A55_5, A55_6,
+    // A56 -- Task ADMIN-REQUESTS (2026-09-21): request.oversee's first call site and the Admin >
+    // Requests tab's real data. Appended last, as every family is, and it has to be: A56.2 is
+    // CHAINED on A38.2's own accumulated `loadAdmin` body (which is itself chained on A36.2's),
+    // so it must run after both. A56.1 and A56.3 take pristine text (`sets.activity` and the
+    // "activity" tab's own badge literal), untouched by any earlier family. Definition order in
+    // this file matches this list (m8).
+    A56_1, A56_2, A56_3];
 }

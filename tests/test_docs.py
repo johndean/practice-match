@@ -2153,6 +2153,16 @@ LISTING_WRITERS = {
         "set only `state` and `sqft` of the first group and never `type`, and raised "
         "`CheckViolation` twice before the fix (task-05-report.md's own RED transcripts) — and have "
         "nothing to do with the photo-readiness gate this map exists for.",
+    "tests/api/test_admin_requests.py":
+        "Task ADMIN-REQUESTS (2026-09-21), the HTTP-level suite for `app/api/admin_requests.py`. "
+        "`_listing` is `tests/api/test_requests.py::_seller_listing`'s own shape, widened to take a "
+        "name/city: a fresh draft through the real `POST /api/seller/listings` route (the empty "
+        "`photos` array that route's own INSERT gives every listing) and then one direct "
+        "`UPDATE listing SET status = 'published', ...` moves it onto the market — a listing with "
+        "an empty `photos` array has nothing for the gate's predicate to find. The extra columns it "
+        "sets (`name`, `city`, `area`, `market`, `type`, alongside `state`/`zip`/`est`/`price`/"
+        "`sqft`) satisfy `listing_publishable_ck`/`listing_submittable_ck` alone and have nothing "
+        "to do with the photo-readiness gate this map exists for.",
     "tests/api/test_disclosure_isolation.py":
         "Task 11 of the same plan (2026-09-18), directive §7's critical two-buyer security test. "
         "`_seller_listing_with_everything_confidential` uploads a REAL photograph through the real "
@@ -2422,7 +2432,9 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # A54 (D-C60) and A55 (D-C61) both merged 2026-09-21, making forty-six families together
      # (forty-four plus one each) — extended here for the fifth time, one word past forty-six so
      # the discriminator case's own `family_count + 1` lookup has the headroom it needs.
-     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven"))}
+     # A56 (Task ADMIN-REQUESTS, 2026-09-21) made forty-seven families — extended here for the
+     # sixth time, one word past forty-seven.
+     "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven", "Forty-eight"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

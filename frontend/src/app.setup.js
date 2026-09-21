@@ -5,6 +5,7 @@ import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminDataSourcesAdapter } from './admin/data_sources';
 import { makeAdminListingsAdapter } from './admin/listings';
+import { makeAdminRequestsAdapter } from './admin/requests';
 import { makeAdminUsersAdapter } from './admin/users';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
@@ -155,6 +156,21 @@ const props = defineProps({
   // logic lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
   adminDataSources: { type: Object, default: () => makeAdminDataSourcesAdapter() },
+  // A56 (Task ADMIN-REQUESTS, 2026-09-21): the real /api/admin/requests client, as the
+  // prototype's `adminRequests` adapter — the seam `adminVals()`'s Requests ("activity") tab
+  // reads its rows and its badge through. `request.oversee`'s first call site
+  // (`app/api/admin_requests.py`), and the two prerequisites
+  // `docs/superpowers/specs/2026-09-21-request-oversight-thread-design.md` names for ruling
+  // D-C63's staff oversight thread — which this adapter does NOT build. The reference and the
+  // Claude Design preview pass nothing and keep the design's fixture path, which is what keeps
+  // the two targets on the same pixels. Nothing in the template reads `adminRequests`; only
+  // `logic.js` does.
+  //
+  // `src/admin/requests.ts`, not an object literal here, for the reason `adminListings` records:
+  // this file is copied verbatim into App.vue and sits outside the coverage gate, so the logic
+  // lives in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminRequests: { type: Object, default: () => makeAdminRequestsAdapter() },
   // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
   // design's own script branches on. With it present the Browse map draws the polygons the API
   // answered or NONE at all, whatever it answered; with no adapter — the reference server and

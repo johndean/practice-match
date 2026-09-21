@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminRequestsBody } from './design-admin-requests.mjs';
 import { designAdminUsersBody } from './design-admin-users.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody } from './design-summary.mjs';
@@ -348,7 +349,7 @@ export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string 
 export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
   return ['/api/seller/listings', '/api/admin/listings', '/api/admin/users', '/api/admin/data-sources',
-    '/api/requests/mine', '/api/seller/requests']
+    '/api/admin/requests', '/api/requests/mine', '/api/seller/requests']
     .map((path) => new URL(path, appOrigin(env)).href);
 }
 
@@ -367,6 +368,11 @@ export function collectionStubBody(href: string): string {
   if (href.endsWith('/api/seller/listings')) return designSellerPageBody();
   if (href.endsWith('/api/admin/data-sources')) return designAdminDataSourcesBody();
   if (href.endsWith('/api/requests/mine') || href.endsWith('/api/seller/requests')) return designRequestsBody();
+  // Task ADMIN-REQUESTS (A56): the Requests tab now reads this endpoint too, so the oracle
+  // answers it with the design's own four rows AND the design's own badge (`counts.pending`,
+  // read off the tab literal by `design-admin-requests.mjs`) — the frozen `admin-requests`
+  // capture keeps its pixels through the SUCCESS path, exactly as `admin-users` does.
+  if (href.endsWith('/api/admin/requests')) return designAdminRequestsBody();
   // Task A36: the Users tab now reads this endpoint too, so the oracle answers it with the
   // design's own four rows AND the design's own badge (`counts.open`, read off the tab literal
   // by `design-admin-users.mjs`) — the frozen `admin-users` capture keeps its pixels through the

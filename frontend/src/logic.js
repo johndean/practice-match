@@ -1510,6 +1510,7 @@ class Component extends DCLogic {
     if (this.props.adminListings) loads.push(this.props.adminListings.list().then((page) => { if (token === this._adminLoad) this.setState({ adminListingRows: page.rows, adminListingCounts: page.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminListingRows: [], adminListingCounts: null }); }));
     if (this.props.adminUsers) loads.push(this.props.adminUsers.list(() => this.loadAdmin()).then((r) => this.setState({ adminUserRows: r.rows, adminUserCounts: r.counts }), () => this.setState({ adminUserRows: [], adminUserCounts: null })));
     if (this.props.adminDataSources) loads.push(this.props.adminDataSources.list().then((r) => { if (token === this._adminLoad) this.setState({ adminDataRows: r.rows, adminDataCount: r.count }); }, () => { if (token === this._adminLoad) this.setState({ adminDataRows: [], adminDataCount: null }); }));
+    if (this.props.adminRequests) loads.push(this.props.adminRequests.list().then((r) => { if (token === this._adminLoad) this.setState({ adminRequestRows: r.rows, adminRequestCounts: r.counts }); }, () => { if (token === this._adminLoad) this.setState({ adminRequestRows: [], adminRequestCounts: null }); }));
     return Promise.all(loads);
   }
 
@@ -1638,12 +1639,12 @@ class Component extends DCLogic {
         columns: ["Request", "Practice", "Status", "Age"],
         grid: "1.2fr 1.3fr .8fr .8fr",
         footnote: "Staff can see that a request exists and whether it was answered. Message contents are visible only in an abuse investigation, and every such view is logged.",
-        rows: [
+        rows: s.adminRequestRows !== undefined ? s.adminRequestRows : (this.props.adminRequests ? [] : [
           [cell("Dr. Rachel Mendes", "Asked for a phased transition plan"), cell("Small animal — Cedar Park", "Dr. James Whitfield"), cell(null, null, "Awaiting seller", "warn"), cell("6 days", "Reminder sent")],
           [cell("Dr. Rachel Mendes", "Asked for production by doctor"), cell("Small animal — Lakeway", "Dr. Ann Kessler"), cell(null, null, "Engaged", "ok"), cell("14 days", "Packet released")],
           [cell("Dr. Owen Sandoval", "Asked about overnight staffing"), cell("Emergency — East Austin", "Bright Star ER LLC"), cell(null, null, "Declined", "bad"), cell("21 days", "Under contract elsewhere")],
           [cell("Dr. Lisa Guerra", "Three requests in one day"), cell("Multiple listings", "Volume pattern flagged automatically"), cell(null, null, "Review", "info"), cell("2 days", "No action yet")]
-        ]
+        ])
       },
       data: {
         columns: ["Dataset", "Source and license", "Status", "Action"],
@@ -1664,7 +1665,7 @@ class Component extends DCLogic {
       tabs: [
         { key: "users", label: "Users", count: s.adminUserCounts ? String(s.adminUserCounts.open) : (this.props.adminUsers ? "" : "3") },
         { key: "listings", label: "Listings", count: this.props.adminListings ? (s.adminListingCounts ? String(s.adminListingCounts.in_review) : "") : "3" },
-        { key: "activity", label: "Requests", count: "2" },
+        { key: "activity", label: "Requests", count: s.adminRequestCounts ? String(s.adminRequestCounts.pending) : (this.props.adminRequests ? "" : "2") },
         { key: "data", label: "Data Sources", count: s.adminDataCount !== undefined ? s.adminDataCount : (this.props.adminDataSources ? null : "2") }
       ].map((t) => ({
         label: t.label, count: t.count, hasCount: !!t.count,
