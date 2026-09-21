@@ -8989,6 +8989,133 @@ const A53_6: Amendment = {
   count: 1
 };
 
+/**
+ * A54 — ruling D-C60 (John, 2026-09-21, verbatim: "The VIN Foundation Admin should have the option
+ * to request further information from applciation and or add detailed explanation of the
+ * rejection"), ruled the same day: close the whole admin decision loop AND show the applicant the
+ * REAL decline reason in the app (spec docs/superpowers/specs/2026-09-21-admin-decision-notes-
+ * ruling.md).
+ *
+ * Both server capabilities the ruling asks for already existed and worked: `POST
+ * /api/admin/users/{id}/decide` has taken `approve`, `decline` and `request_info` with a mandatory,
+ * 4,000-character note since Task I5, storing it (`decision_note`/`info_request`), auditing it and
+ * emailing it, and the applicant answers a `request_info` round in a real textarea on the gate's
+ * own "More information requested" card. What was missing was the WRITING SURFACE (a real note
+ * drawer, replacing `window.prompt`), the READ-BACK (nothing served or rendered the note to a
+ * colleague) and this ONE live defect — the ONLY piece of the ruling this engine can reach.
+ *
+ * THE NOTE DRAWER and the Users tab's READ-BACK are TypeScript, not the design:
+ * `frontend/src/admin/noteDrawer.ts` (composed from the interest modal's and the applicant-answer
+ * gate card's own declarations — scrim, title, 30 px close button, textarea, the `modal.error`
+ * slot's styling and the primary/secondary button pair, copied VERBATIM the way `admin/users.ts`'s
+ * `cell()`/`A()` already copy `adminVals()`'s own style strings) and `admin/users.ts`'s own
+ * `outcome()` (the Listings tab's `decline_reason` sub-line, `admin/listings.ts`, applied to the
+ * Users tab's own three facts). Both are app-only glue the reference never renders — the same
+ * position `frontend/src/requests/buyer.ts`/`seller.ts` hold (A52's own ruling) — so neither carries
+ * an amendment.
+ *
+ * THE LIVE DEFECT is the one piece that DOES reach the ported script: the declined applicant's own
+ * gate card hard-coded "Reason given: Affiliation not verified" in `statusMap.rejected.meta`, so
+ * EVERY declined applicant read that sentence whatever the reviewer actually wrote, while
+ * `app/api/applications.py`'s `GET /api/applications/me` already served the real `decision_note`
+ * on `current` and nothing in the design read it. Fabricated data shown to a real person is
+ * precisely what D-C53 exists to remove, one screen over from the admin tabs it was ruled for.
+ *
+ * Three literal edits, none touching the template (the fix is entirely in `componentDidMount`'s
+ * existing declined-application fetch and the status card's own data literal): A54.1 adds
+ * `declineNote: ""` to the design's own initial state literal, CHAINED on A8.2, whose
+ * `formNotice: "", gateToken: "",` line this extends rather than replaces — **Consumes A8.2**;
+ * A54.2 widens the SAME declined-applicant fetch A8.3b wrote (the one that already re-populates the
+ * re-apply form from `r.current.fields`) to also capture `r.current.decision_note`, whether or not
+ * the row carries `fields` — CHAINED on A8.3b, whose whole callback body this rewrites —
+ * **Consumes A8.3b**; A54.3 is pristine, unchained: the status card's own `meta` array reads
+ * `s.declineNote || "Affiliation not verified"` in place of the bare literal, so a listing with no
+ * served note — every design fixture, and the reference, which is handed no adapter at all — keeps
+ * the design's own words byte for byte and every approved state keeps its pixels.
+ *
+ * RE-BASING, MEASURED rather than predicted (the task report carries the actual before/after PNG
+ * and DOM-snapshot hashes, the A33 method): `gate-declined` is the one approved state that renders
+ * this card, and its own fixture answers no `decision_note` at all (`frontend/tests/harness.ts`'s
+ * `declined` persona), so `s.declineNote` is `""` there and the design's own fallback sentence
+ * paints unchanged — the family is expected to move NO approved state, checked rather than assumed.
+ * None of `baseline-manifest.json`'s thirteen frozen hashes is a gate capture, so none is even a
+ * candidate.
+ */
+const D_C60 = {
+  date: '2026-09-21',
+  ruling: 'D-C60 (John, 2026-09-21, verbatim: "The VIN Foundation Admin should have the option to request further information from applciation and or add detailed explanation of the rejection"), ruled the same day: close the whole admin decision loop (a real note drawer with a read-back) AND show the applicant the REAL decline reason in the app. Both server capabilities already existed and worked (POST /api/admin/users/{id}/decide has taken approve/decline/request_info with a mandatory 4,000-character note since Task I5); what was missing was the writing surface, the read-back and this one live defect. The note drawer (frontend/src/admin/noteDrawer.ts) and the Users tab\'s read-back (admin/users.ts\'s outcome(), the Listings tab\'s own decline_reason idiom applied here) are TypeScript and carry no amendment of their own, the position frontend/src/requests/buyer.ts/seller.ts already hold; this family is the one place the fix reaches the ported script — the declined applicant\'s own gate card hard-coded "Reason given: Affiliation not verified" for every declined applicant whatever the reviewer actually wrote, while app/api/applications.py already served the real decision_note and nothing in the design read it (spec docs/superpowers/specs/2026-09-21-admin-decision-notes-ruling.md).'
+};
+
+/** A54.1 — `declineNote: ""` joins the design's own initial state literal, on the pristine-once
+ *  line A8.2 introduced (`gateToken`'s own line), extended rather than replaced. */
+const A54_1: Amendment = {
+  id: 'A54.1', ...D_C60,
+  find: '    email: "", pw: "", formError: "", formNotice: "", gateToken: "",',
+  replace: '    email: "", pw: "", formError: "", formNotice: "", gateToken: "", declineNote: "",',
+  count: 1
+};
+
+/** A54.2 — the SAME declined-applicant fetch A8.3b wrote (the one that already reads
+ *  `r.current.fields` back into the re-apply form) also captures `r.current.decision_note`,
+ *  whichever way the row carries `fields` — the one field it never read before. */
+const A54_2: Amendment = {
+  id: 'A54.2', ...D_C60,
+  find: '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current && r.current.fields) { const f = r.current.fields; this.setState({ apply: Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }) }); } }, () => {});',
+  replace: '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) { const upd = { declineNote: r.current.decision_note || "" }; if (r.current.fields) { const f = r.current.fields; upd.apply = Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }); } this.setState(upd); } }, () => {});',
+  count: 1
+};
+
+/** A54.3 — pristine, nothing consumed: the status card's own "Reason given" value reads the real
+ *  note where one has been served, and returns the design's own literal byte for byte where it
+ *  has not (every design fixture, and the reference, which has no adapter to serve one). */
+const A54_3: Amendment = {
+  id: 'A54.3', ...D_C60,
+  find: '        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],',
+  replace: '        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: s.declineNote || "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],',
+  count: 1
+};
+
+/**
+ * A54.4/A54.5 — MEASURED while proving the re-basing (the task report carries the actual
+ * before/after PNG hashes): the `gate-declined` approved state signs in as the REAL seeded
+ * `declined@practice-match.test` persona (`scripts/seed_persona.py`'s own `DECLINED_DECISION_NOTE`,
+ * a real, non-empty note) — so A54.2's fetch gives the APP that real sentence while the REFERENCE,
+ * which has no `props.auth` to fetch anything with, goes on rendering the design's own hard-coded
+ * fallback. The two targets would disagree by exactly the words this family exists to correct, and
+ * `maxDiffPixels: 0` could never pass. `startAnswerNote` (A9.1a/b, controller amendment A-S5) is
+ * the identical shape for the identical problem one gate card over — the applicant-answer card's
+ * own seeded note, which the reference likewise has no adapter to fetch — so this is that
+ * mechanism applied a second time rather than a new one: a TENTH declared prototype prop,
+ * `startDeclineNote`, defaulting to `""` (every existing approved state keeps its pixels) and read
+ * only by the harness's own `gate-declined` capture, which is amended (this file's own report
+ * names the row) to hand the reference the SAME sentence `scripts/seed_persona.py` seeds on the
+ * app's real account — `frontend/tests/harness.ts`'s own `DECLINED_DECISION_NOTE`, pinned against
+ * the script's by equality in `tests/test_docs.py`, the `NEEDS_REVIEW_INFO_REQUEST`/`DECLINED_FIELDS`
+ * precedent this is the same shape as.
+ */
+const STARTDECLINENOTE_ENTRY = '&quot;startDeclineNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Declined applicant note on load&quot;}';
+
+/** A54.4 — the declaration, spliced immediately after `startWizardPhotos` with the same
+ *  `&quot;` escaping as its neighbours and the `startNotice`/`startAnswerNote` STRING shape
+ *  (`editor: "text"`, default `""`). `app.setup.js` declares it too (D-I8-2); the app never
+ *  passes it. */
+const A54_4: Amendment = {
+  id: 'A54.4', ...D_C60,
+  find: STARTWIZARDPHOTOS_ENTRY, replace: `${STARTWIZARDPHOTOS_ENTRY},${STARTDECLINENOTE_ENTRY}`,
+  count: 1
+};
+
+/** A54.5 — `componentDidMount` writes it into `declineNote`, one line after the
+ *  `startWizardPhotos` line it mirrors — the design's own real fetch (A54.2) still wins for the
+ *  APP, which never passes this prop, so the two can never disagree about which one applies. */
+const A54_5: Amendment = {
+  id: 'A54.5', ...D_C60,
+  find: '    if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });\n',
+  replace: '    if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });\n'
+    + '    if (this.props.startDeclineNote) this.setState({ declineNote: this.props.startDeclineNote });\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9286,5 +9413,16 @@ export function amendments(): Amendment[] {
     // every `find` occurs exactly once in the pristine twin, verified before this family was
     // written. Definition order in this file matches this list (m8): the template addition
     // first, then the seller inbox's two render-value edits, then the buyer's two surfaces.
-    A53_1, A53_2, A53_3, A53_4, A53_5, A53_6];
+    A53_1, A53_2, A53_3, A53_4, A53_5, A53_6,
+    // A54 -- ruling D-C60 (John, 2026-09-21): the live defect the amendment engine alone can
+    // reach — the declined applicant's own gate card renders the REAL decline reason once one has
+    // been served. Appended last, as every family is. A54.1 and A54.2 are CHAINED (on A8.2 and
+    // A8.3b respectively); A54.3 takes pristine text. A54.4/A54.5 are the tenth declared prototype
+    // prop (`startDeclineNote`) and its componentDidMount wiring, added on MEASURING the
+    // re-basing: the `gate-declined` capture's real seeded persona carries a real decision_note,
+    // so the reference needed the same seam `startAnswerNote` uses to keep the two targets
+    // agreeing. Definition order in this file matches this list (m8): the state literal first,
+    // then the fetch that populates it from the real API, then the card that reads it, then the
+    // prototype prop and its own wiring.
+    A54_1, A54_2, A54_3, A54_4, A54_5];
 }

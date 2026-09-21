@@ -2532,11 +2532,13 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
     await signInAs(page, 'design', '/admin');
     await expect(page.getByText('Dr. Noor Haddad', { exact: true })).toBeVisible();
 
-    // `decline` is in `NOTE_REQUIRED` (`app/api/admin_users.py`), so the design's own note prompt
-    // must be answered before anything is sent — `ui.needsNote`'s dialog, accepted here exactly as
-    // a reviewer would type into it.
-    page.once('dialog', (d) => void d.accept('Ownership unclear'));
+    // `decline` is in `NOTE_REQUIRED` (`app/api/admin_users.py`), so the real note drawer
+    // (ruling D-C60, `frontend/src/admin/noteDrawer.ts`) opens before anything is sent — typed
+    // into and submitted here exactly as a reviewer would.
     await page.getByRole('button', { name: 'Decline', exact: true }).click();
+    const drawer = page.getByRole('dialog');
+    await drawer.getByRole('textbox').fill('Ownership unclear');
+    await drawer.getByRole('button', { name: 'Decline', exact: true }).click();
     await expect.poll(() => sent).toHaveLength(1);
 
     const cookie = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
@@ -2567,13 +2569,17 @@ test.describe('A36 — the Admin Users tab reads accounts, and every decision re
       posted.push(route.request().url());
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     });
-    // The browser's own prompt, cancelled — `window.prompt` answers null on a dismissed dialog.
-    page.on('dialog', (d) => void d.dismiss());
     await signInAs(page, 'design', '/admin');
     await expect(page.getByText('Dr. Wanda Okafor', { exact: true })).toBeVisible();
 
+    // The real drawer's own primary button is disabled while the field is blank — cancelled here
+    // via its own Cancel button, `window.prompt`'s "answers null on a dismissed dialog" the same
+    // way, one door over (ruling D-C60).
     await page.getByRole('button', { name: 'Decline', exact: true }).click();
-    await page.waitForTimeout(300);
+    const drawer = page.getByRole('dialog');
+    await expect(drawer.getByRole('button', { name: 'Decline', exact: true })).toBeDisabled();
+    await drawer.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(drawer).toBeHidden();
     expect(posted, 'a cancelled note posted a decision the API would refuse').toEqual([]);
   });
 });

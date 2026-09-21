@@ -62,6 +62,12 @@ const props = defineProps({
   // a JSON-encoded array over this same prop seam, parsed in `componentDidMount`. The app never
   // passes it — it loads the seller's real draft instead (A16.9's own `openDraft`).
   startWizardPhotos: { type: String, default: '' },
+  // A54.4 (ruling D-C60): the declined applicant's own real decision note on load.
+  // `GET /api/applications/me` is the app's source for it (A54.2) and the reference has no
+  // adapter to call it with, so the oracle hands the note over the same prop seam `startNotice`
+  // and `startAnswerNote` use — otherwise the pixel gate compares the app's real seeded reason
+  // against the design's own hard-coded fallback and never agrees. The app never passes it.
+  startDeclineNote: { type: String, default: '' },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the
