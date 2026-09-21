@@ -8990,6 +8990,133 @@ const A53_6: Amendment = {
 };
 
 /**
+ * A54 — ruling D-C60 (John, 2026-09-21, verbatim: "The VIN Foundation Admin should have the option
+ * to request further information from applciation and or add detailed explanation of the
+ * rejection"), ruled the same day: close the whole admin decision loop AND show the applicant the
+ * REAL decline reason in the app (spec docs/superpowers/specs/2026-09-21-admin-decision-notes-
+ * ruling.md).
+ *
+ * Both server capabilities the ruling asks for already existed and worked: `POST
+ * /api/admin/users/{id}/decide` has taken `approve`, `decline` and `request_info` with a mandatory,
+ * 4,000-character note since Task I5, storing it (`decision_note`/`info_request`), auditing it and
+ * emailing it, and the applicant answers a `request_info` round in a real textarea on the gate's
+ * own "More information requested" card. What was missing was the WRITING SURFACE (a real note
+ * drawer, replacing `window.prompt`), the READ-BACK (nothing served or rendered the note to a
+ * colleague) and this ONE live defect — the ONLY piece of the ruling this engine can reach.
+ *
+ * THE NOTE DRAWER and the Users tab's READ-BACK are TypeScript, not the design:
+ * `frontend/src/admin/noteDrawer.ts` (composed from the interest modal's and the applicant-answer
+ * gate card's own declarations — scrim, title, 30 px close button, textarea, the `modal.error`
+ * slot's styling and the primary/secondary button pair, copied VERBATIM the way `admin/users.ts`'s
+ * `cell()`/`A()` already copy `adminVals()`'s own style strings) and `admin/users.ts`'s own
+ * `outcome()` (the Listings tab's `decline_reason` sub-line, `admin/listings.ts`, applied to the
+ * Users tab's own three facts). Both are app-only glue the reference never renders — the same
+ * position `frontend/src/requests/buyer.ts`/`seller.ts` hold (A52's own ruling) — so neither carries
+ * an amendment.
+ *
+ * THE LIVE DEFECT is the one piece that DOES reach the ported script: the declined applicant's own
+ * gate card hard-coded "Reason given: Affiliation not verified" in `statusMap.rejected.meta`, so
+ * EVERY declined applicant read that sentence whatever the reviewer actually wrote, while
+ * `app/api/applications.py`'s `GET /api/applications/me` already served the real `decision_note`
+ * on `current` and nothing in the design read it. Fabricated data shown to a real person is
+ * precisely what D-C53 exists to remove, one screen over from the admin tabs it was ruled for.
+ *
+ * Three literal edits, none touching the template (the fix is entirely in `componentDidMount`'s
+ * existing declined-application fetch and the status card's own data literal): A54.1 adds
+ * `declineNote: ""` to the design's own initial state literal, CHAINED on A8.2, whose
+ * `formNotice: "", gateToken: "",` line this extends rather than replaces — **Consumes A8.2**;
+ * A54.2 widens the SAME declined-applicant fetch A8.3b wrote (the one that already re-populates the
+ * re-apply form from `r.current.fields`) to also capture `r.current.decision_note`, whether or not
+ * the row carries `fields` — CHAINED on A8.3b, whose whole callback body this rewrites —
+ * **Consumes A8.3b**; A54.3 is pristine, unchained: the status card's own `meta` array reads
+ * `s.declineNote || "Affiliation not verified"` in place of the bare literal, so a listing with no
+ * served note — every design fixture, and the reference, which is handed no adapter at all — keeps
+ * the design's own words byte for byte and every approved state keeps its pixels.
+ *
+ * RE-BASING, MEASURED rather than predicted (the task report carries the actual before/after PNG
+ * and DOM-snapshot hashes, the A33 method): `gate-declined` is the one approved state that renders
+ * this card, and its own fixture answers no `decision_note` at all (`frontend/tests/harness.ts`'s
+ * `declined` persona), so `s.declineNote` is `""` there and the design's own fallback sentence
+ * paints unchanged — the family is expected to move NO approved state, checked rather than assumed.
+ * None of `baseline-manifest.json`'s thirteen frozen hashes is a gate capture, so none is even a
+ * candidate.
+ */
+const D_C60 = {
+  date: '2026-09-21',
+  ruling: 'D-C60 (John, 2026-09-21, verbatim: "The VIN Foundation Admin should have the option to request further information from applciation and or add detailed explanation of the rejection"), ruled the same day: close the whole admin decision loop (a real note drawer with a read-back) AND show the applicant the REAL decline reason in the app. Both server capabilities already existed and worked (POST /api/admin/users/{id}/decide has taken approve/decline/request_info with a mandatory 4,000-character note since Task I5); what was missing was the writing surface, the read-back and this one live defect. The note drawer (frontend/src/admin/noteDrawer.ts) and the Users tab\'s read-back (admin/users.ts\'s outcome(), the Listings tab\'s own decline_reason idiom applied here) are TypeScript and carry no amendment of their own, the position frontend/src/requests/buyer.ts/seller.ts already hold; this family is the one place the fix reaches the ported script — the declined applicant\'s own gate card hard-coded "Reason given: Affiliation not verified" for every declined applicant whatever the reviewer actually wrote, while app/api/applications.py already served the real decision_note and nothing in the design read it (spec docs/superpowers/specs/2026-09-21-admin-decision-notes-ruling.md).'
+};
+
+/** A54.1 — `declineNote: ""` joins the design's own initial state literal, on the pristine-once
+ *  line A8.2 introduced (`gateToken`'s own line), extended rather than replaced. */
+const A54_1: Amendment = {
+  id: 'A54.1', ...D_C60,
+  find: '    email: "", pw: "", formError: "", formNotice: "", gateToken: "",',
+  replace: '    email: "", pw: "", formError: "", formNotice: "", gateToken: "", declineNote: "",',
+  count: 1
+};
+
+/** A54.2 — the SAME declined-applicant fetch A8.3b wrote (the one that already reads
+ *  `r.current.fields` back into the re-apply form) also captures `r.current.decision_note`,
+ *  whichever way the row carries `fields` — the one field it never read before. */
+const A54_2: Amendment = {
+  id: 'A54.2', ...D_C60,
+  find: '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current && r.current.fields) { const f = r.current.fields; this.setState({ apply: Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }) }); } }, () => {});',
+  replace: '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) { const upd = { declineNote: r.current.decision_note || "" }; if (r.current.fields) { const f = r.current.fields; upd.apply = Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }); } this.setState(upd); } }, () => {});',
+  count: 1
+};
+
+/** A54.3 — pristine, nothing consumed: the status card's own "Reason given" value reads the real
+ *  note where one has been served, and returns the design's own literal byte for byte where it
+ *  has not (every design fixture, and the reference, which has no adapter to serve one). */
+const A54_3: Amendment = {
+  id: 'A54.3', ...D_C60,
+  find: '        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],',
+  replace: '        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: s.declineNote || "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],',
+  count: 1
+};
+
+/**
+ * A54.4/A54.5 — MEASURED while proving the re-basing (the task report carries the actual
+ * before/after PNG hashes): the `gate-declined` approved state signs in as the REAL seeded
+ * `declined@practice-match.test` persona (`scripts/seed_persona.py`'s own `DECLINED_DECISION_NOTE`,
+ * a real, non-empty note) — so A54.2's fetch gives the APP that real sentence while the REFERENCE,
+ * which has no `props.auth` to fetch anything with, goes on rendering the design's own hard-coded
+ * fallback. The two targets would disagree by exactly the words this family exists to correct, and
+ * `maxDiffPixels: 0` could never pass. `startAnswerNote` (A9.1a/b, controller amendment A-S5) is
+ * the identical shape for the identical problem one gate card over — the applicant-answer card's
+ * own seeded note, which the reference likewise has no adapter to fetch — so this is that
+ * mechanism applied a second time rather than a new one: a TENTH declared prototype prop,
+ * `startDeclineNote`, defaulting to `""` (every existing approved state keeps its pixels) and read
+ * only by the harness's own `gate-declined` capture, which is amended (this file's own report
+ * names the row) to hand the reference the SAME sentence `scripts/seed_persona.py` seeds on the
+ * app's real account — `frontend/tests/harness.ts`'s own `DECLINED_DECISION_NOTE`, pinned against
+ * the script's by equality in `tests/test_docs.py`, the `NEEDS_REVIEW_INFO_REQUEST`/`DECLINED_FIELDS`
+ * precedent this is the same shape as.
+ */
+const STARTDECLINENOTE_ENTRY = '&quot;startDeclineNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Declined applicant note on load&quot;}';
+
+/** A54.4 — the declaration, spliced immediately after `startWizardPhotos` with the same
+ *  `&quot;` escaping as its neighbours and the `startNotice`/`startAnswerNote` STRING shape
+ *  (`editor: "text"`, default `""`). `app.setup.js` declares it too (D-I8-2); the app never
+ *  passes it. */
+const A54_4: Amendment = {
+  id: 'A54.4', ...D_C60,
+  find: STARTWIZARDPHOTOS_ENTRY, replace: `${STARTWIZARDPHOTOS_ENTRY},${STARTDECLINENOTE_ENTRY}`,
+  count: 1
+};
+
+/** A54.5 — `componentDidMount` writes it into `declineNote`, one line after the
+ *  `startWizardPhotos` line it mirrors — the design's own real fetch (A54.2) still wins for the
+ *  APP, which never passes this prop, so the two can never disagree about which one applies. */
+const A54_5: Amendment = {
+  id: 'A54.5', ...D_C60,
+  find: '    if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });\n',
+  replace: '    if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });\n'
+    + '    if (this.props.startDeclineNote) this.setState({ declineNote: this.props.startDeclineNote });\n',
+  count: 1
+};
+
+/**
  * A55 — ruling D-C61 (John, 2026-09-21, verbatim, on seeing every nav link rendered for every
  * account): "where is the permission page matrix so VIN FOUNDATION admin can define by roles what
  * links are acutally visible to each user and role? Right now all the links are visible to
@@ -9002,13 +9129,15 @@ const A53_6: Amendment = {
  * paragraph) — built, MEASURED and HELD because the oracle could not be told what the app knew:
  * the reference is driven by `?props=` alone and gets no `perms` adapter, so hiding the admin door
  * there moved 28 of the 59 approved states and seven of `baseline-manifest.json`'s thirteen frozen
- * hashes with nothing ruled to pay that cost. He has now ruled it. This family is A55, and it does
- * two things, asymmetrically, because the ruling is asymmetric:
+ * hashes with nothing ruled to pay that cost. He has now ruled it. This family is A55, merged in
+ * ahead of D-C60/A54 the same day, and it does two things, asymmetrically, because the ruling is
+ * asymmetric:
  *
  * ONE. The VIN Foundation Admin door is HIDDEN from an account `page.admin` refuses — the SAME
  * seam `loadAdmin()` already reads (`this.props.perms`, A40's own adapter, real and unconditional
- * in the app) — plus a TENTH declared prototype prop, `startPerms` (A16.11a's mechanism, the same
- * reason A9 and A54 each needed one): a plain JSON object of permission string to boolean, so the
+ * in the app) — plus the ELEVENTH declared prototype prop, `startPerms` (A16.11a's mechanism, the same
+ * reason A9 and A54 each needed one -- A54's own `startDeclineNote` lands the tenth, the same
+ * day, so this is the one after it): a plain JSON object of permission string to boolean, so the
  * reference can be told what the app's REAL generated matrix already answered without a role test
  * written in the design itself (A40.4's own retirement of `(me.roles || []).some(...)` is not
  * reopened — `startPerms` carries an ANSWER, never a role list to re-derive one from).
@@ -9037,7 +9166,9 @@ const A53_6: Amendment = {
  *
  * SIX literal edits, none of them template-only in isolation: A55.1 widens `startGate`'s enum
  * (CONSUMES A8.8a, whose own `replace` is the exact 13-value array this becomes 14); A55.2 splices
- * `startPerms` into the escaped `data-props` JSON after `startWizardPhotos`; A55.3 changes `go()`'s
+ * `startPerms` into the escaped `data-props` JSON after `startDeclineNote` (CONSUMES A54.4, whose
+ * own `replace` is the exact `startWizardPhotos,startDeclineNote` pair this follows); A55.3
+ * changes `go()`'s
  * signed-out branch for `screen === "seller"` alone (CONSUMES A26.9a, whose own `replace` is the
  * exact line this edits — every OTHER screen's `"signin"` is untouched); A55.4 filters the header
  * nav's own array on `canAdmin` (adapter first, `startPerms` second, the design's fixtures and
@@ -9071,18 +9202,20 @@ const A55_1: Amendment = {
   count: 1
 };
 
-/** A55.2 — the TENTH declared prototype prop, `startPerms`: a plain JSON object of permission
+/** A55.2 — the ELEVENTH declared prototype prop, `startPerms`: a plain JSON object of permission
  *  string to boolean, spliced into the escaped `data-props` JSON immediately after
- *  `startWizardPhotos` with the same `&quot;` escaping as its neighbours (A16.11a's mechanism, the
- *  same reason A9 and A54 each needed one). The reference is driven by `?props=` alone and gets no
- *  `perms` adapter, so this is the ONLY way it can be told what the app's real generated matrix
- *  already answered for the signed-in account. `app.setup.js` declares it too, because
- *  `app-generated.test.ts` requires that file to declare everything the design does; the app never
- *  passes it — it always carries the real `perms` adapter instead (A55.4). */
+ *  `startDeclineNote` (A54.4's own splice, which lands the tenth the same day) with the same
+ *  `&quot;` escaping as its neighbours (A16.11a's mechanism, the same reason A9 and A54 each needed
+ *  one). The reference is driven by `?props=` alone and gets no `perms` adapter, so this is the
+ *  ONLY way it can be told what the app's real generated matrix already answered for the signed-in
+ *  account. `app.setup.js` declares it too, because `app-generated.test.ts` requires that file to
+ *  declare everything the design does; the app never passes it — it always carries the real
+ *  `perms` adapter instead (A55.4). Consumes A54.4, whose own `replace` is this exact pair. */
 const STARTPERMS_ENTRY = '&quot;startPerms&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Permissions on load&quot;}';
 const A55_2: Amendment = {
   id: 'A55.2', ...A55,
-  find: STARTWIZARDPHOTOS_ENTRY, replace: `${STARTWIZARDPHOTOS_ENTRY},${STARTPERMS_ENTRY}`, count: 1
+  find: `${STARTWIZARDPHOTOS_ENTRY},${STARTDECLINENOTE_ENTRY}`,
+  replace: `${STARTWIZARDPHOTOS_ENTRY},${STARTDECLINENOTE_ENTRY},${STARTPERMS_ENTRY}`, count: 1
 };
 
 /** A55.3 — `go()`'s signed-out branch sends a visitor who asked for `"seller"` to the sign-up card
@@ -9472,11 +9605,22 @@ export function amendments(): Amendment[] {
     // written. Definition order in this file matches this list (m8): the template addition
     // first, then the seller inbox's two render-value edits, then the buyer's two surfaces.
     A53_1, A53_2, A53_3, A53_4, A53_5, A53_6,
-    // A55 -- ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21). Appended last, as
-    // every family is. A55.1 consumes A8.8a and A55.3 consumes A26.9a (both declared in
-    // LOCAL_AMENDMENTS.md's own "What changes" column); A55.2 and A55.4-A55.6 are unchained --
-    // A55.2 splices after A20.4d's own line without removing it, and A55.4/A55.5/A55.6 all take
-    // pristine text no earlier entry touched. Definition order in this file matches this list
-    // (m8). (A54, ruling D-C60, lands on main the same day and merges in ahead of this position.)
+    // A54 -- ruling D-C60 (John, 2026-09-21): the live defect the amendment engine alone can
+    // reach — the declined applicant's own gate card renders the REAL decline reason once one has
+    // been served. Appended last, as every family is. A54.1 and A54.2 are CHAINED (on A8.2 and
+    // A8.3b respectively); A54.3 takes pristine text. A54.4/A54.5 are the tenth declared prototype
+    // prop (`startDeclineNote`) and its componentDidMount wiring, added on MEASURING the
+    // re-basing: the `gate-declined` capture's real seeded persona carries a real decision_note,
+    // so the reference needed the same seam `startAnswerNote` uses to keep the two targets
+    // agreeing. Definition order in this file matches this list (m8): the state literal first,
+    // then the fetch that populates it from the real API, then the card that reads it, then the
+    // prototype prop and its own wiring.
+    A54_1, A54_2, A54_3, A54_4, A54_5,
+    // A55 -- ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21), merged in AFTER
+    // A54/D-C60 the same day -- A55.2's own splice anchor is A54.4's output, so this family must
+    // run after it. A55.1 consumes A8.8a and A55.3 consumes A26.9a (both declared in
+    // LOCAL_AMENDMENTS.md's own "What changes" column); A55.2 consumes A54.4 (declared the same
+    // way); A55.4-A55.6 are unchained -- each takes pristine text no earlier entry touched.
+    // Definition order in this file matches this list (m8).
     A55_1, A55_2, A55_3, A55_4, A55_5, A55_6];
 }

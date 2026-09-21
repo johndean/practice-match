@@ -602,6 +602,13 @@ export const DECLINED_FIELDS = {
   intent: 'Exploring ownership within two years.',
   affirm: true
 } as const;
+/**
+ * The real reason `scripts/seed_persona.py` declines `declined@`'s application for — ruling
+ * D-C60's own read of the same shape: one fact in two languages, pinned equal by
+ * `tests/test_docs.py`, because `gate-declined` renders it on both targets — the app through the
+ * real API (A54.2), the reference through A54.4/A54.5's `startDeclineNote`.
+ */
+export const DECLINED_DECISION_NOTE = "Employer is outside the marketplace's current pilot region.";
 
 /**
  * The five outcomes that end on the SIGN-IN card with a message (spec §3's notice slot), and the
@@ -1253,6 +1260,11 @@ export interface ReachTarget {
    *  page of the design's own four rows that `prepare()` arms. `[]` is the empty dashboard
    *  (A-SL17). */
   myListings?: unknown[];
+  /** The real decline reason on the declined applicant's own status card. The app fetches it
+   *  (`GET /api/applications/me`, A54.2); the reference is handed it through A54.4/A54.5's
+   *  `startDeclineNote` — there is no other way in, the `note`/`startAnswerNote` shape one
+   *  gate card over (ruling D-C60). */
+  declineNote?: string;
 }
 
 /**
@@ -1367,6 +1379,9 @@ export function referenceUrl(target: ReachTarget = {}): string {
     // A16.11b: `null` leaves `myListings` unset and the design's four fixtures rendering, which
     // is every state but `seller-dash-empty`.
     startMyListings: target.myListings ?? null,
+    // A54.4/A54.5 (ruling D-C60): the declined applicant's own real decline reason, so the
+    // reference agrees with the app's real seeded persona instead of the design's own fallback.
+    startDeclineNote: target.declineNote ?? '',
     startPerms: referencePerms(persona)
   }))}`;
 }

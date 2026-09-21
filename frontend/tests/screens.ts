@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, driverFor, expectApiStatus, reach, referenceUrl, settleExpectedApiFailures, waitMap } from './harness';
+import { DECLINED_DECISION_NOTE, DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, driverFor, expectApiStatus, reach, referenceUrl, settleExpectedApiFailures, waitMap } from './harness';
 
 export interface Screen {
   name: string;
@@ -254,7 +254,7 @@ export const SCREENS: Screen[] = [
   // seeded `pending@` / `declined@` account and A5.4's bootstrap maps the account's state to
   // the gate. On the reference — no session, no API — the same gate comes from `startGate`.
   { name: 'gate-pending', steps: async (p) => { await reach(p, { gate: 'pending', persona: 'pending' }); } },
-  { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined' }); } },
+  { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined', declineNote: DECLINED_DECISION_NOTE }); } },
   { name: 'browse', steps: browse },
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
   // UNLABELLED aria-haspopup="listbox" on the screen — A13's metro selector carries an

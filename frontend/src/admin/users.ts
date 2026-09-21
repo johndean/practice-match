@@ -41,6 +41,7 @@
  * stated dependency is this task's merge.
  */
 import { csrfToken } from '../auth/api';
+import { openNoteDrawer } from './noteDrawer';
 
 export interface ActionButton { label: string; go: () => Promise<void>; style: string }
 
@@ -96,6 +97,12 @@ export type Action = 'approve' | 'decline' | 'request_info' | 'suspend' | 'reins
 
 /** The four `admin_users.decide` refuses with `NoteRequired` when the note is blank. */
 export const NOTE_REQUIRED: readonly Action[] = ["decline", "request_info", "suspend", "revoke"];
+
+/** `admin_users.MAX_NOTE` — the server's real bound on a decision note (ruling D-C60), read from
+ *  ONE place and applied as the note drawer's own `maxlength` rather than retyped. Pinned by
+ *  equality in `tests/test_docs.py`, the same single-line-double-quoted-JSON convention the four
+ *  tables above already use. */
+export const MAX_NOTE = 4000;
 
 // The buttons the approved design shows, per state — a legal SUBSET of `TRANSITIONS`, not all of
 // it: the API also allows `revoke` from `unverified`, `verified`, `pending`, `needs_review` and
@@ -168,6 +175,13 @@ export interface UserItem {
   /** The LATEST application's own status, or null where the account has none — `pending`,
    *  `needs_review`, `approved` or `declined`. The two OPEN ones outrank `state` (module note). */
   application_status: string | null;
+  /** The read-back ruling D-C60 asks for, all three from the SAME latest application `LIST_SQL`
+   *  already joins: the real words behind a decline, the question a request-info round asked, and
+   *  the applicant's own reply. `admin/listings.ts`'s own `decline_reason` is the precedent this
+   *  follows rather than a new idiom. */
+  decision_note: string | null;
+  info_request: string | null;
+  answer: string | null;
 }
 
 /**
@@ -190,11 +204,20 @@ export interface DesignUserRow {
   pill: string; pillStyle: string; actions: { label: string; style: string }[];
 }
 
+/** The outcome of one `decide` POST — a discriminated result rather than a thrown error or an
+ *  internal `alert`, so the CALLER decides what a refusal means (ruling D-C60): `decision()`'s
+ *  direct, no-note path alerts, and the note drawer shows the message in its own error slot and
+ *  keeps what was typed, never losing it to a refusal. */
+export type DecideOutcome = { ok: true } | { ok: false; message: string };
+
 export interface UsersUi {
-  /** Prompts the reviewer for the note the API requires; null when they cancel. */
-  needsNote(action: Action): Promise<string | null>;
   /** The decision itself — `POST /api/admin/users/:id/decide`. */
-  decide(item: UserItem, action: Action, note: string): Promise<void>;
+  decide(item: UserItem, action: Action, note: string): Promise<DecideOutcome>;
+  /** For a NOTE_REQUIRED decision: opens the note surface and owns the whole exchange — submit,
+   *  and on a refusal, retry or cancel — calling `submit` (never `decide` directly) for every
+   *  attempt, so what this method records and what actually happened can never disagree. Resolves
+   *  once the surface closes, however it closes; never rejects. */
+  decideWithNote(item: UserItem, action: Action, submit: (note: string) => Promise<DecideOutcome>): Promise<void>;
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -288,17 +311,37 @@ function provenance(item: UserItem): string {
   return `Approved ${formatDate(item.decided_at)}${by}.`;
 }
 
+/** Ruling D-C60 (John, 2026-09-21): the read-back a reviewer is owed beside the pill —
+ *  `admin/listings.ts`'s own `decline_reason` line (`statusLine`'s comment: "the one thing its
+ *  seller is owed and the one thing the reviewer needs to see beside the pill"), applied to the
+ *  Users tab's own two facts. A genuinely DECLINED applicant (the account's own terminal state,
+ *  never the "declined while the account stays active" seller shape fix round 2 already silences)
+ *  reads the real reason instead of the design's own intent quote; an open request-info round
+ *  reads the question that was asked, and the applicant's own reply once there is one — the
+ *  "broken working loop" the spec names, closed the same way the reason is: real words, or
+ *  nothing invented. The design's own fixtures carry none of the three fields, so this returns ''
+ *  for every approved state and every pixel is kept. */
+function outcome(item: UserItem): string {
+  if (item.state === 'declined' && item.decision_note) return `Declined: ${item.decision_note}`;
+  if (openStatus(item) === 'needs_review' && item.info_request) {
+    return item.answer ? `Asked: ${item.info_request} · Answered: ${quote(item.answer)}` : `Asked: ${item.info_request}`;
+  }
+  return '';
+}
+
 function decision(item: UserItem, action: Action, ui: UsersUi): () => Promise<void> {
   return async () => {
-    let note = '';
-    if (NOTE_REQUIRED.includes(action)) {
-      const given = await ui.needsNote(action);
-      // Cancelled, or blank: `admin_users.decide` refuses a blank note on these four, so an
-      // empty prompt is not a decision and there is nothing to send.
-      if (given === null || given.trim() === '') return;
-      note = given;
+    // No note needed (`approve`, `reinstate`): the direct path, and this is the ONE place that
+    // alerts a refusal — the note surface below has its own error slot and would otherwise show
+    // the same message twice, once inline and once in a browser alert.
+    if (!NOTE_REQUIRED.includes(action)) {
+      const result = await ui.decide(item, action, '');
+      if (!result.ok) window.alert(result.message);
+      return;
     }
-    await ui.decide(item, action, note);
+    // The whole exchange — submit, retry-on-refusal with the note kept, or cancel — lives inside
+    // `decideWithNote` (ruling D-C60); this passes it the ONE way a submit ever reaches the API.
+    await ui.decideWithNote(item, action, (note) => ui.decide(item, action, note));
   };
 }
 
@@ -355,7 +398,7 @@ export function toUserRows(items: (UserItem | DesignUserRow)[], ui: UsersUi): Ce
         // applicant's own words.
         join([item.kind === 'seller' ? 'Seller applicant' : '', flagged
           ? `Affiliation flagged: ${item.flags.map((flag) => FLAG_TEXT[flag] ?? flag).join(' ')}`
-          : provenance(item) || quote(text(fields.intent))])
+          : provenance(item) || outcome(item) || quote(text(fields.intent))])
       ),
       cell(null, null, pill, tone),
       cell(null, null, null, null, actions ? actions.map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))) : null)
@@ -405,40 +448,65 @@ export interface AdminUsersAdapter {
   list(reload: () => void): Promise<{ rows: Cell[][]; counts: UserCounts | null }>;
 }
 
+/** `decision()`'s only call into `decideWithNote` is guarded by `NOTE_REQUIRED.includes(action)`,
+ *  and this table's keys ARE `NOTE_REQUIRED` — of the four, this tab renders three; Revoke is not
+ *  rendered at all (see the module note), kept here regardless so the drawer already has the
+ *  right words the day it returns. Typed over exactly those four actions, never `Partial<Record
+ *  <Action, …>>`, so indexing it needs no fallback for an action `decideWithNote` cannot be called
+ *  with — a fallback here would be untestable dead code, not a safety net. `request_info` asks the
+ *  applicant for something; the other two record a reason. */
+const DRAWER_LABEL: Record<'decline' | 'request_info' | 'suspend' | 'revoke', string> = {
+  decline: 'Why is this account being declined?',
+  request_info: 'What do you need from this applicant before a decision can be made?',
+  suspend: 'Why is this account being suspended?',
+  revoke: 'Why is this account being revoked?'
+};
+
+/** One `POST /api/admin/users/:id/decide`, as a `DecideOutcome` rather than a thrown error or an
+ *  internal alert — the shared plumbing both `drawerUi.decide` paths (direct, and through the note
+ *  drawer's own `submit`) go through, so the two can never disagree about what a refusal means. */
+async function postDecision(item: UserItem, action: Action, note: string): Promise<DecideOutcome> {
+  const res = await send('POST', `/users/${item.account_id}/decide`, { action, note });
+  if (res.ok) return { ok: true };
+  const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+  return { ok: false, message: body?.error?.message ?? 'That decision could not be recorded.' };
+}
+
 /**
- * The concrete `UsersUi`: the browser's own prompts, standing in for the decision drawer Rev 3
- * owns — the same stopgap `describe()` (`src/listings/seller.ts`) uses for a photograph's caption
- * and `admin/listings.ts` for a rejection reason. A refusal is swallowed into a blunt `alert`,
- * because this tab has no error surface of its own and D-C53's ask is the real data and the real
- * decision, not a new banner.
+ * The concrete `UsersUi`: the real decision drawer ruling D-C60 asks for
+ * (`frontend/src/admin/noteDrawer.ts`, composed from the interest modal's and the applicant-answer
+ * card's own elements), replacing the one-line `window.prompt` this tab used to stand in with —
+ * `admin/listings.ts`'s own stopgap for a rejection reason is untouched; this family's scope is
+ * the Users tab alone.
  */
-function windowUi(reload: () => void): UsersUi {
+function drawerUi(reload: () => void): UsersUi {
   return {
-    // `decision()`'s only call is guarded by `NOTE_REQUIRED.includes(action)`, and of those four
-    // this tab renders three — Revoke is not rendered at all (see the module note). `request_info`
-    // asks the applicant for something; the other two record a reason, so the wording branches
-    // once rather than carrying a table with entries no button can reach.
-    needsNote: async (action) => window.prompt(action === 'request_info'
-      ? 'What do you need from this applicant before a decision can be made?'
-      : `Why is this account being ${action === 'decline' ? 'declined' : 'suspended'}?`),
     decide: async (item, action, note) => {
-      const res = await send('POST', `/users/${item.account_id}/decide`, { action, note });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        window.alert(body?.error?.message ?? 'That decision could not be recorded.');
-      }
-      // Re-read whatever happened. A refusal is as good a reason as a success: `StateConflict` is
-      // the API saying this row is not in the state the reviewer was looking at, and the cure for
-      // a stale row is the queue, not an alert.
+      const result = await postDecision(item, action, note);
+      // Re-read whatever happened, exactly as before this ruling: a refusal is as good a reason
+      // as a success — `StateConflict` is the API saying this row is not in the state the
+      // reviewer was looking at, and the cure for a stale row is the queue. The drawer's own DOM
+      // sits outside the table this repaints, so a retry in progress is untouched by it.
       reload();
-    }
+      return result;
+    },
+    decideWithNote: (item, action, submit) => openNoteDrawer({
+      title: LABEL[action],
+      subtitle: item.name || item.email,
+      // `decision()` calls this only for a `NOTE_REQUIRED` action, which is exactly `DRAWER_LABEL`'s
+      // key set — asserted rather than widened with a fallback (see that table's own note).
+      label: DRAWER_LABEL[action as keyof typeof DRAWER_LABEL],
+      submitLabel: LABEL[action],
+      maxLength: MAX_NOTE,
+      submit
+    })
   };
 }
 
 export function makeAdminUsersAdapter(): AdminUsersAdapter {
   return {
     list: async (reload) => {
-      const ui = windowUi(reload);
+      const ui = drawerUi(reload);
       // Real accounts are `UserItem`-shaped; the pixel oracle's harness answers this very endpoint
       // with `DesignUserRow`-shaped ones instead (the interface note explains why). `toUserRows`
       // reads either.

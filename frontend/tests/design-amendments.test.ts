@@ -504,9 +504,16 @@ describe('local design amendments (spec D15)', () => {
     // distinct revoked state (Task REVOKE-UI, John's ruling of 2026-09-19). Six literal edits,
     // appended last, as every family is; none chained.
     'A53.1', 'A53.2', 'A53.3', 'A53.4', 'A53.5', 'A53.6',
-    // A55 — ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21). Six literal edits,
-    // appended last, as every family is. A55.1 consumes A8.8a and A55.3 consumes A26.9a (both
-    // declared in LOCAL_AMENDMENTS.md); A55.2/A55.4/A55.5/A55.6 are unchained.
+    // A54 — ruling D-C60 (John, 2026-09-21): the declined applicant's own gate card renders the
+    // real decline reason once one has been served. Five literal edits, appended last, as every
+    // family is; A54.1 and A54.2 are chained (on A8.2 and A8.3b respectively). A54.4/A54.5 are the
+    // tenth declared prototype prop (startDeclineNote) and its wiring, added on MEASURING the
+    // re-basing.
+    'A54.1', 'A54.2', 'A54.3', 'A54.4', 'A54.5',
+    // A55 — ruling D-C61, "no link may lead to a refusal" (John, 2026-09-21), merged in after
+    // A54/D-C60 the same day. Six literal edits, appended last, as every family is. A55.1
+    // consumes A8.8a, A55.2 consumes A54.4 and A55.3 consumes A26.9a (all three declared in
+    // LOCAL_AMENDMENTS.md); A55.4/A55.5/A55.6 are unchained.
     'A55.1', 'A55.2', 'A55.3', 'A55.4', 'A55.5', 'A55.6',
   ];
 
@@ -720,7 +727,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(419);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(424);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -801,7 +808,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'startPerms', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'startDeclineNote', 'startPerms', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; A55.1 (D-C61) adds the
     // fourteenth, "seller-needed". The shape is A5.6's.
     expect(declared.startGate).toEqual({

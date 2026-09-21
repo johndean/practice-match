@@ -62,7 +62,13 @@ const props = defineProps({
   // a JSON-encoded array over this same prop seam, parsed in `componentDidMount`. The app never
   // passes it — it loads the seller's real draft instead (A16.9's own `openDraft`).
   startWizardPhotos: { type: String, default: '' },
-  // A55.2 (D-C61, 2026-09-21): the tenth declared prototype prop, `startPerms` — a plain JSON
+  // A54.4 (ruling D-C60): the declined applicant's own real decision note on load.
+  // `GET /api/applications/me` is the app's source for it (A54.2) and the reference has no
+  // adapter to call it with, so the oracle hands the note over the same prop seam `startNotice`
+  // and `startAnswerNote` use — otherwise the pixel gate compares the app's real seeded reason
+  // against the design's own hard-coded fallback and never agrees. The app never passes it.
+  startDeclineNote: { type: String, default: '' },
+  // A55.2 (D-C61, 2026-09-21): the eleventh declared prototype prop, `startPerms` — a plain JSON
   // object of permission string to boolean (e.g. `{ "page.admin": false }`), the reference's only
   // way to be told what the app's real `perms` adapter already answered for the signed-in
   // account, since the reference receives no adapter at all. `null` is "nothing was handed over",

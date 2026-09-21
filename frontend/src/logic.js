@@ -252,7 +252,7 @@ const num = (s) => { const m = s == null ? null : String(s).match(/[-+]?\d[\d,]*
 class Component extends DCLogic {
   state = {
     screen: "gate", gate: "signin", auth: false, viewport: "desktop", mobileTab: "list",
-    email: "", pw: "", formError: "", formNotice: "", gateToken: "",
+    email: "", pw: "", formError: "", formNotice: "", gateToken: "", declineNote: "",
     signup: { email: "", pw: "", error: "" }, forgot: { email: "", error: "" }, reset: { pw: "", pw2: "", error: "" }, invite: { pw: "", pw2: "", error: "" }, answer: { text: "", error: "", applicationId: "", note: "" },
     apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
@@ -407,7 +407,7 @@ class Component extends DCLogic {
     else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });
     else if (me && me.state === "unverified") this.setState({ screen: "gate", gate: "check-email", email: me.email });
     if (me && me.state === "needs_review" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) this.setState({ screen: "gate", gate: "answer", answer: Object.assign({}, this.state.answer, { applicationId: r.current.id, note: r.current.info_request || "" }) }); }, () => {});
-    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current && r.current.fields) { const f = r.current.fields; this.setState({ apply: Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }) }); } }, () => {});
+    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) { const upd = { declineNote: r.current.decision_note || "" }; if (r.current.fields) { const f = r.current.fields; upd.apply = Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }); } this.setState(upd); } }, () => {});
     if (this.props.startNotice) this.setState({ screen: "gate", gate: "signin", formNotice: this.props.startNotice });
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
@@ -417,6 +417,7 @@ class Component extends DCLogic {
     if (this.props.sellerRequests && me && me.state === "active" && this.props.perms && this.props.perms.allowed("page.seller")) this.reloadInbox();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     if (this.props.startWizardPhotos) this.setState({ wizAssets: JSON.parse(this.props.startWizardPhotos) });
+    if (this.props.startDeclineNote) this.setState({ declineNote: this.props.startDeclineNote });
     this.loadAdmin();
     if (this.props.adminListings && this.props.adminListings.onDecision) this.props.adminListings.onDecision(() => this.loadAdmin());
     this.loadAreas(this.state.market);
@@ -1968,7 +1969,7 @@ class Component extends DCLogic {
         kicker: "Decision", title: "Access was not granted",
         headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",
         body: "Your request could not be approved as submitted. The most common reason is an affiliation the VIN Foundation could not confirm. You may reply with additional information and ask for a second review.",
-        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],
+        meta: [{ k: "Reviewed", v: "August 30, 2026" }, { k: "Reason given", v: s.declineNote || "Affiliation not verified" }, { k: "Appeal window", v: "Open" }],
         primary: { label: "Reply with more information", go: () => this.setState({ gate: "apply" }) }
       },
       "check-email": {
