@@ -477,3 +477,113 @@ async def test_after_revoke_authorized_capabilities_is_empty_for_that_buyer(clie
     revoke = await client.post(f"/api/seller/requests/{request_id}/revoke", headers=seller_headers)
     assert revoke.status_code == 200
     assert access.authorized_capabilities(conn, listing_id=listing_id, seller_id=seller_id, buyer_account_id=buyer_id) == frozenset()
+
+
+# --- ruling D-C62 (2026-09-21): a buyer is told when their access opens, closes or is refused --
+
+
+def _outbox_row(conn, account_id: str) -> dict:
+    """The MOST RECENT outbox row addressed to `account_id` — a buyer whose request is later
+    revoked has TWO (grant, then revoke), and a test asserting on the revoke must not read the
+    stale approval it raced past (`ORDER BY id DESC LIMIT 1`, `tests/api/test_applications.py`'s
+    own idempotency-test shape)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT o.template, o.params FROM email_outbox o JOIN account a ON a.email = o.to_email"
+            " WHERE a.id = %s ORDER BY o.id DESC LIMIT 1",
+            (account_id,),
+        )
+        row = cur.fetchone()
+    assert row is not None, f"no outbox row addressed to account {account_id}"
+    return {"template": row[0], "params": row[1]}
+
+
+def _rendered_mail(conn, account_id: str) -> str:
+    from app.mail import templates as TP
+
+    row = _outbox_row(conn, account_id)
+    r = TP.render(row["template"], row["params"], base_url="https://qa.foundation.vin")
+    return r.subject + "\n" + r.text + "\n" + r.html
+
+
+@pytest.mark.asyncio
+async def test_approving_a_request_enqueues_access_approved_to_the_buyer(client, conn, member) -> None:
+    seller_headers, _buyer_headers, listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-mail1@x.org", "b-mail1@x.org")
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    assert response.status_code == 200, response.text
+    outbox = _outbox_row(conn, buyer_id)
+    assert outbox["template"] == "access_approved"
+    assert outbox["params"]["link"].endswith(f"/practices/{listing_id}")
+
+
+@pytest.mark.asyncio
+async def test_denying_a_request_enqueues_access_denied_to_the_buyer_and_never_the_seller(client, conn, member) -> None:
+    seller_headers, _buyer_headers, _listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-mail2@x.org", "b-mail2@x.org")
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM account WHERE email = %s", ("s-mail2@x.org",))
+        seller_id = str(cur.fetchone()[0])
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "deny", "reason": "Not a fit"})
+    assert response.status_code == 200, response.text
+    outbox = _outbox_row(conn, buyer_id)
+    assert outbox["template"] == "access_denied"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox o JOIN account a ON a.email = o.to_email WHERE a.id = %s", (seller_id,))
+        assert cur.fetchone()[0] == 0, "the seller performed the act and must never be mailed here"
+
+
+@pytest.mark.asyncio
+async def test_revoking_access_enqueues_access_revoked_to_the_buyer(client, conn, member) -> None:
+    seller_headers, _buyer_headers, _listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-mail3@x.org", "b-mail3@x.org")
+    await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    response = await client.post(f"/api/seller/requests/{request_id}/revoke", headers=seller_headers)
+    assert response.status_code == 200, response.text
+    outbox = _outbox_row(conn, buyer_id)
+    assert outbox["template"] == "access_revoked"
+
+
+@pytest.mark.asyncio
+async def test_a_denial_on_a_confidential_listing_never_names_the_practice_anywhere_in_the_outbox_row(client, conn, member) -> None:
+    """THE PRIVACY RULE (spec `docs/superpowers/specs/2026-09-21-disclosure-notifications-ruling.md`):
+    "the refusal itself must not leak the identity the seller just declined to give." End to end,
+    through the real HTTP route, a listing whose seller has never disclosed its name at all."""
+    seller_headers, _buyer_headers, listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-priv1@x.org", "b-priv1@x.org")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET name = %s, name_disclosed = false WHERE id = %s",
+                    ("Highly Confidential Veterinary Practice", listing_id))
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "deny", "reason": "We already have a buyer"})
+    assert response.status_code == 200, response.text
+    row = _outbox_row(conn, buyer_id)
+    assert "Highly Confidential Veterinary Practice" not in str(row["params"])
+    assert "Highly Confidential Veterinary Practice" not in _rendered_mail(conn, buyer_id)
+
+
+@pytest.mark.asyncio
+async def test_a_grant_on_a_disclosed_listing_names_the_practice_in_the_approved_mail(client, conn, member) -> None:
+    """The positive case, proved on the same route: with the ceiling open and a full grant, the
+    real name DOES reach the mail — proving the gate discriminates rather than always hiding it."""
+    seller_headers, _buyer_headers, listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-priv2@x.org", "b-priv2@x.org")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET name = %s, name_disclosed = true WHERE id = %s",
+                    ("Blue Sky Veterinary Clinic", listing_id))
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    assert response.status_code == 200, response.text
+    row = _outbox_row(conn, buyer_id)
+    assert row["params"]["name"] == "Blue Sky Veterinary Clinic"
+
+
+@pytest.mark.asyncio
+async def test_a_retried_decision_does_not_mail_the_buyer_twice(client, conn, member) -> None:
+    """A second `decide` on an already-decided request is refused (409, proved above by
+    `test_approve_refused_once_already_decided`) before `notify_decision` is ever reached — this
+    proves the OUTCOME an idempotency key exists for: at most one `access_approved` row for one
+    decision, whatever a client's retry does."""
+    seller_headers, _buyer_headers, _listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-idem1@x.org", "b-idem1@x.org")
+    first = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    assert first.status_code == 200
+    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    assert second.status_code == 409
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox o JOIN account a ON a.email = o.to_email WHERE a.id = %s", (buyer_id,))
+        assert cur.fetchone()[0] == 1
