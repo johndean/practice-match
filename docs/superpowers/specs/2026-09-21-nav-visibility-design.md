@@ -72,6 +72,19 @@ applicant-answer, re-apply and the rest) out of that one card. No new element, c
 - The new gate card appends one approved state; an addition, not a re-base.
 - Amendment family: **A55** (A54 is taken by ruling D-C60, the same day).
 
+## The Permissions tab — John's standing requirement, 2026-09-21
+
+> "the implementation of the permission matrix/tab is longterm requirement by role and by user"
+
+Recorded as a REQUIREMENT, not a deferral to be forgotten. Two things in it, and the second is the
+larger: **by role** is the matrix as it exists today made editable; **by user** is a per-account
+override on top of it, which the codebase has no concept of anywhere — `effective_roles` resolves
+an account to its ROLES and the matrix maps roles to permissions, so there is no seam for "this
+one account, differently". That is a schema change, a resolution-order rule (does a user grant add
+to its role's, or replace it?), and a new answer to "why can this person do that?" for every audit.
+
+Neither half is in this ruling. When it is designed, the honest scope is below.
+
 ## Out of scope, and explicitly deferred to its own spec
 
 The **Permissions tab** — a screen where a VIN Foundation admin edits role → permission at
