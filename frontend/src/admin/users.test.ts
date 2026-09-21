@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component } from '../logic.js';
 import {
-  ACTIONS, NOTE_REQUIRED, PILLS, ROLE_LABELS, countsOf, makeAdminUsersAdapter, toUserRows,
-  type Cell, type DesignUserRow, type UserItem, type UsersUi
+  ACTIONS, MAX_NOTE, NOTE_REQUIRED, PILLS, ROLE_LABELS, countsOf, makeAdminUsersAdapter, toUserRows,
+  type Cell, type DecideOutcome, type DesignUserRow, type UserItem, type UsersUi
 } from './users';
 
 // ---------------------------------------------------------------------------------------
@@ -47,15 +47,25 @@ const PRIYA: UserItem = {
   account_id: 'a1', email: 'priya@example.test', state: 'pending', name: 'Dr. Priya Raghavan',
   affiliation_label: null, kind: 'buyer', flags: [], roles: [], grants: [],
   decided_at: null, decided_by_name: null, application_status: null,
+  decision_note: null, info_request: null, answer: null,
   fields: { school_year: 'Texas A&M, 2016', license_state: 'TX', employer: 'Associate, two-doctor practice', intent: 'Looking to buy within 18 months in Central Texas.' }
 };
 const item = (over: Partial<UserItem>): UserItem => ({ ...PRIYA, ...over });
 
-function recordingUi(note: string | null = 'a reviewer note') {
+/** A `UsersUi` test double that RECORDS what `decision()` asks of it rather than opening a real
+ *  drawer — `noteDrawer.test.ts` owns the real drawer's own interactions (retry, cancel, the error
+ *  slot). `decideWithNote` stands in for ONE submit attempt with a fixed note, through the very
+ *  `submit` callback `decision()` hands it, so a case that presses a button still exercises the
+ *  real POST-then-outcome plumbing (`recordingUi`'s own `decide`) rather than a second copy of it. */
+function recordingUi(note: string | null = 'a reviewer note', outcome: DecideOutcome = { ok: true }) {
   const calls: string[] = [];
   const ui: UsersUi = {
-    needsNote: (action) => { calls.push(`needsNote:${action}`); return Promise.resolve(note); },
-    decide: (target, action, given) => { calls.push(`decide:${target.account_id}:${action}:${given}`); return Promise.resolve(); }
+    decide: (target, action, given) => { calls.push(`decide:${target.account_id}:${action}:${given}`); return Promise.resolve(outcome); },
+    decideWithNote: async (_target, action, submit) => {
+      calls.push(`decideWithNote:${action}`);
+      if (note === null || note.trim() === '') return;         // the reviewer cancelled
+      await submit(note);
+    }
   };
   return { ui, calls };
 }
@@ -247,6 +257,68 @@ describe('the facts the design has no element for, stated in its own ` · ` idio
   });
 });
 
+describe('MAX_NOTE', () => {
+  it('is the server\'s own bound, pinned by equality against app/api/admin_users.py in tests/test_docs.py', () => {
+    expect(MAX_NOTE).toBe(4000);
+  });
+});
+
+describe('the read-back a colleague needs beside the pill (ruling D-C60)', () => {
+  it('renders the real reason on a genuinely declined applicant, instead of their own words', () => {
+    const [row] = rowsFor([item({ state: 'declined', decision_note: 'Affiliation could not be confirmed.' })]);
+    expect(row[1].sub).toBe('Declined: Affiliation could not be confirmed.');
+  });
+
+  it('falls back to the applicant\'s own words where no real reason has been served', () => {
+    // The design's own fixtures carry no `decision_note` at all, so this is the byte-identical
+    // path every approved state keeps.
+    const [row] = rowsFor([item({ state: 'declined', decision_note: null })]);
+    expect(row[1].sub).toBe('“Looking to buy within 18 months in Central Texas.”');
+  });
+
+  it('renders the question an open request-info round asked', () => {
+    const [row] = rowsFor([item({ state: 'needs_review', application_status: 'needs_review', info_request: 'Which hospital is this about?' })]);
+    expect(row[1].sub).toBe('Asked: Which hospital is this about?');
+  });
+
+  it('adds the applicant\'s own reply once they answer, quoted as their own words', () => {
+    const [row] = rowsFor([item({
+      state: 'needs_review', application_status: 'needs_review',
+      info_request: 'Which hospital is this about?', answer: 'Cedar Park Animal Hospital.'
+    })]);
+    expect(row[1].sub).toBe('Asked: Which hospital is this about? · Answered: “Cedar Park Animal Hospital.”');
+  });
+
+  it('leads a seller application\'s read-back with the seller marker, exactly as the intent quote is led', () => {
+    const [row] = rowsFor([item({ kind: 'seller', state: 'declined', decision_note: 'Affiliation could not be confirmed.' })]);
+    expect(row[1].sub).toBe('Seller applicant · Declined: Affiliation could not be confirmed.');
+  });
+
+  it('lets a flag outrank the read-back, exactly as it outranks the intent quote', () => {
+    const [row] = rowsFor([item({
+      state: 'declined', decision_note: 'Affiliation could not be confirmed.', flags: ['employer_keyword']
+    })]);
+    expect(row[1].sub).toBe('Affiliation flagged: employer appears to be a consolidator.');
+  });
+
+  it('says nothing extra for an application-level decline on an account that stays active (fix round 2\'s own silence)', () => {
+    // The seller-declined-on-an-active-buyer shape: the pill and the single Suspend button are
+    // the ACCOUNT's, so the read-back stays silent here too and the applicant's own words stand —
+    // `provenance()`'s twin case, one branch over.
+    const [row] = rowsFor([item({
+      state: 'active', kind: 'seller', application_status: 'declined', decision_note: 'Affiliation could not be confirmed.'
+    })]);
+    expect(row[1].sub).toBe('Seller applicant · “Looking to buy within 18 months in Central Texas.”');
+  });
+
+  it('says nothing for a stale open application on a suspended account', () => {
+    // `openStatus()` already answers null there (fix round 2, re-review Important 2); the
+    // read-back must not resurrect a question the tab no longer treats as open.
+    const [row] = rowsFor([item({ state: 'suspended', application_status: 'needs_review', info_request: 'Which hospital?' })]);
+    expect(row[1].sub).toBe('“Looking to buy within 18 months in Central Texas.”');
+  });
+});
+
 describe('the pill and the decision buttons, per account state', () => {
   // `application_status: null` is PRIYA's own default — these two are the ACCOUNT-STATE axis, and
   // the open-application axis has its own block below.
@@ -421,6 +493,8 @@ describe('an OPEN application outranks the account state, because that is the ro
 });
 
 describe('a decision is a note, then the post', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   const press = async (state: string, label: string, note: string | null = 'a reviewer note') => {
     const { ui, calls } = recordingUi(note);
     const row = toUserRows([item({ state })], ui)[0];
@@ -430,9 +504,9 @@ describe('a decision is a note, then the post', () => {
 
   it('requires a note for Decline, Request info and Suspend — the rendered three of the API\'s four', async () => {
     expect(NOTE_REQUIRED).toEqual(['decline', 'request_info', 'suspend', 'revoke']);
-    expect(await press('pending', 'Decline')).toEqual(['needsNote:decline', 'decide:a1:decline:a reviewer note']);
-    expect(await press('pending', 'Request info')).toEqual(['needsNote:request_info', 'decide:a1:request_info:a reviewer note']);
-    expect(await press('active', 'Suspend')).toEqual(['needsNote:suspend', 'decide:a1:suspend:a reviewer note']);
+    expect(await press('pending', 'Decline')).toEqual(['decideWithNote:decline', 'decide:a1:decline:a reviewer note']);
+    expect(await press('pending', 'Request info')).toEqual(['decideWithNote:request_info', 'decide:a1:request_info:a reviewer note']);
+    expect(await press('active', 'Suspend')).toEqual(['decideWithNote:suspend', 'decide:a1:suspend:a reviewer note']);
   });
 
   it('asks for no note on Approve and Reinstate, which the API accepts without one', async () => {
@@ -440,9 +514,21 @@ describe('a decision is a note, then the post', () => {
     expect(await press('suspended', 'Reinstate')).toEqual(['decide:a1:reinstate:']);
   });
 
-  it('sends nothing when the reviewer cancels the prompt, or leaves it blank', async () => {
-    expect(await press('pending', 'Decline', null)).toEqual(['needsNote:decline']);
-    expect(await press('pending', 'Decline', '   ')).toEqual(['needsNote:decline']);
+  it('sends nothing when the reviewer cancels the note surface, or leaves it blank', async () => {
+    expect(await press('pending', 'Decline', null)).toEqual(['decideWithNote:decline']);
+    expect(await press('pending', 'Decline', '   ')).toEqual(['decideWithNote:decline']);
+  });
+
+  it('alerts on a refusal from the DIRECT, no-note path, which the note drawer never sees', async () => {
+    // `decision()` alerts for Approve/Reinstate itself, because those two never open the drawer
+    // that would otherwise show the message — the drawer's own error slot is exercised by
+    // `noteDrawer.test.ts` and by the fetch-boundary suite below.
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const { ui } = recordingUi('unused', { ok: false, message: 'approve is not allowed from state active' });
+    const row = toUserRows([item({ state: 'pending' })], ui)[0];
+    await row[3].actions.find((a) => a.label === 'Approve')!.go();
+    expect(alertSpy).toHaveBeenCalledWith('approve is not allowed from state active');
   });
 });
 
@@ -526,8 +612,16 @@ describe('makeAdminUsersAdapter, against the real fetch boundary', () => {
     ({ status: 200, body: { items, next_cursor: null, counts: { open: 1, total: 4 }, ...over } });
   const reload = () => vi.fn();
 
+  /** The real note drawer's own primary or secondary button, by its label — never "the first
+   *  `<button>`", which is the drawer's own close icon (`noteDrawer.test.ts`'s own convention). */
+  function drawerButton(label: string): HTMLButtonElement {
+    const found = [...document.querySelectorAll('button')].find((b) => b.textContent === label);
+    if (found === undefined) throw new Error(`no drawer button labelled ${label}`);
+    return found as HTMLButtonElement;
+  }
+
   beforeEach(() => { document.cookie = 'pm_csrf=tok123'; });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 
   it('lists one page, mapped through toUserRows, with no double-submit token on the read', async () => {
     const calls = stubFetch(page([PRIYA]));
@@ -574,40 +668,89 @@ describe('makeAdminUsersAdapter, against the real fetch boundary', () => {
     expect(again).toHaveBeenCalledTimes(1);
   });
 
-  it('asks for the decline reason through the browser\'s own prompt, and sends it', async () => {
+  it('opens the real note drawer for Decline, with the applicant\'s own name and the server\'s bound, and sends the typed reason', async () => {
     const calls = stubFetch(page([PRIYA]), { status: 200, body: {} });
-    const promptSpy = vi.fn().mockReturnValueOnce('affiliation could not be verified');
-    vi.stubGlobal('prompt', promptSpy);
     const { rows } = await makeAdminUsersAdapter().list(reload());
-    await rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
-    expect(promptSpy).toHaveBeenCalledWith('Why is this account being declined?');
+    const done = rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
+    expect(document.body.textContent).toContain('Why is this account being declined?');
+    expect(document.body.textContent).toContain('Dr. Priya Raghavan');
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.maxLength).toBe(MAX_NOTE);
+    textarea.value = 'affiliation could not be verified';
+    textarea.dispatchEvent(new Event('input'));
+    drawerButton('Decline').click();
+    await done;
     expect(JSON.parse(calls[1].init.body!)).toEqual({ action: 'decline', note: 'affiliation could not be verified' });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('names the account by its email in the drawer\'s subtitle where the applicant gave no name', async () => {
+    stubFetch(page([item({ name: null, email: 'no-name@example.test' })]), { status: 200, body: {} });
+    const { rows } = await makeAdminUsersAdapter().list(reload());
+    void rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
+    expect(document.body.textContent).toContain('no-name@example.test');
   });
 
   it('asks the applicant\'s own question on Request info, and the reviewer\'s reason on Suspend', async () => {
-    const promptSpy = vi.fn().mockReturnValue('because');
-    vi.stubGlobal('prompt', promptSpy);
     const first = stubFetch(page([PRIYA]), { status: 200, body: {} });
     const { rows } = await makeAdminUsersAdapter().list(reload());
-    await rows[0][3].actions.find((a) => a.label === 'Request info')!.go();
-    expect(promptSpy).toHaveBeenLastCalledWith('What do you need from this applicant before a decision can be made?');
+    const firstDone = rows[0][3].actions.find((a) => a.label === 'Request info')!.go();
+    expect(document.body.textContent).toContain('What do you need from this applicant before a decision can be made?');
+    const firstTextarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    firstTextarea.value = 'because';
+    firstTextarea.dispatchEvent(new Event('input'));
+    drawerButton('Request info').click();
+    await firstDone;
     expect(JSON.parse(first[1].init.body!)).toMatchObject({ action: 'request_info' });
 
     const second = stubFetch(page([item({ state: 'active' })]), { status: 200, body: {} });
     const active = await makeAdminUsersAdapter().list(reload());
-    await active.rows[0][3].actions.find((a) => a.label === 'Suspend')!.go();
-    expect(promptSpy).toHaveBeenLastCalledWith('Why is this account being suspended?');
+    const secondDone = active.rows[0][3].actions.find((a) => a.label === 'Suspend')!.go();
+    expect(document.body.textContent).toContain('Why is this account being suspended?');
+    const secondTextarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    secondTextarea.value = 'because';
+    secondTextarea.dispatchEvent(new Event('input'));
+    drawerButton('Suspend').click();
+    await secondDone;
     expect(JSON.parse(second[1].init.body!)).toMatchObject({ action: 'suspend' });
   });
 
-  it('sends nothing, and re-reads nothing, when the reviewer cancels the note prompt', async () => {
+  it('sends nothing, and re-reads nothing, when the reviewer cancels the drawer', async () => {
     const calls = stubFetch(page([PRIYA]));
-    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce(null));
     const again = vi.fn();
     const { rows } = await makeAdminUsersAdapter().list(again);
-    await rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
+    const done = rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
+    drawerButton('Cancel').click();
+    await done;
     expect(calls).toHaveLength(1);            // the list GET alone — no decide POST followed the cancel
     expect(again).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('keeps the note and shows the server\'s own reason in the drawer\'s error slot on a refusal, and re-reads the queue all the same', async () => {
+    // The queue reload is unconditional on EVERY attempt (success or refusal) — the drawer's own
+    // DOM sits outside the table this repaints, so a retry in progress is untouched by it.
+    const calls = stubFetch(
+      page([PRIYA]),
+      { status: 409, body: { error: { code: 'STATE', message: 'cannot decline an account in state active' } } },
+      { status: 200, body: {} }
+    );
+    const again = vi.fn();
+    const { rows } = await makeAdminUsersAdapter().list(again);
+    const done = rows[0][3].actions.find((a) => a.label === 'Decline')!.go();
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'affiliation could not be verified';
+    textarea.dispatchEvent(new Event('input'));
+    drawerButton('Decline').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('cannot decline an account in state active'));
+    expect(textarea.value).toBe('affiliation could not be verified');
+    expect(again).toHaveBeenCalledTimes(1);
+
+    // Retried with the SAME text, still in the drawer — and this time it lands.
+    drawerButton('Decline').click();
+    await done;
+    expect(again).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('alerts the reviewer, rather than failing silently, when the decision is refused — and still re-reads', async () => {

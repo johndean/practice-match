@@ -254,6 +254,72 @@ async def test_the_list_carries_the_provenance_and_the_open_queue_count_the_user
     assert body["counts"] == {"open": 1, "total": 3}
 
 
+async def test_the_list_carries_the_read_back_a_reviewer_needs_beside_the_pill(client, conn, member):
+    """Ruling D-C60 (John, 2026-09-21, verbatim: "The VIN Foundation Admin should have the option
+    to request further information from applciation and or add detailed explanation of the
+    rejection"). `POST .../decide` has always stored `decision_note` (decline) and `info_request`
+    (request_info) on the application row (`:713-717`), and `GET /api/applications/{id}` has always
+    served them to the applicant — but `LIST_SQL` selected neither, so the question a colleague
+    just asked, and the reason a colleague just declined for, were invisible from the moment they
+    were written, even to the reviewer who wrote them. `frontend/src/admin/listings.ts`'s own
+    `decline_reason` is the precedent this follows for the Users tab's three own facts."""
+    asked, _ = await _applicant(client, member, email="asked@example.org")
+    declined, _ = await _applicant(client, member, email="declined-reason@example.org")
+    untouched, _ = await _applicant(client, member, email="untouched-reason@example.org")
+    _admin, cookies, hdr = member(("admin",), email="reader@example.org")
+
+    ask = await client.post(f"/api/admin/users/{asked}/decide", headers=auth_headers(cookies, hdr),
+                            json={"action": "request_info", "note": "Which hospital is this about?"})
+    assert ask.status_code == 200
+    decline = await client.post(f"/api/admin/users/{declined}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "decline", "note": "Affiliation could not be confirmed."})
+    assert decline.status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(cookies))).json()
+    listed = {item["account_id"]: item for item in body["items"]}
+
+    asked_row = listed[str(asked)]
+    assert asked_row["info_request"] == "Which hospital is this about?"
+    assert asked_row["answer"] is None
+    # `decide` never stamps `decision_note` for `request_info` — the two columns are exclusive.
+    assert asked_row["decision_note"] is None
+
+    declined_row = listed[str(declined)]
+    assert declined_row["decision_note"] == "Affiliation could not be confirmed."
+    assert declined_row["info_request"] is None
+    assert declined_row["answer"] is None
+
+    # An account with no decision at all carries no read-back — absent beats faked.
+    untouched_row = listed[str(untouched)]
+    assert untouched_row["decision_note"] is None
+    assert untouched_row["info_request"] is None
+    assert untouched_row["answer"] is None
+
+
+async def test_the_list_carries_the_applicants_own_reply_once_they_give_one(client, conn, member):
+    """The other half of the read-back D-C60 asks for: once the applicant answers, the reviewer
+    sees the reply beside the question that was asked, without opening a second screen — the
+    "broken working loop" the ruling's spec names (the applicant's reply was invisible to the
+    person who asked for it)."""
+    aid, cookies, hdr = member((), state="verified", email="answers-back@example.org")
+    await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
+    _admin, acookies, ahdr = member(("admin",), email="asker@example.org")
+    ask = await client.post(f"/api/admin/users/{aid}/decide", headers=auth_headers(acookies, ahdr),
+                            json={"action": "request_info", "note": "Which hospital is this about?"})
+    assert ask.status_code == 200
+
+    mine = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
+    application_id = mine["current"]["id"]
+    reply = await client.post(f"/api/applications/{application_id}/answer", headers=auth_headers(cookies, hdr),
+                              json={"answer": "Cedar Park Animal Hospital."})
+    assert reply.status_code == 200
+
+    body = (await client.get("/api/admin/users?limit=200", headers=auth_headers(acookies))).json()
+    row = next(i for i in body["items"] if i["account_id"] == str(aid))
+    assert row["info_request"] == "Which hospital is this about?"
+    assert row["answer"] == "Cedar Park Animal Hospital."
+
+
 async def test_the_open_queue_count_is_the_tabs_own_and_never_the_filtered_page(client, conn, member):
     """The badge counts the QUEUE, not the page: `state=`, `kind=` and `role=` narrow `items`, and
     a reviewer who filters to one account must not see the tab claim there is one account waiting.

@@ -21,10 +21,11 @@
  * `PILLS`/`ACTIONS`, so it represents a status backed by no column exactly as easily as one
  * backed by five, and the capture keeps its hash.
  *
- * **The reviewer's prompt for `state` and `market` (D12) reuses an existing seam.** `admin/users.ts`'s
- * `UsersUi` has `needsNote(action)` for the decline note; `ListingsUi` below carries the very same
- * method, for the identical reason (`admin_listings.NOTE_REQUIRED` also gates one action on one
- * free-text field), plus `needsFields(action)`, in the same shape and the same place, for the two
+ * **The reviewer's prompt for `state` and `market` (D12) reuses an existing seam.** `ListingsUi`
+ * below carries its own `needsNote(action)` for the decline note (`window.prompt`, unchanged by
+ * ruling D-C60 — that ruling's real decision drawer, `frontend/src/admin/noteDrawer.ts`, is scoped
+ * to the Users tab this file sits beside, and this tab's own stopgap is a separate concern), plus
+ * `needsFields(action)`, in the same shape and the same place, for the two
  * fields a FIRST publish needs. No new markup: a proper admin field editor is Rev 3 (spec §14 item
  * 6); until then the reviewer is asked the way `describe()` (`src/listings/seller.ts`) already
  * asks a seller to caption a photograph — the browser's own prompt.
@@ -214,7 +215,8 @@ export interface DesignListingRow {
 
 export interface ListingsUi {
   /** Prompts the reviewer for the reason `decline` requires; null when they cancel or leave it
-   *  blank. Same shape as `UsersUi.needsNote` (`frontend/src/admin/users.ts`). */
+   *  blank. `window.prompt`, the same stopgap the Users tab carried until ruling D-C60 replaced it
+   *  there with a real drawer — this tab's own note surface is a separate, later concern. */
   needsNote(action: Action): Promise<string | null>;
   /** Prompts the reviewer for `state` and `market` — D12's two fields, asked only when this
    *  listing has never been published before (`item.state === null`; a republish needs neither,

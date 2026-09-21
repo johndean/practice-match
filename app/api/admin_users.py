@@ -509,6 +509,7 @@ SELECT count(*) FILTER (WHERE a.state = ANY(%(open)s)
 LIST_SQL = """
 SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at, a.last_sign_in_at,
        ap.id, ap.kind, ap.fields, ap.flags, ap.status, ap.submitted_at, ap.decided_at, d.display_name,
+       ap.decision_note, ap.info_request, ap.answer,
        COALESCE((SELECT jsonb_agg(jsonb_build_object('role', g.role, 'granted_by', g.granted_by,
                                                      'granted_by_name', gb.display_name, 'granted_at', g.granted_at)
                                   ORDER BY g.role)
@@ -556,6 +557,13 @@ async def list_users(
     account, over the WHOLE table and never the filtered page: a reviewer who narrows to one
     applicant must not be told the queue is one deep.
 
+    Ruling D-C60 (2026-09-21) adds the LATEST application's own `decision_note`, `info_request` and
+    `answer` — the question a request-info round asked, the applicant's own reply, and the real
+    words behind a decline. All three have always been stored by `decide` below and served to the
+    applicant on `GET /api/applications/{id}`; nothing served them to the reviewer who wrote them,
+    which is the gap `frontend/src/admin/listings.ts`'s own `decline_reason` closed for the
+    Listings tab and this closes for Users.
+
     The count is served with the FIRST page only (fix round 1, review Minor 1). It is a full scan
     of `account` and the badge describes the whole table, so a client paging the queue already
     holds the answer; a cursored page carries `counts: null`, which is the client's own "no counts
@@ -580,7 +588,12 @@ async def list_users(
              "application_id": str(r[7]) if r[7] is not None else None, "kind": r[8], "fields": r[9],
              "flags": r[10] or [], "application_status": r[11], "submitted_at": _iso(r[12]),
              "decided_at": _iso(r[13]), "decided_by_name": r[14],
-             "roles": [g["role"] for g in r[15]], "grants": r[15]}
+             # Ruling D-C60 (2026-09-21): the read-back a reviewer needs beside the pill — the
+             # question the LATEST application was asked, the applicant's own reply, and a real
+             # decline reason — the three facts `GET /api/applications/{id}` has always served the
+             # applicant and this route never served the reviewer who wrote them.
+             "decision_note": r[15], "info_request": r[16], "answer": r[17],
+             "roles": [g["role"] for g in r[18]], "grants": r[18]}
             for r in rows[:capped]
         ]
     last = items[-1] if len(rows) > capped else None

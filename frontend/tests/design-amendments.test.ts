@@ -504,6 +504,12 @@ describe('local design amendments (spec D15)', () => {
     // distinct revoked state (Task REVOKE-UI, John's ruling of 2026-09-19). Six literal edits,
     // appended last, as every family is; none chained.
     'A53.1', 'A53.2', 'A53.3', 'A53.4', 'A53.5', 'A53.6',
+    // A54 — ruling D-C60 (John, 2026-09-21): the declined applicant's own gate card renders the
+    // real decline reason once one has been served. Five literal edits, appended last, as every
+    // family is; A54.1 and A54.2 are chained (on A8.2 and A8.3b respectively). A54.4/A54.5 are the
+    // tenth declared prototype prop (startDeclineNote) and its wiring, added on MEASURING the
+    // re-basing.
+    'A54.1', 'A54.2', 'A54.3', 'A54.4', 'A54.5',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -716,7 +722,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(413);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(418);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -797,7 +803,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'startWizardPhotos', 'startDeclineNote', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',

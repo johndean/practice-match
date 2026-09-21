@@ -981,6 +981,13 @@ def test_the_harness_carries_the_seeded_application_data_the_oracle_renders():
     presented["affirm"] = bool(re.search(r"^\s*affirm: true,?$", block.group(1), re.MULTILINE))
     assert presented == seed_persona.DECLINED_FIELDS, (presented, seed_persona.DECLINED_FIELDS)
 
+    # Ruling D-C60: `gate-declined` renders `declined@`'s real decision_note on both targets — the
+    # app through the real API (A54.2), the reference through A54.4/A54.5's `startDeclineNote` — so
+    # the two must be told the SAME sentence or the pixel gate can never agree with itself.
+    note = re.search(r"^export const DECLINED_DECISION_NOTE = \"([^\"]+)\";$", harness, re.MULTILINE)
+    assert note, "frontend/tests/harness.ts no longer defines DECLINED_DECISION_NOTE"
+    assert note.group(1) == seed_persona.DECLINED_DECISION_NOTE
+
 
 def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     """Review round 1, I3. Two sentences in CLAUDE.md outlived their truth: the thirteen non-Browse
@@ -1206,6 +1213,19 @@ def test_the_admin_users_tables_match_the_api():
         for action in offered:
             assert action in TRANSITIONS, f"the Admin Users table offers {action!r}, which app/api/admin_users.py has no transition for"
             assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"
+
+
+def test_the_admin_users_note_bound_matches_the_api():
+    """Ruling D-C60 (2026-09-21): the note drawer bounds the reviewer's input client-side against
+    the server's real limit, read from ONE place rather than retyped — `admin_users.MAX_NOTE`
+    itself, the same `_users_ts_literal` convention `NOTE_REQUIRED`/`ACTIONS`/`PILLS`/`ROLE_LABELS`
+    already use. Before this pin the two numbers could drift silently: a server-side change to
+    `MAX_NOTE` would leave the drawer's `maxlength` claiming a limit that is no longer real,
+    letting a reviewer type right up to the OLD bound and take the generic `INVALID_REQUEST` 422
+    (`app/auth/deps.py`) the drawer has no way to explain."""
+    from app.api.admin_users import MAX_NOTE
+
+    assert _users_ts_literal("MAX_NOTE") == MAX_NOTE
 
 
 def _listings_ts_literal(name: str) -> object:
@@ -2399,7 +2419,10 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # NUMBER_WORDS[family_count + 1] to prove the gate still fails on a count one too high — so
      # the table must always run at least one word PAST the real count. Extended here for the
      # fourth time (A18, A27, A24 are the three before it), the way each of those did.
-     "Forty-three", "Forty-four", "Forty-five"))}
+     "Forty-three", "Forty-four", "Forty-five",
+     # A54 (2026-09-21) made forty-five families. Extended a fifth time, with the same one-word
+     # headroom the fourth extension left and the discriminator case's own KeyError found empty.
+     "Forty-six", "Forty-seven"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
