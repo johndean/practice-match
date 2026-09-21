@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from app import config
 from app.api.admin_data_sources import router as admin_data_sources_router
 from app.api.admin_listings import router as admin_listings_router
+from app.api.admin_requests import router as admin_requests_router
 from app.api.admin_settings import router as admin_settings_router
 from app.api.admin_signups import router as admin_signups_router
 from app.api.admin_users import router as admin_users_router
@@ -172,6 +173,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # listings`, so behind the Coming Soon page they are absent, like every other member
         # surface above, and `scripts/verify-deploy.sh` probes for their 404 beside the rest.
         app.include_router(seller_requests_router)
+        # Same gate again (Task ADMIN-REQUESTS, `request.oversee`'s first call site): the staff
+        # queue across both parties to a disclosure request, `/api/admin/*`'s own reason — staff
+        # and admin only, and behind the Coming Soon page absent rather than merely guarded, like
+        # `admin_users_router` and `admin_listings_router` above.
+        app.include_router(admin_requests_router)
         # Superseded 2026-09-09 by John's ruling (A-I5d.5) — this used to be UNCONDITIONAL (Task
         # I5d, D-I5d-5): `interest_signup` is filled by the Coming Soon page, so the rows this
         # reads only exist on PRODUCTION, which runs `coming_soon` until launch, and gating the

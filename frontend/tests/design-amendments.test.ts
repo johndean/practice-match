@@ -515,6 +515,10 @@ describe('local design amendments (spec D15)', () => {
     // consumes A8.8a, A55.2 consumes A54.4 and A55.3 consumes A26.9a (all three declared in
     // LOCAL_AMENDMENTS.md); A55.4/A55.5/A55.6 are unchained.
     'A55.1', 'A55.2', 'A55.3', 'A55.4', 'A55.5', 'A55.6',
+    // A56 — Task ADMIN-REQUESTS (2026-09-21): request.oversee's first call site and the Admin >
+    // Requests tab's real data. Appended last, as every family is. A56.2 is CHAINED on A38.2's
+    // own accumulated `loadAdmin` body; A56.1 and A56.3 take pristine text.
+    'A56.1', 'A56.2', 'A56.3',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -727,7 +731,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(424);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(427);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

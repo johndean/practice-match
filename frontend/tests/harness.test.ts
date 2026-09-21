@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MAX_BBOX_DEG, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, allowAnonymousBootRefusal, allowsAnonymousBootRefusal, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designAdminDataSourceRows, designAdminDataSourcesBody } from './design-admin-data-sources.mjs';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAdminRequestCounts, designAdminRequestRows, designAdminRequestsBody } from './design-admin-requests.mjs';
 import { designAdminUserCounts, designAdminUserRows, designAdminUsersBody } from './design-admin-users.mjs';
 import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designSummaryBody, designSummarySet } from './design-summary.mjs';
@@ -443,13 +444,13 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(submitStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
   });
 
-  it('names all six collections on the local app origin, on the port the run uses', () => {
+  it('names all seven collections on the local app origin, on the port the run uses', () => {
     expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
       .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings', 'http://localhost:5473/api/admin/users', 'http://localhost:5473/api/admin/data-sources',
-        'http://localhost:5473/api/requests/mine', 'http://localhost:5473/api/seller/requests']);
+        'http://localhost:5473/api/admin/requests', 'http://localhost:5473/api/requests/mine', 'http://localhost:5473/api/seller/requests']);
     expect(collectionStubUrls({} as NodeJS.ProcessEnv))
       .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings', 'http://localhost:5173/api/admin/users', 'http://localhost:5173/api/admin/data-sources',
-        'http://localhost:5173/api/requests/mine', 'http://localhost:5173/api/seller/requests']);
+        'http://localhost:5173/api/admin/requests', 'http://localhost:5173/api/requests/mine', 'http://localhost:5173/api/seller/requests']);
   });
 
   // A52 (Task 14, per-buyer-disclosure): the buyer's own "My Requests" list, the detail screen's
@@ -535,6 +536,22 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(body.counts).toEqual(designAdminUserCounts());
     expect(body.counts).toEqual({ open: 3, total: 4 });
     expect(collectionStubBody('http://localhost:5473/api/admin/users')).toBe(designAdminUsersBody());
+  });
+
+  it('serves every design Requests fixture, and the badge the design shows, as one page (Task ADMIN-REQUESTS)', () => {
+    // `admin-requests` is the FOURTH frozen Admin capture to be answered through the SUCCESS
+    // path (Users, Listings and Data Sources already were). This tab has no Action column at
+    // all, so `DesignRequestRow` carries no `actions` field, unlike `DesignUserRow`/
+    // `DesignListingRow`.
+    const body = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/requests')) as
+      { items: unknown[]; next_cursor: string | null; counts: { pending: number; total: number } };
+    expect(body.items).toEqual(designAdminRequestRows());
+    expect(body.items).toHaveLength(4);
+    expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
+    // The design's own literal badge, read off its own tab rather than written here.
+    expect(body.counts).toEqual(designAdminRequestCounts());
+    expect(body.counts).toEqual({ pending: 2, total: 4 });
+    expect(collectionStubBody('http://localhost:5473/api/admin/requests')).toBe(designAdminRequestsBody());
   });
 
   it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {
