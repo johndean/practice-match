@@ -1748,7 +1748,7 @@ describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
     c2.wizardVals().submit();
     await flush();
     expect(api.submit).toHaveBeenCalledWith('a3f1');
-    expect(c2.state.wizSubmitted, 'the design\'s own Submitted card still appears at once').toBe(true);
+    expect(c2.state.wizSubmitted, 'the API accepted it, so the Submitted card is drawn (A58.1: on the answer, no longer at once)').toBe(true);
     expect(c2.state.myListings).toEqual([]);
   });
 
@@ -7376,6 +7376,90 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       expect(rows[0].hint).toBe('The seller has not responded yet. Nothing further is disclosed until they do.');
       expect(rows[1].hint).toBe('Financial packet and floor plan are open to you on this listing.');
       expect(rows[2].hint).toBe('This seller is not engaging further. The listing may already be under contract.');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A58.1 — Submit tells the truth (finding S2 of the 2026-09-23 seller wizard audit).
+//
+// `submit` was `(promise-or-Promise.resolve()) && this.setState({ wizSubmitted: true, … })`, and a
+// Promise is ALWAYS truthy — so the `setState` ran unconditionally and SYNCHRONOUSLY, before the
+// server had answered anything. A seller whose listing the API refused (`INCOMPLETE`,
+// `PHOTOS_NOT_READY`, a `409 STATE`, a rate limit) was shown "Submitted — Your listing is with the
+// VIN Foundation" all the same, the refusal was computed into `wiz.errorText`, which `App.vue`
+// renders inside `isPreview` and NOT inside `isDone`, and a fabricated `in_review` row stayed in
+// their dashboard because `reloadListings()` never ran on the failure path.
+//
+// Three paths, three cases, because they are three different contracts:
+//   * NO ADAPTER — the reference and the Claude Design preview — flips synchronously with the
+//     design's own optimistic row, byte for byte as before. Every approved state depends on it.
+//   * ADAPTER + SUCCESS — flips, then reloads, so the dashboard behind the card is the server's.
+//   * ADAPTER + REFUSAL — does NOT flip. The seller stays on the preview, where the design already
+//     draws the error slot the refusal lands in.
+// ---------------------------------------------------------------------------------------
+describe('A58.1 — Submit flips to "Submitted" only when the server accepted it', () => {
+  /** The wizard's own adapter shape (the A16/A20 blocks' own `adapter()`), reused rather than
+   *  re-invented; `vi.fn()` so a case can assert what was NOT called. */
+  const adapter = (over: Record<string, unknown> = {}): any => ({
+    list: vi.fn().mockResolvedValue([{ id: 's1', status: 'in_review', title: 'T', meta: 'M', note: 'N' }]),
+    create: vi.fn().mockResolvedValue('new-1'),
+    get: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+    patch: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+    submit: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+    attach: vi.fn().mockResolvedValue({ w: {}, assets: [] }),
+    ...over
+  });
+
+  /** A seller on step 8 of a real draft, the screen the Submit button lives on. */
+  const onPreview = (listings?: any): any => {
+    const c2: any = new Component(listings ? { listings } : {});
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 8, editingId: 'a3f1' });
+    return c2;
+  };
+
+  it('a refused Submit does NOT flip the card, and leaves the seller on the preview with the refusal', async () => {
+    const api = adapter({
+      submit: vi.fn().mockRejectedValue(new ListingError('INCOMPLETE',
+        'Every required field must be answered before this listing can be submitted.'))
+    });
+    const c2 = onPreview(api);
+    const rows = c2.state.sellerListings.length;
+    await c2.wizardVals().submit();
+
+    expect(c2.state.wizSubmitted, 'the server refused, so nothing was submitted').toBe(false);
+    const v = c2.wizardVals();
+    expect(v.isDone, 'the "Submitted" card must not be drawn').toBe(false);
+    expect(v.isPreview, 'the seller stays on the preview, which is where the error slot is').toBe(true);
+    expect(v.errorText).toContain('Every required field must be answered');
+    expect(api.list, 'no reload on the failure path — there is nothing new to read').not.toHaveBeenCalled();
+    expect(c2.state.sellerListings, 'nothing is prepended to the dashboard').toHaveLength(rows);
+    expect(c2.state.sellerListings.some((r: any) => r.note === 'Submitted just now · awaiting VIN Foundation review'),
+      'no fabricated in_review row for a listing the server never took').toBe(false);
+  });
+
+  it('an accepted Submit flips the card and reloads the seller\'s own rows', async () => {
+    const api = adapter();
+    const c2 = onPreview(api);
+    await c2.wizardVals().submit();
+
+    expect(api.submit).toHaveBeenCalledWith('a3f1');
+    expect(c2.state.wizSubmitted).toBe(true);
+    expect(c2.wizardVals().isDone).toBe(true);
+    expect(api.list, 'the dashboard behind the card is the server\'s own rows').toHaveBeenCalled();
+    expect(c2.state.myListings).toEqual([{ id: 's1', status: 'in_review', title: 'T', meta: 'M', note: 'N' }]);
+  });
+
+  it('with no adapter the design\'s own path is byte for byte what it was — synchronous, with the optimistic row', () => {
+    const c2 = onPreview();
+    const before = c2.state.sellerListings.length;
+    c2.wizardVals().submit();
+
+    expect(c2.state.wizSubmitted, 'the reference flips at once, with no promise to wait on').toBe(true);
+    expect(c2.wizardVals().isDone).toBe(true);
+    expect(c2.state.sellerListings).toHaveLength(before + 1);
+    expect(c2.state.sellerListings[0]).toMatchObject({
+      status: 'in_review', note: 'Submitted just now · awaiting VIN Foundation review'
     });
   });
 });

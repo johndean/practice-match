@@ -2449,8 +2449,10 @@ NUMBER_WORDS = {n: w for n, w in enumerate(
      # sixth time, one word past forty-seven.
      # A57 (two copy rulings, 2026-09-21) made forty-eight families — extended here for the
      # seventh time, one word past forty-eight.
+     # A58 (the seller wizard repair, D-C65, 2026-09-23) made forty-nine families — extended here
+     # for the eighth time, one word past forty-nine.
      "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven", "Forty-eight",
-     "Forty-nine"))}
+     "Forty-nine", "Fifty"))}
 
 
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():

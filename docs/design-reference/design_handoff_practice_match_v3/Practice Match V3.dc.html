@@ -3616,9 +3616,14 @@ class Component extends DCLogic {
       previewNote: w.anon
         ? "Practice name and street address are hidden. Buyers see the community and an approximate map pin until you approve their request."
         : "Practice name and address are visible to every approved buyer. Turn on generalized location in step 7 if you are still operating.",
-      submit: () => (this.props.listings && s.editingId
-        ? this.props.listings.submit(s.editingId).then(() => this.reloadListings(), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))
-        : Promise.resolve()) && this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
+      submit: () => {
+        const showSubmitted = () => this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) });
+        if (!this.props.listings || !s.editingId) return showSubmitted();
+        return this.props.listings.submit(s.editingId).then(
+          () => { showSubmitted(); return this.reloadListings(); },
+          (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." })
+        );
+      }
     };
   }
 

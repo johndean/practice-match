@@ -9521,6 +9521,61 @@ const A57_7: Amendment = {
   count: 1
 };
 
+/**
+ * A58 — the seller wizard repair (John, 2026-09-23, ruling D-C65: "implement full seller wizard
+ * audit"), driven by `docs/superpowers/specs/2026-09-23-seller-wizard-audit.md`. The audit put four
+ * independent readers through all eight steps and required, per control, what the UI promises, what
+ * is collected, what is stored, what a buyer is served and whether validation matches. This family
+ * carries the findings whose fix reaches the approved design; the rest are app-only and carry no
+ * amendment (A52's own ruling for `frontend/src/requests/*.ts`).
+ */
+const A58 = {
+  date: '2026-09-23',
+  ruling: 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding S2 of the eight-step audit — the wizard\'s Submit button told a seller their listing had been submitted when the server had refused it. The handler read `(promise-or-Promise.resolve()) && this.setState({ wizSubmitted: true, ... })`, and a Promise is always truthy, so the "Submitted" card was drawn unconditionally and synchronously — before the API had answered anything. Submit now flips that card only on an answer that accepted it: with no adapter (the reference, the Claude Design preview) the design\'s own synchronous path is unchanged, with an adapter a refusal leaves the seller on the preview with the refusal in the design\'s own error slot, and only an acceptance draws the card and reloads the seller\'s own rows.'
+};
+
+/** A58.1 — SUBMIT TELLS THE TRUTH (finding S2). The design's own handler was
+ *  `(this.props.listings && s.editingId ? submit(...).then(...) : Promise.resolve()) &&
+ *  this.setState({ wizSubmitted: true, ... })` — and a Promise is ALWAYS truthy, so the right-hand
+ *  side ran unconditionally and SYNCHRONOUSLY, before the server had answered. Measured against a
+ *  rejecting adapter: the seller landed on "Submitted — Your listing is with the VIN Foundation"
+ *  while the refusal was computed into `wiz.errorText`, which the template renders inside
+ *  `isPreview` and NOT inside `isDone`, so it was never drawn at all; and a fabricated `in_review`
+ *  row stayed in their dashboard, because `reloadListings()` runs only on the fulfilled arm. Every
+ *  refusal the API can answer was affected — `INCOMPLETE`, `PHOTOS_NOT_READY`, a `409 STATE`, a
+ *  rate limit.
+ *
+ *  THREE PATHS, and the first is why this is written as a thunk rather than as a second copy of the
+ *  design's own object literal:
+ *    * NO ADAPTER — the reference and the Claude Design preview — flips SYNCHRONOUSLY with the
+ *      design's own optimistic row, byte for byte as before, which every approved state depends on.
+ *      The guard is `!this.props.listings || !s.editingId`, the shape the `next:` handler two lines
+ *      up already uses, so a wizard with an adapter but no draft behind it keeps today's behaviour
+ *      too.
+ *    * ADAPTER + ACCEPTANCE — flips, then reloads, so the dashboard behind the card carries the
+ *      server's own rows (A16.1) rather than the optimistic one.
+ *    * ADAPTER + REFUSAL — does NOT flip. `wizErr` is set by the design's own rejection arm,
+ *      untouched, and the seller stays on the preview, which is the one screen that draws it.
+ *
+ *  `showSubmitted` is a thunk and not a pre-computed object so that `this.state.sellerListings` is
+ *  read at the moment of the flip, exactly as the design's own line read it; the no-adapter path is
+ *  then the same expression at the same moment. Consumes A16.7. */
+const A58_1: Amendment = {
+  id: 'A58.1', ...A58,
+  find: '      submit: () => (this.props.listings && s.editingId\n'
+    + '        ? this.props.listings.submit(s.editingId).then(() => this.reloadListings(), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))\n'
+    + '        : Promise.resolve()) && this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })',
+  replace: '      submit: () => {\n'
+    + '        const showSubmitted = () => this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) });\n'
+    + '        if (!this.props.listings || !s.editingId) return showSubmitted();\n'
+    + '        return this.props.listings.submit(s.editingId).then(\n'
+    + '          () => { showSubmitted(); return this.reloadListings(); },\n'
+    + '          (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." })\n'
+    + '        );\n'
+    + '      }',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9844,5 +9899,10 @@ export function amendments(): Amendment[] {
     // "activity" tab's own badge literal), untouched by any earlier family. Definition order in
     // this file matches this list (m8).
     A56_1, A56_2, A56_3,
-    A57_1, A57_2, A57_3, A57_4, A57_5, A57_6, A57_7];
+    A57_1, A57_2, A57_3, A57_4, A57_5, A57_6, A57_7,
+    // A58 -- the seller wizard repair (Task 1 of the 2026-09-23 repair plan, ruling D-C65).
+    // Appended last, as every family is, and it has to be: A58.1 is CHAINED on A16.7, whose whole
+    // three-line `replace` its own `find` takes (declared `Consumes A16.7` on its
+    // LOCAL_AMENDMENTS.md row), so it must run after that family.
+    A58_1];
 }

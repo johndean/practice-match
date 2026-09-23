@@ -526,6 +526,11 @@ describe('local design amendments (spec D15)', () => {
     // consume A53.3 (its two separately-introduced lines), A57.5 consumes A53.4, A57.6 consumes
     // A53.5 and A57.7 consumes A53.6.
     'A57.1', 'A57.2', 'A57.3', 'A57.4', 'A57.5', 'A57.6', 'A57.7',
+    // A58 — the seller wizard repair (ruling D-C65, John 2026-09-23: "implement full seller
+    // wizard audit"). A58.1 is finding S2: Submit flips the "Submitted" card only on an answer
+    // that accepted it. CHAINED on A16.7, whose whole three-line `replace` its `find` takes
+    // (declared `Consumes A16.7` in LOCAL_AMENDMENTS.md).
+    'A58.1',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -738,7 +743,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(434);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(435);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
