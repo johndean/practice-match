@@ -1,77 +1,55 @@
-# Defect — `browse-market-strip-location` diverges on macOS and not on Linux
+# RETRACTED — `browse-market-strip-location` was not a platform divergence
 
-**Found 2026-09-23**, during the full verification gate for the D-C64 docs merge (`fbd8b1b`).
-Recorded rather than fixed, on John's instruction to proceed with the deploy and take this next.
+**Raised 2026-09-23. Retracted the same day, after investigation.** The defect described by the
+earlier versions of this record does not exist. Kept rather than deleted, because the reasoning
+error is worth more than the file.
 
-## What happens
+## What was claimed
 
-`npm run test:e2e` (the `app` project) fails one approved state on macOS:
+That the approved state `browse-market-strip-location` failed visual parity deterministically on
+darwin (61962 pixels, ratio 0.05) while CI's linux Chromium passed the identical SHA, and that the
+oracle's verdict therefore depended on which machine ran it.
 
-```
-[app] tests/visual.spec.ts:88 visual parity with the approved design browse-market-strip-location
-61962 pixels (ratio 0.05 of all image pixels) are different.
-```
+## What is true
 
-`npm run test:visual:baselines` passes all 120 reference captures in the same run. Every other
-app-target state passes: **219 passed, 1 failed.**
+Re-run of the full documented sequence — `test:visual:baselines` then the whole `app` project —
+**220 passed**, including this state. The failure does not reproduce.
 
-## What is established
+It was an artefact of the investigator's own environment. Mid-gate, the scratch database `pm_gate`
+was created to work around a `092` checksum block on the shared dev database. The reference
+baselines were generated against that database in one state; by the time `visual.spec.ts` ran, the
+suite's own account and listing flows had created 33 listings in it. Baseline and comparison were
+captured either side of that change. Once both happen after it, they agree.
 
-- **Deterministic.** Two isolated re-runs both report exactly `61962 pixels`. Not antialiasing
-  noise, not a timing flake in the usual sense — the same pixels differ every time.
-- **Not caused by the commit under test.** `git diff 66075c6..HEAD` is one markdown file, 97
-  insertions. `frontend/src`, the design bundle, `tests/` and every fixture are byte-identical, so
-  the previous main executes the same code against the same inputs.
-- **Platform-specific.** CI's `frontend (typecheck · unit · build · smoke · visual parity)` job is
-  `success` on this exact SHA, running Linux Chromium. The divergence appears only on darwin.
-- **Not a stale committed baseline.** The expected snapshots are untracked — `git log` returns
-  nothing for `browse-market-strip-location-darwin.png` — because both sides are generated in the
-  same run, the reference project writing what the app project is compared against.
+CI never saw it because CI starts from a fresh service-container database for every run and never
+straddles the change.
 
-## Investigated 2026-09-23 — the first hypothesis is REFUTED
+## The hypotheses that were tested and killed, in order
 
-The record's original hypothesis was that the LOCATION-mode summary adapter resolved after the
-screenshot. **That is wrong**, and it was disproved by reading the diff image rather than by
-reasoning:
+1. **The LOCATION-mode summary adapter resolved after the screenshot.** Refuted by reading the
+   diff image: the Market snapshot strip is pixel-identical — header, all six cards, every figure
+   and bar.
+2. **A map viewport or timing race.** Refuted twice. Raising the state's settle from 400 ms to
+   4000 ms produced the identical 61962 pixels; and direct measurement showed both targets at the
+   same container size (604x311 at top 141), the same pane transform
+   `matrix(1, 0, 0, 1, -183, 0)`, the same tile `10/421/233` and the same 9 markers.
+3. **Platform divergence between darwin and linux.** Refuted by this retraction: the sequence
+   passes on darwin.
 
-- **The Market snapshot strip is pixel-identical.** The LOCATION header, all six cards, every
-  figure and every bar show no difference at all. The adapter is innocent.
-- **The whole difference is a map pan of about 188 px.** The `$2.65M` pin is present in BOTH
-  images — at y≈165 in the reference and y≈353 in the app. Same pin, same price, shifted
-  vertically. The results rail is identical in both ("9 PRACTICES AVAILABLE", the same two
-  listings), so the listing data agrees; only the map's viewport differs, which brings different
-  pins into frame.
-- **It is not a timing race.** Raising the state's final settle from 400 ms to 4000 ms produced
-  the identical 61962 pixels. That also rules out the 250 ms viewport debounce (A24.21-A24.23) and
-  the boundary refetch behind it.
-- **The trigger is the strip expansion.** `browse-market-panel` selects the SAME practice with the
-  SAME waits and passes; the only difference is `click('Expand all six layers')`, which resizes the
-  map container.
+## The lesson worth keeping
 
-**What remains unknown**, and is where the next session starts: why a container resize leaves the
-app's map centred ~188 px from the reference's, deterministically on darwin and not on linux. A
-purely structural difference would fail on CI too, and does not — so something in that resize path
-depends on a quantity that varies by platform, scrollbar width and font metrics being the obvious
-candidates since both change container height.
+**Baselines and the comparison must be generated against the same database state.** The reference
+project is a static prototype, but the app project's flows mutate the database they share with it,
+so generating baselines and then running the app project across a database change compares two
+different worlds. Creating a scratch database part-way through a gate is exactly how that happens.
 
-**The next step is measurement, not a fix:** read Leaflet's actual centre and zoom from both
-targets after the expansion. That turns "about 188 px" into two numbers and says whether the app
-recentres on resize while the reference anchors, or whether both recentre from different container
-heights.
+And the process lesson: "deterministic and local-only" is evidence of a stable local CONDITION, not
+evidence of a platform defect. The first reading of that evidence was wrong, was written into the
+repository, and was corrected only after the full sequence was re-run.
 
-**Deferred by John, 2026-09-23**, on the ground that no user is affected — which is correct: both
-renders are the application behaving properly.
+## Still open, and unrelated to the above
 
-## Why it matters beyond one red test
-
-The oracle is the arbiter of design fidelity at `maxDiffPixels: 0`. A state that passes on one
-platform and fails on another means the gate's verdict depends on who runs it, which weakens every
-future "no pixel moved" claim made from a developer machine. Either the app has a real race that
-Linux timing hides, or the oracle needs a wait the app target does not currently perform.
-
-## Not in scope of this record
-
-The shared dev database carries `092_esri_basemap_registry.sql` under a different checksum than
-main's file, so `scripts/migrate.py` refuses and every local backend run fails until the database
-is recreated. That is a separate operational item and needs John's word, a reset being destructive
-and the database shared across worktrees.
+The shared dev database carried `092_esri_basemap_registry.sql` under a stale checksum, which is
+what forced the scratch database in the first place. That was repaired on 2026-09-23 — the two
+seeded `dataset_registry` rows brought to the file's current values and the ledger checksum
+corrected — so a future gate can run against `practice_match` without a scratch database at all.
