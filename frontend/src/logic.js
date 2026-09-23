@@ -1030,11 +1030,10 @@ class Component extends DCLogic {
           priceLabel: this.money(p.price),
           revLabel: this.money(p.rev),
           ebitdaLabel: this.money(Math.round(p.rev * 0.19)),
-          docs: String(p.docs),
           sqft: p.sqft.toLocaleString(),
           meta: [
             { value: this.money(p.rev), unit: "revenue" },
-            { value: String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" },
+            { value: p.docs == null ? "—" : String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" },
             { value: p.sqft.toLocaleString(), unit: "sq ft" }
           ].map((mm, mi) => Object.assign({}, mm, {
             // A thin rule separates items; it sits inside each item so it survives wrapping.
@@ -1888,8 +1887,7 @@ class Component extends DCLogic {
       ],
       keyFacts: [
         { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" }
-      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat([
-        { k: "Exam rooms", v: String(p.rooms) },
+      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([
         { k: "Square feet", v: p.sqft.toLocaleString() },
         { k: "Property", v: bldg }
       ]),
@@ -1922,8 +1920,8 @@ class Component extends DCLogic {
         {
           title: "The Practice", hasProse: !!p.services, prose: p.services ? p.services + "." : "", hasNote: false, note: "",
           rows: (p.docs != null ? [{ k: "Doctors", v: p.docs + " FTE" }] : []).concat([
-            { k: "Support team", v: p.staff },
-            { k: "Exam rooms", v: String(p.rooms) },
+            { k: "Support team", v: p.staff }
+          ]).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([
             { k: "Hours", v: p.hours }
           ])
         },

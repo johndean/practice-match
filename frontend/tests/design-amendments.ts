@@ -9745,6 +9745,87 @@ const A58_4e: Amendment = {
   count: 1
 };
 
+/** A58.4f — THE EXAM ROOMS KEY FACT (finding S8, fix round 1). The first pass closed S8's own
+ *  four strings and reported this one as out of scope; the controller ruled on 2026-09-24 that
+ *  `rooms` and the whole residue are IN — D-C65 is "implement full seller wizard audit" and the
+ *  brief's enumeration was narrower than the ruling. `String(p.rooms)` is `"null"` for a null, so
+ *  this row read the word on the same card A58.4a just repaired, one row down; `rooms` is in the
+ *  audit's own §6 list of step-4 columns that can be NULL on a published listing.
+ *
+ *  A58.4a's treatment verbatim, the same `!= null` test — a practice with ZERO exam rooms is a
+ *  real answer and is still printed — and the row keeps its PLACE, third of the five.
+ *  Consumes A58.4a, whose introduced `.concat` line and Exam-rooms line this `find` takes whole. */
+const A58_4f: Amendment = {
+  id: 'A58.4f', ...A58,
+  ruling: RULING_S8,
+  find: '      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat([\n'
+    + '        { k: "Exam rooms", v: String(p.rooms) },\n',
+  replace: '      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([\n',
+  count: 1
+};
+
+/** A58.4g — THE PRACTICE'S EXAM ROOMS ROW (finding S8, fix round 1). The same figure one block
+ *  down the same screen, reading the same word for the same reason. A58.4b's treatment verbatim,
+ *  the same `!= null` test, and the row keeps its PLACE — third of the four, so it sits between
+ *  the Support-team member and the Hours member rather than leading or trailing.
+ *  Consumes A58.4b, whose introduced `rows:` line this `find` takes whole. */
+const A58_4g: Amendment = {
+  id: 'A58.4g', ...A58,
+  ruling: RULING_S8,
+  find: '          rows: (p.docs != null ? [{ k: "Doctors", v: p.docs + " FTE" }] : []).concat([\n'
+    + '            { k: "Support team", v: p.staff },\n'
+    + '            { k: "Exam rooms", v: String(p.rooms) },\n',
+  replace: '          rows: (p.docs != null ? [{ k: "Doctors", v: p.docs + " FTE" }] : []).concat([\n'
+    + '            { k: "Support team", v: p.staff }\n'
+    + '          ]).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([\n',
+  count: 1
+};
+
+/** A58.4h — THE RESULTS-RAIL CARD'S DOCTOR COUNT (finding S8, fix round 1). The THIRD rendered
+ *  site of the family's own field, missed by the first pass's residue statement: `mdResults`'
+ *  own `meta[1]` is `{ value: String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" }`, drawn
+ *  on the Browse results rail (`App.vue`'s `v.md?.mdResults` loop) BESIDE the very map pin
+ *  A58.4c repaired — so one absent figure read "— doctors" on the pin and "null doctors" on the
+ *  card for the same practice, in the same view.
+ *
+ *  A58.4c's treatment verbatim, and the precedent is again inside this same `meta` array:
+ *  `{ value: this.money(p.rev), unit: "revenue" }` one member up already renders the em dash for
+ *  an absent revenue with its unit word kept. `unit` is untouched — `null === 1` is false, so the
+ *  plural already written is the one used, exactly as on the pin. */
+const A58_4h: Amendment = {
+  id: 'A58.4h', ...A58,
+  ruling: RULING_S8,
+  find: '            { value: String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" },',
+  replace: '            { value: p.docs == null ? "—" : String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" },',
+  count: 1
+};
+
+/** A58.4i — THE RESULTS-RAIL ROW'S ORPHANED `docs` (finding S8, fix round 1; the bundle's own
+ *  dead-code rule, A28.2's precedent). `mdResults` also computed `docs: String(p.docs)` — a
+ *  FIFTH "null" the first pass's walk found and nothing renders.
+ *
+ *  MEASURED before deleting, the A28.2-A28.9 way, and on BOTH targets: ONE declaration, and ZERO
+ *  readers. The design's own `<sc-for list="{{ md.mdResults }}" as="r">` block reads fourteen
+ *  fields — `cardStyle`, `eyebrow`, `hasPhotoSrc`, `heartIconStyle`, `meta`, `name`,
+ *  `noPhotoSrc`, `photoHint`, `photoId`, `photoSrc`, `place`, `priceLabel`, `select`,
+ *  `toggleSave` — and `docs` is not among them; `App.vue`'s own loop reads the same fourteen and
+ *  carries zero `r?.docs`; `r.docs` occurs nowhere in either file, and the only `mdResults`
+ *  readers outside `logic.js` are two A25 cases that map `r.name`. (The `d.docs`/`d?.docs` on
+ *  both targets is the DETAIL screen's document list, a different declaration on a different
+ *  object, and is untouched.)
+ *
+ *  `revLabel`, `ebitdaLabel` and `sqft` on the same row are unread by that loop too and are
+ *  deliberately LEFT STANDING: this round's ruling names the "null" residue, and deleting values
+ *  nobody ruled on would be the scope creep A28.2-A28.4 refused before D-C45 named the four
+ *  helpers explicitly. */
+const A58_4i: Amendment = {
+  id: 'A58.4i', ...A58,
+  ruling: RULING_S8,
+  find: '          docs: String(p.docs),\n',
+  replace: '',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10073,5 +10154,8 @@ export function amendments(): Amendment[] {
     // Appended last, as every family is, and it has to be: A58.1 is CHAINED on A16.7, whose whole
     // three-line `replace` its own `find` takes (declared `Consumes A16.7` on its
     // LOCAL_AMENDMENTS.md row), so it must run after that family.
-    A58_1, A58_2, A58_3, A58_4a, A58_4b, A58_4c, A58_4d, A58_4e];
+    A58_1, A58_2, A58_3, A58_4a, A58_4b, A58_4c, A58_4d, A58_4e,
+    // Fix round 1 (controller, 2026-09-24): the residue S8 left behind. A58.4f consumes A58.4a
+    // and A58.4g consumes A58.4b, so both run after the entries whose lines they take.
+    A58_4f, A58_4g, A58_4h, A58_4i];
 }

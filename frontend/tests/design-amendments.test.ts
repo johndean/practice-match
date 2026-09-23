@@ -545,6 +545,12 @@ describe('local design amendments (spec D15)', () => {
     // figure inside a composed SENTENCE takes `money()`'s own em dash, while the section with no
     // prose takes the `hasProse: false, prose: ""` its Financial Snapshot neighbour carries.
     'A58.4a', 'A58.4b', 'A58.4c', 'A58.4d', 'A58.4e',
+    // Fix round 1 (controller, 2026-09-24): S8's residue, ruled IN after the first pass
+    // reported it out of scope. A58.4f/A58.4g are the two `String(p.rooms)` rows, A58.4h the
+    // results-rail card's own doctor count beside the pin A58.4c fixed, and A58.4i the
+    // orphaned `docs:` on that row — one declaration, zero readers on both targets. A58.4f is
+    // CHAINED on A58.4a and A58.4g on A58.4b (each declared `Consumes` in LOCAL_AMENDMENTS.md).
+    'A58.4f', 'A58.4g', 'A58.4h', 'A58.4i',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -757,7 +763,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(442);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(446);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

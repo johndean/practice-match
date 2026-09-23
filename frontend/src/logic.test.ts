@@ -7569,6 +7569,7 @@ describe('A58.4 — no buyer-facing string reads the word "null" (finding S8)', 
   const detailOf = (id: string): any => { c.setState({ auth: true, detailId: id }); return c.detail(); };
   const practiceSection = (id: string): any => detailOf(id).sections.filter((s: any) => s.title === 'The Practice')[0];
   const pin = (id: string): any => c.marketVals(c.filtered()).practices.filter((x: any) => x.id === id)[0];
+  const rail = (id: string): any => c.marketVals(c.filtered()).mdResults.filter((x: any) => x.name === c.practiceName(P.filter((q: any) => q.id === id)[0]))[0];
 
   it('omits the Doctors key fact rather than printing "null full-time equivalent" (A58.4a)', () => {
     withField('p1', { docs: null }, () => {
@@ -7640,5 +7641,61 @@ describe('A58.4 — no buyer-facing string reads the word "null" (finding S8)', 
     const sec = practiceSection('p1');
     expect(sec.hasProse).toBe(true);
     expect(sec.prose).toBe('Wellness, dentistry, soft-tissue surgery, in-house lab, digital radiography.');
+  });
+
+  // -- fix round 1 (controller, 2026-09-24). The first pass closed four of S8's strings and
+  // reported the rest as out of scope; the controller ruled `rooms` and the whole residue IN,
+  // D-C65 being "implement full seller wizard audit". Three more RENDERED sites, found by
+  // nulling every step-4 column and walking every string detail()/marketVals()/renderVals()
+  // produce, plus one computed value nothing renders at all.
+
+  it('omits the Exam rooms key fact rather than printing "null" (A58.4f)', () => {
+    withField('p1', { rooms: null }, () => {
+      const facts = detailOf('p1').keyFacts;
+      expect(facts.map((k: any) => k.k)).toEqual(['Gross revenue', 'Doctors', 'Square feet', 'Property']);
+      for (const k of facts) expect(String(k.v), `key fact ${k.k}`).not.toContain('null');
+    });
+    // …and with the figure present the row is third, exactly as the design draws it.
+    expect(detailOf('p1').keyFacts.map((k: any) => k.k)).toEqual(['Gross revenue', 'Doctors', 'Exam rooms', 'Square feet', 'Property']);
+    expect(detailOf('p1').keyFacts.filter((k: any) => k.k === 'Exam rooms')[0].v).toBe('5');
+  });
+
+  it('omits The Practice\'s Exam rooms row rather than printing "null" (A58.4g)', () => {
+    withField('p1', { rooms: null }, () => {
+      const rows = practiceSection('p1').rows;
+      expect(rows.map((r: any) => r.k)).toEqual(['Doctors', 'Support team', 'Hours']);
+      for (const r of rows) expect(String(r.v), `row ${r.k}`).not.toContain('null');
+    });
+    const rows = practiceSection('p1').rows;
+    expect(rows.map((r: any) => r.k)).toEqual(['Doctors', 'Support team', 'Exam rooms', 'Hours']);
+    expect(rows.filter((r: any) => r.k === 'Exam rooms')[0].v).toBe('5');
+  });
+
+  it('a practice with ZERO exam rooms still prints its row — != null, not truthiness (A58.4f/A58.4g)', () => {
+    withField('p1', { rooms: 0 }, () => {
+      expect(detailOf('p1').keyFacts.filter((k: any) => k.k === 'Exam rooms')[0].v).toBe('0');
+      expect(practiceSection('p1').rows.filter((r: any) => r.k === 'Exam rooms')[0].v).toBe('0');
+    });
+  });
+
+  it('the results-rail card\'s doctor count takes the same em dash as the pin beside it (A58.4h)', () => {
+    c.setState({ auth: true });
+    withField('p1', { docs: null }, () => {
+      const m = rail('p1').meta;
+      expect(m[1].value).toBe('—');
+      expect(m[1].unit, 'the unit word is kept, exactly money()\'s own shape').toBe('doctors');
+      for (const mm of m) expect(String(mm.value), 'rail meta').not.toContain('null');
+    });
+    // Present, singular and zero all print the figure, byte for byte the design's own.
+    expect(rail('p1').meta[1]).toMatchObject({ value: '3', unit: 'doctors' });
+    withField('p1', { docs: 1 }, () => expect(rail('p1').meta[1]).toMatchObject({ value: '1', unit: 'doctor' }));
+    withField('p1', { docs: 0 }, () => expect(rail('p1').meta[1]).toMatchObject({ value: '0', unit: 'doctors' }));
+  });
+
+  it('the results-rail row carries no computed `docs` — one declaration, zero readers on both targets (A58.4i)', () => {
+    expect(rail('p1').docs, 'the design\'s own <sc-for as="r"> reads 14 fields and this is not one of them').toBeUndefined();
+    withField('p1', { docs: null }, () => {
+      expect(rail('p1').docs, 'it computed the word "null" for nobody').toBeUndefined();
+    });
   });
 });
