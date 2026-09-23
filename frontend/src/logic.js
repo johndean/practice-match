@@ -821,7 +821,7 @@ class Component extends DCLogic {
         priceLabel: this.money(p.price),
         name: this.practiceName(p),
         photoSrc: this.thumbSrc(p),
-        meta: p.docs + (p.docs === 1 ? " doctor" : " doctors") + " · " + this.money(p.rev) + " revenue"
+        meta: (p.docs == null ? "—" : p.docs) + (p.docs === 1 ? " doctor" : " doctors") + " · " + this.money(p.rev) + " revenue"
       })),
       activeLayer: valueLayer,
       active: (() => {
@@ -1887,12 +1887,12 @@ class Component extends DCLogic {
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [
-        { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },
-        { k: "Doctors", v: p.docs + " full-time equivalent" },
+        { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" }
+      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat([
         { k: "Exam rooms", v: String(p.rooms) },
         { k: "Square feet", v: p.sqft.toLocaleString() },
         { k: "Property", v: bldg }
-      ],
+      ]),
       docs: [
         { name: "Exterior and interior photos", meta: "9 images · seller-provided", pill: "Open to approved members", pillStyle: pill(true), iconStyle: docIcon(true), isOpen: true, isLocked: false },
         { name: "Floor plan", meta: "PDF · 1 page", pill: unlocked ? "Open to you" : "Locked — seller approval", pillStyle: pill(unlocked), iconStyle: docIcon(unlocked), isOpen: !!unlocked, isLocked: !unlocked },
@@ -1920,13 +1920,12 @@ class Component extends DCLogic {
           ]
         },
         {
-          title: "The Practice", hasProse: true, prose: p.services + ".", hasNote: false, note: "",
-          rows: [
-            { k: "Doctors", v: p.docs + " FTE" },
+          title: "The Practice", hasProse: !!p.services, prose: p.services ? p.services + "." : "", hasNote: false, note: "",
+          rows: (p.docs != null ? [{ k: "Doctors", v: p.docs + " FTE" }] : []).concat([
             { k: "Support team", v: p.staff },
             { k: "Exam rooms", v: String(p.rooms) },
             { k: "Hours", v: p.hours }
-          ]
+          ])
         },
         {
           title: "Property", hasProse: true, prose: p.facility, hasNote: false, note: "",
@@ -2505,7 +2504,7 @@ class Component extends DCLogic {
         const tone = r.status === "pending" ? ["#003a70", "#deecf7", "#deecf7"] : r.status === "accepted" ? ["#ffffff", "#003a70", "#003a70"] : ["#494949", "#ffffff", "#494949"];
         return {
           title: p.type + " practice — " + p.area,
-          meta: this.money(p.price) + " · " + p.docs + " doctors · " + p.sqft.toLocaleString() + " sq ft",
+          meta: this.money(p.price) + " · " + (p.docs == null ? "—" : p.docs) + " doctors · " + p.sqft.toLocaleString() + " sq ft",
           msg: "\u201C" + r.msg + "\u201D",
           reply: r.reply || "", hasReply: !!r.reply,
           statusLabel: label, when: r.when,

@@ -9640,6 +9640,111 @@ const A58_3: Amendment = {
   count: 1
 };
 
+const RULING_S8 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding S8 of the eight-step audit — step 4 of the wizard has NO validation at any layer, so `docs` and `services` can both be NULL on a PUBLISHED listing, and four buyer-facing strings concatenated them straight into prose: the detail card’s key fact read "null full-time equivalent", The Practice block’s first row read "null FTE", the Browse map pin and the buyer’s own "My Requests" row each read "null doctors", and The Practice’s opening paragraph read "null.". Each now says ABSENT in the design’s own vocabulary and composes no new copy: a ROW is omitted, a figure inside a composed SENTENCE takes the em dash `money()` already returns for an absent figure — "— doctors" beside the "— revenue" the same sentence already renders — and a section with no prose takes the `hasProse: false, prose: ""` the Financial Snapshot section beside it already carries.';
+
+/** A58.4a — THE DOCTORS KEY FACT IS OMITTED RATHER THAN READ "null" (finding S8). The buyer's
+ *  detail card read `{ k: "Doctors", v: p.docs + " full-time equivalent" }`, and step 4 is
+ *  validated NOWHERE — not client-side, not in `columns_for`, not in `_complete_enough`, which
+ *  adds only `sqft` (and only because migration 034 was written after a null `sqft` crashed
+ *  Browse) — so a PUBLISHED listing can carry `docs: null` and the card read
+ *  "null full-time equivalent" to every buyer who opened it.
+ *
+ *  The treatment is A58.3's, one array over: the row is OMITTED through the design's own
+ *  `.concat(COND ? [ … ] : [])`. No fallback is composed — the design draws no "not stated" row
+ *  and "Doctors: —" would be a figure the seller never withheld, merely never gave. The test is
+ *  `!= null` and not truthiness, which is the design's own test for a present figure
+ *  (`hasDemo: p.id !== "p8" && p.pop != null` in this same method): a practice with ZERO doctors
+ *  is a real answer and must still be printed. The row keeps its PLACE, second of the five. */
+const A58_4a: Amendment = {
+  id: 'A58.4a', ...A58,
+  ruling: RULING_S8,
+  find: '      keyFacts: [\n'
+    + '        { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },\n'
+    + '        { k: "Doctors", v: p.docs + " full-time equivalent" },\n'
+    + '        { k: "Exam rooms", v: String(p.rooms) },\n'
+    + '        { k: "Square feet", v: p.sqft.toLocaleString() },\n'
+    + '        { k: "Property", v: bldg }\n'
+    + '      ],\n',
+  replace: '      keyFacts: [\n'
+    + '        { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" }\n'
+    + '      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat([\n'
+    + '        { k: "Exam rooms", v: String(p.rooms) },\n'
+    + '        { k: "Square feet", v: p.sqft.toLocaleString() },\n'
+    + '        { k: "Property", v: bldg }\n'
+    + '      ]),\n',
+  count: 1
+};
+
+/** A58.4b — THE PRACTICE'S DOCTORS ROW, THE SAME (finding S8). `{ k: "Doctors", v: p.docs +
+ *  " FTE" }` is the same figure one block down the same screen, and read "null FTE" for the same
+ *  reason. Same treatment, same `!= null` test, and the row keeps its PLACE — first of the four,
+ *  so the conditional member leads the `.concat` rather than sitting inside it. */
+const A58_4b: Amendment = {
+  id: 'A58.4b', ...A58,
+  ruling: RULING_S8,
+  find: '          rows: [\n'
+    + '            { k: "Doctors", v: p.docs + " FTE" },\n'
+    + '            { k: "Support team", v: p.staff },\n'
+    + '            { k: "Exam rooms", v: String(p.rooms) },\n'
+    + '            { k: "Hours", v: p.hours }\n'
+    + '          ]\n',
+  replace: '          rows: (p.docs != null ? [{ k: "Doctors", v: p.docs + " FTE" }] : []).concat([\n'
+    + '            { k: "Support team", v: p.staff },\n'
+    + '            { k: "Exam rooms", v: String(p.rooms) },\n'
+    + '            { k: "Hours", v: p.hours }\n'
+    + '          ])\n',
+  count: 1
+};
+
+/** A58.4c — THE BROWSE MAP PIN'S META (finding S8). `p.docs + (p.docs === 1 ? " doctor" :
+ *  " doctors") + " · " + this.money(p.rev) + " revenue"` read "null doctors · $2.10M revenue"
+ *  over the pin of any published listing whose seller skipped step 4.
+ *
+ *  A ROW CANNOT BE DROPPED HERE — the figure is inside a composed sentence on a pin that must
+ *  still be drawn — so the treatment is the design's OWN em dash, `money()`'s answer for an
+ *  absent figure, which this very sentence already renders one clause to the right: a listing
+ *  with no revenue reads "— revenue", and from here one with no doctors reads "— doctors". The
+ *  dash stands where the NUMBER stands and the unit word is kept, which is exactly `money()`'s
+ *  shape; `p.docs === 1` is false for a null, so the plural is the one already written. */
+const A58_4c: Amendment = {
+  id: 'A58.4c', ...A58,
+  ruling: RULING_S8,
+  find: 'meta: p.docs + (p.docs === 1 ? " doctor" : " doctors") + " · " + this.money(p.rev) + " revenue"',
+  replace: 'meta: (p.docs == null ? "—" : p.docs) + (p.docs === 1 ? " doctor" : " doctors") + " · " + this.money(p.rev) + " revenue"',
+  count: 1
+};
+
+/** A58.4d — THE BUYER'S "MY REQUESTS" META (finding S8). `this.money(p.price) + " · " + p.docs +
+ *  " doctors · " + …` read "$1.45M · null doctors · 4,200 sq ft" on the buyer's own list of the
+ *  requests they have sent. A58.4c's treatment verbatim, and for the same reason: the sentence
+ *  already opens with `money()`, so an absent price prints the identical em dash beside it. */
+const A58_4d: Amendment = {
+  id: 'A58.4d', ...A58,
+  ruling: RULING_S8,
+  find: '          meta: this.money(p.price) + " · " + p.docs + " doctors · " + p.sqft.toLocaleString() + " sq ft",',
+  replace: '          meta: this.money(p.price) + " · " + (p.docs == null ? "—" : p.docs) + " doctors · " + p.sqft.toLocaleString() + " sq ft",',
+  count: 1
+};
+
+/** A58.4e — THE PRACTICE'S OPENING PARAGRAPH (finding S8). `prose: p.services + "."` rendered
+ *  the single word "null." as the section's own lead paragraph — a full 15.5 px prose block, not
+ *  a row value — for a listing whose seller left step 4's "Services offered" empty.
+ *
+ *  The design already has a treatment for a section with nothing to say in prose, and it is
+ *  carried by the section immediately above this one: Financial Snapshot is
+ *  `hasProse: false, prose: ""`, and `App.vue` mounts the `<p>` inside `v-if="sec?.hasProse"`, so
+ *  `false` means no paragraph rather than an empty one. `!!p.services` is the design's own `!!`
+ *  test (`hasReply: !!r.reply`), which also catches the empty string — a lone full stop is no
+ *  more a sentence than "null." is. The `prose` ternary keeps the paragraph byte for byte
+ *  wherever the listing HAS services, which is every design fixture and every seeded listing. */
+const A58_4e: Amendment = {
+  id: 'A58.4e', ...A58,
+  ruling: RULING_S8,
+  find: '          title: "The Practice", hasProse: true, prose: p.services + ".", hasNote: false, note: "",',
+  replace: '          title: "The Practice", hasProse: !!p.services, prose: p.services ? p.services + "." : "", hasNote: false, note: "",',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9968,5 +10073,5 @@ export function amendments(): Amendment[] {
     // Appended last, as every family is, and it has to be: A58.1 is CHAINED on A16.7, whose whole
     // three-line `replace` its own `find` takes (declared `Consumes A16.7` on its
     // LOCAL_AMENDMENTS.md row), so it must run after that family.
-    A58_1, A58_2, A58_3];
+    A58_1, A58_2, A58_3, A58_4a, A58_4b, A58_4c, A58_4d, A58_4e];
 }

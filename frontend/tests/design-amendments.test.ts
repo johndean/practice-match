@@ -537,6 +537,14 @@ describe('local design amendments (spec D15)', () => {
     // A58.2, whose introduced square-feet line its `find` takes whole (declared `Consumes A58.2`
     // in LOCAL_AMENDMENTS.md).
     'A58.2', 'A58.3',
+    // A58.4a-e are finding S8: step 4 is validated NOWHERE, so `docs` and `services` can both be
+    // NULL on a PUBLISHED listing, and four buyer-facing strings concatenated them into prose —
+    // "null full-time equivalent", "null FTE", "null doctors" (the Browse pin and the buyer's own
+    // My Requests row) and "null.". None is CHAINED: all five `find`s occur in the pristine
+    // bundle. Two treatments, both the design's own — a ROW is omitted (A58.3's `.concat`), and a
+    // figure inside a composed SENTENCE takes `money()`'s own em dash, while the section with no
+    // prose takes the `hasProse: false, prose: ""` its Financial Snapshot neighbour carries.
+    'A58.4a', 'A58.4b', 'A58.4c', 'A58.4d', 'A58.4e',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -749,7 +757,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(437);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(442);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

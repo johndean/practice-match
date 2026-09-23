@@ -7532,3 +7532,113 @@ describe('A58.2/A58.3 — the buyer\'s Property block states only what the listi
     expect(keys('p2')).not.toContain('Facility type');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A58.4 — no buyer-facing string reads the word "null" (finding S8 of the 2026-09-23 seller
+// wizard audit).
+//
+// Step 4 carries NO validation at any layer — `docs`, `rooms`, `hours` and `services` can all be
+// NULL on a PUBLISHED listing (`app/api/seller_listings.py:177`; `_complete_enough` adds only
+// `sqft`, and only because migration 034 was written after a null crashed Browse) — and four
+// buyer-facing strings concatenated those fields straight into prose: "null full-time
+// equivalent", "null FTE", "null doctors" (the Browse pin and the buyer's My Requests row) and
+// "null.".
+//
+// TWO TREATMENTS, each the design's own, neither of them new copy:
+//   * a ROW is OMITTED, A58.3's own `.concat(COND ? [ … ] : [])` — the design draws no
+//     "not stated" row and composing one would be a second fabrication.
+//   * a figure inside a COMPOSED SENTENCE, where no row can be dropped, takes the em dash
+//     `money()` already returns for an absent figure: "— doctors" stands beside the "— revenue"
+//     the very same sentence already renders for a withheld revenue.
+//   * the section PROSE takes `hasProse: false, prose: ""`, which is byte for byte what the
+//     Financial Snapshot section beside it already carries.
+// ---------------------------------------------------------------------------------------
+describe('A58.4 — no buyer-facing string reads the word "null" (finding S8)', () => {
+  const fixture = (id: string): any => (P as unknown as Record<string, unknown>[]).filter((x) => x.id === id)[0];
+
+  /** Run `body` with `patch` laid over fixture `id` — the row `GET /api/listings` serves for a
+   *  published listing whose seller answered none of step 4. Everything is put back afterwards,
+   *  so the fixtures the rest of this file characterises are untouched. */
+  function withField(id: string, patch: Record<string, unknown>, body: () => void): void {
+    const p = fixture(id);
+    const saved = Object.keys(patch).map((f) => [f, p[f]] as const);
+    Object.assign(p, patch);
+    try { body(); } finally { for (const [f, v] of saved) p[f] = v; }
+  }
+
+  const detailOf = (id: string): any => { c.setState({ auth: true, detailId: id }); return c.detail(); };
+  const practiceSection = (id: string): any => detailOf(id).sections.filter((s: any) => s.title === 'The Practice')[0];
+  const pin = (id: string): any => c.marketVals(c.filtered()).practices.filter((x: any) => x.id === id)[0];
+
+  it('omits the Doctors key fact rather than printing "null full-time equivalent" (A58.4a)', () => {
+    withField('p1', { docs: null }, () => {
+      const facts = detailOf('p1').keyFacts;
+      expect(facts.map((k: any) => k.k)).toEqual(['Gross revenue', 'Exam rooms', 'Square feet', 'Property']);
+      for (const k of facts) expect(String(k.v), `key fact ${k.k}`).not.toContain('null');
+    });
+  });
+
+  it('keeps the Doctors key fact, in the design\'s own place, when the listing carries the figure (A58.4a)', () => {
+    const facts = detailOf('p1').keyFacts;
+    expect(facts.map((k: any) => k.k)).toEqual(['Gross revenue', 'Doctors', 'Exam rooms', 'Square feet', 'Property']);
+    expect(facts[1].v).toBe('3 full-time equivalent');
+  });
+
+  it('omits The Practice\'s Doctors row rather than printing "null FTE" (A58.4b)', () => {
+    withField('p1', { docs: null }, () => {
+      const rows = practiceSection('p1').rows;
+      expect(rows.map((r: any) => r.k)).toEqual(['Support team', 'Exam rooms', 'Hours']);
+      for (const r of rows) expect(String(r.v), `row ${r.k}`).not.toContain('null');
+    });
+    // …and with the figure present the row is first, exactly as the design draws it.
+    const rows = practiceSection('p1').rows;
+    expect(rows.map((r: any) => r.k)).toEqual(['Doctors', 'Support team', 'Exam rooms', 'Hours']);
+    expect(rows[0].v).toBe('3 FTE');
+  });
+
+  it('the map pin\'s meta takes the em dash money() already gives an absent figure, never "null doctors" (A58.4c)', () => {
+    c.setState({ auth: true });
+    withField('p1', { docs: null }, () => {
+      expect(pin('p1').meta).toBe('— doctors · $2.10M revenue');
+    });
+    expect(pin('p1').meta, 'the figure is present: byte for byte the design\'s own').toBe('3 doctors · $2.10M revenue');
+  });
+
+  it('the buyer\'s My Requests meta does the same, never "null doctors" (A58.4d)', () => {
+    c.setState({ auth: true, screen: 'requests', myRequests: [{ id: 'r1', pid: 'p1', status: 'pending', when: 'Aug 29', msg: 'Interested.' }] });
+    withField('p1', { docs: null }, () => {
+      expect(c.renderVals().reqList[0].meta).toBe('$1.45M · — doctors · 4,200 sq ft');
+    });
+    expect(c.renderVals().reqList[0].meta, 'the figure is present: byte for byte the design\'s own').toBe('$1.45M · 3 doctors · 4,200 sq ft');
+  });
+
+  it('a practice with ZERO doctors still prints its figure — the test is != null, not truthiness (A58.4a/A58.4b)', () => {
+    // The choice of `!= null` over `p.docs ? …` is load-bearing and is claimed in the ledger:
+    // `docs` is an integer column and 0 is a real answer, so truthiness would omit a row the
+    // seller DID fill in. Perturbing either amendment to truthiness turns this case red.
+    withField('p1', { docs: 0 }, () => {
+      expect(detailOf('p1').keyFacts.map((k: any) => k.k)).toContain('Doctors');
+      expect(detailOf('p1').keyFacts.filter((k: any) => k.k === 'Doctors')[0].v).toBe('0 full-time equivalent');
+      expect(practiceSection('p1').rows.filter((r: any) => r.k === 'Doctors')[0].v).toBe('0 FTE');
+      // …and the two composed sentences print the figure, never the dash.
+      expect(pin('p1').meta).toBe('0 doctors · $2.10M revenue');
+    });
+  });
+
+  it('The Practice draws no prose paragraph rather than the word "null." (A58.4e)', () => {
+    withField('p1', { services: null }, () => {
+      const sec = practiceSection('p1');
+      expect(sec.prose).toBe('');
+      expect(sec.hasProse, 'the Financial Snapshot section\'s own treatment for a section with no prose').toBe(false);
+    });
+    // An empty string says the same thing and is tested the same way (`!!`, the design's own
+    // `hasReply: !!r.reply`): a lone full stop is no more a sentence than "null." is.
+    withField('p1', { services: '' }, () => {
+      expect(practiceSection('p1').prose).toBe('');
+      expect(practiceSection('p1').hasProse).toBe(false);
+    });
+    const sec = practiceSection('p1');
+    expect(sec.hasProse).toBe(true);
+    expect(sec.prose).toBe('Wellness, dentistry, soft-tissue surgery, in-house lab, digital radiography.');
+  });
+});
