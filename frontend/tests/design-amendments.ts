@@ -9540,9 +9540,13 @@ const A58 = {
  *  side ran unconditionally and SYNCHRONOUSLY, before the server had answered. Measured against a
  *  rejecting adapter: the seller landed on "Submitted — Your listing is with the VIN Foundation"
  *  while the refusal was computed into `wiz.errorText`, which the template renders inside
- *  `isPreview` and NOT inside `isDone`, so it was never drawn at all; and a fabricated `in_review`
- *  row stayed in their dashboard, because `reloadListings()` runs only on the fulfilled arm. Every
- *  refusal the API can answer was affected — `INCOMPLETE`, `PHOTOS_NOT_READY`, a `409 STATE`, a
+ *  `isPreview` and NOT inside `isDone`, so it was never drawn at all; and on the REFERENCE path a
+ *  fabricated `in_review` row stayed in the fixture list, because `reloadListings()` runs only on
+ *  the fulfilled arm. With an ADAPTER that row was written to state and drawn NOWHERE — A16.1's own
+ *  ternary renders `myListings`, or NO rows while none has loaded, and never `sellerListings`
+ *  (fix round 1, review Important-1: the first draft of this sentence claimed the dashboard, which
+ *  is true only of the path that has no server to refuse anything). Every refusal the API can
+ *  answer was affected — `INCOMPLETE`, `PHOTOS_NOT_READY`, a `409 STATE`, a
  *  rate limit.
  *
  *  THREE PATHS, and the first is why this is written as a thunk rather than as a second copy of the

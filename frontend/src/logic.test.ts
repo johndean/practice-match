@@ -7388,8 +7388,11 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
 // server had answered anything. A seller whose listing the API refused (`INCOMPLETE`,
 // `PHOTOS_NOT_READY`, a `409 STATE`, a rate limit) was shown "Submitted — Your listing is with the
 // VIN Foundation" all the same, the refusal was computed into `wiz.errorText`, which `App.vue`
-// renders inside `isPreview` and NOT inside `isDone`, and a fabricated `in_review` row stayed in
-// their dashboard because `reloadListings()` never ran on the failure path.
+// renders inside `isPreview` and NOT inside `isDone`, and on the REFERENCE path a fabricated
+// `in_review` row stayed in the fixture list because `reloadListings()` never ran on the failure
+// path. With an ADAPTER that row was written to state and drawn nowhere: A16.1's own ternary
+// renders `myListings`, or no rows while none has loaded, and never `sellerListings` (fix round 1,
+// review Important-1 — measured on `sellerVals().listings`, not read off the `setState`).
 //
 // Three paths, three cases, because they are three different contracts:
 //   * NO ADAPTER — the reference and the Claude Design preview — flips synchronously with the
@@ -7433,7 +7436,7 @@ describe('A58.1 — Submit flips to "Submitted" only when the server accepted it
     expect(v.isPreview, 'the seller stays on the preview, which is where the error slot is').toBe(true);
     expect(v.errorText).toContain('Every required field must be answered');
     expect(api.list, 'no reload on the failure path — there is nothing new to read').not.toHaveBeenCalled();
-    expect(c2.state.sellerListings, 'nothing is prepended to the dashboard').toHaveLength(rows);
+    expect(c2.state.sellerListings, 'nothing is prepended to the design\'s own fixture list').toHaveLength(rows);
     expect(c2.state.sellerListings.some((r: any) => r.note === 'Submitted just now · awaiting VIN Foundation review'),
       'no fabricated in_review row for a listing the server never took').toBe(false);
   });
