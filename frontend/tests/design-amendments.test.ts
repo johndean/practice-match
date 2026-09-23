@@ -531,6 +531,12 @@ describe('local design amendments (spec D15)', () => {
     // that accepted it. CHAINED on A16.7, whose whole three-line `replace` its `find` takes
     // (declared `Consumes A16.7` in LOCAL_AMENDMENTS.md).
     'A58.1',
+    // A58.2/A58.3 are findings S5 and S6, on the BUYER's Property block: the Parking row was a
+    // literal on every listing (no field, no column, nobody ever asked) and the "Facility type"
+    // row read `bldg`, the building-status answer to a different question. A58.3 is CHAINED on
+    // A58.2, whose introduced square-feet line its `find` takes whole (declared `Consumes A58.2`
+    // in LOCAL_AMENDMENTS.md).
+    'A58.2', 'A58.3',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -743,7 +749,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(435);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(437);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

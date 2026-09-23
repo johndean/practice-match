@@ -3712,11 +3712,10 @@ class Component extends DCLogic {
         {
           title: "Property", hasProse: true, prose: p.facility, hasNote: false, note: "",
           rows: [
-            { k: "Building status", v: bldg },
-            { k: "Facility type", v: p.bldg === "Leased" ? "Leased suite" : "Standalone building" },
-            { k: "Approximate square feet", v: p.sqft.toLocaleString() },
-            { k: "Parking", v: "On-site" }
-          ]
+            { k: "Building status", v: bldg }
+          ].concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([
+            { k: "Approximate square feet", v: p.sqft.toLocaleString() }
+          ])
         }
       ]
     };

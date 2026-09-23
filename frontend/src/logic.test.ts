@@ -7466,3 +7466,69 @@ describe('A58.1 — Submit flips to "Submitted" only when the server accepted it
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A58.2 / A58.3 — the buyer's Property block stops fabricating (findings S5 and S6 of the
+// 2026-09-23 seller wizard audit).
+//
+// S5: `{ k: "Parking", v: "On-site" }` was a LITERAL on every listing in the product. `parking`
+// appears in no migration, no route and no adapter — nobody was ever asked, so the row was a
+// statement about a property nothing in the system knows.
+//
+// S6: the row labelled "Facility type" read `p.bldg`, which is the BUILDING STATUS
+// (Included / Available separately / Leased) and a different question from the one step 5 asks
+// (`facilityType`: Standalone / Strip or plaza / Medical park / Other). A seller who answered
+// "Medical park" was published to buyers as "Standalone building", and a seller who answered
+// "Strip or plaza" on a leased suite was published as "Leased suite" — the wrong answer to the
+// right label, which is worse than no answer at all.
+//
+// ABSENT BEATS FAKED: the API half is a later task in the same plan, so `facilityType` is
+// undefined on every listing today. The row must therefore DISAPPEAR rather than fall back to
+// anything, which is what these cases pin on both sides of the seam.
+// ---------------------------------------------------------------------------------------
+describe('A58.2/A58.3 — the buyer\'s Property block states only what the listing carries', () => {
+  /** The Property section of the buyer's detail screen for `id`. */
+  const property = (id: string): any => {
+    c.setState({ auth: true, detailId: id });
+    return c.detail().sections.filter((s: any) => s.title === 'Property')[0];
+  };
+  const keys = (id: string): string[] => property(id).rows.map((r: any) => r.k);
+  /** A fixture by id, as the API's own row would be laid over it. */
+  const fixture = (id: string): any => (P as unknown as Record<string, unknown>[]).filter((x) => x.id === id)[0];
+
+  it('carries no Parking row — nobody is ever asked, so nothing may be said (A58.2, S5)', () => {
+    for (const p of P as unknown as { id: string }[]) {
+      expect(keys(p.id), `listing ${p.id}`).not.toContain('Parking');
+      expect(property(p.id).rows.map((r: any) => r.v), `listing ${p.id}`).not.toContain('On-site');
+    }
+  });
+
+  it('shows NO Facility type row while the listing carries no facilityType (A58.3, S6)', () => {
+    // Every design fixture, and every listing the API serves today: absent beats faked, so the
+    // row is gone rather than reading the building-status answer to a different question.
+    for (const p of P as unknown as { id: string }[]) {
+      expect(keys(p.id), `listing ${p.id}`).not.toContain('Facility type');
+    }
+    // …and the rows that ARE real are untouched, in the design's own order.
+    expect(keys('p1')).toEqual(['Building status', 'Approximate square feet']);
+  });
+
+  it('shows the listing\'s OWN facility type when the API serves one, in the design\'s own place (A58.3, S6)', () => {
+    const p = fixture('p1');            // bldg "Included" — the old expression read "Standalone building"
+    p.facilityType = 'Medical park';
+    try {
+      expect(keys('p1')).toEqual(['Building status', 'Facility type', 'Approximate square feet']);
+      expect(property('p1').rows.filter((r: any) => r.k === 'Facility type')[0].v).toBe('Medical park');
+    } finally { delete p.facilityType; }
+  });
+
+  it('never lets the building-status answer stand in for the facility type (A58.3, S6)', () => {
+    const leased = fixture('p2');       // bldg "Leased" — the old expression read "Leased suite"
+    leased.facilityType = 'Strip or plaza';
+    try {
+      expect(property('p2').rows.filter((r: any) => r.k === 'Facility type')[0].v).toBe('Strip or plaza');
+    } finally { delete leased.facilityType; }
+    // With the answer withheld again the row is absent, not "Leased suite".
+    expect(keys('p2')).not.toContain('Facility type');
+  });
+});

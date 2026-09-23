@@ -9580,6 +9580,66 @@ const A58_1: Amendment = {
   count: 1
 };
 
+const RULING_S5 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding S5 of the eight-step audit — the buyer’s Property block carried `{ k: "Parking", v: "On-site" }` as a LITERAL on every listing in the product. No field, no column and no question: `parking` appears nowhere in `migrations/`, `app/api/` or `frontend/src/listings/`, so no seller has ever been asked and the row was a statement about a property nothing in the system knows. The row is removed.';
+
+const RULING_S6 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding S6 of the eight-step audit — the buyer’s Property block carried a row labelled "Facility type" computed from `bldg`, which answers a different question: `bldg` is the BUILDING STATUS (Included / Available separately / Leased) while `facilityType` is what step 5 actually asks (Standalone / Strip or plaza / Medical park / Other), so a seller who answered "Medical park" was published to buyers as "Standalone building" and one who answered "Strip or plaza" on a leased suite as "Leased suite" — the wrong answer under the right label. The row reads the listing’s OWN `facilityType`, and while the listing carries none it is not rendered at all: absent beats faked.';
+
+/** A58.2 — NO PARKING ROW (finding S5). `{ k: "Parking", v: "On-site" }` was a LITERAL, drawn on
+ *  the Property block of every listing the product has ever served. `parking` is in no migration,
+ *  no column, no route, no adapter and no wizard step — the seller is never asked, so there is
+ *  nothing behind the sentence to be right or wrong. Under D-C53's own rule, restated by D-C65 for
+ *  what a BUYER reads rather than what an admin clicks, a statement with nothing behind it is
+ *  removed rather than softened, and there is no honest fallback to put in its place: "Parking:
+ *  unknown" would be a second fabrication (nobody declared it unknown either) and the design draws
+ *  no such row. One literal script edit; the `find` swallows the square-feet line above it because
+ *  that line carries the separating comma, which is the only reason A58.3 below is chained on this
+ *  entry rather than standing on its own pristine text. */
+const A58_2: Amendment = {
+  id: 'A58.2', ...A58,
+  ruling: RULING_S5,
+  find: '            { k: "Approximate square feet", v: p.sqft.toLocaleString() },\n'
+    + '            { k: "Parking", v: "On-site" }\n',
+  replace: '            { k: "Approximate square feet", v: p.sqft.toLocaleString() }\n',
+  count: 1
+};
+
+/** A58.3 — THE FACILITY TYPE IS THE LISTING'S OWN (finding S6). The row read
+ *  `p.bldg === "Leased" ? "Leased suite" : "Standalone building"` — `bldg` is the BUILDING STATUS
+ *  the wizard's step 5 asks first (Included / Available separately / Leased) and `facilityType` is
+ *  the separate question beside it (Standalone / Strip or plaza / Medical park / Other), which is
+ *  collected, validated and stored (`migrations/030:27`) and reaches no buyer. So a seller who
+ *  answered "Medical park" was published as "Standalone building": not a missing answer but the
+ *  WRONG answer under the right label, which a buyer has no way to see through.
+ *
+ *  ABSENT BEATS FAKED, and it is the whole of the behaviour while the API half is unbuilt: with no
+ *  `facilityType` on the listing the row is not rendered at all, so the Property block states two
+ *  facts it holds rather than three of which one is invented. No fallback is added — the design
+ *  has no "not stated" row and composing one would be new copy nobody ruled.
+ *
+ *  The conditional member is the design's OWN idiom for exactly this shape, the legend ramp's
+ *  `.concat(COND ? [ … ] : [])` (the `NO_DATA_FILL` row), and not spread: this bundle uses none
+ *  anywhere and `Object.assign` 48 times, so a spread here would be a syntax the design does not
+ *  speak. The row keeps its PLACE — second of the three, between Building status and Approximate
+ *  square feet — because the ruling is about what the row says, not where the design put it.
+ *
+ *  Consumes A58.2: its `find` closes over the square-feet line A58.2 introduced (the same line,
+ *  minus the comma the Parking row needed), so this entry rewrites text that entry produced. */
+const A58_3: Amendment = {
+  id: 'A58.3', ...A58,
+  ruling: RULING_S6,
+  find: '          rows: [\n'
+    + '            { k: "Building status", v: bldg },\n'
+    + '            { k: "Facility type", v: p.bldg === "Leased" ? "Leased suite" : "Standalone building" },\n'
+    + '            { k: "Approximate square feet", v: p.sqft.toLocaleString() }\n'
+    + '          ]\n',
+  replace: '          rows: [\n'
+    + '            { k: "Building status", v: bldg }\n'
+    + '          ].concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([\n'
+    + '            { k: "Approximate square feet", v: p.sqft.toLocaleString() }\n'
+    + '          ])\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -9908,5 +9968,5 @@ export function amendments(): Amendment[] {
     // Appended last, as every family is, and it has to be: A58.1 is CHAINED on A16.7, whose whole
     // three-line `replace` its own `find` takes (declared `Consumes A16.7` on its
     // LOCAL_AMENDMENTS.md row), so it must run after that family.
-    A58_1];
+    A58_1, A58_2, A58_3];
 }
