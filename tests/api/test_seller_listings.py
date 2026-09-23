@@ -743,13 +743,20 @@ async def test_a_patch_body_one_byte_over_the_json_limit_is_refused(client: Any,
 async def test_a_number_beyond_its_columns_range_is_refused_in_the_envelope(
     client: Any, conn: Any, member: Any, step: int, field: str, value: str
 ) -> None:
-    """A-SL13 L3: `integer` and `bigint` have ends, and psycopg2's NumericValueOutOfRange was a 500."""
+    """A-SL13 L3: `integer` and `bigint` have ends, and psycopg2's NumericValueOutOfRange was a 500.
+
+    The MESSAGE is asserted, not only the code (review fix round 1, Minor-2). Task 5's year bound
+    shares `OUT_OF_RANGE` with this arm and is documented as running AFTER it, and until now
+    nothing held that order: every new `est` case is below `INT_MAX`, so both orderings were green
+    and `99999999999` could silently have been reported as an implausible YEAR rather than as a
+    number too large for the column."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={field: value},
                                   headers=auth_headers(cookies, headers))
     assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "OUT_OF_RANGE"
+    assert response.json() == {"error": {"code": "OUT_OF_RANGE",
+                                         "message": f"{field} is larger than this listing can hold."}}
 
 
 # --- Task 5 (audit §6): `zip` and `est` are validated at the one door that writes them -----------
@@ -762,7 +769,13 @@ async def test_a_number_beyond_its_columns_range_is_refused_in_the_envelope(
 # the map and to attach community data".
 
 
-@pytest.mark.parametrize("value", ["banana", "7", "786", "786134", "78613 1234", "78613-12", "ABCDE", "7861a"])
+# The last two are Unicode decimal digits — Arabic-Indic and fullwidth (review fix round 1,
+# Minor-1). `\d` matches every one of them, `int()` and `isdecimal()` read them as 78613, so
+# both were ACCEPTED and STORED VERBATIM and then reached the geocoder's fallback ladder as a
+# string no ZIP table holds — the exact harm this task exists to close, through the one door it
+# was meant to shut. The pattern is `[0-9]`, not `\d`.
+@pytest.mark.parametrize("value", ["banana", "7", "786", "786134", "78613 1234", "78613-12", "ABCDE",
+                                   "7861a", "\u0667\u0668\u0666\u0661\u0663", "\uff11\uff12\uff13\uff14\uff15"])
 async def test_a_zip_that_is_not_a_us_zip_code_is_refused_in_the_envelope(
     client: Any, conn: Any, member: Any, value: str
 ) -> None:
@@ -837,9 +850,8 @@ async def test_the_year_established_ceiling_is_this_year_and_never_a_frozen_lite
     client: Any, conn: Any, member: Any
 ) -> None:
     """A practice cannot be established in a year that has not happened, and a hard-coded ceiling
-    would start refusing the current year the moment the calendar turned — which is the defect the
-    seeds test's own literal `2026` carries today. The floor is accepted too, so the range has both
-    of its ends tested at their exact edges."""
+    here would start refusing the current year the moment the calendar passed it. The floor is
+    accepted too, so the range has both of its ends tested at their exact edges."""
     from datetime import UTC, datetime
 
     from app.api.seller_listings import EST_MIN, est_ceiling
@@ -859,6 +871,46 @@ async def test_the_year_established_ceiling_is_this_year_and_never_a_frozen_lite
                                  json={"est": str(this_year + 1)}, headers=signed)
     assert refused.status_code == 422, refused.text
     assert refused.json()["error"]["code"] == "OUT_OF_RANGE"
+
+
+def test_the_year_floor_is_low_enough_for_the_derivation_that_chose_it() -> None:
+    """The CONSTRAINT, not the consequence (review fix round 1, Important-1).
+
+    Every other assertion about `EST_MIN` says "the data we happen to have is inside the bound",
+    which stays green for a floor that violates the reasoning that picked it: the review proved it
+    by setting `EST_MIN = 1987`, at which `tests/seeds/` and all three `est` tests still passed
+    while the wizard would have refused the design's OWN oldest fixture year. So this asserts the
+    two things the derivation actually claims.
+
+    ONE — the floor accepts every establishment year the product itself carries, on both sides of
+    the design/API line. Read out of `logic.js` rather than typed, the way this module's neighbours
+    read the design's own tables, so a fixture set that grows an older practice fails HERE instead
+    of at that seller's Continue.
+
+    TWO — the floor leaves the Browse filter's open-ended "Before 1995" a real bucket. That bucket
+    is the only thing the filter's own vocabulary contributes to this bound (its three buckets are
+    exhaustive over every integer, so they supply no floor of their own), and a floor at or above
+    1995 would empty it."""
+    import re
+
+    from app.api.seller_listings import EST_MIN
+    from tests.seeds.test_hospitals_json import LOGIC_JS, load
+
+    design_years = [int(year) for year in re.findall(r"\best:\s*([0-9]{4})\b", LOGIC_JS.read_text(encoding="utf-8"))]
+    assert len(design_years) >= 20, "the design's own practice fixtures no longer parse; this pin is reading nothing"
+    # The bucket check is FIRST so that it can be the assertion that fails. Ordered the other way
+    # it is unreachable and therefore inert — `EST_MIN >= 1995` also refuses 1985, so the data
+    # check below would always fire first and this one would assert nothing. Each is proved to fail
+    # on its own: `EST_MIN = 1995` trips this one, `EST_MIN = 1987` trips the next.
+    assert EST_MIN < 1995, (
+        f"EST_MIN={EST_MIN} empties the Browse filter's own 'Before 1995' bucket, the one thing"
+        " that filter's vocabulary contributes to this bound"
+    )
+    oldest = min(design_years + [int(str(h["est"])) for h in load()])
+    assert EST_MIN <= oldest, (
+        f"EST_MIN={EST_MIN} refuses {oldest}, which the product itself carries — the wizard would"
+        " reject a year the design's own fixtures or the seeded hospitals already use"
+    )
 
 
 def test_every_seeded_hospital_would_pass_the_bound_derived_from_them() -> None:

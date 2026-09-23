@@ -164,11 +164,11 @@ def test_the_demo_business_fields_are_present_and_plausible() -> None:
         assert 1 <= int(h["docs"]) <= 12 and 1 <= int(h["rooms"]) <= 12, h["slug"]
         assert 2_000 <= int(h["sqft"]) <= 12_000, h["slug"]
         assert h["bldg"] in ("Included", "Leased", "Separate"), h["slug"]
-        # The floor and the ceiling are `app/api/seller_listings.py`'s now, not this line's:
-        # the wizard's own year bound was DERIVED from this assertion (audit 2026-09-23 §6),
-        # so reading it back from there is what stops the product saying two things about one
-        # field — and it retires the literal `2026`, which would have started refusing the
-        # current year on 1 January.
+        # The floor and the ceiling are `app/api/seller_listings.py`'s now, not this line's: the
+        # wizard's own year bound was DERIVED from this assertion (audit 2026-09-23 §6), so reading
+        # it back from there is what stops the number being written in two places. Nothing more is
+        # claimed for it: the retired literal `2026` could never have failed, this loop running
+        # over 29 static rows whose newest `est` is 2018.
         assert EST_MIN <= int(h["est"]) <= est_ceiling(), h["slug"]
         assert 0 <= int(h["listed_days_ago"]) <= 60, h["slug"]
         for text_field in ("staff", "services", "facility", "ownership"):

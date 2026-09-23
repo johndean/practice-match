@@ -166,6 +166,13 @@ OWNERSHIPS = (
 FACILITY_TYPES = ("Standalone", "Strip or plaza", "Medical park", "Other")
 BLDG_IN = {"Included": "Included", "Available separately": "Separate", "Leased": "Leased"}
 BLDG_OUT = {value: key for key, value in BLDG_IN.items()}
+# WHAT THE TWO RULES BELOW ALREADY COST, MEASURED (audit 2026-09-23 §6, review fix round 1). Both
+# `ZIP_RE` and `EST_MIN` apply at WRITE time only — no migration, no CHECK, no backfill — so the
+# question a reader asks is how many stored rows they would now refuse on a re-save. MEASURED ON
+# QA, 2026-09-24: ZERO listings carry a malformed ZIP and ZERO carry an implausible `est`. §6's
+# consequence is therefore hypothetical rather than a live defect: no seller is blocked from
+# editing, and no data correction is needed.
+#
 # A US ZIP code: five digits, optionally the USPS +4 (audit 2026-09-23 §6). `zip` reached `_text`,
 # which asks only that a string is a string, so `banana` was stored — and a ZIP the geocoder cannot
 # resolve is not an inert bad string: `app/census/geocode.py` falls back to a CITY CENTROID, so the
@@ -173,7 +180,13 @@ BLDG_OUT = {value: key for key, value in BLDG_IN.items()}
 # "Used to place your practice on the map and to attach community data". The hyphen is required in
 # the +4 form because that is the one way USPS writes it; nine bare digits are a different string
 # and are refused rather than guessed at.
-ZIP_RE = re.compile(r"\d{5}(-\d{4})?")
+#
+# `[0-9]`, NEVER `\d` (review fix round 1, Minor-1): `\d` matches every Unicode decimal digit, and
+# `int()` and `isdecimal()` read them too, so an Arabic-Indic or a fullwidth "78613" passed the
+# pattern and was stored VERBATIM — the string, not the number — and went on to the geocoder's
+# fallback ladder as a ZIP no table holds. `re.ASCII` would do the same job; the character class
+# says it at the one place a reader looks.
+ZIP_RE = re.compile(r"[0-9]{5}(-[0-9]{4})?")
 MONEY_FIELDS = ("price", "rev")
 INT_FIELDS = ("est", "docs", "rooms", "sqft")
 # A-SL13 M1. D10's "refuse anything else" means garbage, not blanks. `state.w` initialises every
@@ -193,10 +206,12 @@ INT_MAX, BIGINT_MAX = 2**31 - 1, 2**63 - 1
 # `test_the_demo_business_fields_are_present_and_plausible` has held every seeded hospital to
 # `1900 <= est <= 2026` since the seeds landed, in the same loop as its `price`, `docs`, `rooms`
 # and `sqft` bands. This is now the one place that floor is written down — that test reads it back
-# from here, which also retires its literal `2026` (a ceiling that becomes wrong on 1 January). It sits well below the oldest boundary the Browse "Year established" filter names
-# (`pre1995`/`1995-2010`/`post2010`, logic.js:2284), which is what keeps that filter's own
-# open-ended "Before 1995" a real bucket rather than an empty one: the design's oldest fixture is
-# 1985 and the oldest seeded hospital 1987, and both are inside it.
+# from here, so the number is not written twice. It sits well below the oldest boundary the Browse
+# "Year established" filter names (`pre1995`/`1995-2010`/`post2010`, logic.js:2284), which is what
+# keeps that filter's own open-ended "Before 1995" a real bucket rather than an empty one: the
+# design's oldest fixture is 1985 and the oldest seeded hospital 1987, and both are inside it.
+# Both of those constraints are asserted on `EST_MIN` ITSELF, and each is proved to fail on its
+# own, by `test_the_year_floor_is_low_enough_for_the_derivation_that_chose_it`.
 EST_MIN = 1900
 # `listing_submittable_ck`'s own list and its own exemptions (030). Mirrored rather than inferred:
 # when the CHECK changes, this is the line that has to change with it (review M2).
@@ -236,10 +251,13 @@ def est_ceiling() -> int:
     """The newest year established a listing may claim: THIS one, read from the calendar.
 
     The Browse filter's newest bucket is "After 2010" and is open forward, so nothing in the
-    product closes it; what closes it is that a practice cannot be established in a year that has
-    not happened. Computed rather than written down, because the seeds test's own `2026` is a
-    literal that becomes wrong on 1 January and a ceiling that refuses the current year is the
-    defect this bound is meant to prevent, not one it may introduce."""
+    product closes it; what closes it is that a practice cannot be established in a year that
+    has not happened. Computed rather than written down, because a literal here would refuse a
+    seller whose practice opened in the current year as soon as the calendar passed it, and
+    refusing the current year is the defect this bound must prevent, not one it may introduce. (The seeds test's
+    retired literal `2026` was NOT such a case and this docstring used to say it was: that
+    assertion ran over 29 static rows whose newest `est` is 2018, so no date could have made it
+    fail. The honest reason to retire it is that the number should not be written twice.)"""
     return datetime.now(UTC).year
 
 
