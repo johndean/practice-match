@@ -205,21 +205,170 @@ seed-to-asset conversion lands. Respect it — the control must not offer what t
 
 ---
 
-## Task 8: The disclosure toggles say what they do (S1, S3, S4, S7, design, A58.7)
+## Task 8: The disclosure toggles say what they do (S1, S3, S4, S7, design + app)
 
-**RUN THIS TASK LAST** — it rewrites approved design copy and depends on what Tasks 1-7 make true.
+**RUN THIS TASK LAST** — it changes the disclosure model and depends on what Tasks 1-7 make true.
 
-**Findings S1, S3, S4, S7.** Three of four step-7 toggles are labelled for the state they do not
-produce; no revenue range exists; step 2 promises a map pin the ON state never draws; `docsLocked`'s
-help describes the opposite of its behaviour.
+**RULED BY JOHN, 2026-09-24 — D-C66: CORRECT THE BEHAVIOUR, not the copy.** The ceilings become
+per-buyer releasable. This knowingly changes the 2026-09-18 per-buyer disclosure directive's
+ceiling-AND-grant, and that directive must be amended in the same release rather than left
+contradicted.
 
-**Required:** every toggle's label and help state what the code does. Two candidate directions, and
-the implementer must STOP and surface rather than choose:
-* **(a) Correct the copy** — cheapest, truthful, and the toggles remain permanent suppressors.
-* **(b) Make the behaviour match the copy** — ceilings become per-buyer releasable, which is a change
-  to `app/api/listings.py`'s ceiling-AND-grant and therefore to the 2026-09-18 directive.
+**Why this is the right direction and not merely the bigger one:** the labels have ALWAYS promised
+release on approval ("Keep practice name and address hidden **until I approve a buyer**",
+`frontend/src/logic.js:1758`; "Release revenue as a range **until I approve a buyer**", `:1759`).
+The behaviour is what diverged from the promise, so correcting the behaviour honours what every
+seller was told, while correcting the copy would have ratified a narrower product than the one they
+were sold.
 
-This is John's ruling to make. Prepare both, recommend, and stop.
+**The precedent is already in the codebase.** `showIdentifiable` is the one toggle of the four that
+works as a genuine per-buyer gate: `NOT_SHOW` + no grant serves the redacted derivative, `NOT_SHOW`
++ `UNREDACTED_IMAGES` serves the display variant (`app/privacy/delivery.py:78-85`). Tasks here make
+`anon`, `revBand` and `docsLocked` behave the way it already does. Follow that shape rather than
+inventing one.
 
-- [ ] **Step 1:** enumerate every affected string with its current behaviour, in the report file.
-- [ ] **Step 2:** STOP and surface to the controller for John's ruling before any edit.
+**Required behaviour, per toggle:**
+| Toggle | Unapproved buyer | Buyer granted the matching capability |
+|---|---|---|
+| `anon` ON | anonymised name, no street/zip/phone, no pin | name, street, zip, phone, exact point — via `IDENTITY` / `EXACT_LOCATION` |
+| `revBand` ON | no revenue figure | the exact figure — via `FINANCIALS` |
+| `docsLocked` ON | document TITLES visible, bytes refused | titles and bytes — via the document's own capability |
+| `showIdentifiable` OFF | redacted derivative | display variant — via `UNREDACTED_IMAGES` (already correct, do not change) |
+
+**`docsLocked`'s help text is the one that also needs its own correction**: it promises "Buyers see
+the document titles and can ask for access", and `_documents` currently returns `[]` before it
+queries (`app/api/listings.py:412-413`). Under D-C66 the titles must actually be served to an
+unapproved buyer, which is what the help has always claimed.
+
+**SAFETY — the one thing that must not be got wrong.** This ruling makes data MORE reachable than
+it is today. Every step must fail closed: an absent capability, an unknown level, a missing grant
+or an error must all resolve to the hidden state, never the disclosed one. `app/disclosure/access.py`
+already defaults to `frozenset()` and `covers()` already returns `frozenset()` for an unknown level
+— keep both. Add no path where a missing value reads as permission.
+
+**Not in scope:** the buyer's document list is four hard-coded fixtures with no reader for the real
+`documents[]` (finding S7). Wiring that is its own task; note it in the report.
+
+**Files:** `app/api/listings.py` (the serialiser's ceiling terms), `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md` (amended, with the ruling recorded), `frontend/tests/design-amendments.ts` if any copy still misstates the corrected behaviour, plus tests both sides.
+
+- [ ] **Step 1: RED** — pytest per toggle: ceiling shut + no grant hides; ceiling shut + matching grant RELEASES. The second assertion is the one that fails today.
+- [ ] **Step 2:** change the serialiser's ceiling terms, one toggle at a time, keeping fail-closed.
+- [ ] **Step 3:** amend the 2026-09-18 directive to record D-C66 and what it supersedes.
+- [ ] **Step 4:** re-read every step-7 and step-2 label against the new behaviour; correct only what is still false. Measure re-basing.
+- [ ] **Step 5:** full gates both sides; report the measured re-basing and the fail-closed proof.
+
+---
+
+## Task 9: The seller grants per buyer, per capability (D-C67, design + app)
+
+**RULED BY JOHN, 2026-09-24 — D-C67: "all toggles must be fully functional and SELLER must be able
+to manage it all and per seller."** Read with D-C66: the ceilings become per-buyer releasable, and
+the seller is the one who decides, per buyer, what is released.
+
+**RUN AFTER TASK 8** — D-C66 makes the ceilings releasable; this gives the seller the control that
+chooses what a given buyer receives. Before Task 8 there is nothing to choose between.
+
+**The gap, measured.** The server and the adapter already support it and no control uses it:
+* `app/disclosure/requests.py::decide` takes `disclosure_level` and writes
+  `approved_disclosure_level` (`:137-150`).
+* `frontend/src/requests/seller.ts:31` types it — `decide(id, action, level?, reason?)`.
+* The design never passes it (`frontend/src/logic.js`'s Accept sends no level), so `decide` falls
+  back to the REQUESTED level, which `app/api/requests.py:170` defaults to `FULL_CONFIDENTIAL` —
+  **all five capabilities, on every approval.**
+* `app/disclosure/levels.py` already models the five (`IDENTITY`, `EXACT_LOCATION`,
+  `UNREDACTED_IMAGES`, `FINANCIALS`, `FLOOR_PLANS`) and `covers()` already maps a level to its set.
+
+**Required:** on an inbox row awaiting a decision, the seller chooses WHICH capabilities this buyer
+receives, and approves that set. The existing all-five path stays reachable as one choice, not the
+only one.
+
+**Composition — invent nothing.** Compose from V3's own elements, the A8/A41-A47 process. The
+interest modal's scrim, title, error slot and primary/secondary pair is the established shell
+(`frontend/src/admin/noteDrawer.ts` is the worked precedent and carries no amendment); step 7's own
+checkbox-and-help rows are the established shape for a set of disclosure choices. Do not invent a
+new control, a new colour or new copy for a capability — `app/auth/labels.py` and the step-7 labels
+already name these things in the product's voice.
+
+**Fail closed, and this is the whole risk of the task:** an approval that names no capability grants
+NOTHING, never everything. The set the seller ticked is the set stored; an empty set is a refusal to
+release, not a silent `FULL_CONFIDENTIAL`. `covers()` returning `frozenset()` for an unknown level is
+the existing precedent — keep it.
+
+**Also required:** the seller must be able to SEE what a given buyer currently holds, on the row,
+and to narrow it later. Withdraw (A53/A57) already removes everything; narrowing is the new half.
+
+- [ ] **Step 1: RED** — pytest: approving with a named subset stores exactly that subset; approving
+      with an empty set releases nothing; a buyer holding only `FINANCIALS` gets the revenue and NOT
+      the address. The last one is the proof D-C66 and this task meet correctly.
+- [ ] **Step 2:** the adapter half — pass the chosen level through `decide`.
+- [ ] **Step 3:** the design half — the chooser on the inbox row, composed from V3's own elements.
+      Next free amendment id in family A58.
+- [ ] **Step 4:** the row shows what the buyer holds now.
+- [ ] **Step 5:** full gates both sides; measured re-basing; fail-closed proof stated explicitly.
+
+---
+
+## Task 10: Every disclosable datum has a control, and every surface honours it (D-C68)
+
+**RULED BY JOHN, 2026-09-24 — D-C68: "this applies to every view, address, pricing, images, etc."**
+Read with D-C66 (ceilings become per-buyer releasable) and D-C67 (the seller chooses per buyer):
+the seller's control covers EVERY disclosable datum, and EVERY buyer-facing surface obeys the same
+answer.
+
+**RUN AFTER TASKS 8 AND 9.** Those build the mechanism; this completes its coverage.
+
+### Part A — the coverage gap, measured
+
+`app/disclosure/levels.py:8` models five capabilities: `IDENTITY`, `EXACT_LOCATION`,
+`UNREDACTED_IMAGES`, `FINANCIALS`, `FLOOR_PLANS`. Measured against `app/api/listings.py`'s
+serialiser, these are served with **no gate of any kind**:
+
+`price` (:557) · `type`, `est` (:558-559) · `city`, `state`, `area` (:552) · `hours` (:556) ·
+`docs`, `rooms`, `sqft`, `bldg` (:558-559) · `ownership` (:611) · `services` (:601) ·
+`facilityType` (Task 4)
+
+**`price` is the one that is not merely an omission.** The audit recorded it as deliberate — "Asking
+price is public by design and promises nothing else … no privacy control is offered for it on step 3
+or step 7, and none is implied" — so gating it is a NEW product decision, not a repair, and it has
+consequences the implementer must NOT absorb silently:
+
+* **The Browse card and the results rail are built around a price.** A listing with no price shows
+  what? The design has no treatment for it. Absent beats faked, so the row/card must degrade to
+  something the design already draws, or this needs John's ruling on new copy.
+* **The price filter leaks the same way revenue does.** Finding S11: `null / 1000 === 0` puts a
+  hidden revenue inside "Under $1M". A hidden price will do exactly the same to "Under $500K" unless
+  the filter is fixed in the same change. **Fix the filter in this task or the fix creates the leak
+  it is meant to close.**
+* **Sort by price** has the same exposure.
+
+`services` and `hours` are the other two that matter — finding S10: they are published verbatim to
+every member while the image pipeline feeds those same strings to the redactor that scrubs signage
+off photographs. A free-text field is where a seller defeats their own anonymity.
+
+**Deliverable for Part A:** propose the capability set that covers every disclosable datum, name
+which existing capability each field joins or which new one it needs, and STOP for John's ruling
+before adding any new capability. Adding a capability changes `REQUESTABLE_LEVELS`, the buyer's
+request surface and the seller's chooser, so it is his call, not an implementer's.
+
+### Part B — every surface honours the same answer
+
+The audit found the surfaces already diverge, and the mechanism is the reason:
+
+* `frontend/src/listings/load.ts:22` fetches `/api/listings?limit=200` and **nothing else**. The
+  single-listing route — the only caller of `_documents` — is never requested by the app, so the
+  detail screen is rendered from the LIST payload.
+* Consequently the buyer's document list is four hard-coded fixtures (`logic.js:1891-1896`) and
+  `documents[]` has no reader at all (finding S7).
+
+**Required:** one served answer, honoured by every surface a buyer can reach — Browse card, results
+rail, docked panel, detail, interest modal and the phone frame. A datum hidden by the seller must be
+hidden on all of them, and a datum released to a buyer must appear on all of them.
+
+- [ ] **Step 1:** enumerate every buyer-facing surface and every disclosable datum it renders, as a
+      matrix, from the code. This is measurement, not design.
+- [ ] **Step 2: RED** — one test per (datum × surface) that a hidden datum is absent and a granted
+      datum is present. The matrix from Step 1 is the test list.
+- [ ] **Step 3:** STOP and surface the Part A proposal for John's ruling before implementing any new
+      capability.
+- [ ] **Step 4:** implement, fail closed throughout.
+- [ ] **Step 5:** full gates, measured re-basing, and the price-filter leak proved closed.
