@@ -132,7 +132,7 @@ _SELECT = """
 SELECT id, seller_id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, rev_disclosed, documents_disclosed, identifiable_content_visibility,
        ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
-       area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
+       area, type, market, price, rev, docs, rooms, sqft, bldg, facility_type, est, listed_at,
        note, staff, services, facility, ownership, photos, photo_captions,
        coalesce((SELECT jsonb_object_agg(a.id::text, a.caption) FROM listing_asset a
                   WHERE a.listing_id = listing.id AND a.kind = 'photo' AND a.caption IS NOT NULL),
@@ -557,6 +557,25 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") and "FINANCIALS" in capabilities else None,
         "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
+        # S6 (the seller-wizard audit, 2026-09-23; ruling D-C65). Step 5 asks "Facility type"
+        # (Standalone / Strip or plaza / Medical park / Other) and `app/api/seller_listings.py`
+        # validates and stores the answer -- and `_SELECT` did not name the column, so the buyer's
+        # own "Facility type" row was computed from `bldg` instead, which answers the BUILDING
+        # STATUS question (Included / Available separately / Leased). Amendment A58.3 pointed that
+        # row at the listing's own `facilityType`; this is what fills it.
+        #
+        # SERVED UNDER THE DESIGN'S OWN NAME, camel-cased where every column beside it is not:
+        # the seller's draft route already answers `facilityType` for the identical column
+        # (`app/api/seller_listings.py`'s `toWizardState`), so one spelling reaches the client from
+        # both routes and `load.ts` copies the key rather than renaming it a second way.
+        #
+        # UNGATED, deliberately: a building shape is not an identity fact. No disclosure flag and
+        # no capability names it, so it follows `bldg` directly above and `type`, never `street`
+        # and `phone`. `null` -- never a substituted default -- for a listing whose seller has not
+        # answered, because the design draws no row at all for an absent value (A58.3, "absent
+        # beats faked") and a default would republish every such listing as a standalone building
+        # nobody ever said it was.
+        "facilityType": row["facility_type"],
         "listed": relative_listed(row["listed_at"], now),
         "listed_at": row["listed_at"].isoformat(),
         "status": row["status"],

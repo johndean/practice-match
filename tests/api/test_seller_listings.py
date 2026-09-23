@@ -385,6 +385,9 @@ async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is
         # three unconditionally. `geo_precision` is `None` here — this listing has never been
         # geocoded, which is the state a seller's draft is in.
         "photo_captions": [], "asset_captions": {}, "geo_precision": None,
+        # S6 (Task 4): `_SELECT` selects `facility_type` too, and `serialise` reads it
+        # unconditionally — a row "as `_rows()` builds one" carries every column the query names.
+        "facility_type": None,
         # Task P9, the same rule one column further on: `serialise` resolves every photo slot
         # through the privacy state, so the buyer contract reads both of `_SELECT`'s new columns.
         "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},

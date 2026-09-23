@@ -122,6 +122,21 @@ export interface ApiListing {
   // FACT `income_note` states in prose, served beside it because the two surfaces compose
   // different copy from it. `null` where there is no median at all.
   income_approximate: boolean | null;
+  // S6 (the seller-wizard audit, 2026-09-23; ruling D-C65): what the wizard's step 5 actually
+  // asks — Standalone / Strip or plaza / Medical park / Other — which is a different question
+  // from `bldg` above (Included / Available separately / Leased). Until the API served it, the
+  // buyer's row labelled "Facility type" was computed from `bldg`, so a seller who answered
+  // "Medical park" was published as "Standalone building".
+  //
+  // ALREADY CAMEL-CASE ON THE WIRE, unlike every field above it: the seller's own draft route
+  // has always answered this column under the design's own name, so `app/api/listings.py` serves
+  // the one spelling both routes use and `toPractice` copies rather than renames.
+  //
+  // OPTIONAL because a server predating this task sends no key, and because the D6 design-fixture
+  // stub has nothing to say — the design's twenty-one practices carry no facility type at all.
+  // `null` where the seller has not answered, and the design then draws NO row (A58.3, "absent
+  // beats faked") rather than a guessed shape.
+  facilityType?: string | null;
 }
 
 export interface Practice {
@@ -172,6 +187,11 @@ export interface Practice {
   // key, so `this.props.market ? p.petRate : <the design's demoted fixture constant>` falls to
   // the constant on the reference path and every approved state keeps its pixels.
   petRate?: number;
+  // S6 (A58.3): the same absence rule once more, and here it is what the amendment turns on —
+  // `p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []` in the design's own
+  // Property block, so an absent key draws no row and the design's fixtures, which carry none,
+  // keep every approved state on its pixels.
+  facilityType?: string;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -245,6 +265,11 @@ export function toPractice(row: ApiListing): Practice {
   // truthiness test would drop a rate of 0, which is a rate the payload stated rather than one
   // it withheld. The two are different answers and the design branches on the difference.
   if (row.pet_rate != null) p.petRate = row.pet_rate;
+  // S6 (A58.3): `!= null` again, and it covers BOTH absences at once — a server that predates
+  // this field sends no key, and a seller who has not answered step 5 sends `null`. The design
+  // draws no "Facility type" row for either, which is the whole point of the amendment: the row
+  // states the seller's own answer or it is not there at all.
+  if (row.facilityType != null) p.facilityType = row.facilityType;
   return p;
 }
 

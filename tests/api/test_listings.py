@@ -25,12 +25,12 @@ from tests.api.conftest import auth_headers
 INSERT = (
     "INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status,"
     " location_disclosed, name_disclosed, rev_disclosed, geom, area, type, market, price, rev, docs, rooms, sqft,"
-    " bldg, est, listed_at, note, staff, services, facility, ownership, photos, photo_captions,"
+    " bldg, facility_type, est, listed_at, note, staff, services, facility, ownership, photos, photo_captions,"
     " source, identifiable_content_visibility)"
     " VALUES (%(slug)s,%(name)s,%(street)s,%(city)s,%(state)s,%(zip)s,%(phone)s,%(hours)s,"
     " %(status)s,%(disclosed)s,%(name_disclosed)s,%(rev_disclosed)s,"
     " ST_SetSRID(ST_MakePoint(%(lng)s,%(lat)s),4326)::geography,"
-    " %(area)s,'Small animal',%(market)s,1000000,1500000,2,4,3000,'Included',2001,"
+    " %(area)s,'Small animal',%(market)s,1000000,1500000,2,4,3000,'Included',%(facility_type)s,2001,"
     " now() - make_interval(days => %(days)s),'n','s','sv','f','o',%(photos)s::jsonb,"
     " %(photo_captions)s::jsonb,'seed',%(visibility)s)"
     " RETURNING id"
@@ -45,6 +45,11 @@ def _insert(conn: Any, **over: Any) -> str:
         "lat": 30.2672, "lng": -97.7431, "area": "Austin", "market": "Austin, TX", "days": 3,
         "rev_disclosed": True,
         "photos": json.dumps([]), "photo_captions": json.dumps([]),
+        # S6 (Task 4): `migrations/030:27` adds the column nullable and with no CHECK — validation
+        # is app-level, in `app/api/seller_listings.py`'s own `FACILITY_TYPES` — so `None` is the
+        # state of every row that predates the wizard writing one, and it is the default here for
+        # exactly that reason. The tests that care pass their own.
+        "facility_type": None,
         # SHOW, named EXPLICITLY (Task P9). The column's own default is NOT_SHOW — John's ruling
         # A-IDP-4, "Default -> NOT SHOW, including all 18 seeds" — under which a seed path entry
         # has no derivative and is served to nobody, so every photo assertion in this file would
@@ -417,6 +422,10 @@ def _row(**over: Any) -> dict[str, Any]:
         "listed_at": datetime(2026, 9, 3, tzinfo=UTC), "note": "n", "staff": "s",
         "services": "sv", "facility": "f", "ownership": "o", "photos": [],
         "photo_captions": [],
+        # S6 (Task 4): `_SELECT` selects it, so a row "as `_rows()` builds one" carries it. `None`
+        # is the un-answered state (`migrations/030:27` is nullable, and step 5 is where a seller
+        # answers); the tests that assert on it pass their own.
+        "facility_type": None,
         # A-SL23 (0): `_SELECT`'s aggregate of this listing's own `listing_asset.caption`s, keyed
         # by asset id. Empty for a seed, whose `photos` name no asset row at all.
         "asset_captions": {},
@@ -516,6 +525,77 @@ def test_serialise_hides_a_name_the_seller_has_not_disclosed() -> None:
     assert body["slug"] is None
     assert body["name_disclosed"] is False
     assert _squashed("Northside Animal Hospital") not in _squashed(json.dumps(body))
+
+
+# ---------------------------------------------------------------------------------------------
+# S6 (the seller-wizard audit, 2026-09-23; ruling D-C65). `facility_type` is collected by step 5,
+# validated against `app.api.seller_listings.FACILITY_TYPES` and stored (`migrations/030:27`) —
+# and until this task it appeared in no `_SELECT` here, so the one buyer-facing row that names it
+# could never be drawn from the seller's own answer. Amendment A58.3 already made the design read
+# the listing's OWN `facilityType` and draw nothing without one; these tests are the other half.
+#
+# UNGATED, deliberately: it is a building shape ("Standalone" / "Strip or plaza" / "Medical park"
+# / "Other"), not an identity fact, and no disclosure flag or capability names it — so it follows
+# `bldg` and `type`, not `street` and `phone`. The two tests below pin both halves of that.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_serialise_carries_the_listings_own_facility_type() -> None:
+    """S6: the buyer's Property row reads `facilityType`, so the payload has to carry it."""
+    body = serialise(_row(facility_type="Medical park"), datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["facilityType"] == "Medical park"
+
+
+def test_serialise_serves_no_facility_type_where_the_seller_answered_none() -> None:
+    """Absent stays absent (A58.3: "absent beats faked"). A listing with no answer must serve
+    `null` — never a substituted "Standalone" — because the design draws no row for a null and a
+    default would republish every such listing as a standalone building it was never said to be."""
+    body = serialise(_row(facility_type=None), datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["facilityType"] is None
+
+
+def test_the_facility_type_survives_every_disclosure_flag_being_off() -> None:
+    """Ungated: a building shape is not an identity fact, and no capability names it. With the
+    name, the location and the revenue all withheld and no capability granted, the row still
+    carries it — which is what `bldg` beside it already does."""
+    body = serialise(_row(facility_type="Strip or plaza", location_disclosed=False,
+                          name_disclosed=False, rev_disclosed=False),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["facilityType"] == "Strip or plaza"
+    assert body["bldg"] == "Included", "the column it follows is ungated too"
+
+
+async def test_a_stored_facility_type_reaches_both_read_routes(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The half a direct `serialise` call cannot prove: that `_SELECT` NAMES the column.
+
+    Both routes share `_SELECT`, so both are read here — the list route is what Browse boots from
+    (`frontend/src/listings/load.ts`) and the detail route is what the contract documents."""
+    listing_id = _insert(conn, facility_type="Medical park")
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    one = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
+    assert one["facilityType"] == "Medical park"
+
+    listed = (await client.get("/api/listings", headers=auth)).json()["items"]
+    assert [item["facilityType"] for item in listed if item["id"] == listing_id] == ["Medical park"]
+
+
+async def test_a_listing_with_no_facility_type_is_served_null_by_both_read_routes(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Every row written before step 5 had anywhere to put the answer is this row."""
+    listing_id = _insert(conn)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    one = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
+    assert one["facilityType"] is None
+
+    listed = (await client.get("/api/listings", headers=auth)).json()["items"]
+    assert [item["facilityType"] for item in listed if item["id"] == listing_id] == [None]
 
 
 def test_anonymised_name_is_the_frontends_own_practice_name_fallback() -> None:
@@ -1366,6 +1446,9 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
         "geo_precision": None,
+        # S6 (Task 4): `_SELECT`'s own `facility_type`, for the same "a row `_rows()` could build"
+        # reason as the two columns below it.
+        "facility_type": None,
         # Task P9: `_SELECT` selects both, and `serialise` reads them for every photo slot.
         "identifiable_content_visibility": "NOT_SHOW", "visible_photos": {},
     }

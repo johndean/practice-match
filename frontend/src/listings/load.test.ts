@@ -47,6 +47,7 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     income_note: null,
     income_vs_us_pct: null,
     income_approximate: null,
+    facilityType: null,
     ...over
   };
 }
@@ -316,6 +317,28 @@ describe('applyListings', () => {
     // `!= null`, never truthiness: a rate of 0 is a real (if absurd) answer and must not read as
     // absent, which is the difference between "no household keeps a pet here" and "nobody said".
     expect(toPractice(row({ pet_rate: 0 })).petRate).toBe(0);
+  });
+
+  // S6 (the seller-wizard audit, 2026-09-23; ruling D-C65). Step 5 asks "Facility type"
+  // (Standalone / Strip or plaza / Medical park / Other) and the answer is stored — and until the
+  // API served it, the buyer's Property row labelled "Facility type" was computed from `bldg`,
+  // which answers the BUILDING STATUS question instead, so a seller who answered "Medical park"
+  // was published as "Standalone building". Amendment A58.3 made the design read the listing's
+  // OWN `facilityType`; this is the field reaching it.
+  //
+  // ALREADY THE DESIGN'S OWN NAME on the wire: the payload key is `facilityType`, as the seller's
+  // own draft route already serves it (`app/api/seller_listings.py`'s `toWizardState`), so
+  // `toPractice` copies rather than renames — and the ABSENCE rule is the same one every field
+  // above it follows, because the design draws no row at all for a listing that carries none.
+  it("carries facilityType through, and omits the key when the seller answered none", () => {
+    expect(toPractice(row({ facilityType: 'Medical park' })).facilityType).toBe('Medical park');
+    expect(toPractice(row({ facilityType: 'Strip or plaza' })).facilityType).toBe('Strip or plaza');
+    expect('facilityType' in toPractice(row({ facilityType: null }))).toBe(false);
+    // A row from a server that predates this task sends no key at all, and the design's own
+    // "absent beats faked" answer is the same one: no row rather than a guessed shape.
+    const older = { ...row() } as Record<string, unknown>;
+    delete older['facilityType'];
+    expect('facilityType' in toPractice(older as unknown as ApiListing)).toBe(false);
   });
 
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the

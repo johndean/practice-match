@@ -162,6 +162,10 @@ def test_contract_doc_names_every_community_field_the_listing_serialiser_emits()
         "est": 2001, "listed_at": datetime(2026, 9, 1, tzinfo=UTC), "status": "published",
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
+        # S6 (Task 4): `_SELECT`'s own `facility_type`. A LISTING column like `bldg` beside it,
+        # constant across the two calls below, so the measurement never claims it — which is the
+        # distinction this test draws.
+        "facility_type": None,
         # GEO-WIRE (4): `_SELECT`'s own `practice_location.geo_precision`. It is a LISTING column,
         # not a `CommunityRow` field, so it is constant across the two calls below and the
         # measurement never claims it — which is exactly the distinction this test is drawing.

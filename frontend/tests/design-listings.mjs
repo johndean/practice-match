@@ -96,7 +96,14 @@ export function toApiShape(p, i) {
     // by `designListingsBody` instead — see its own note; putting it here would break this
     // function's one promise, that it is the exact inverse of `toPractice`.
     income_vs_us_pct: null,
-    income_approximate: null
+    income_approximate: null,
+    // S6 (Task 4, 2026-09-23): the endpoint serves this column on every row, so the stub does
+    // too — a field the server sends and the stub does not is a gap in this function's one
+    // promise, that it is `toPractice`'s exact inverse (M1). The design's own twenty-one
+    // practices carry no facility type, so it is `null` for every one of them and amendment
+    // A58.3's row is drawn on neither target: the reference has no adapter and the app is
+    // answered `null`, which is what keeps every approved state on its pixels.
+    facilityType: p.facilityType ?? null
   };
 }
 
