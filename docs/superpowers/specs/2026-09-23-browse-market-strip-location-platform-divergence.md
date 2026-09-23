@@ -28,18 +28,39 @@ app-target state passes: **219 passed, 1 failed.**
   nothing for `browse-market-strip-location-darwin.png` — because both sides are generated in the
   same run, the reference project writing what the app project is compared against.
 
-## The leading hypothesis, untested
+## Investigated 2026-09-23 — the first hypothesis is REFUTED
 
-This is the one approved state that captures the Market snapshot strip in **LOCATION** mode, whose
-figures reach the app through the `market` adapter rather than through a `?props=` payload. If the
-adapter's summary resolves after the screenshot on darwin and before it on linux, the app would
-capture the AREA-mode bars against a reference drawn in LOCATION mode — a plausible 5 % of the
-image, and consistent with the difference being stable rather than random.
+The record's original hypothesis was that the LOCATION-mode summary adapter resolved after the
+screenshot. **That is wrong**, and it was disproved by reading the diff image rather than by
+reasoning:
 
-**This is a hypothesis and has not been tested.** The next step is to read the diff PNG at
-`test-results/visual-visual-parity-with--9a02d-rowse-market-strip-location-app/` and establish
-which region differs before touching anything — the failure may equally be a font fallback or a
-canvas rendering difference, and guessing would waste the measurement.
+- **The Market snapshot strip is pixel-identical.** The LOCATION header, all six cards, every
+  figure and every bar show no difference at all. The adapter is innocent.
+- **The whole difference is a map pan of about 188 px.** The `$2.65M` pin is present in BOTH
+  images — at y≈165 in the reference and y≈353 in the app. Same pin, same price, shifted
+  vertically. The results rail is identical in both ("9 PRACTICES AVAILABLE", the same two
+  listings), so the listing data agrees; only the map's viewport differs, which brings different
+  pins into frame.
+- **It is not a timing race.** Raising the state's final settle from 400 ms to 4000 ms produced
+  the identical 61962 pixels. That also rules out the 250 ms viewport debounce (A24.21-A24.23) and
+  the boundary refetch behind it.
+- **The trigger is the strip expansion.** `browse-market-panel` selects the SAME practice with the
+  SAME waits and passes; the only difference is `click('Expand all six layers')`, which resizes the
+  map container.
+
+**What remains unknown**, and is where the next session starts: why a container resize leaves the
+app's map centred ~188 px from the reference's, deterministically on darwin and not on linux. A
+purely structural difference would fail on CI too, and does not — so something in that resize path
+depends on a quantity that varies by platform, scrollbar width and font metrics being the obvious
+candidates since both change container height.
+
+**The next step is measurement, not a fix:** read Leaflet's actual centre and zoom from both
+targets after the expansion. That turns "about 188 px" into two numbers and says whether the app
+recentres on resize while the reference anchors, or whether both recentre from different container
+heights.
+
+**Deferred by John, 2026-09-23**, on the ground that no user is affected — which is correct: both
+renders are the application behaving properly.
 
 ## Why it matters beyond one red test
 
