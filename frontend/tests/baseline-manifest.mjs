@@ -70,6 +70,29 @@
 // single-node diff (`"Revoke"` -> `"Withdraw"`, confirmed by diffing the DOM snapshot JSON
 // directly). The other TWELVE of the thirteen are unmoved, which is the proof the ruling reached
 // exactly the seller inbox's own button text and nothing else.
+// Ruling D-C65 (John, 2026-09-23 — "implement full seller wizard audit", amendment family A58)
+// then re-based ONE of the thirteen, `detail`. Findings S5 and S6 of the eight-step audit are two
+// rows of the buyer's Property block that were FABRICATED: `{ k: "Parking", v: "On-site" }` was a
+// hard-coded literal on every listing the product has ever served (`parking` occurs in no
+// migration, no column, no route, no adapter and no wizard step, so no seller has ever been
+// asked), and the row labelled "Facility type" was computed from `bldg` — the BUILDING STATUS the
+// wizard's step 5 asks first — rather than from the listing's own `facilityType`, so a seller who
+// answered "Medical park" was published to buyers as "Standalone building". A58.2 deletes the
+// first and A58.3 makes the second read the listing's own field and render NO row while it carries
+// none (absent beats faked). Two rows leaving a four-row, two-column grid reflows the page, so
+// this hash is re-pinned under the ruling — the A18/A34/A38/A53/A55/A57 mechanism, a DESIGN change
+// through the D15 engine with the app and the oracle moving together (the pixel gate stayed at
+// maxDiffPixels: 0 and the DOM oracle stayed node-for-node identical throughout).
+// The other TWELVE are unmoved, measured the A33 method and re-hashed from the PNGs after the
+// write rather than inferred from this file's own test passing: baselines were regenerated cold
+// before and after and all 59 PNG and 59 DOM hashes diffed — FOUR approved states move, `detail`,
+// `detail-lightbox`, `detail-lightbox-next` and `interest-modal`, each in BOTH oracles and each
+// one of the four captures that reach the desktop detail screen; the last three are not among
+// these thirteen. `mobile-detail` does NOT move, which is the proof the change reached this block
+// and nothing else: the phone frame renders its own detail screen and no `sections` block at all
+// (`v.d?.sections` has exactly one reader in `App.vue`), so it has never drawn the Property block.
+// The node-level diff on `detail` is TWO removals of 121 lines each and ZERO additions — the two
+// row <div>s — with "Building status" and "Approximate square feet" surviving once each.
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.

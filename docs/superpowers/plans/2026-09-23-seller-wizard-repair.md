@@ -82,6 +82,26 @@ Task 5 — until it lands the value is undefined, so the row must disappear rath
       their pristine lines.
 - [ ] **Step 3-6:** regenerate, GREEN, measure re-basing, ledger + CLAUDE.md, commit.
 
+**Outcome, measured (2026-09-23/24), correcting this task's own stated premise.** The premise this
+task was dispatched on — that `detail` **and `mobile-detail`** both render the Property block — is
+WRONG about the second, and the correction is recorded here rather than left for the next reader to
+rediscover: `v.d?.sections` has exactly ONE reader in `App.vue` (the desktop detail screen), so the
+phone frame renders no `sections` block at all and has never drawn the Property block. It cannot
+move for this change, and it did not.
+
+FOUR approved states move, each in BOTH oracles — `detail`, `detail-lightbox`, `detail-lightbox-next`
+and `interest-modal`, exactly the four captures that reach the desktop detail screen. The node-level
+DOM diff on `detail` is two removals of 121 lines each and ZERO additions (the two row `<div>`s),
+with "Building status" and "Approximate square feet" surviving once each. `App.vue` and
+`pseudo.css` regenerate byte for byte, the edits being script-only.
+
+ONE of `baseline-manifest.json`'s thirteen frozen hashes therefore moves, `detail`
+(`5facf0be…` → `af98330e…`), and it is RE-PINNED under **ruling D-C65** (John, 2026-09-24, on the
+measurement: the two rows were fabricated, so removing them is the correction and the approved
+screenshot must follow) — the A18/A34/A38/A53/A55/A57 mechanism. The other twelve are unmoved,
+re-hashed from the PNGs after the write rather than inferred from the test passing. That is the
+"unless the task says otherwise" of the global constraint above, spent once and recorded.
+
 ---
 
 ## Task 3: No buyer-facing string ever reads "null" (S8, design, A58.4)
