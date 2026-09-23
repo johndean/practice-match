@@ -166,6 +166,14 @@ OWNERSHIPS = (
 FACILITY_TYPES = ("Standalone", "Strip or plaza", "Medical park", "Other")
 BLDG_IN = {"Included": "Included", "Available separately": "Separate", "Leased": "Leased"}
 BLDG_OUT = {value: key for key, value in BLDG_IN.items()}
+# A US ZIP code: five digits, optionally the USPS +4 (audit 2026-09-23 §6). `zip` reached `_text`,
+# which asks only that a string is a string, so `banana` was stored — and a ZIP the geocoder cannot
+# resolve is not an inert bad string: `app/census/geocode.py` falls back to a CITY CENTROID, so the
+# practice is silently placed somewhere it is not, under a field whose own help text says it is
+# "Used to place your practice on the map and to attach community data". The hyphen is required in
+# the +4 form because that is the one way USPS writes it; nine bare digits are a different string
+# and are refused rather than guessed at.
+ZIP_RE = re.compile(r"\d{5}(-\d{4})?")
 MONEY_FIELDS = ("price", "rev")
 INT_FIELDS = ("est", "docs", "rooms", "sqft")
 # A-SL13 M1. D10's "refuse anything else" means garbage, not blanks. `state.w` initialises every
@@ -178,6 +186,18 @@ OPTIONAL_NUMERIC = ("rev", "docs", "rooms", "sqft")
 # 016's column types, so a number that cannot fit is a refusal rather than psycopg2's
 # NumericValueOutOfRange escaping as a 500 (review L3). Negatives never arrive: `isdecimal()`.
 INT_MAX, BIGINT_MAX = 2**31 - 1, 2**63 - 1
+# A YEAR IS NOT A COUNT (audit 2026-09-23 §6). `est` is the one integer field whose value is a
+# calendar year, and until now the only bound it had was the column's own INT_MAX — the audit drove
+# year 7 and year 999999999 through step 1 and both were stored. THE FLOOR IS THE PRODUCT'S OWN and
+# is not invented here: `tests/seeds/test_hospitals_json.py`'s own
+# `test_the_demo_business_fields_are_present_and_plausible` has held every seeded hospital to
+# `1900 <= est <= 2026` since the seeds landed, in the same loop as its `price`, `docs`, `rooms`
+# and `sqft` bands. This is now the one place that floor is written down — that test reads it back
+# from here, which also retires its literal `2026` (a ceiling that becomes wrong on 1 January). It sits well below the oldest boundary the Browse "Year established" filter names
+# (`pre1995`/`1995-2010`/`post2010`, logic.js:2284), which is what keeps that filter's own
+# open-ended "Before 1995" a real bucket rather than an empty one: the design's oldest fixture is
+# 1985 and the oldest seeded hospital 1987, and both are inside it.
+EST_MIN = 1900
 # `listing_submittable_ck`'s own list and its own exemptions (030). Mirrored rather than inferred:
 # when the CHECK changes, this is the line that has to change with it (review M2).
 REQUIRED_ONCE_SUBMITTED = ("name", "city", "zip", "type", "est", "price")
@@ -212,6 +232,17 @@ class Refusal(Exception):
         self.code, self.message, self.status, self.extra = code, message, status, extra
 
 
+def est_ceiling() -> int:
+    """The newest year established a listing may claim: THIS one, read from the calendar.
+
+    The Browse filter's newest bucket is "After 2010" and is open forward, so nothing in the
+    product closes it; what closes it is that a practice cannot be established in a year that has
+    not happened. Computed rather than written down, because the seeds test's own `2026` is a
+    literal that becomes wrong on 1 January and a ceiling that refuses the current year is the
+    defect this bound is meant to prevent, not one it may introduce."""
+    return datetime.now(UTC).year
+
+
 def _number(field: str, raw: object) -> int | None:
     """A money or integer field as the design's text inputs produce it ("1,450,000", "$2,100,000").
 
@@ -236,6 +267,12 @@ def _number(field: str, raw: object) -> int | None:
     value = int(cleaned)
     if value > (BIGINT_MAX if field in MONEY_FIELDS else INT_MAX):
         raise Refusal("OUT_OF_RANGE", f"{field} is larger than this listing can hold.", 422)
+    if field == "est":
+        # After the column's own ceiling, never instead of it: 99999999999 is refused as a number
+        # too large to store before it is ever read as a year.
+        ceiling = est_ceiling()
+        if not EST_MIN <= value <= ceiling:
+            raise Refusal("OUT_OF_RANGE", f"est must be a year between {EST_MIN} and {ceiling}.", 422)
     return value
 
 
@@ -252,6 +289,21 @@ def _text(field: str, raw: object) -> str | None:
         # in a `text` column at all, so this is the column's own rule said early.
         raise Refusal("BAD_TEXT", f"{field} must not contain a null character.", 422)
     return raw.strip() or None
+
+
+def _zip(raw: object) -> str | None:
+    """`_text`'s answer for `zip`, held to the US ZIP pattern.
+
+    The pattern guards a VALUE and never an absence: `state.w` initialises `zip` to `""` and a
+    seller who has typed one must be able to clear it again, so `None` passes through exactly as it
+    does for every other text field and `listing_submittable_ck` is what refuses a blank one at
+    submit. Write-time only, and deliberately: a row stored before this rule existed is not
+    rewritten and no migration backfills it."""
+    value = _text("zip", raw)
+    if value is not None and not ZIP_RE.fullmatch(value):
+        raise Refusal("BAD_ZIP", "zip must be a five-digit US ZIP code, optionally +4"
+                                 " (78613 or 78613-1234).", 422)
+    return value
 
 
 def _one_of(field: str, raw: object, allowed: tuple[str, ...]) -> str:
@@ -329,6 +381,8 @@ def columns_for(step: int, body: dict[str, Any], row: dict[str, Any] | None = No
                 "facilityType", raw, FACILITY_TYPES, row["facility_type"] if row is not None else None)
         elif field == "bldg":
             out["bldg"] = _bldg_or_unchanged(raw, row["bldg"] if row is not None else None)
+        elif field == "zip":
+            out["zip"] = _zip(raw)
         elif field == "desc":
             out["services"] = _text("desc", raw)
         elif field == "anon":

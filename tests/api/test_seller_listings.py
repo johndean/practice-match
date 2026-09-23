@@ -276,7 +276,7 @@ async def test_a_published_edit_writes_one_audit_row_naming_no_permission(client
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='7', type='Small animal',"
+        cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='78613', type='Small animal',"
                     " est=1998, price=1, sqft=3000, state='TX', market='Austin, TX', area='C' WHERE id=%s", (listing_id,))
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"rooms": "6"}, headers=auth_headers(cookies, headers))
     with conn.cursor() as cur:
@@ -320,7 +320,7 @@ async def test_a_patch_drops_every_listings_cache_key_after_the_commit(client: A
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='7',"
+        cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='78613',"
                     " type='Small animal', est=1998, price=1, sqft=3000, state='TX', market='Austin, TX',"
                     " area='C' WHERE id=%s", (listing_id,))
     redis.set("listings:v1:::50", b'{"items": []}')
@@ -655,7 +655,7 @@ async def test_blanking_a_required_field_on_a_submitted_listing_is_refused_not_a
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET name='A', city='C', zip='7', type='Small animal', est=1998,"
+        cur.execute("UPDATE listing SET name='A', city='C', zip='78613', type='Small animal', est=1998,"
                     " price=1, sqft=3000, state='TX', market='Austin, TX', area='C', status=%s WHERE id=%s",
                     (status, listing_id))
 
@@ -750,6 +750,129 @@ async def test_a_number_beyond_its_columns_range_is_refused_in_the_envelope(
                                   headers=auth_headers(cookies, headers))
     assert response.status_code == 422, response.text
     assert response.json()["error"]["code"] == "OUT_OF_RANGE"
+
+
+# --- Task 5 (audit §6): `zip` and `est` are validated at the one door that writes them -----------
+#
+# The audit drove `banana` through step 2 and years 7 and 999999999 through step 1, and all three
+# were STORED: `zip` reached `_text`, which asks only that a string is a string, and `est` reached
+# `_number`, whose only ceiling is the column's own INT_MAX. A nonsense ZIP is not an inert bad
+# string — `app/census/geocode.py` falls back to a city centroid, so the practice is silently placed
+# somewhere it is not, under a field whose own help text says it is "Used to place your practice on
+# the map and to attach community data".
+
+
+@pytest.mark.parametrize("value", ["banana", "7", "786", "786134", "78613 1234", "78613-12", "ABCDE", "7861a"])
+async def test_a_zip_that_is_not_a_us_zip_code_is_refused_in_the_envelope(
+    client: Any, conn: Any, member: Any, value: str
+) -> None:
+    """Five digits, optionally +4, and nothing else — and the column is left exactly as it was."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"zip": value},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 422, response.text
+    assert response.json() == {"error": {"code": "BAD_ZIP", "message": (
+        "zip must be a five-digit US ZIP code, optionally +4 (78613 or 78613-1234)."
+    )}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT zip FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
+@pytest.mark.parametrize("value", ["78613", "78613-1234", "  78613  "])
+async def test_a_real_us_zip_code_is_stored_stripped(client: Any, conn: Any, member: Any, value: str) -> None:
+    """The +4 form is a US ZIP too, and `_text`'s own strip still runs before the pattern does."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"zip": value},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute("SELECT zip FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (value.strip(),)
+
+
+async def test_a_blank_zip_still_clears_the_column(client: Any, conn: Any, member: Any) -> None:
+    """A draft is incomplete by nature: `state.w` initialises `zip` to `""` and a seller who has
+    typed one must be able to clear it again, so the pattern guards a VALUE and never an absence.
+    `listing_submittable_ck` is what refuses a blank one at submit."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"zip": "78613"},
+                               headers=signed)).status_code == 200
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"zip": "   "},
+                               headers=signed)).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT zip FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
+@pytest.mark.parametrize("value", ["7", "999999999", "1899", "0"])
+async def test_a_year_established_outside_the_products_own_plausible_range_is_refused(
+    client: Any, conn: Any, member: Any, value: str
+) -> None:
+    """The bound is the product's own, not this test's: `tests/seeds/test_hospitals_json.py`'s
+    `test_the_demo_business_fields_are_present_and_plausible` has held every seeded hospital to
+    `1900 <= est <= 2026` since the seeds landed, in the same loop as its `price`, `docs`, `rooms`
+    and `sqft` bands. `EST_MIN` is that floor, and is now the one place it is written down — that
+    test reads it back from here."""
+    from app.api.seller_listings import EST_MIN, est_ceiling
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"est": value},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 422, response.text
+    assert response.json() == {"error": {"code": "OUT_OF_RANGE", "message": (
+        f"est must be a year between {EST_MIN} and {est_ceiling()}."
+    )}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT est FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
+async def test_the_year_established_ceiling_is_this_year_and_never_a_frozen_literal(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A practice cannot be established in a year that has not happened, and a hard-coded ceiling
+    would start refusing the current year the moment the calendar turned — which is the defect the
+    seeds test's own literal `2026` carries today. The floor is accepted too, so the range has both
+    of its ends tested at their exact edges."""
+    from datetime import UTC, datetime
+
+    from app.api.seller_listings import EST_MIN, est_ceiling
+
+    this_year = datetime.now(UTC).year
+    assert est_ceiling() == this_year
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    for accepted in (EST_MIN, this_year):
+        assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"est": str(accepted)},
+                                   headers=signed)).status_code == 200, accepted
+        with conn.cursor() as cur:
+            cur.execute("SELECT est FROM listing WHERE id=%s", (listing_id,))
+            assert cur.fetchone() == (accepted,)
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                 json={"est": str(this_year + 1)}, headers=signed)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["code"] == "OUT_OF_RANGE"
+
+
+def test_every_seeded_hospital_would_pass_the_bound_derived_from_them() -> None:
+    """The bound is the product's own data measured, not a rule imposed on it: all 29 seeded
+    hospitals — the demo listings on QA — go through the very helpers the wizard now calls, and
+    every one of them is accepted. `tests/seeds/test_hospitals_json.py` reads `EST_MIN` and
+    `est_ceiling()` back from the API so the floor is written down once; this is the other
+    direction, the real values driven through the real gate."""
+    from app.api.seller_listings import _number, _zip
+    from tests.seeds.test_hospitals_json import load
+
+    for hospital in load():
+        assert _number("est", str(hospital["est"])) == int(str(hospital["est"])), hospital["slug"]
+        assert _zip(str(hospital["zip"])) == str(hospital["zip"]), hospital["slug"]
 
 
 async def test_text_carrying_a_null_character_is_refused_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
@@ -2362,7 +2485,7 @@ async def test_the_identity_documents_audit_sentence_is_what_the_seller_routes_w
     for state in sorted(SL.EDIT_REENTERS_REVIEW):
         listing_id = await _create(client, cookies, headers)
         with conn.cursor() as cur:
-            cur.execute("UPDATE listing SET status=%s, name='A', city='C', zip='7', type='Small animal',"
+            cur.execute("UPDATE listing SET status=%s, name='A', city='C', zip='78613', type='Small animal',"
                         " est=1998, price=1, sqft=3000, state='TX', market='Austin, TX', area='C'"
                         " WHERE id=%s", (state, listing_id))
         assert (await client.patch(f"/api/seller/listings/{listing_id}?step=4",
