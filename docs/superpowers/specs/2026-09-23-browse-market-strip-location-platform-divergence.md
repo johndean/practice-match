@@ -38,6 +38,14 @@ straddles the change.
 
 ## The lesson worth keeping
 
+> **SUPERSEDED ON THE CAUSE (2026-09-24) by
+> `docs/superpowers/specs/2026-09-24-browse-market-strip-location-capture-flake.md`.** The
+> retraction above stands — there was no platform divergence — but the database explanation below
+> is now disputed as the cause: this state has since been shown to produce two different PNGs from
+> the SAME code, on ONE machine, with NO database change between the captures. The database lesson
+> is still true as a rule about running gates; it is no longer the established explanation of what
+> happened here.
+
 **Baselines and the comparison must be generated against the same database state.** The reference
 project is a static prototype, but the app project's flows mutate the database they share with it,
 so generating baselines and then running the app project across a database change compares two

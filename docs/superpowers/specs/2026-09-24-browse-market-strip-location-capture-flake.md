@@ -3,6 +3,14 @@
 **Recorded 2026-09-24, during Task 2 of the seller wizard repair (A58.2/A58.3).** This is a finding,
 not a fix. Nothing here was changed; the flake is live.
 
+**Supersedes, on the cause,
+`docs/superpowers/specs/2026-09-23-browse-market-strip-location-platform-divergence.md`.** That
+record's retraction stands — there was never a platform divergence — but its "lesson worth keeping"
+attributes the difference it saw to baselines straddling a `pm_gate` database change, and the
+measurement below disputes that: the same state produces two different PNGs from the SAME code, on
+ONE machine, with NO database change between the captures. The database rule it states is sound in
+general and is not withdrawn; it is no longer the established explanation of what happened there.
+
 ## The claim
 
 The approved state `browse-market-strip-location` produces **two different PNGs from the same code**
