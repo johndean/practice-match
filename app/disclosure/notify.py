@@ -17,20 +17,37 @@ asked FRESH after the decision, never from the listing row directly:
   denied or revoked request is never in that status -- so asking it after either of those two
   decisions always answers `frozenset()`. Ruling 1 (2026-09-21, on reading the first draft) gives
   `access_denied`/`access_revoked` (`app/mail/templates.py`) a `name` param too -- a buyer with
-  several outstanding requests could not otherwise tell WHICH was declined -- but it is safe BY
-  CONSTRUCTION rather than by this module's judgement: `_buyer_facing_name` below is the ONLY
-  place either template's `name` is filled, and it can never answer the practice's real name for
-  either status, since neither can ever produce the `'APPROVED'` row `authorized_capabilities`
-  requires. The real name can only ever reach `access_approved`, still only through
-  `_buyer_facing_name`.
+  several outstanding requests could not otherwise tell WHICH was declined -- and
+  `_buyer_facing_name` below is the ONLY place either template's `name` is filled.
+
+  **WHAT THAT GUARANTEES CHANGED SHAPE UNDER RULING D-C66 (2026-09-24) and is stated again rather
+  than left as it was.** Until then the guarantee was structural: neither status can produce the
+  `'APPROVED'` row `authorized_capabilities` requires, so `capabilities` was always `frozenset()`
+  and the `and` gate could only ever yield the anonymised label. D-C66 joins the two halves with
+  `or`, so a denial or a revoke on a listing whose seller left the name ceiling OPEN now names the
+  practice. That is not a disclosure: an open ceiling means every signed-in buyer already reads
+  that name on the listing page, this one included, before and after the decision. The privacy
+  rule the spec states -- "a notification must never disclose what the decision withheld" -- is
+  still structural, because `capabilities` is still `frozenset()` for both statuses and the
+  CEILING alone answers, which is a fact about the listing rather than about this request.
 * `_buyer_facing_name` mirrors `app.api.listings.serialise`'s own two-part gate
-  (`named = name_disclosed and "IDENTITY" in capabilities`) rather than trusting either half
+  (`named = name_disclosed or "IDENTITY" in capabilities`) rather than trusting either half
   alone: the listing's `name_disclosed` ceiling (directive §8's "did the seller ever permit this
   at all") and this buyer's own `IDENTITY` capability (directive §8's "did the seller approve
-  THIS buyer") are two separate questions, and a request-level grant can no more override a
-  closed ceiling than a seller's global disclosure can stand in for a buyer this specific seller
-  never approved. Falls back to the design's own anonymised label
-  (`app.api.listings.anonymised_name`) whenever either half is closed.
+  THIS buyer") are two separate questions, and the answer is yes if EITHER says so -- an open
+  ceiling is the seller publishing the name, and a grant releases it whether or not they have.
+  Falls back to the design's own anonymised label (`app.api.listings.anonymised_name`) when
+  neither is open.
+
+  **THE JOIN WAS `and` UNTIL RULING D-C66 (John, 2026-09-24), and this module is not in that
+  ruling's own file list: it is here under the A27.5 rule, because the ruling makes this copy
+  of the gate disagree with the one it mirrors BY ITS OWN ACT.** With `and`, a buyer approved
+  for `FINANCIALS` on a listing whose name ceiling the seller had left open -- which is all
+  twenty-nine QA seeds -- would be mailed "additional access to Austin Veterinary" and then
+  click through to a page headed with the practice's real name. The two must answer one question
+  once. The direction is deliberately NOT a privacy widening on its own: `or` here can only ever
+  name a practice `serialise` would already have named for the same buyer, because both read the
+  same column and the same capability set.
 * None of the three templates ever carries a financial figure, a document title or an exact
   location -- `access_approved` says access opened and links to the listing; the product is where
   confidential content is read, not the mailbox.
@@ -63,13 +80,16 @@ TEMPLATE_FOR_STATUS: dict[str, str] = {
 
 def _buyer_facing_name(conn: Any, *, listing_id: str, seller_id: str | None, buyer_account_id: str) -> str:
     """The practice's real name, or the design's own anonymised fallback -- `app.api.listings`'s
-    own `named = name_disclosed and "IDENTITY" in capabilities` gate, asked fresh here rather than
-    assumed from the caller. Reading `capabilities` AFTER the decision is what makes this safe for
+    own `named = name_disclosed or "IDENTITY" in capabilities` gate (D-C66, 2026-09-24; it was
+    `and` until then, see the module docstring), asked fresh here rather than assumed from the
+    caller. Reading `capabilities` AFTER the decision is what makes this safe for
     `access_denied`/`access_revoked` too, now that ruling 1 (2026-09-21) reuses it there: neither
     status can produce an `'APPROVED'` row for `authorized_capabilities` to match, so `capabilities`
-    is always `frozenset()` and the fallback is the only value either could ever receive. This
-    docstring anticipated exactly that reuse before either caller existed, and reading it fresh
-    per call -- rather than trusting a value the caller already had -- is what proved it sound."""
+    is always `frozenset()` and the CEILING alone decides for those two -- a shut one gives the
+    anonymised label, an open one gives the name the buyer can already read on the listing page.
+    This docstring anticipated exactly that reuse before either caller existed, and reading it
+    fresh per call -- rather than trusting a value the caller already had -- is what proved it
+    sound."""
     with conn.cursor() as cur:
         cur.execute("SELECT name, name_disclosed, area FROM listing WHERE id = %s", (listing_id,))
         row = cur.fetchone()
@@ -82,7 +102,7 @@ def _buyer_facing_name(conn: Any, *, listing_id: str, seller_id: str | None, buy
     # the schema forbids — a guard nobody can exercise reads as "this can happen" and it cannot.
     name, name_disclosed, area = cast("tuple[Any, Any, Any]", row)
     capabilities = authorized_capabilities(conn, listing_id=listing_id, seller_id=seller_id, buyer_account_id=buyer_account_id)
-    if bool(name_disclosed) and "IDENTITY" in capabilities:
+    if bool(name_disclosed) or "IDENTITY" in capabilities:
         return str(name)
     return anonymised_name(str(area))
 

@@ -6,6 +6,70 @@ controller offered — rewriting the copy to describe the global switch. It does
 
 The intended Practice Match product behavior is CONFIRMED: **PER-BUYER DISCLOSURE.**
 
+---
+
+## AMENDED 2026-09-24 — RULING D-C66: THE CEILING IS THE PUBLIC DEFAULT, NOT A SECOND LOCK
+
+**John, 2026-09-24, on Task 8 of the seller-wizard repair plan
+(`docs/superpowers/plans/2026-09-23-seller-wizard-repair.md`): CORRECT THE BEHAVIOUR, NOT THE COPY.
+The listing-wide ceilings become per-buyer releasable.**
+
+**What was built from this directive, and what it did.** §3, §8 and §18 below were implemented as
+*ceiling AND grant*: `app/api/listings.py::serialise` read `bool(row["location_disclosed"]) and
+"EXACT_LOCATION" in capabilities`, and its two siblings for the name and the revenue, while
+`app/api/seller_listings.py::read_document` ANDed `documents_disclosed` in front of
+`has_capability`. Read against the seller's own four switches, that makes the product say the
+opposite of what its labels say. The four step-7 toggles all SHUT a ceiling, and three of them
+promise release on approval in as many words — "Keep practice name and address hidden **until I
+approve a buyer**", "Release revenue as a range **until I approve a buyer**", "Keep floor plans and
+financial packet locked / Buyers see the document titles and can ask for access". A seller who
+ticked any of them and then approved a buyer released **nothing at all**: `False and anything` is
+False, whatever the seller decided afterwards. The one toggle that behaved as promised was
+`showIdentifiable`, whose `NOT_SHOW` + `UNREDACTED_IMAGES` path (`app/privacy/delivery.py`) was
+built as a genuine per-buyer gate, and it is the shape the other three now follow.
+
+**The ruling.** The seller's flag is the PUBLIC DEFAULT and the buyer's grant RELEASES on top of it:
+*ceiling OR grant*. A seller who leaves a ceiling OPEN is publishing that field to every signed-in
+buyer, which is what the toggle's own off position has always meant and what this product did
+before this directive ANDed a grant in front of it. A seller who SHUTS a ceiling is publishing to
+nobody until they approve someone — the promise the label makes.
+
+**WHAT THAT SUPERSEDES, quoted rather than deleted.** Each sentence below stays in place in its own
+section, with a supersession note beside it:
+
+* §3, "A listing-level global boolean must NOT be sufficient to authorize confidential disclosure."
+* §8, "**GLOBAL VISIBILITY is NOT BUYER AUTHORIZATION.** Separate these concepts."
+* §11, "Exact location is confidential unless explicitly authorized. The public listing may use
+  generalized location, market area, city/region, approximate map representation."
+* §18, "Do not create a global field such as `listing.confidentiality_approved = true` and use that
+  as the sole authorization mechanism."
+
+**WHAT IT DOES NOT SUPERSEDE, and this is the half that matters most.** §19 (FAIL CLOSED) is
+strengthened, not relaxed, and the reason is structural: under AND, a bug that wrongly handed a
+buyer a capability still met a shut ceiling; under OR the capability set is the ONLY thing standing
+between a listing and disclosure. Every producer of that set still answers `frozenset()` for an
+absent buyer, a missing row and an unknown level, and the no-grant answer is re-proved field by
+field rather than inherited (`tests/api/test_listings_disclosure.py`).
+
+§10 and §12 (documents) are likewise NOT relaxed, and the document bytes are the one place this
+ruling is asymmetric. There the ceiling is **removed** from the authorization chain rather than
+ORed into it: `read_document` keeps `status == "published"` and `has_capability` exactly as they
+are, so an APPROVED, unexpired, capability-matched grant is still the only thing that opens a
+document. ORing `documents_disclosed` in there would rebuild an incident this codebase has already
+had once — one ceiling flag flipped, every signed-in member downloading a seller's financial packet
+(`tests/api/test_listing_assets.py::test_a_non_owner_member_cannot_read_a_document_however_disclosure_and_status_are_set`
+is that incident's own pin and still passes unchanged). What DOES change for documents is the
+TITLES: `app/api/listings.py::_documents` no longer returns `[]` for a locked listing, because
+hiding the titles made §17's own preserved copy ("Buyers see the document titles and can ask for
+access") describe a screen the server could not produce.
+
+§7's two-buyer test and §21's acceptance matrix are unchanged as REQUIREMENTS and move house as
+FIXTURES: they are now exercised on a listing whose ceilings are SHUT, because that is where a
+per-buyer grant is the whole answer. On a ceiling-open listing Buyer B is no longer "redacted" —
+the seller published to them on purpose.
+
+---
+
 Do NOT rewrite the five pieces of copy to describe a global disclosure switch.
 
 The product is a permissioned veterinary-practice marketplace in which a seller controls
@@ -35,6 +99,14 @@ Create an explicit buyer/listing authorization relationship. Conceptually: listi
 access_request, access_grant, disclosure_level. The authorization must be evaluated against BOTH
 the listing AND the authenticated buyer. A listing-level global boolean must NOT be sufficient to
 authorize confidential disclosure.
+
+> **SUPERSEDED IN PART by D-C66 (2026-09-24), for the three listing-level ceilings
+> `name_disclosed`, `location_disclosed` and `rev_disclosed` only.** A ceiling the seller has left
+> OPEN now IS sufficient, because leaving it open is the seller publishing that field — the
+> sentence above was read as "a shut ceiling also blocks a grant", which made approval release
+> nothing. The authorization is still evaluated against BOTH: the listing says what is public and
+> the grant says what else THIS buyer gets. For document BYTES the original sentence stands
+> unchanged and is if anything stricter — see §10 and the amendment note at the head of this file.
 
 ## 4. ACCESS REQUEST TABLE
 Create the necessary persistent data model. At minimum support: access_request_id, listing_id,
@@ -67,6 +139,11 @@ buyer-specific confidential disclosure. Determine what the existing global switc
 controls. If it controls publication/redaction of listing assets, preserve that functionality where
 appropriate. However: **GLOBAL VISIBILITY is NOT BUYER AUTHORIZATION.** Separate these concepts.
 
+> **SUPERSEDED IN PART by D-C66 (2026-09-24).** Global visibility is not buyer authorization and
+> never becomes it — but under D-C66 it is not its OPPOSITE either. An open ceiling is a decision
+> to publish; a shut one is a decision to wait for an approval, not a veto over one. The two
+> concepts stay separate and are now combined with OR rather than AND.
+
 ## 9. IMAGE DISCLOSURE
 Preserve the existing requirement: all uploaded listing images default to NOT SHOW. Original assets
 remain private. Buyers receive only the appropriate redacted derivative until disclosure is
@@ -83,7 +160,19 @@ authorization + authorized disclosure level.
 
 ## 11. EXACT LOCATION
 Exact location is confidential unless explicitly authorized. The public listing may use generalized
-location, market area, city/region, approximate map representation. After seller approval for Buyer
+location, market area, city/region, approximate map representation.
+
+> **SUPERSEDED IN PART by D-C66 (2026-09-24).** Exact location is still confidential unless
+> explicitly authorized — and a seller who leaves the `anon` ceiling open IS explicitly authorizing
+> it, for everyone. The consequence, recorded because it deletes something this directive asked
+> for: the middle tier built for the sentence above (a public listing serving every buyer a point
+> rounded to 2 decimal places, about 1.1 km, while the exact pair waited on a grant) has no
+> remaining state to live in and is gone. An open ceiling now publishes the street, so a coarsened
+> pin beside it would answer one question two ways, up to 1.1 km apart; a shut ceiling serves the
+> street to a granted buyer, who must get the pin that goes with it. `app/api/listings.py::_point`
+> and `tests/api/test_geo_wire.py` both record the supersession where the tier used to be. The
+> second half of this section — Buyer A approved, Buyer B still public — is unchanged. After seller approval for Buyer
+
 A: Buyer A may receive the authorized exact location; Buyer B must continue seeing only the
 public/generalized location. Do not expose exact coordinates through an unauthenticated API response
 even if the frontend hides them.
@@ -133,7 +222,16 @@ it."
 
 ## 18. DATA MODEL INTEGRITY
 Do not create a global field such as `listing.confidentiality_approved = true` and use that as the
-sole authorization mechanism. Authorization must include the buyer identity. Conceptually:
+sole authorization mechanism.
+
+> **SUPERSEDED IN PART by D-C66 (2026-09-24).** No such field was created; the pre-existing
+> per-field ceilings are what this sentence was implemented against. Under D-C66 an OPEN ceiling is
+> a sufficient authorization for the three fields it names, because it is a publication decision
+> rather than an authorization record. What the sentence forbids — a global flag standing in for a
+> buyer's own grant, so that ONE switch discloses to everyone something the seller meant to release
+> to one person — is still forbidden, and is exactly why the document bytes route keeps its grant
+> and drops its ceiling instead. Authorization must include the buyer identity. Conceptually:
+
 `listing_id + buyer_user_id + disclosure_level + status` must determine authorization.
 
 ## 19. FAIL CLOSED

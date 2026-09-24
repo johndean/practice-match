@@ -762,17 +762,21 @@ async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn:
     # listing must carry at least one real photograph — a card with none shows nothing at all.
     assert all(any(p for p in item["photos"]) for item in items)
     assert {item["market"] for item in items} >= {"Dallas, TX", "Austin, TX", "Atlanta, GA"}
-    # Per-buyer disclosure (Task 8, corrected 2026-09-19): the seeds' OWN ceiling is open (D8/A-L5,
-    # both flags true) and no buyer here holds a grant, so this caller gets the PUBLIC tier —
-    # directive §2/§11's "approximate map representation", the point coarsened to about 1.1 km —
-    # while the exact point and the real name stay behind a grant. Task 8's first cut withheld the
-    # point entirely, which drew no pin for anyone on any listing; `test_geo_wire.py` caught it.
-    # Every hospital must still appear ON the map, which is what a marketplace browse is for.
+    # **RULING D-C66 (John, 2026-09-24), and this is the QA demo's own restoration.** Every seeded
+    # hospital sets all four ceilings OPEN (D8/A-L5, `seeds/hospitals.json`), and under
+    # ceiling-AND-grant that bought them nothing: no seeded listing has a grant against it, so this
+    # caller read an anonymised name and a point coarsened to about 1.1 km — 29 demo hospitals,
+    # every one of them redacted from everybody, for ever. Under ceiling-OR-grant an open ceiling is
+    # the seller publishing, which is what this data has always meant and what the product did
+    # before the 2026-09-18 directive. The two assertions this replaces read "at the approximate
+    # precision, not the exact one" and `name_disclosed is False`.
     assert all(item["lat"] is not None and item["lng"] is not None for item in items), \
         "an open ceiling must still put every seeded hospital on the map"
-    assert all(item["lat"] == round(item["lat"], 2) and item["lng"] == round(item["lng"], 2)
-               for item in items), "and at the approximate precision, not the exact one"
-    assert all(item["name_disclosed"] is False for item in items)
+    assert any(item["lat"] != round(item["lat"], 2) or item["lng"] != round(item["lng"], 2)
+               for item in items), "and at the EXACT precision the open ceiling publishes"
+    assert all(item["name_disclosed"] is True for item in items)
+    assert any(item["name"] == "6666 Dallas Veterinary Specialist Hospital" for item in items), \
+        "an open name ceiling publishes the practice's real name to every signed-in buyer"
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM listing WHERE source = 'seed' AND geom IS NOT NULL")
         assert cur.fetchone()[0] == 29, "the seeder must have written a real geocoded point for every hospital"

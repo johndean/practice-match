@@ -33,9 +33,15 @@ MATCH = json.loads((Path(__file__).parent.parent / "census" / "fixtures" / "geoc
 # The fixture's own rooftop coordinate — `450 Cypress Creek Rd, Cedar Park, TX 78613`, a real
 # recorded Census Geocoder response (`tests/census/test_geocode.py`'s own module docstring).
 MATCH_LNG, MATCH_LAT = -97.820278589313, 30.497509155435
-#: What a buyer WITHOUT an EXACT_LOCATION grant sees once the seller opens the ceiling: the same
-#: point coarsened to 2 decimal places, about 1.1 km — directive §11's "approximate map
-#: representation" (per-buyer disclosure, 2026-09-19). The exact pair above now requires a grant.
+#: **SUPERSEDED BY RULING D-C66 (John, 2026-09-24), and kept as the record of what it replaced.**
+#: Between 2026-09-19 and that ruling a buyer with no EXACT_LOCATION grant, reading a listing whose
+#: seller had left the `anon` ceiling OPEN, received this point — the fixture's own coordinate
+#: rounded to 2 decimal places, about 1.1 km — as directive §11's "approximate map representation",
+#: while the exact pair waited on a grant. D-C66 makes an open ceiling a publication rather than a
+#: half-measure: the street, the postcode and the telephone number now reach every signed-in buyer,
+#: so a pin up to 1.1 km from the street in the same payload would answer one question twice.
+#: `app/api/listings.py::_point` carries the same note where the rounding used to be. The constant
+#: stays because the assertions below still need to say WHICH value they are no longer getting.
 APPROX_LNG, APPROX_LAT = round(MATCH_LNG, 2), round(MATCH_LAT, 2)
 CONTACT = "tech@vinfoundation.example.org"
 _REAL_GEOCODER = geocode.Geocoder
@@ -193,13 +199,14 @@ async def test_publishing_a_listing_carries_it_all_the_way_to_a_pin_a_metro_and_
 
     # (4) The pin. `listing.geom` is written by the geocode now, not by `seed_listings.py` alone.
     item = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    # An ungranted buyer gets the APPROXIMATE point, not the exact one and not nothing: the pin is
-    # still drawn (this whole test is about the wire reaching a pin) while the precise position
-    # stays behind the per-buyer grant.
-    assert (item["lat"], item["lng"]) == (APPROX_LAT, APPROX_LNG)
+    # D-C66 (2026-09-24): this seller left the ceiling OPEN (`anon: False`, step 2 above), so the
+    # pin is the EXACT geocoded point, for every signed-in buyer and with no grant in sight. It used
+    # to be `(APPROX_LAT, APPROX_LNG)` — the rounded tier that ruling retired.
+    assert (item["lat"], item["lng"]) == (MATCH_LAT, MATCH_LNG)
+    assert (item["lat"], item["lng"]) != (APPROX_LAT, APPROX_LNG)
     assert item["geo_precision"] == "rooftop"
     listed = (await client.get("/api/listings", headers=buyer)).json()["items"]
-    assert [(row["id"], row["lat"]) for row in listed] == [(listing_id, APPROX_LAT)]
+    assert [(row["id"], row["lat"]) for row in listed] == [(listing_id, MATCH_LAT)]
 
     # (5) The Community Context card has figures instead of "Community data unavailable".
     assert item["pop"] is not None and item["income"] is not None
@@ -218,10 +225,13 @@ async def test_the_geocoded_pin_is_still_withheld_from_a_listing_that_hides_its_
     `serialise`, so wiring the geocode must not become a way for an address the seller chose to
     hide to reach a buyer's browser as a pair of coordinates.
 
-    Since the per-buyer disclosure work (2026-09-19) the OPEN case is the approximate point rather
-    than the exact one — the exact pair needs an EXACT_LOCATION grant — while the CLOSED case below
-    is unchanged and is what this test has always been about: `location_disclosed = false` still
-    yields no point at all, for every buyer, granted or not."""
+    The OPEN case has moved twice and both moves are recorded rather than silently re-asserted: the
+    per-buyer disclosure work (2026-09-19) made it the APPROXIMATE point, and ruling D-C66
+    (2026-09-24) made it the exact one again, an open ceiling being a decision to publish. The
+    CLOSED case below is untouched by either and is what this test has always been about:
+    `location_disclosed = false` still yields no point at all for a buyer with no grant — and, new
+    with D-C66, yields the exact one to a buyer the seller has approved
+    (`tests/api/test_listings_disclosure.py`)."""
     _seed_geography(conn)
     listing_id, _sent = await _published_listing(client, member, monkeypatch)
     CT.geocode_listing(listing_id)
@@ -229,7 +239,7 @@ async def test_the_geocoded_pin_is_still_withheld_from_a_listing_that_hides_its_
     _account, cookies, _headers = member(("buyer",), email="gw-buyer@example.org")
     buyer = auth_headers(cookies, headers=None)
     shown = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert (shown["lat"], shown["lng"]) == (APPROX_LAT, APPROX_LNG)
+    assert (shown["lat"], shown["lng"]) == (MATCH_LAT, MATCH_LNG)
 
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET location_disclosed = false WHERE id = %s", (listing_id,))

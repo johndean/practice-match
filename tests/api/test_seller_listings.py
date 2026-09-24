@@ -3047,9 +3047,20 @@ async def test_the_street_a_seller_typed_is_what_an_approved_buyer_receives(
     trip — the claim the finding is made of, which no test in the tree could make before because
     every fixture wrote `street` with direct SQL.
 
-    THE PRIVACY TOGGLE GOVERNS DISPLAY ONLY, and both halves are asserted here: with `anon` ON the
-    address the seller just typed reaches nobody, and with it OFF it still reaches only a buyer the
-    seller has approved for `EXACT_LOCATION`."""
+    **THE MIDDLE ASSERTION IS INVERTED UNDER RULING D-C66 (John, 2026-09-24), deliberately and as a
+    ruled behaviour change rather than a test edited until it passed.** As Task 6 shipped it five
+    days earlier, this case proved three states: `anon` ON reaches nobody; `anon` OFF with no grant
+    STILL reaches nobody ("the ceiling alone is not the grant: collecting the address must not
+    change what an unapproved buyer sees"); `anon` OFF with a grant reaches the approved buyer. The
+    second of those was ceiling-AND-grant, and the same `and` is what made `anon` ON + an approved
+    buyer release nothing at all — the defect D-C66 names. Under ceiling-OR-grant, `anon` OFF is the
+    seller publishing the address, so the middle state now reaches every signed-in buyer.
+
+    THE PRIVACY TOGGLE STILL GOVERNS DISPLAY ONLY and the first assertion is untouched: with `anon`
+    ON the address the seller just typed reaches nobody who has not been approved. What D-C66 adds
+    on that arm — that approving a buyer on a listing with `anon` still ON now releases it — is
+    proved field by field in `tests/api/test_listings_disclosure.py`; this case keeps its own shape
+    so the three states it walks stay comparable with what it used to say about them."""
     _sid, s_cookies, s_hdr = member(roles=("seller",), email="s9-seller@example.org")
     signed = auth_headers(s_cookies, s_hdr)
     listing_id = await _create(client, s_cookies, s_hdr)
@@ -3073,10 +3084,10 @@ async def test_the_street_a_seller_typed_is_what_an_approved_buyer_receives(
     await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"anon": False}, headers=signed)
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET status='published' WHERE id = %s", (listing_id,))
-    ungranted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
-    assert (ungranted["street"], ungranted["phone"]) == (None, None), (
-        "the ceiling alone is not the grant: collecting the address must not change what an"
-        " unapproved buyer sees")
+    published = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert (published["street"], published["phone"]) == ("1204 Cypress Creek Rd", "(512) 555-0100"), (
+        "D-C66: `anon` OFF is the seller publishing the address, so an open ceiling reaches every"
+        " signed-in buyer. This assertion read (None, None) until 2026-09-24.")
 
     created = await client.post("/api/requests", headers=buyer,
                                 json={"listing_id": listing_id, "disclosure_level": "EXACT_LOCATION"})
@@ -3088,6 +3099,22 @@ async def test_the_street_a_seller_typed_is_what_an_approved_buyer_receives(
     granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
     assert granted["street"] == "1204 Cypress Creek Rd"
     assert granted["phone"] == "(512) 555-0100"
+
+    # ...and the arm D-C66 adds, on this same listing: the seller shuts the ceiling again and the
+    # buyer they approved KEEPS the address, while the listing goes back to hiding it from everyone
+    # else. That is the whole of the ruling in one step, on the very data S9 collected.
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"anon": True}, headers=signed)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published' WHERE id = %s", (listing_id,))
+    still_granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert still_granted["street"] == "1204 Cypress Creek Rd"
+    assert still_granted["phone"] == "(512) 555-0100"
+
+    _oid, o_cookies, o_hdr = member(roles=("buyer",), email="s9-other-buyer@example.org")
+    other = (await client.get(f"/api/listings/{listing_id}",
+                              headers=auth_headers(o_cookies, o_hdr))).json()
+    assert (other["street"], other["phone"]) == (None, None), (
+        "a shut ceiling still hides the address from a buyer the seller has not approved")
 
 
 # --- S9 fix round 1 (review Important-1): the submit gate alone was ONE-WAY ------------------------

@@ -115,9 +115,18 @@ def _count_queries(monkeypatch: Any) -> _QueryCounter:
 
 
 @pytest.mark.asyncio
-async def test_an_unapproved_buyer_sees_the_anonymised_name_even_when_the_ceiling_is_open(client: Any, conn: Any, member: Any) -> None:
+async def test_an_unapproved_buyer_sees_the_anonymised_name_when_the_ceiling_is_shut(client: Any, conn: Any, member: Any) -> None:
+    """**RE-KEYED UNDER D-C66 (2026-09-24), and what it used to prove is why.** This case was
+    written as "...even when the ceiling is OPEN": under ceiling-AND-grant an open `name_disclosed`
+    redacted the name all the same, because the buyer held no grant. Under ceiling-OR-grant an open
+    ceiling IS the seller publishing the name, so the same fixture would now prove the opposite of
+    what it was written for -- that inversion is its own case,
+    `test_a_signed_in_buyer_with_no_grant_receives_everything_an_open_ceiling_publishes` below.
+
+    The claim survives the move unchanged and is the one this case exists for: the OUTPUT flag
+    reports what THIS buyer actually received, never the seller's raw column."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s1@x.org")
-    listing_id = await _published_seller_listing(conn, client, auth_headers(s_cookies, s_hdr), name_disclosed=True)
+    listing_id = await _published_seller_listing(conn, client, auth_headers(s_cookies, s_hdr), name_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b1@x.org")
     response = await client.get(f"/api/listings/{listing_id}", headers=auth_headers(b_cookies, b_hdr))
     assert response.json()["name"] != "Real Practice Name"
@@ -125,32 +134,47 @@ async def test_an_unapproved_buyer_sees_the_anonymised_name_even_when_the_ceilin
 
 
 @pytest.mark.asyncio
-async def test_a_signed_in_buyer_with_no_grant_is_identical_to_the_public_shape(client: Any, conn: Any, member: Any) -> None:
-    """Directive §11's own last line: exact coordinates never reach an unauthenticated -- in this
-    product's vocabulary, un-GRANTED -- response body, even with every ceiling wide open. One
-    listing, all three ceilings open, no request ever created against it."""
+async def test_a_signed_in_buyer_with_no_grant_receives_everything_an_open_ceiling_publishes(client: Any, conn: Any, member: Any) -> None:
+    """**INVERTED UNDER D-C66 (2026-09-24), deliberately, and this is the ruling's other half.**
+
+    Until this ruling this case read "...is identical to the public shape" and asserted that a
+    listing with all three ceilings OPEN served a signed-in buyer with no grant NOTHING: no name,
+    no address, no point, no revenue. That was directive §11's own last line read as
+    ceiling-AND-grant, and it is what made approving a buyer release nothing on a listing whose
+    seller had shut a ceiling -- `False and anything`.
+
+    Under ceiling-OR-grant an open ceiling is the seller PUBLISHING that field, exactly as this
+    product behaved before the 2026-09-18 directive ANDed a grant in front of it and exactly as the
+    toggle's own off position reads. No request exists against this listing and none is needed. The
+    redacted shape has not gone anywhere -- it is what a SHUT ceiling serves, which
+    `test_every_shut_ceiling_still_hides_everything_from_a_buyer_with_no_grant` proves field by
+    field."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s1b@x.org")
     listing_id = await _published_seller_listing(
         conn, client, auth_headers(s_cookies, s_hdr),
         name_disclosed=True, location_disclosed=True, rev_disclosed=True,
     )
+    lat, lng = await _with_a_point(conn, listing_id)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b1b@x.org")
     body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(b_cookies, b_hdr))).json()
-    assert body["name"] != "Real Practice Name" and body["name_disclosed"] is False
-    assert body["street"] is None and body["zip"] is None and body["phone"] is None
-    assert body["lat"] is None and body["lng"] is None and body["location_disclosed"] is False
-    assert body["rev"] is None
-    # Directive §12's own words, checked over the RAW body: no exact coordinate leaks through any
-    # OTHER key either, not just the ones this test already named.
-    text = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(b_cookies, b_hdr))).text
-    assert "123 Main St" not in text and "5125551234" not in text and "Real Practice Name" not in text
+    assert body["name"] == "Real Practice Name" and body["name_disclosed"] is True
+    assert (body["street"], body["zip"], body["phone"]) == ("123 Main St", "78701", "5125551234")
+    assert body["location_disclosed"] is True
+    assert body["rev"] == 500000
+    # The pin follows the street it belongs to. Between 2026-09-19 and D-C66 this buyer received a
+    # point rounded to 2 decimal places -- about 1.1 km -- while the exact pair waited on a grant;
+    # with the street itself now published beside it, that tier would be one question answered two
+    # ways (`app/api/listings.py::_point` records the supersession where the rounding used to be).
+    assert (body["lat"], body["lng"]) == (pytest.approx(lat), pytest.approx(lng))
 
 
 @pytest.mark.asyncio
 async def test_an_approved_identity_grant_reveals_the_real_name(client: Any, conn: Any, member: Any) -> None:
     _sid, s_cookies, s_hdr = member(("seller",), email="s2@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=True)
+    # RE-KEYED UNDER D-C66: `name_disclosed=False`. With the ceiling open the name is published to
+    # everyone now, so an open-ceiling fixture could no longer prove the GRANT released anything.
+    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b2@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
     await _approve(client, seller_headers, buyer_headers, listing_id, level="IDENTITY")
@@ -162,11 +186,17 @@ async def test_an_approved_identity_grant_reveals_the_real_name(client: Any, con
 @pytest.mark.asyncio
 async def test_an_identity_grant_does_not_also_reveal_location_or_revenue(client: Any, conn: Any, member: Any) -> None:
     """Each capability follows its OWN name (directive §16) -- a grant of ONE must not confer
-    another, even though every ceiling in this listing is wide open."""
+    another.
+
+    **RE-KEYED UNDER D-C66 (2026-09-24): every ceiling in this fixture was wide OPEN and is now
+    SHUT.** The old fixture made the point that an open ceiling was not enough; under
+    ceiling-OR-grant an open ceiling is enough by itself, so the isolation this case is actually
+    about -- one capability must not stand in for the other four -- can only be seen where the
+    grant is the whole answer. The assertions below are unchanged."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s3@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id = await _published_seller_listing(conn, client, seller_headers,
-                                                  name_disclosed=True, location_disclosed=True, rev_disclosed=True)
+                                                  name_disclosed=False, location_disclosed=False, rev_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b3@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
     await _approve(client, seller_headers, buyer_headers, listing_id, level="IDENTITY")
@@ -179,11 +209,14 @@ async def test_an_identity_grant_does_not_also_reveal_location_or_revenue(client
 @pytest.mark.asyncio
 async def test_a_financials_grant_reveals_only_revenue(client: Any, conn: Any, member: Any) -> None:
     """The mirror of the IDENTITY test above -- directive §1's own FINANCIALS example -- so no
-    single capability is accidentally standing in for "all of them.\""""
+    single capability is accidentally standing in for "all of them."
+
+    RE-KEYED UNDER D-C66 for the same reason as the case above: the three ceilings this fixture
+    opened are shut, because an open one now discloses on its own."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s3b@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id = await _published_seller_listing(conn, client, seller_headers,
-                                                  name_disclosed=True, location_disclosed=True, rev_disclosed=True)
+                                                  name_disclosed=False, location_disclosed=False, rev_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b3c@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
     await _approve(client, seller_headers, buyer_headers, listing_id, level="FINANCIALS")
@@ -194,27 +227,50 @@ async def test_a_financials_grant_reveals_only_revenue(client: Any, conn: Any, m
 
 
 @pytest.mark.asyncio
-async def test_a_full_confidential_grant_with_the_ceiling_closed_still_withholds_the_field(client: Any, conn: Any, member: Any) -> None:
-    """Directive §8/§24: the ceiling flag ANDs with the grant, in BOTH directions -- a grant this
-    broad cannot override a ceiling the seller has left shut."""
+async def test_a_full_confidential_grant_opens_a_ceiling_the_seller_shut(client: Any, conn: Any, member: Any) -> None:
+    """**INVERTED UNDER D-C66 (2026-09-24). This case is the defect the ruling is made of.**
+
+    It used to be called `test_a_full_confidential_grant_with_the_ceiling_closed_still_withholds_
+    the_field`, and it asserted -- correctly, for the implementation as it then stood -- that
+    "a grant this broad cannot override a ceiling the seller has left shut" (directive §8/§24).
+    Read from the seller's side that is: the seller ticks "Keep practice name and address hidden
+    UNTIL I APPROVE A BUYER", the buyer asks, the seller approves the broadest level there is, and
+    the buyer receives nothing whatsoever. John ruled the behaviour wrong rather than the copy
+    (D-C66), so the ceiling is now the PUBLIC DEFAULT and the grant RELEASES on top of it.
+
+    What has NOT changed, and is asserted here beside the release: a shut ceiling still discloses
+    nothing to a buyer with no grant (the case below it), and the bytes of a document still need a
+    capability-matched grant whatever the ceiling says
+    (`tests/api/test_documents_disclosure.py`)."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s4@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
     listing_id = await _published_seller_listing(conn, client, seller_headers, location_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b4@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    before = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert before["street"] is None and before["location_disclosed"] is False
+
     await _approve(client, seller_headers, buyer_headers, listing_id)
     body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
-    assert body["street"] is None  # location_disclosed is still false; FULL_CONFIDENTIAL cannot override it
-    assert body["location_disclosed"] is False
+    assert body["street"] == "123 Main St"
+    assert body["location_disclosed"] is True
 
 
 @pytest.mark.asyncio
 async def test_buyer_a_with_exact_location_and_buyer_b_without_diverge_at_the_same_moment(client: Any, conn: Any, member: Any) -> None:
     """Directive §7's own critical security test, applied to EXACT_LOCATION on the detail route:
-    two buyers, one seller-approved, reading the SAME listing in the SAME test run must not agree."""
+    two buyers, one seller-approved, reading the SAME listing in the SAME test run must not agree.
+
+    **RE-KEYED UNDER D-C66 (2026-09-24): `location_disclosed` moves true -> false.** §7 is a
+    requirement about a CONFIDENTIAL field, and under ceiling-OR-grant a listing whose ceiling the
+    seller left open has no confidential location to diverge about -- both buyers would correctly
+    receive the street the seller published. A shut ceiling is where §7 now lives, and the
+    divergence it asks for is sharper there than it was: Buyer B gets no address and no pin at all,
+    rather than the 1.1-km-rounded point the middle tier used to hand them."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s5b@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_id = await _published_seller_listing(conn, client, seller_headers, location_disclosed=True)
+    listing_id = await _published_seller_listing(conn, client, seller_headers, location_disclosed=False)
     # `_published_seller_listing` sets `street`/`city`/`zip` but no `geom` -- the helper's other
     # callers never need a point. This test's own subject IS the exact coordinate, so it geocodes
     # the listing directly (`serialise`'s `disclosed and lat is not None` guard is the null-safety
@@ -231,12 +287,12 @@ async def test_buyer_a_with_exact_location_and_buyer_b_without_diverge_at_the_sa
     a_body = (await client.get(f"/api/listings/{listing_id}", headers=a_headers)).json()
     b_body = (await client.get(f"/api/listings/{listing_id}", headers=b_headers)).json()
     assert a_body["street"] == "123 Main St" and a_body["lat"] is not None and a_body["lng"] is not None
-    # Buyer B keeps the PUBLIC tier: no street, and the point coarsened to ~1.1 km rather than
-    # withheld (directive §2/§11). The isolation that matters is that B's point is NOT A's.
-    assert b_body["street"] is None
-    assert (b_body["lat"], b_body["lng"]) == (round(a_body["lat"], 2), round(a_body["lng"], 2))
+    # Buyer B keeps what the seller published, which on a shut ceiling is no location at all. A25's
+    # "no point, no pin" and D-C66 agree here: the listing stays off B's map.
+    assert b_body["street"] is None and b_body["zip"] is None and b_body["phone"] is None
+    assert (b_body["lat"], b_body["lng"]) == (None, None)
     assert (b_body["lat"], b_body["lng"]) != (a_body["lat"], a_body["lng"]), \
-        "an approximate point must not equal the exact one this fixture grants Buyer A"
+        "Buyer B must not receive the point this fixture grants Buyer A"
 
 
 @pytest.mark.asyncio
@@ -245,7 +301,10 @@ async def test_after_revocation_the_buyer_returns_to_the_public_shape(client: An
     unlocked -- no session refresh, no separate flag to clear."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s6b@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=True)
+    # RE-KEYED UNDER D-C66: the ceiling is SHUT, so the grant is the only thing holding the name
+    # open and revocation is the only thing that can close it again. With the ceiling open the name
+    # is published to everybody and a revoked buyer would correctly go on seeing it.
+    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b6b@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
     request_id = await _approve(client, seller_headers, buyer_headers, listing_id, level="IDENTITY")
@@ -265,8 +324,10 @@ async def test_a_buyer_denied_on_the_detail_page_cannot_read_the_same_field_out_
     not be able to read on `GET /api/listings` either."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s7@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
+    # RE-KEYED UNDER D-C66: both ceilings SHUT, because an open one is now a publication and there
+    # would be nothing for either route to withhold.
     listing_id = await _published_seller_listing(conn, client, seller_headers,
-                                                  name_disclosed=True, rev_disclosed=True)
+                                                  name_disclosed=False, rev_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b7@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
 
@@ -283,8 +344,10 @@ async def test_a_buyer_denied_on_the_detail_page_cannot_read_the_same_field_out_
 async def test_the_list_route_applies_capabilities_per_listing(client: Any, conn: Any, member: Any) -> None:
     _sid, s_cookies, s_hdr = member(("seller",), email="s5@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_x = await _published_seller_listing(conn, client, seller_headers, name_disclosed=True)
-    listing_y = await _published_seller_listing(conn, client, seller_headers, name_disclosed=True)
+    # RE-KEYED UNDER D-C66: both ceilings SHUT, so the only difference between X and Y is the grant
+    # this buyer holds against one of them -- which is what "per listing" means.
+    listing_x = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
+    listing_y = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b5@x.org")
     buyer_headers = auth_headers(b_cookies, b_hdr)
     await _approve(client, seller_headers, buyer_headers, listing_x, level="IDENTITY")
@@ -349,7 +412,9 @@ async def test_the_list_routes_shared_cache_never_leaks_one_buyers_grant_to_anot
     even though both ask for the exact same page within the same TTL window."""
     _sid, s_cookies, s_hdr = member(("seller",), email="s8@x.org")
     seller_headers = auth_headers(s_cookies, s_hdr)
-    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=True)
+    # RE-KEYED UNDER D-C66: the ceiling is SHUT, so Buyer A's disclosed name exists only because of
+    # A's own grant -- which is the only way this cache can leak anything at all.
+    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
     _aid, a_cookies, a_hdr = member(("buyer",), email="a8@x.org")
     a_headers = auth_headers(a_cookies, a_hdr)
     _bid, b_cookies, b_hdr = member(("buyer",), email="b8@x.org")
@@ -402,3 +467,137 @@ async def test_the_sellers_own_dashboard_view_is_unaffected_by_any_buyers_capabi
     # D11's own polarity: `anon`/`revBand` mirror the RAW ceiling flags this test set to False,
     # never a buyer's capability -- this route has no concept of one at all.
     assert body["anon"] is True and body["revBand"] is True
+
+
+# --- Task 8 of the seller-wizard repair (ruling D-C66, 2026-09-24) -------------------------------
+#
+# **The ceilings became PER-BUYER RELEASABLE.** Every term above this line read *ceiling AND grant*,
+# so a seller who shut a ceiling -- which is what all four step-7 toggles do, and what every label
+# on them promises ("Keep practice name and address hidden UNTIL I APPROVE A BUYER",
+# `frontend/src/logic.js`) -- could approve a buyer and release NOTHING: `False and anything` is
+# False, whatever the seller decided afterwards. Three of the four toggles behaved that way;
+# `showIdentifiable` (`app/privacy/delivery.py::buyer_variant`) was the one that already worked, and
+# is the shape these now follow.
+#
+# John ruled the BEHAVIOUR wrong rather than the copy (D-C66), so each term is now *ceiling OR
+# grant*: the ceiling is the PUBLIC DEFAULT and the grant RELEASES on top of it. The 2026-09-18
+# directive's own ceiling-AND-grant sentences (§3, §8, §11, §18) are superseded IN PLACE in
+# `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md`, never deleted.
+#
+# WHAT THAT DOES TO THE TESTS ABOVE, stated rather than quietly applied: a ceiling left OPEN is now
+# sufficient on its own, so a ceiling-open fixture can no longer prove anything about a grant. Every
+# case above that opened a ceiling to isolate the grant now SHUTS it to isolate the same thing, and
+# each carries its own note saying what it used to prove and why that changed -- the inversion idiom
+# this branch used for `reorder_photos`' own characterisation test one task earlier.
+#
+# The cases below are the new behaviour's own proof, per toggle and -- for `anon`, which is one
+# switch over five served facts -- per FIELD. The pin is asserted separately from the street on
+# purpose: `_point` took the ceiling as its OWN argument, so a release that reached the street,
+# the postcode and the telephone number and left the pin at None would be three quarters of a row
+# and would read as done.
+
+
+async def _with_a_point(conn: Any, listing_id: str) -> tuple[float, float]:
+    """`_published_seller_listing` writes no `geom` -- its other callers never need one. Austin's
+    own coordinate, the pair `test_buyer_a_with_exact_location_and_buyer_b_without_diverge_at_the_
+    same_moment` already uses."""
+    lng, lat = -97.7431, 30.2672
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET geom = ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography"
+                    " WHERE id = %s", (lng, lat, listing_id))
+    return lat, lng
+
+
+@pytest.mark.asyncio
+async def test_a_shut_name_ceiling_releases_the_name_and_slug_to_an_identity_grant(client: Any, conn: Any, member: Any) -> None:
+    """D-C66, the `anon` toggle's identity half. `name_disclosed = false` is what the wizard writes
+    when the seller ticks "Keep practice name and address hidden until I approve a buyer", and until
+    this ruling approving that buyer changed nothing at all."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-name-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers, name_disclosed=False)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-name-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    before = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert before["name"] != "Real Practice Name" and before["slug"] is None
+
+    await _approve(client, seller_headers, buyer_headers, listing_id, level="IDENTITY")
+    after = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert after["name"] == "Real Practice Name"
+    assert after["name_disclosed"] is True
+    assert after["slug"] is not None, "the slug spells the name, so it is released with it (A-L5.1)"
+
+
+@pytest.mark.asyncio
+async def test_a_shut_location_ceiling_releases_the_street_the_zip_the_telephone_and_the_pin(
+    client: Any, conn: Any, member: Any,
+) -> None:
+    """D-C66, the `anon` toggle's location half -- FIVE served facts behind one switch, asserted one
+    at a time because `serialise` reaches them through TWO different expressions (`disclosed` for
+    the three strings, `_point`'s own arguments for the pair of coordinates) and a fix that moved
+    only the first would leave the map empty for the buyer the seller just approved."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-loc-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers, location_disclosed=False)
+    lat, lng = await _with_a_point(conn, listing_id)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-loc-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    before = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert (before["street"], before["zip"], before["phone"]) == (None, None, None)
+    assert (before["lat"], before["lng"]) == (None, None)
+
+    await _approve(client, seller_headers, buyer_headers, listing_id, level="EXACT_LOCATION")
+    after = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert after["street"] == "123 Main St"
+    assert after["zip"] == "78701"
+    assert after["phone"] == "5125551234"
+    assert after["lat"] == pytest.approx(lat)
+    assert after["lng"] == pytest.approx(lng)
+    assert after["location_disclosed"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_shut_revenue_ceiling_releases_the_exact_figure_to_a_financials_grant(client: Any, conn: Any, member: Any) -> None:
+    """D-C66, the `revBand` toggle. Step 7's own label: "Release revenue as a range until I approve
+    a buyer" -- the release half is what this proves; the range half is a separate, pre-existing
+    copy defect (no band is computed anywhere in the product) and is reported, not fixed here."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-rev-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers, rev_disclosed=False)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-rev-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    assert (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()["rev"] is None
+    await _approve(client, seller_headers, buyer_headers, listing_id, level="FINANCIALS")
+    assert (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()["rev"] == 500000
+
+
+@pytest.mark.asyncio
+async def test_every_shut_ceiling_still_hides_everything_from_a_buyer_with_no_grant(client: Any, conn: Any, member: Any) -> None:
+    """THE FAIL-CLOSED PROOF, and the one case this ruling could most easily have broken. Under AND
+    a bug that wrongly handed a buyer a capability still met a shut ceiling; under OR the capability
+    set is the ONLY thing left between a listing and disclosure, so the no-grant answer is re-proved
+    here rather than inherited -- every field of every toggle, on a listing whose seller shut all
+    four, for a signed-in buyer who has never asked for anything."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-closed-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers)
+    await _with_a_point(conn, listing_id)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-closed-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    response = await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)
+    body = response.json()
+    assert body["name"] != "Real Practice Name" and body["name_disclosed"] is False and body["slug"] is None
+    assert (body["street"], body["zip"], body["phone"]) == (None, None, None)
+    assert (body["lat"], body["lng"]) == (None, None)
+    assert body["location_disclosed"] is False
+    assert body["rev"] is None
+    # Directive §12 over the RAW body: no confidential value reaches this buyer through any other
+    # key either, not only the ones named above.
+    assert "123 Main St" not in response.text
+    assert "5125551234" not in response.text
+    assert "Real Practice Name" not in response.text
+    assert "500000" not in response.text

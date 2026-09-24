@@ -313,3 +313,106 @@ async def test_an_ungranted_buyer_never_sees_the_sellers_own_filename(
     await _approve(client, seller_headers, buyer_headers, listing_id, level="FINANCIALS")
     granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
     assert granted["documents"][0]["name"] == "Smith_Family_Veterinary_2023_Financials.pdf"
+
+
+# --- Task 8 of the seller-wizard repair (ruling D-C66, 2026-09-24) -------------------------------
+#
+# `docsLocked` is the third of the four step-7 toggles the ruling reaches, and it is the one whose
+# two halves move in OPPOSITE directions -- which is why it gets its own section rather than a row
+# in the table above.
+#
+# **The LIST stops being gated by the ceiling.** `_documents` returned `[]` before it ran its query
+# whenever `documents_disclosed` was false, so a seller who ticked "Keep floor plans and financial
+# packet locked" hid the very titles the same toggle's own help promises ("Buyers see the document
+# titles and can ask for access"). Under D-C66 the titles are visible whether the toggle is on or
+# off, which is what makes the request flow reachable on a locked listing at all.
+#
+# **The BYTES keep requiring the grant, and the ceiling is REMOVED from that chain rather than
+# ORed into it.** That asymmetry is deliberate and is the one thing in this task that must not be
+# "made consistent": `read_document`'s own docstring records a real incident in which disclosure and
+# "published" stood in for authorization alone, and any signed-in member could download a seller's
+# financial packet the moment one ceiling flag flipped. ORing the ceiling here would rebuild that
+# incident exactly. So the chain keeps `status == "published"` and `has_capability` untouched and
+# drops `bool(disclosed)`: the bytes answer to a GRANT and to nothing else.
+#
+# `tests/api/test_listing_assets.py::test_a_non_owner_member_cannot_read_a_document_however_
+# disclosure_and_status_are_set` is the incident's own pin and is unchanged by this task -- it
+# sweeps both flags in both positions against an ungranted member and expects 403 every time, which
+# is still exactly right.
+
+
+@pytest.mark.asyncio
+async def test_a_locked_listing_lists_its_document_titles_and_still_refuses_the_bytes(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """D-C66's list half. Before this ruling the same listing answered `documents: []` -- a seller
+    who locked their documents left a buyer with nothing to point at, and step 7's own help
+    sentence ("Buyers see the document titles and can ask for access") described a screen the
+    server could not produce."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-doc-lock-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, (asset_id,) = await _listing_with_documents(conn, client, seller_headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET documents_disclosed = false WHERE id = %s", (listing_id,))
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-doc-lock-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert [d["id"] for d in body["documents"]] == [asset_id]
+    # ...and the title is still the GENERIC label, because this buyer holds no grant: the seller's
+    # own filename can name the practice or its street (security review, 2026-09-19), and D-C66
+    # does not touch that control.
+    assert body["documents"][0]["name"] == "Financial packet"
+
+    refused = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}", headers=buyer_headers)
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "LOCKED"
+
+
+@pytest.mark.asyncio
+async def test_a_locked_listing_opens_its_document_to_the_buyer_the_seller_approves(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """D-C66's bytes half, and the defect the ruling is made of: the seller locks the packet, the
+    buyer asks, the seller approves -- and before this ruling the ceiling ANDed the grant away and
+    the approval delivered nothing at all."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-doc-grant-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, (asset_id,) = await _listing_with_documents(conn, client, seller_headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET documents_disclosed = false WHERE id = %s", (listing_id,))
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-doc-grant-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+    await _approve(client, seller_headers, buyer_headers, listing_id, level="FINANCIALS")
+
+    response = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}", headers=buyer_headers)
+    assert response.status_code == 200
+    assert response.content == PDF
+    # The real filename arrives with the grant, on the locked listing too.
+    body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert body["documents"][0]["name"] == "doc-0.pdf"
+
+
+@pytest.mark.asyncio
+async def test_an_unlocked_listing_still_refuses_the_bytes_to_a_buyer_with_no_grant(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """THE FAIL-CLOSED PROOF for this toggle, and the reason the ceiling is REMOVED from the bytes
+    chain rather than ORed into it. `documents_disclosed = true` is the state the incident
+    `read_document`'s docstring records was triggered by -- one flag flipped, and every signed-in
+    member could download the packet. Under D-C66 an open ceiling publishes the street and the
+    name; it still publishes no document bytes to anybody who has not been approved."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="c66-doc-open-s@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, (asset_id,) = await _listing_with_documents(conn, client, seller_headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET documents_disclosed = true, name_disclosed = true,"
+                    " location_disclosed = true, rev_disclosed = true WHERE id = %s", (listing_id,))
+    _bid, b_cookies, b_hdr = member(("buyer",), email="c66-doc-open-b@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    refused = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}", headers=buyer_headers)
+    assert refused.status_code == 403
+    assert refused.json() == {
+        "error": {"code": "LOCKED", "message": "This document is locked until the seller approves access."}
+    }

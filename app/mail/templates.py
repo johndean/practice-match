@@ -140,15 +140,16 @@ _LISTING_DECLINED = (
 # `app.disclosure.notify` is the ONE caller of these three, and it composes every value below from
 # `app.disclosure.access.authorized_capabilities` (called AFTER the decision is written), never
 # from the listing row directly — see that module's own docstring for the full account. What that
-# means for THIS file: `access_denied` and `access_revoked` now declare a `name` param too, but it
-# is safe BY CONSTRUCTION rather than by this file's judgement — `_buyer_facing_name`
-# (`app.disclosure.notify`) can only ever fill it with the design's own anonymised label
-# (`app.api.listings.anonymised_name`) for these two statuses, because neither DENIED nor REVOKED
-# can produce an `'APPROVED'` row for `authorized_capabilities` to match, so `capabilities` is
-# always `frozenset()` there and the two-part gate below always takes the fallback branch.
-# `access_approved`'s `name` is filled with that SAME anonymised label unless the listing's
-# `name_disclosed` ceiling is open AND this buyer's approved level covers `IDENTITY` — the
-# identical two-part gate `app.api.listings.serialise` computes for the listing payload itself.
+# means for THIS file: `access_denied` and `access_revoked` declare a `name` param too, and
+# `_buyer_facing_name` (`app.disclosure.notify`) is the only thing that ever fills it. Neither
+# DENIED nor REVOKED can produce an `'APPROVED'` row for `authorized_capabilities` to match, so
+# `capabilities` is always `frozenset()` there and the listing's own `name_disclosed` ceiling
+# alone decides: shut, and the mail carries the design's anonymised label
+# (`app.api.listings.anonymised_name`); open, and it carries the name every signed-in buyer
+# already reads on the listing page. Every `name` here is filled by that same gate,
+# `name_disclosed OR this buyer's approved level covers IDENTITY` — the identical gate
+# `app.api.listings.serialise` computes for the listing payload itself (ruling D-C66,
+# 2026-09-24; it was an AND on both sides until then).
 # `requested` is the buyer's own act (the date they asked) and discloses nothing about the seller.
 # None of the three ever carries a financial figure, a document title or an exact location; a
 # grant is a link to the listing page, not a copy of what it now shows.

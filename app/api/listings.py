@@ -38,20 +38,27 @@ blanks what the flags hide:
   returning it would hand back the hidden name in another spelling. Same posture as the address
   above: the flag nulls what it hides. **Task L6 therefore keys off `id`, never `slug`** (A-L5.1).
 
-**Since the per-buyer disclosure plan's Task 8 (2026-09-18), each flag above is a CEILING rather
-than the whole answer (directive §8, §24).** `location_disclosed`/`name_disclosed`/`rev_disclosed`
-still mean exactly what this section already says -- a seller-set precondition that must be true
-before *any* buyer can ever receive the value -- but a buyer additionally needs the matching
-capability (`EXACT_LOCATION`/`IDENTITY`/`FINANCIALS`) from an APPROVED `request` row before the
-field crosses into their own response. `list_listings`/`get_listing` compute the calling buyer's
-capabilities (one bulk query for a whole page, one single-listing query for the detail route --
-directive §23, `app.disclosure.access.authorized_capabilities`/`_bulk`) and `serialise` ANDs each
-flag against them; the flag being true discloses nothing to a buyer the seller has not separately
-approved. "Every seed sets both flags true" below therefore no longer means "every buyer sees the
-real name" -- it means "the ceiling is open for whichever buyer a seller approves."
+**Since the per-buyer disclosure plan's Task 8 (2026-09-18) each flag above is a CEILING rather
+than the whole answer, and RULING D-C66 (John, 2026-09-24) settled which way the two combine.**
+`list_listings`/`get_listing` compute the calling buyer's capabilities (one bulk query for a whole
+page, one single-listing query for the detail route -- directive §23,
+`app.disclosure.access.authorized_capabilities`/`_bulk`) and `serialise` reads *flag OR capability*
+per field: the flag is the seller's PUBLIC DEFAULT and the capability RELEASES on top of it.
 
-Every seed sets both flags true (D8, A-L5), so nothing John sees on QA changes; Wave 2b's sellers
-default to false, which is why both branches have to be right now rather than later.
+It was *flag AND capability* between 2026-09-18 and that ruling, and the defect that produced is
+the ruling's own subject: all four of the seller's step-7 switches SHUT a ceiling and three of them
+promise release on approval in as many words ("Keep practice name and address hidden **until I
+approve a buyer**"), so a seller who ticked one and then approved a buyer released nothing at all --
+`False and anything`. The directive's own ceiling-AND-grant sentences (§3, §8, §11, §18) are
+superseded IN PLACE in `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md`, and
+`app/api/seller_listings.py::read_document` is the ONE deliberate asymmetry: there the ceiling is
+REMOVED rather than ORed, because ORing it would rebuild an incident this module has already had.
+
+Every seed sets both flags true (D8, A-L5), so every seeded hospital publishes its real name and
+address to every signed-in buyer, which is what that data has always meant and what QA showed
+before the directive; Wave 2b's sellers default to false -- all four columns are `NOT NULL DEFAULT
+false` -- so a real wizard listing still discloses nothing until its seller opens a ceiling or
+approves a buyer.
 
 **All three routes are mounted only in `site_mode == "app"`** (A-L5.1), beside the auth,
 applications and admin routers: they are member endpoints, and
@@ -386,29 +393,35 @@ def _photo_urls(listing_id: str, photos: list[str | None], row: Mapping[str, Any
     return out
 
 
-def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceiling_open: bool) -> list[dict[str, Any]]:
+def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str]) -> list[dict[str, Any]]:
     """Every non-photo asset THIS CALLER could actually fetch through `read_document`
     (`app/api/seller_listings.py`) -- directive §10's own "the JSON list must not advertise what
     the bytes route will refuse."  The route's own `allowed` boolean is
-    `owner or staff or (documents_disclosed and published and has_capability(...))`; this list has
+    `owner or staff or (published and has_capability(...))`; this list has
     no notion of owner/staff at all (the buyer-facing `get_listing` route this feeds is not how a
     seller or a reviewer reads their own listing -- they have `GET /api/seller/listings/{id}` and
     `GET /api/admin/listings/{id}` for that), so it is exactly the buyer arm of that same boolean,
-    applied per document: `ceiling_open` is the listing's own `documents_disclosed` flag (directive
-    §8, §24) and `capabilities` is the SAME set `serialise`'s other fields already AND against their
-    own ceilings -- a document is listed only when BOTH hold, exactly as the bytes route requires
-    both to serve it.
+    applied per document.
 
-    Existence IS public once the seller opens the ceiling, which is the plan's own literal Step 3
-    and the product's own promise: step 7's approved copy reads "Buyers see the document titles and
-    can ask for access." Titles are how a buyer knows what to request; withholding them would leave
-    the request flow this whole subsystem exists to serve with nothing to point at. `ceiling_open`
-    is checked FIRST, and the query never runs when it is False, so a listing whose seller has kept
-    its documents locked lists nothing and costs nothing extra to serve.
+    Existence IS public, which is the product's own promise: step 7's approved copy reads "Buyers
+    see the document titles and can ask for access." Titles are how a buyer knows what to request;
+    withholding them would leave the request flow this whole subsystem exists to serve with nothing
+    to point at.
+
+    **RULING D-C66 (John, 2026-09-24) TOOK THE CEILING OFF THIS LIST.** Until then a
+    `documents_disclosed = false` listing returned `[]` before the query ran -- so the seller who
+    ticked "Keep floor plans and financial packet locked" hid the very titles that same toggle's
+    help promises, and the buyer had nothing to ask about on precisely the listings where asking is
+    the whole point. Titles are served whichever way the toggle is set now, and what the toggle's
+    OFF position used to buy -- bytes with no grant behind them -- is gone from the bytes route in
+    the same ruling (`app/api/seller_listings.py::read_document`), so no state is left in which
+    this list advertises what that route will refuse for a reason this list cannot see.
+
+    **THE COST, stated rather than hidden:** a locked listing used to run no query at all here and
+    now runs one. That is one indexed lookup (`listing_asset_kind_idx`) on the DETAIL route only --
+    the list route has no document UI and never calls this.
 
     Called once per single-listing read -- never from the list route, which has no document UI."""
-    if not ceiling_open:
-        return []
     with conn.cursor() as cur:
         cur.execute("SELECT id, name, kind, content_type FROM listing_asset"
                     " WHERE listing_id = %s AND kind <> 'photo' ORDER BY created_at", (listing_id,))
@@ -442,16 +455,29 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str], ceil
 _DOCUMENT_LABEL = {"financials": "Financial packet", "floor_plan": "Floor plan"}
 
 
-def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:
-    """One coordinate at the precision this caller has earned (directive §2, §11).
+def _point(value: Any, *, released: bool) -> float | None:
+    """One coordinate, to a caller the listing's location has been released to, and to nobody else.
 
-    No ceiling -> None: the seller withheld their location and A25's "no point, no pin" stands.
-    Ceiling, no grant -> rounded to 2 decimal places, about 1.1 km: §11's "approximate map
-    representation", coarser than the catchment ring already drawn publicly around the listing.
-    Ceiling and grant -> the exact point."""
-    if not ceiling or value is None:
+    Not released -> None: either the seller shut the `anon` ceiling and has approved nobody, or this
+    caller is a buyer they have not approved. A25's "no point, no pin" stands beside it as its own,
+    different guard -- `value is None`, a listing that has never been geocoded at all.
+
+    **TASK 8 OF THE SELLER-WIZARD REPAIR (ruling D-C66, 2026-09-24) COLLAPSED THREE TIERS TO TWO,
+    and the deleted one is recorded here rather than left as a gap a later reader has to reconstruct.**
+    Between 2026-09-19 and this ruling there was a middle tier: a listing whose `location_disclosed`
+    ceiling was OPEN served every buyer a point rounded to 2 decimal places (about 1.1 km) --
+    directive §11's "approximate map representation" -- while the exact pair waited on an
+    EXACT_LOCATION grant. That tier existed only because the ceiling was ANDed with the grant, which
+    made "a public listing whose street is hidden from everyone" a reachable state. Under D-C66 it is
+    not: an open ceiling publishes the street, the postcode and the telephone number to every
+    signed-in buyer, so a coarsened pin beside a payload naming 123 Main St would be the SAME
+    question answered two ways, up to 1.1 km apart -- and a shut ceiling now serves those three to a
+    granted buyer, who must get the pin that goes with them. There is no remaining state in which
+    "approximate" is the honest answer, so the rounding is gone rather than left unreachable.
+    `tests/api/test_geo_wire.py` carried that tier's own pin and records the same supersession."""
+    if not released or value is None:
         return None
-    return float(value) if exact else round(float(value), 2)
+    return float(value)
 
 
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
@@ -483,25 +509,32 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     (`_documents`'s own docstring), so this parameter is never re-filtered here; `documents or []`
     is only the "an absent list is not the same key error as a real empty one" guard `capabilities`'
     own default already follows one field over."""
-    # Directive §2 and §11 split location into TWO tiers, and Task 8's first cut collapsed them
-    # into one (controller ruling, 2026-09-19, after CI caught it): §11 says "the public listing MAY
-    # USE generalized location, market area, city/region, APPROXIMATE MAP REPRESENTATION" while
-    # "exact location is confidential unless explicitly authorized" and exact COORDINATES must not
-    # reach an unauthenticated response. Gating the point itself on the grant gave the public tier
-    # NOTHING rather than something approximate, which drew no pin for any buyer on any listing --
-    # `tests/api/test_geo_wire.py` caught exactly that.
+    # **RULING D-C66 (John, 2026-09-24): ceiling OR grant, where every line of this block used to
+    # read ceiling AND grant.** The seller's flag is the PUBLIC DEFAULT and the buyer's grant
+    # RELEASES on top of it — so a seller who shuts a ceiling publishes to nobody until they approve
+    # someone (which is exactly what step 7's labels promise: "Keep practice name and address hidden
+    # UNTIL I APPROVE A BUYER"), and a seller who leaves one open publishes to every signed-in
+    # buyer, as this product did before the 2026-09-18 directive ANDed a grant in front of it.
+    # Under AND, approving a buyer on a shut ceiling released NOTHING — `False and anything` — which
+    # is the defect the ruling names. The directive's own ceiling-AND-grant sentences (§3, §8, §11,
+    # §18) are superseded IN PLACE in
+    # `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md`.
     #
-    #   `ceiling`  the seller's own `location_disclosed` — nothing at all when false (A25's
-    #              "no point, no pin" is untouched, and an undisclosed listing stays off the map)
-    #   `disclosed` ceiling AND the per-buyer grant — the EXACT street, postcode, telephone and point
+    #   `disclosed` the street, the postcode, the telephone number AND the point — one answer, never
+    #               three quarters of one: `_point` used to take the ceiling as a SEPARATE argument
+    #               and would have gone on returning None for the very buyer the seller had just
+    #               approved (that entry's own docstring records the tier this collapsed).
+    #   `named`     the practice name and the slug that spells it (A-L5.1).
     #
-    # With the ceiling open and no grant the buyer gets a COARSENED point (2 decimal places, about
-    # 1.1 km) — an approximate map representation, which is less precise than the ~8 km catchment
-    # ring the product already draws publicly around every listing, so it discloses nothing the
-    # buyer could not already infer.
-    ceiling = bool(row["location_disclosed"])
-    disclosed = ceiling and "EXACT_LOCATION" in capabilities
-    named = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
+    # FAIL CLOSED IS NOW CARRIED ENTIRELY BY `capabilities` (directive §19), and that is the cost of
+    # this shape rather than a boast: under AND a wrongly-granted capability still met a shut
+    # ceiling, and under OR nothing stands behind it. Every producer of that set answers
+    # `frozenset()` for an absent buyer, a missing row and an unknown level
+    # (`app/disclosure/access.py`, `app/disclosure/levels.py::covers`), this parameter's own default
+    # is the empty set, and `tests/api/test_listings_disclosure.py` re-proves the no-grant answer
+    # field by field rather than inheriting it.
+    disclosed = bool(row["location_disclosed"]) or "EXACT_LOCATION" in capabilities
+    named = bool(row["name_disclosed"]) or "IDENTITY" in capabilities
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
     # Spec C.7 rows 3-4, computed ONCE and read twice below: the two arrays are parallel, and a
@@ -554,7 +587,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "zip": row["zip"] if disclosed else None,
         "phone": row["phone"] if disclosed else None,
         "hours": row["hours"],
-        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") and "FINANCIALS" in capabilities else None,
+        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") or "FINANCIALS" in capabilities else None,
         "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
         # S6 (the seller-wizard audit, 2026-09-23; ruling D-C65). Step 5 asks "Facility type"
@@ -619,8 +652,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "geo_precision": row["geo_precision"],
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
-        "lat": _point(row["lat"], exact=disclosed, ceiling=ceiling),
-        "lng": _point(row["lng"], exact=disclosed, ceiling=ceiling),
+        "lat": _point(row["lat"], released=disclosed),
+        "lng": _point(row["lng"], released=disclosed),
         "location_disclosed": disclosed,
         # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
         # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
@@ -849,10 +882,11 @@ async def get_listing(listing_id: str, principal: Reader) -> Response:
         caps = authorized_capabilities(conn, listing_id=str(row["id"]), seller_id=row.get("seller_id"),
                                        buyer_account_id=str(principal.account_id))
         # Task 9: the SAME connection and the SAME `caps`, before either closes -- one more indexed
-        # query (`listing_asset_kind_idx`), filtered to what this caller's own capabilities and the
-        # listing's `documents_disclosed` ceiling actually admit.
-        documents = _documents(conn, str(row["id"]), capabilities=caps,
-                               ceiling_open=bool(row.get("documents_disclosed")))
+        # query (`listing_asset_kind_idx`), labelled by what this caller's own capabilities admit.
+        # D-C66 (2026-09-24) took the listing's `documents_disclosed` ceiling out of this call: the
+        # titles are the request flow's own signpost and are served whether the seller has locked
+        # the documents or not.
+        documents = _documents(conn, str(row["id"]), capabilities=caps)
 
     return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"])),
                                   capabilities=caps, documents=documents))

@@ -12,13 +12,26 @@ own SQL matches `status = 'APPROVED'` alone — so `access_denied`/`access_revok
 the practice's REAL name BY CONSTRUCTION, not merely because this module chooses not to pass one.
 
 Ruling 1 (2026-09-21, on reading the first draft) gives both a `name` param too — a buyer with
-several outstanding requests could not otherwise tell WHICH was declined — but `_buyer_facing_name`
-can only ever fill it with the design's own ANONYMISED label for either status, never the string
-in `listing.name`: neither DENIED nor REVOKED can produce the `'APPROVED'` row
-`authorized_capabilities` requires. Only `access_approved` can ever receive the practice's real
-name, and only when the listing's own `name_disclosed` ceiling is open AND the approved level
-covers `IDENTITY` — the identical two-part gate `app.api.listings.serialise` computes for the
-listing payload itself (`named = name_disclosed and "IDENTITY" in capabilities`).
+several outstanding requests could not otherwise tell WHICH was declined — and
+`_buyer_facing_name` is the only thing that ever fills it, through the identical gate
+`app.api.listings.serialise` computes for the listing payload itself.
+
+**THAT GATE BECAME `named = name_disclosed OR "IDENTITY" in capabilities` UNDER RULING D-C66 (John,
+2026-09-24), and four cases below are RE-KEYED OR INVERTED because of it rather than edited until
+they passed.** It was `and` until then, and under `and` a denial or a revoke could never carry the
+real name by construction: neither status can produce the `'APPROVED'` row
+`authorized_capabilities` requires, so `capabilities` was always `frozenset()` and the `and` always
+took the fallback. Under `or` the listing's own CEILING alone answers for those two statuses — an
+open one names the practice, which discloses nothing, because an open ceiling is the seller
+publishing that name to every signed-in buyer, this one included, before and after the decision.
+The spec's privacy rule ("a notification must never disclose what the decision withheld") is still
+structural and is still proved here: `capabilities` is `frozenset()` for both statuses, so what the
+mail carries is a fact about the LISTING and never about this request.
+
+This module is not in D-C66's own file list. It is changed under the A27.5 rule — a release must
+not make a statement false by its own act — because leaving the `and` here would have mailed
+"additional access to Austin Veterinary" to a buyer who then clicks through to the practice's real
+name, on all twenty-nine QA seeds.
 """
 from __future__ import annotations
 
@@ -162,9 +175,13 @@ def test_a_revocation_never_names_the_practice_either(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
         buyer_email = cur.fetchone()[0]
-    # Ceiling OPEN and a FULL_CONFIDENTIAL grant -- the most permissive case there is -- and the
-    # name must STILL never reach the revoke mail, because a revoked request holds no active grant.
-    listing = _listing(conn, seller, name="Revoked Practice Name", name_disclosed=True)
+    # RE-KEYED UNDER D-C66: the ceiling is SHUT. It was OPEN, with a FULL_CONFIDENTIAL grant
+    # before the revoke -- "the most permissive case there is" -- because under `and` a revoked
+    # request held no active grant and the name could not reach the mail whatever the ceiling said.
+    # Under `or` an open ceiling names the practice, and correctly: it is published to every
+    # signed-in buyer. What this case is actually about -- a revoked grant carries nothing of its
+    # own into the mail -- can only be seen where the ceiling is shut, so that is where it now is.
+    listing = _listing(conn, seller, name="Revoked Practice Name", name_disclosed=False)
     request_id = _pending_request(conn, listing, buyer, seller)
     req.decide(conn, request_id=request_id, seller_account_id=seller, action="approve", disclosure_level="FULL_CONFIDENTIAL", reason=None)
     row = req.revoke(conn, request_id=request_id, seller_account_id=seller)
@@ -194,7 +211,13 @@ def test_a_denied_or_revoked_decision_always_composes_the_anonymised_label_never
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
         buyer_email = cur.fetchone()[0]
-    listing = _listing(conn, seller, name="Shape Pin Clinic", name_disclosed=True)
+    # RE-KEYED UNDER D-C66, same reason as the case above: `name_disclosed` was True here to make
+    # the point that even the most permissive listing could not leak through a denial or a revoke.
+    # The ceiling is what answers for those two statuses now, so the permissive half of that claim
+    # moves to `test_a_denial_or_a_revoke_on_a_published_name_carries_the_name_the_buyer_can`
+    # `_already_read` below and this case keeps the half it was really built to hold: the COMPOSER
+    # can only ever emit the anonymised label where the seller has not published the name.
+    listing = _listing(conn, seller, name="Shape Pin Clinic", name_disclosed=False)
     expected_label = anonymised_name("Austin")  # `_listing()`'s own fixed `area`
     request_id = _pending_request(conn, listing, buyer, seller)
 
@@ -237,13 +260,17 @@ def test_a_grant_on_a_disclosed_listing_with_identity_names_the_practice(conn) -
 
 
 def test_a_grant_that_does_not_cover_identity_uses_the_generic_fallback(conn) -> None:
-    """The ceiling is open, but THIS request was approved for `FINANCIALS` alone -- `IDENTITY` was
-    never granted -- so the name must not appear even though `name_disclosed` is true."""
+    """**RE-KEYED UNDER D-C66 (2026-09-24): the ceiling moves open -> shut.** This case read "the
+    ceiling is open, but THIS request was approved for `FINANCIALS` alone -- `IDENTITY` was never
+    granted -- so the name must not appear even though `name_disclosed` is true." Under `or` an
+    open ceiling names the practice on its own and correctly, because it is published to every
+    signed-in buyer; the claim this case exists for -- one capability does not confer another --
+    is only visible where the ceiling is shut."""
     seller, buyer = _account(conn, "s-name2@x.org"), _account(conn, "b-name2@x.org")
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
         buyer_email = cur.fetchone()[0]
-    listing = _listing(conn, seller, name="Financials Only Clinic", name_disclosed=True)
+    listing = _listing(conn, seller, name="Financials Only Clinic", name_disclosed=False)
     request_id = _pending_request(conn, listing, buyer, seller)
     row = req.decide(conn, request_id=request_id, seller_account_id=seller, action="approve",
                      disclosure_level="FINANCIALS", reason=None)
@@ -253,10 +280,21 @@ def test_a_grant_that_does_not_cover_identity_uses_the_generic_fallback(conn) ->
     assert "Financials Only Clinic" not in _rendered(conn, buyer_email)
 
 
-def test_a_grant_on_a_confidential_listing_uses_the_generic_fallback_even_at_full_confidential(conn) -> None:
-    """The capability is open (`FULL_CONFIDENTIAL` covers `IDENTITY`) but the listing's OWN
-    ceiling, `name_disclosed`, is closed -- the seller never agreed to be named at all, and a
-    request-level grant cannot override that (directive §8's "two questions... must stay apart")."""
+def test_a_grant_on_a_confidential_listing_names_the_practice_to_the_buyer_it_was_granted_to(conn) -> None:
+    """**INVERTED UNDER D-C66 (2026-09-24). This is the ruling, in the mailbox.**
+
+    It used to be called `test_a_grant_on_a_confidential_listing_uses_the_generic_fallback_even_at_
+    full_confidential` and asserted that a `FULL_CONFIDENTIAL` grant could not name a listing whose
+    own `name_disclosed` ceiling was shut -- "the seller never agreed to be named at all, and a
+    request-level grant cannot override that". Read from the seller's side that is: they tick "Keep
+    practice name and address hidden UNTIL I APPROVE A BUYER", they approve a buyer, and the buyer
+    is told about "Austin Veterinary". D-C66 makes the ceiling the PUBLIC DEFAULT and the grant the
+    release, so the buyer the seller approved is told which practice they were approved for -- the
+    same name `app/api/listings.py::serialise` now serves them on the listing page, which is the
+    whole reason this gate is a mirror of that one.
+
+    The fallback has not gone anywhere: it is what a buyer with NO grant gets on the same listing,
+    which the two denial/revoke cases above prove on a shut ceiling."""
     seller, buyer = _account(conn, "s-name3@x.org"), _account(conn, "b-name3@x.org")
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
@@ -266,7 +304,27 @@ def test_a_grant_on_a_confidential_listing_uses_the_generic_fallback_even_at_ful
     row = req.decide(conn, request_id=request_id, seller_account_id=seller, action="approve",
                      disclosure_level="FULL_CONFIDENTIAL", reason=None)
     N.notify_decision(conn, row=row)
-    assert "Anonymous By Choice Clinic" not in _rendered(conn, buyer_email)
+    assert _outbox_row(conn, buyer_email)["params"]["name"] == "Anonymous By Choice Clinic"
+    assert "Anonymous By Choice Clinic" in _rendered(conn, buyer_email)
+
+
+def test_a_denial_or_a_revoke_on_a_published_name_carries_the_name_the_buyer_can_already_read(conn) -> None:
+    """The other side of D-C66 in the mailbox, and the reason the three cases above could move
+    their ceilings without losing anything: with the ceiling OPEN the practice's name is published
+    to every signed-in buyer, so a denial that names it discloses nothing the recipient could not
+    read on the listing page a second earlier. `capabilities` is still `frozenset()` here -- a
+    denied request holds no grant -- so what the mail carries is a fact about the LISTING, which is
+    exactly what the spec's privacy rule ("never disclose what the decision withheld") permits."""
+    seller, buyer = _account(conn, "s-name4@x.org"), _account(conn, "b-name4@x.org")
+    with conn.cursor() as cur:
+        cur.execute("SELECT email FROM account WHERE id=%s", (buyer,))
+        buyer_email = cur.fetchone()[0]
+    listing = _listing(conn, seller, name="Published Name Clinic", name_disclosed=True)
+    request_id = _pending_request(conn, listing, buyer, seller)
+    denied = req.decide(conn, request_id=request_id, seller_account_id=seller, action="deny",
+                        disclosure_level=None, reason=None)
+    N.notify_decision(conn, row=denied)
+    assert _outbox_row(conn, buyer_email)["params"]["name"] == "Published Name Clinic"
 
 
 # --- idempotency: a retried decision cannot mail twice ------------------------------------------

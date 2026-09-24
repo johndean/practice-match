@@ -89,7 +89,10 @@ async def test_a_grant_on_one_listing_reveals_nothing_on_a_second_confidential_l
     body_y = (await client.get(f"/api/listings/{listing_y}", headers=buyer_headers)).json()
     assert body_y["name"] != "Highland Park Veterinary", "a grant on X must not reach Y's name"
     assert body_y["rev"] is None, "a grant on X must not reach Y's revenue"
-    assert (body_y["lat"], body_y["lng"]) == (round(_LAT, 2), round(_LNG, 2)), "Y must stay at the coarsened point"
+    # D-C66 (2026-09-24): the shared fixture's ceilings are SHUT, so an ungranted listing has no
+    # point at all. This read `(round(_LAT, 2), round(_LNG, 2))` -- "Y must stay at the coarsened
+    # point" -- while an open ceiling served every buyer a 1.1-km-rounded pair.
+    assert (body_y["lat"], body_y["lng"]) == (None, None), "Y must give this buyer no point at all"
     assert (body_y["lat"], body_y["lng"]) != (body_x["lat"], body_x["lng"])
 
 

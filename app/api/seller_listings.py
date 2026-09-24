@@ -1809,17 +1809,27 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
     different confidential surface than the one the seller actually approved (directive §16).
 
     Owner and staff are UNCHANGED — the design's own "Locked — seller approval"
-    (`logic.js:1288-1290`), John's ruling D19, exactly as before this task. This completes the
-    reserved buyer-with-an-accepted-request arm the prior round's own comment named this exact
-    location for: `documents_disclosed`/`status` were read off the row and left DELIBERATELY UNUSED
-    (a round of this module once let disclosure and "published" stand in for authorization ALONE,
-    which let any signed-in member download a seller's documents the instant one ceiling flag
-    flipped, with no request and no approval ever made) — they are what this arm now ANDs in beside
-    `has_capability`'s own answer: `documents_disclosed` is the listing-wide CEILING (directive §8,
-    §24, `app/disclosure/access.py`'s own module docstring) and `has_capability` is the per-buyer
-    GRANT; neither is sufficient alone, and BOTH must hold before a buyer's request reaches the
-    store. `has_capability` is asked LAST, after `or` has already short-circuited past it for an
-    owner or a reviewer, so neither pays for a `request`-table lookup at all.
+    (`logic.js:1288-1290`), John's ruling D19, exactly as before this task.
+
+    **RULING D-C66 (John, 2026-09-24): `documents_disclosed` LEFT this chain, and `has_capability`
+    did not move.** Read that difference carefully, because the two changes look alike and only one
+    of them is safe. A round of this module once let disclosure and "published" stand in for
+    authorization ALONE — any signed-in member could download a seller's documents the instant one
+    ceiling flag flipped, with no request and no approval ever made
+    (`tests/api/test_listing_assets.py::test_a_non_owner_member_cannot_read_a_document_however_
+    disclosure_and_status_are_set` is that incident's own pin, and it still passes unchanged). That
+    incident removed the GRANT. This removes the CEILING: `status == "published"` and
+    `has_capability` stay exactly where they are, so the bytes still answer to an APPROVED,
+    unexpired, capability-matched grant and to nothing else, and the listing-wide flag can neither
+    open the door on its own nor — which is the defect the ruling names — hold it shut against the
+    buyer the seller has just approved. Under the old `and`, a seller who ticked "Keep floor plans
+    and financial packet locked" and then approved a request released nothing at all.
+
+    ORing the ceiling in here instead, the way `serialise`'s three field-level terms now do, would
+    rebuild the original incident exactly — one flag, every member — so the asymmetry between this
+    route and that one is deliberate and is not to be tidied away. `has_capability` is asked LAST,
+    after `or` has already short-circuited past it for an owner or a reviewer, so neither pays for a
+    `request`-table lookup at all.
 
     Guarded by `listing.read` so every member reaches the handler, and the handler is what refuses:
     the alternative — `listing.manage_own` — would answer staff a 403 from the matrix and could
@@ -1830,17 +1840,19 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
         with closing(sync_conn()) as conn, conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT a.content_type, a.storage_key, a.kind, l.seller_id,"
-                            " l.documents_disclosed, l.status"
+                            " l.status"
                             " FROM listing_asset a JOIN listing l ON l.id = a.listing_id"
                             " WHERE a.id = %s AND a.listing_id = %s AND a.kind <> 'photo'",
                             (parsed_asset, parsed_listing))
                 found = cur.fetchone()
             if found is None:
                 raise Refusal("NOT_FOUND", "No such document.", 404)
-            content_type, key, kind, seller_id, disclosed, status = found
+            content_type, key, kind, seller_id, status = found
             # Owner or staff by the MATRIX, not a hard-coded role tuple (`listing.review` is the
             # staff/admin capability the reviewer already holds, so a later role change moves both
-            # together) — OR a buyer whose grant covers THIS document, under BOTH ceilings above.
+            # together) — OR a buyer whose own APPROVED grant covers THIS document on a PUBLISHED
+            # listing (D-C66: the listing-wide `documents_disclosed` ceiling is no longer a term
+            # here, and the docstring above says why removing it is not the incident it resembles).
             # The capability check needs `conn` OPEN, so it stays inside this `with` block, ONE
             # mechanical reorder from before this task (the connection used to close first): every
             # other pre-existing `raise Refusal(...)` in this module already runs inside an
@@ -1850,7 +1862,7 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
             allowed = (
                 seller_id == principal.account_id
                 or P.allowed("listing.review", principal)
-                or (bool(disclosed) and status == "published"
+                or (status == "published"
                     and has_capability(conn, listing_id=listing_id, seller_id=seller_id,
                                        buyer_account_id=str(principal.account_id),
                                        capability=capability_for_document_kind(kind)))

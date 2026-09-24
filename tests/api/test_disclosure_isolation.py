@@ -17,14 +17,23 @@ Two corrections to the plan's own literal Step 1 fixture, each found by reading 
 implementation (both landed in this branch on 2026-09-19, the day this task was written) before
 writing a single assertion, never discovered by a false pass:
 
-1. **The public tier is not `None` for location.** `app/api/listings.py::_point`'s own docstring:
-   "Ceiling, no grant -> rounded to 2 decimal places ... a coarser approximate map representation."
-   A published listing with `location_disclosed = true` and no grant serves a ROUNDED point, not a
-   null one -- asserting `None` here would encode a bug the branch's own last commit (90da043) just
-   fixed. Every location assertion below reads the rounded value back FROM the exact one the
-   response already returned (`round(after_a["lat"], 2)`), the same idiom
-   `tests/api/test_listings_disclosure.py::test_buyer_a_with_exact_location_and_buyer_b_without_
-   diverge_at_the_same_moment` already established, rather than a value this file computed by hand.
+1. **The public tier is not `None` for location** -- **SUPERSEDED BY RULING D-C66 (John,
+   2026-09-24), and kept here because what replaced it is the reason this file's fixture moved.**
+   As written on 2026-09-19 this read: `app/api/listings.py::_point`'s own docstring, "Ceiling, no
+   grant -> rounded to 2 decimal places ... a coarser approximate map representation", so a
+   published listing with `location_disclosed = true` and no grant served a ROUNDED point rather
+   than a null one, and every location assertion below read that rounded value back from the exact
+   one the response had already returned.
+
+   D-C66 makes the ceiling the PUBLIC DEFAULT rather than a second lock: *ceiling OR grant*. That
+   retires the rounded tier (an open ceiling now publishes the street itself, so a pin 1.1 km from
+   it would be one question answered twice) and, much more to the point for THIS file, it means an
+   open ceiling is no longer a confidential state at all. `_seller_listing_with_everything_
+   confidential` therefore sets all four ceilings SHUT, which is what its own name has always
+   claimed and what §7 requires to mean anything: on a ceiling-open listing Buyer B is not
+   "redacted", they are a member of the public the seller published to on purpose. Buyer B's point
+   below is consequently `None` rather than a rounded pair -- a sharper divergence than before, not
+   a weaker one.
 2. **`identifiable_content_visibility` must be `NOT_SHOW`, not `SHOW`, for the photo surface to
    prove anything.** `app/privacy/delivery.py::buyer_variant`'s own test names it directly:
    "SHOW discloses the display derivative regardless of authorization." Under the global SHOW
@@ -38,9 +47,11 @@ writing a single assertion, never discovered by a false pass:
 
 And one behaviour this file deliberately does NOT test as a defect, because it is a ruled, correct
 one: `_documents`'s own docstring (controller ruling, 2026-09-19, correcting Task 9's own brief) --
-a document's TITLE is public to every buyer once the seller's `documents_disclosed` ceiling is
-open ("Buyers see the document titles and can ask for access", step 7's approved copy, directive
-§17), and only the BYTES route is gated on the per-buyer grant. Buyer B is therefore expected to
+a document's TITLE is public to every buyer ("Buyers see the document titles and can ask for
+access", step 7's approved copy, directive §17), and only the BYTES route is gated on the per-buyer
+grant. Under D-C66 that is true whether the seller has locked the documents or not: the ceiling
+used to suppress the whole list, which left a buyer with nothing to ask about on exactly the
+listings where asking is the point. Buyer B is therefore expected to
 see the financial document's title in `documents` throughout this test -- asserting otherwise would
 be asserting a regression against the ruling, not a security property.
 
@@ -119,8 +130,13 @@ async def _seller_listing_with_everything_confidential(
             " city = 'Dallas', state = 'TX', zip = '75205', street = '4200 Preston Rd',"
             " phone = '2145551234', est = 2005, price = 2000000, rev = 900000, sqft = 4000,"
             " type = 'Small animal', market = 'Dallas, TX', area = 'Dallas',"
-            " location_disclosed = true, name_disclosed = true, rev_disclosed = true,"
-            " documents_disclosed = true, identifiable_content_visibility = 'NOT_SHOW',"
+            # D-C66 (2026-09-24): all four ceilings SHUT, which is what "everything confidential"
+            # means once an OPEN ceiling is a publication. `documents_disclosed` is now read by
+            # nothing on either document surface -- the titles list whatever it says and the bytes
+            # need a capability-matched grant whatever it says -- and is set false here for the
+            # same reason as its three siblings: this fixture is the confidential listing.
+            " location_disclosed = false, name_disclosed = false, rev_disclosed = false,"
+            " documents_disclosed = false, identifiable_content_visibility = 'NOT_SHOW',"
             " geom = ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography"
             " WHERE id = %s",
             (_LNG, _LAT, listing_id),
@@ -166,9 +182,9 @@ async def test_buyer_a_approved_buyer_b_is_not_receives_the_confidential_informa
     assert before_b["name"] != "Highland Park Veterinary"
     assert before_a["street"] is None and before_b["street"] is None
     assert before_a["rev"] is None and before_b["rev"] is None
-    # Directive §11/deviation 1: the ceiling is open, so the PUBLIC tier is the coarsened point,
-    # never bare `None` -- and both buyers already agree on it before either is granted anything.
-    assert before_a["lat"] is not None and before_a["lng"] is not None
+    # D-C66 (deviation 1 above): the ceiling is SHUT, so the public tier has no point at all --
+    # and both buyers already agree on that before either is granted anything.
+    assert (before_a["lat"], before_a["lng"]) == (None, None)
     assert (before_a["lat"], before_a["lng"]) == (before_b["lat"], before_b["lng"])
 
     request_a = await client.post("/api/requests", headers=a_headers, json={"listing_id": listing_id})
@@ -210,14 +226,17 @@ async def test_buyer_a_approved_buyer_b_is_not_receives_the_confidential_informa
     assert after_b["zip"] is None
     assert after_b["phone"] is None
     assert after_b["rev"] is None, "BUYER B must not see the exact revenue after BUYER A alone is approved"
-    # The coarsened point, not withheld and not exact -- and it must NOT equal Buyer A's exact one.
-    assert (after_b["lat"], after_b["lng"]) == (round(_LAT, 2), round(_LNG, 2))
+    # No point at all on a shut ceiling (D-C66; it was the coarsened pair until 2026-09-24) -- and
+    # whatever it is, it must NOT equal Buyer A's exact one.
+    assert (after_b["lat"], after_b["lng"]) == (None, None)
     assert (after_b["lat"], after_b["lng"]) != (after_a["lat"], after_a["lng"])
 
-    # The document's TITLE is public once the ceiling is open (module docstring) -- B seeing it is
-    # the ruled behaviour, not a leak. The BYTES are what must stay locked.
+    # The document's TITLE is public (module docstring) -- B seeing it is the ruled behaviour, not
+    # a leak, and under D-C66 it is public whether the seller locked the documents or not, because
+    # a buyer cannot ask for access to a document they cannot see exists. The BYTES are what must
+    # stay locked.
     assert any(d["id"] == document_asset_id for d in after_b["documents"]), (
-        "the document's existence is public to every buyer once documents_disclosed is true"
+        "the document's existence is public to every buyer, locked listing or not"
     )
     document_b = await client.get(f"/api/seller/listings/{listing_id}/documents/{document_asset_id}", headers=b_headers)
     assert document_b.status_code == 403, "BUYER B must not be able to fetch the financial document after BUYER A alone is approved"
@@ -241,7 +260,7 @@ async def test_buyer_a_approved_buyer_b_is_not_receives_the_confidential_informa
     assert after_revoke["name"] != "Highland Park Veterinary", "BUYER A must lose access immediately on revoke"
     assert after_revoke["street"] is None
     assert after_revoke["rev"] is None
-    assert (after_revoke["lat"], after_revoke["lng"]) == (round(_LAT, 2), round(_LNG, 2))
+    assert (after_revoke["lat"], after_revoke["lng"]) == (None, None)
 
     photo_a_after_revoke = await client.get(f"/api/listings/{listing_id}/photos/1", headers=a_headers)
     assert hashlib.sha256(photo_a_after_revoke.content).hexdigest() == privacy_row.redacted_sha256
