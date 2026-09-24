@@ -162,16 +162,26 @@ authorization + authorized disclosure level.
 Exact location is confidential unless explicitly authorized. The public listing may use generalized
 location, market area, city/region, approximate map representation.
 
-> **SUPERSEDED IN PART by D-C66 (2026-09-24).** Exact location is still confidential unless
-> explicitly authorized — and a seller who leaves the `anon` ceiling open IS explicitly authorizing
-> it, for everyone. The consequence, recorded because it deletes something this directive asked
-> for: the middle tier built for the sentence above (a public listing serving every buyer a point
-> rounded to 2 decimal places, about 1.1 km, while the exact pair waited on a grant) has no
-> remaining state to live in and is gone. An open ceiling now publishes the street, so a coarsened
-> pin beside it would answer one question two ways, up to 1.1 km apart; a shut ceiling serves the
-> street to a granted buyer, who must get the pin that goes with it. `app/api/listings.py::_point`
-> and `tests/api/test_geo_wire.py` both record the supersession where the tier used to be. The
-> second half of this section — Buyer A approved, Buyer B still public — is unchanged. After seller approval for Buyer
+> **SUPERSEDED IN PART by D-C66 (2026-09-24), and NARROWLY — this section keeps more than the
+> other three.** What changes is the ADDRESS: a seller who leaves the `anon` ceiling open is
+> publishing the street, the postcode and the telephone number to every signed-in buyer, and a
+> seller who shuts it releases those three to a buyer they approve. What does NOT change is the
+> sentence's own subject. **Exact COORDINATES still require the grant, in every case**: the middle
+> tier this section asked for — a released listing serving an ungranted buyer a point rounded to 2
+> decimal places, about 1.1 km — stands exactly as built on 2026-09-19, and `app/api/listings.py`
+> now reads `ceiling = location_disclosed OR the grant` (is there a pin at all) beside
+> `exact = the grant alone` (how precise it is), which are two questions and not one.
+>
+> That split was got WRONG once and the record is kept rather than tidied: the first pass of
+> D-C66's own task collapsed the two into one expression, deleting this tier, and the controller
+> overruled it the same day (fix round 1). The argument for collapsing — an open ceiling publishes
+> the street, so a coarse pin beside it answers one question twice — holds only for a listing that
+> HAS a street, and `street` is NULL on every wizard listing predating amendment A58.5, which is
+> what first collected the column. On those the pin is the only location signal the payload
+> carries and this rounding is the whole of §11's protection for it. D-C66 asked that a ceiling
+> become releasable per buyer; it did not ask that an ungranted buyer be shown a finer point than
+> before. `app/api/listings.py::_point` and `tests/api/test_geo_wire.py` both carry the same note.
+> The second half of this section — Buyer A approved, Buyer B still public — is unchanged. After seller approval for Buyer
 
 A: Buyer A may receive the authorized exact location; Buyer B must continue seeing only the
 public/generalized location. Do not expose exact coordinates through an unauthenticated API response

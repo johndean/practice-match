@@ -765,15 +765,18 @@ async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn:
     # **RULING D-C66 (John, 2026-09-24), and this is the QA demo's own restoration.** Every seeded
     # hospital sets all four ceilings OPEN (D8/A-L5, `seeds/hospitals.json`), and under
     # ceiling-AND-grant that bought them nothing: no seeded listing has a grant against it, so this
-    # caller read an anonymised name and a point coarsened to about 1.1 km — 29 demo hospitals,
-    # every one of them redacted from everybody, for ever. Under ceiling-OR-grant an open ceiling is
-    # the seller publishing, which is what this data has always meant and what the product did
-    # before the 2026-09-18 directive. The two assertions this replaces read "at the approximate
-    # precision, not the exact one" and `name_disclosed is False`.
+    # caller read an ANONYMISED NAME — 29 demo hospitals, every one of them nameless to everybody,
+    # for ever. Under ceiling-OR-grant an open ceiling is the seller publishing, which is what this
+    # data has always meant and what the product did before the 2026-09-18 directive. The one
+    # assertion this replaces read `name_disclosed is False`.
+    #
+    # THE POINT IS THE ONE THING D-C66 DID NOT MOVE HERE (fix round 1, controller, 2026-09-24): the
+    # rounding stays, because an open ceiling releases the ADDRESS and only a grant releases the
+    # PRECISION. No seeded listing has a grant, so every one of them keeps the ~1.1 km pin it had.
     assert all(item["lat"] is not None and item["lng"] is not None for item in items), \
         "an open ceiling must still put every seeded hospital on the map"
-    assert any(item["lat"] != round(item["lat"], 2) or item["lng"] != round(item["lng"], 2)
-               for item in items), "and at the EXACT precision the open ceiling publishes"
+    assert all(item["lat"] == round(item["lat"], 2) and item["lng"] == round(item["lng"], 2)
+               for item in items), "and at the approximate precision, not the exact one"
     assert all(item["name_disclosed"] is True for item in items)
     assert any(item["name"] == "6666 Dallas Veterinary Specialist Hospital" for item in items), \
         "an open name ceiling publishes the practice's real name to every signed-in buyer"

@@ -45,6 +45,15 @@ page, one single-listing query for the detail route -- directive §23,
 `app.disclosure.access.authorized_capabilities`/`_bulk`) and `serialise` reads *flag OR capability*
 per field: the flag is the seller's PUBLIC DEFAULT and the capability RELEASES on top of it.
 
+ONE FIELD IS NOT THAT SHAPE and it is the exception rather than an oversight: the pin's PRECISION
+answers to the GRANT ALONE. `location_disclosed OR EXACT_LOCATION` decides whether there is a pin,
+an address, a postcode and a telephone number at all; `EXACT_LOCATION` alone decides whether the
+pin is the exact coordinate or directive §11's rounding at 2 decimal places. `_point`'s own
+docstring carries the reasoning (D-C66 fix round 1), and the short of it is that an open ceiling
+publishes the address only where there IS one -- `street` is NULL on every wizard listing predating
+amendment A58.5 -- so collapsing the two into one expression would widen disclosure past what the
+ruling asked for on exactly the listings with least to lose it by.
+
 It was *flag AND capability* between 2026-09-18 and that ruling, and the defect that produced is
 the ruling's own subject: all four of the seller's step-7 switches SHUT a ceiling and three of them
 promise release on approval in as many words ("Keep practice name and address hidden **until I
@@ -455,29 +464,40 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str]) -> l
 _DOCUMENT_LABEL = {"financials": "Financial packet", "floor_plan": "Floor plan"}
 
 
-def _point(value: Any, *, released: bool) -> float | None:
-    """One coordinate, to a caller the listing's location has been released to, and to nobody else.
+def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:
+    """One coordinate at the precision this caller has earned (directive §2, §11).
 
-    Not released -> None: either the seller shut the `anon` ceiling and has approved nobody, or this
-    caller is a buyer they have not approved. A25's "no point, no pin" stands beside it as its own,
-    different guard -- `value is None`, a listing that has never been geocoded at all.
+    THREE TIERS, and the two arguments are two DIFFERENT questions rather than one asked twice:
 
-    **TASK 8 OF THE SELLER-WIZARD REPAIR (ruling D-C66, 2026-09-24) COLLAPSED THREE TIERS TO TWO,
-    and the deleted one is recorded here rather than left as a gap a later reader has to reconstruct.**
-    Between 2026-09-19 and this ruling there was a middle tier: a listing whose `location_disclosed`
-    ceiling was OPEN served every buyer a point rounded to 2 decimal places (about 1.1 km) --
-    directive §11's "approximate map representation" -- while the exact pair waited on an
-    EXACT_LOCATION grant. That tier existed only because the ceiling was ANDed with the grant, which
-    made "a public listing whose street is hidden from everyone" a reachable state. Under D-C66 it is
-    not: an open ceiling publishes the street, the postcode and the telephone number to every
-    signed-in buyer, so a coarsened pin beside a payload naming 123 Main St would be the SAME
-    question answered two ways, up to 1.1 km apart -- and a shut ceiling now serves those three to a
-    granted buyer, who must get the pin that goes with them. There is no remaining state in which
-    "approximate" is the honest answer, so the rounding is gone rather than left unreachable.
-    `tests/api/test_geo_wire.py` carried that tier's own pin and records the same supersession."""
-    if not released or value is None:
+    * Not released -> None. The seller shut the `anon` ceiling and has approved nobody, so this
+      listing is off the map for this caller. A25's "no point, no pin" stands beside it as its own,
+      different guard -- `value is None`, a listing that has never been geocoded at all.
+    * Released, no grant -> rounded to 2 decimal places, about 1.1 km: §11's "approximate map
+      representation", coarser than the catchment ring already drawn publicly around the listing.
+    * Released AND granted -> the exact point.
+
+    **RULING D-C66 (2026-09-24) MOVED `ceiling` AND DELIBERATELY LEFT `exact` ALONE, and the one
+    commit in which it did not is recorded here because the argument for collapsing them is
+    plausible and wrong.** `ceiling` is now `location_disclosed OR the buyer's EXACT_LOCATION
+    grant` -- so the buyer the seller has just approved gets a pin at all, which under the old
+    `ceiling`-alone reading they never did (three quarters of that ruling's own first table row).
+    `exact` stays the GRANT alone.
+
+    The collapse was argued this way and it does not hold: an open ceiling publishes the street,
+    so a coarsened pin beside a payload naming 123 Main St is one question answered two ways, up to
+    1.1 km apart. True of a listing that HAS a street -- and `street` is NULL on every wizard
+    listing predating finding S9 (amendment A58.5 is what first collected the column; six such
+    drafts were measured on QA on 2026-09-24), while `location_disclosed` can be true on any of
+    them. There the pin is the ONLY location signal the payload carries, the street answers
+    nothing, and this rounding is the whole of §11's protection for it. D-C66 asked that a shut
+    ceiling become RELEASABLE per buyer; it did not ask that an ungranted buyer be shown a finer
+    point than before, and widening disclosure past what a ruling asked for is the one direction
+    that task was told not to go (controller, fix round 1).
+
+    `tests/api/test_geo_wire.py` is the tier's own pin and records the same round trip."""
+    if not ceiling or value is None:
         return None
-    return float(value)
+    return float(value) if exact else round(float(value), 2)
 
 
 def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None,
@@ -520,11 +540,14 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     # §18) are superseded IN PLACE in
     # `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md`.
     #
-    #   `disclosed` the street, the postcode, the telephone number AND the point — one answer, never
-    #               three quarters of one: `_point` used to take the ceiling as a SEPARATE argument
-    #               and would have gone on returning None for the very buyer the seller had just
-    #               approved (that entry's own docstring records the tier this collapsed).
-    #   `named`     the practice name and the slug that spells it (A-L5.1).
+    #   `released` the street, the postcode, the telephone number — and whether there is a pin AT
+    #              ALL. `_point` takes it as its `ceiling` argument, which is what stops the buyer
+    #              the seller has just approved being handed an address with no point beside it.
+    #   `exact`    the PRECISION of that pin, and nothing else. The GRANT alone, never the ceiling:
+    #              an open ceiling publishes the address, and §11's approximate tier is what an
+    #              ungranted buyer keeps (D-C66 fix round 1 — `_point`'s own docstring says why
+    #              collapsing these two into one expression is wrong for a listing with no street).
+    #   `named`    the practice name and the slug that spells it (A-L5.1).
     #
     # FAIL CLOSED IS NOW CARRIED ENTIRELY BY `capabilities` (directive §19), and that is the cost of
     # this shape rather than a boast: under AND a wrongly-granted capability still met a shut
@@ -533,7 +556,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     # (`app/disclosure/access.py`, `app/disclosure/levels.py::covers`), this parameter's own default
     # is the empty set, and `tests/api/test_listings_disclosure.py` re-proves the no-grant answer
     # field by field rather than inheriting it.
-    disclosed = bool(row["location_disclosed"]) or "EXACT_LOCATION" in capabilities
+    released = bool(row["location_disclosed"]) or "EXACT_LOCATION" in capabilities
+    exact = "EXACT_LOCATION" in capabilities
     named = bool(row["name_disclosed"]) or "IDENTITY" in capabilities
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
@@ -583,9 +607,9 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "name_disclosed": named,
         "market": row["market"], "area": row["area"], "type": row["type"],
         "city": row["city"], "state": row["state"],
-        "street": row["street"] if disclosed else None,
-        "zip": row["zip"] if disclosed else None,
-        "phone": row["phone"] if disclosed else None,
+        "street": row["street"] if released else None,
+        "zip": row["zip"] if released else None,
+        "phone": row["phone"] if released else None,
         "hours": row["hours"],
         "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") or "FINANCIALS" in capabilities else None,
         "docs": row["docs"], "rooms": row["rooms"],
@@ -652,9 +676,15 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "geo_precision": row["geo_precision"],
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
-        "lat": _point(row["lat"], released=disclosed),
-        "lng": _point(row["lng"], released=disclosed),
-        "location_disclosed": disclosed,
+        "lat": _point(row["lat"], exact=exact, ceiling=released),
+        "lng": _point(row["lng"], exact=exact, ceiling=released),
+        # `released`, never `exact`: this field has always meant "the address fields in THIS payload
+        # are populated" -- it is what `street`/`zip`/`phone` three lines up are gated on, and the
+        # pin's PRECISION is a separate fact no reader of this key asks about (fix round 1's own
+        # audit of both sides: `frontend/src/listings/load.ts` declares it on `ApiListing` and no
+        # caller reads it; `tests/api/test_listings_disclosure.py` and `test_geo_wire.py` assert it
+        # beside `street`, which is exactly the fact it reports).
+        "location_disclosed": released,
         # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
         # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
         # the design's own placeholder for that slot instead of a broken image.

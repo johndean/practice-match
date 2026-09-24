@@ -161,11 +161,27 @@ async def test_a_signed_in_buyer_with_no_grant_receives_everything_an_open_ceili
     assert (body["street"], body["zip"], body["phone"]) == ("123 Main St", "78701", "5125551234")
     assert body["location_disclosed"] is True
     assert body["rev"] == 500000
-    # The pin follows the street it belongs to. Between 2026-09-19 and D-C66 this buyer received a
-    # point rounded to 2 decimal places -- about 1.1 km -- while the exact pair waited on a grant;
-    # with the street itself now published beside it, that tier would be one question answered two
-    # ways (`app/api/listings.py::_point` records the supersession where the rounding used to be).
-    assert (body["lat"], body["lng"]) == (pytest.approx(lat), pytest.approx(lng))
+    # THE POINT IS THE ONE FIELD AN OPEN CEILING DOES *NOT* PUBLISH IN FULL, and D-C66 fix round 1
+    # (controller, 2026-09-24) is what kept it that way. The first pass of this task read the
+    # brief's "the `ceiling` argument must take the same OR" literally, which makes `_point`'s two
+    # arguments one expression and deletes directive §11's middle tier by construction -- so an
+    # ungranted buyer began receiving a finer point than before, which D-C66 never asked for. The
+    # tier is restored: the ADDRESS is released by the ceiling, the PRECISION by the grant alone.
+    assert (body["lat"], body["lng"]) == (round(lat, 2), round(lng, 2))
+    assert (body["lat"], body["lng"]) != (pytest.approx(lat), pytest.approx(lng)), (
+        "an open ceiling publishes the address; it does not publish the exact coordinate")
+
+    # ...and the SAME buyer, once granted, gets the exact pair on the same listing -- the third
+    # tier, so all three are named in one place rather than inferred from two files.
+    _sid2, s2_cookies, s2_hdr = _sid, s_cookies, s_hdr  # the same seller decides
+    granted = await client.post("/api/requests", headers=auth_headers(b_cookies, b_hdr),
+                                json={"listing_id": listing_id, "disclosure_level": "EXACT_LOCATION"})
+    assert granted.status_code == 201, granted.text
+    decided = await client.post(f"/api/seller/requests/{granted.json()['id']}/decide",
+                                headers=auth_headers(s2_cookies, s2_hdr), json={"action": "approve"})
+    assert decided.status_code == 200, decided.text
+    after = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(b_cookies, b_hdr))).json()
+    assert (after["lat"], after["lng"]) == (pytest.approx(lat), pytest.approx(lng))
 
 
 @pytest.mark.asyncio
