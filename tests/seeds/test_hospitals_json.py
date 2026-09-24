@@ -116,6 +116,22 @@ def test_every_phone_is_a_555_number() -> None:
         assert PHONE_SHAPES.fullmatch(str(h["phone"])), (h["slug"], h["phone"])
 
 
+def test_every_seeded_phone_is_one_the_wizard_would_also_accept() -> None:
+    """Task 6 of the 2026-09-23 wizard repair (finding S9): step 2 now COLLECTS a telephone number
+    and holds it to `app/api/seller_listings.py::PHONE_RE`. A seed whose number that door would
+    refuse is a row whose own seller could never re-save it — D25 gives all twenty-nine a real
+    `seller_id`, so every one of them is reachable from the wizard's Edit.
+
+    Read back from the API module rather than restated, the `EST_MIN`/`est_ceiling()` pattern two
+    assertions up: the wizard's rule is the one that must be satisfied, so it is the one this reads.
+    `PHONE_SHAPES` above stays narrower on purpose — it is about the 555-01xx FICTION block, which
+    is a different claim from "this is the shape of a telephone number"."""
+    from app.api.seller_listings import PHONE_RE
+
+    for h in load():
+        assert PHONE_RE.fullmatch(str(h["phone"])), (h["slug"], h["phone"])
+
+
 def test_area_and_market_are_derived_from_the_city_and_state() -> None:
     for h in johns_eighteen():
         assert h["area"] == h["city"], h["slug"]

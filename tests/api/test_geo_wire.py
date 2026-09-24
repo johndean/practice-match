@@ -136,7 +136,10 @@ async def _published_listing(client: Any, member: Any, monkeypatch: Any) -> tupl
         # `anon: False` is the design's own step-7 switch read at step 2: "Sellers control what
         # buyers can see". Set BEFORE the publish, because a later edit would take the listing off
         # the market (D3) — which is itself the behaviour the second half of the pin test needs.
-        (2, {"city": "Cedar Park", "zip": "78613", "anon": False}),
+        # `street` and `phone` are step 2's own since finding S9 (ruling D-C65) and both are
+        # required to submit; the street is also what lets `resolve` reach a street match at all.
+        (2, {"street": "1204 Cypress Creek Rd", "city": "Cedar Park", "zip": "78613",
+             "phone": "(512) 555-0100", "anon": False}),
         (3, {"price": "1450000"}),
         (4, {"sqft": "3000"}),
     ):

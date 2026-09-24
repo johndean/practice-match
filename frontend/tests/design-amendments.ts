@@ -7065,7 +7065,7 @@ const A35_7: Amendment = {
  *  doors for every account, while the app renders the account's own. Approved states are captured
  *  per screen as the account that can open them (`harness.ts`'s `SCREEN_PERSONA`: a BUYER for
  *  browse/detail/requests, a SELLER for the wizard and dashboard, the design persona for admin), so
- *  the filter moved 28 of the 59 approved states — every DOM and pixel capture of a member screen
+ *  the filter moved 28 of the 60 approved states — every DOM and pixel capture of a member screen
  *  taken as a buyer (−2 doors) or a seller (−1) — and SEVEN of `baseline-manifest.json`'s thirteen
  *  frozen hashes with them (`detail`, `requests`, `seller-dash` and the four `wizard-*`; the four
  *  `admin-*` are captured as the all-roles persona and the two phone-frame captures render their
@@ -9128,7 +9128,7 @@ const A54_5: Amendment = {
  * `A40.1`/`A40.2` are the RESERVED, UNWRITTEN ids for exactly this work (CLAUDE.md's own A40
  * paragraph) — built, MEASURED and HELD because the oracle could not be told what the app knew:
  * the reference is driven by `?props=` alone and gets no `perms` adapter, so hiding the admin door
- * there moved 28 of the 59 approved states and seven of `baseline-manifest.json`'s thirteen frozen
+ * there moved 28 of the 60 approved states and seven of `baseline-manifest.json`'s thirteen frozen
  * hashes with nothing ruled to pay that cost. He has now ruled it. This family is A55, merged in
  * ahead of D-C60/A54 the same day, and it does two things, asymmetrically, because the ruling is
  * asymmetric:
@@ -9826,6 +9826,88 @@ const A58_4i: Amendment = {
   count: 1
 };
 
+const RULING_S9 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding S9 of the eight-step audit — `EXACT_LOCATION` is a live, requestable, approvable disclosure capability whose entire payload is the practice’s street address and telephone number, and NO wizard step collected either, so a seller who approved a request delivered `street: null, phone: null` beside `location_disclosed: true`. The 2026-09-08 spec deferred "the exact-location switch and the street field it needs" together; the 2026-09-18 directive then shipped the capability without the prerequisite. Step 2 collects both, in the step’s own `text()` idiom, and both are required to SUBMIT — a listing that cannot deliver the address is what makes the capability a lie. The privacy toggle continues to govern DISPLAY only: with `anon` on, the address the seller has typed reaches nobody.';
+
+/** A58.5a — the design's own initial `w` state literal gains the two keys (finding S9).
+ *
+ *  A20.1's mechanism exactly, and it has to be here for the same reason: `text(key, …)` reads
+ *  `value: w[key]`, and every one of the sixteen field keys `byStep` renders is declared in this
+ *  literal. Two more fields, two more declarations — a key the wizard renders and the state
+ *  literal does not carry would be the one exception to that invariant.
+ *
+ *  UNCHAINED, and the anchor is what makes it so: A20.1's own edit is at the literal's TAIL
+ *  (`docsLocked: true` → `…, showIdentifiable: false`) while this one is in its middle, on text
+ *  no amendment has touched. `w: { name: ""` occurs exactly once in the bundle — `openDraft`'s
+ *  copy opens `w: Object.assign({ name: ""`, which is A58.5b's own anchor and the same
+ *  distinguishing trick A20.1/A20.2 used. */
+const A58_5a: Amendment = {
+  id: 'A58.5a', ...A58,
+  ruling: RULING_S9,
+  find: 'w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true,',
+  replace: 'w: { name: "", type: "Small animal", est: "", street: "", city: "", zip: "", phone: "", anon: true,',
+  count: 1
+};
+
+/** A58.5b — `openDraft`'s own copy of the same defaults (finding S9), A20.2's own reason: a
+ *  listing fetched from the dashboard (Edit) must carry both keys before `(d && d.w) || {}` lays
+ *  the server's own values over them. It matters more here than for A20.2's boolean: `toWizardState`
+ *  OMITS a null column so that the design's own default stands (A-SL27 (1)), so without this line a
+ *  draft with no street would leave `w.street` undefined — and `setW` would then send `undefined`
+ *  where the adapter expects the empty string every other blank text field sends. */
+const A58_5b: Amendment = {
+  id: 'A58.5b', ...A58,
+  ruling: RULING_S9,
+  find: 'w: Object.assign({ name: "", type: "Small animal", est: "", city: "", zip: "", anon: true,',
+  replace: 'w: Object.assign({ name: "", type: "Small animal", est: "", street: "", city: "", zip: "", phone: "", anon: true,',
+  count: 1
+};
+
+/** A58.5c — step 2's own fields array gains the two controls (finding S9).
+ *
+ *  COMPOSED FROM THE STEP'S OWN `text()` IDIOM AND NOTHING ELSE: same helper, same four arguments,
+ *  same `wrapStyle`, so the two new inputs are the two existing ones in every respect but their
+ *  key, their label, their placeholder and their help. No new control, no new label style, no new
+ *  help-text voice — four text fields in the grid that already holds two, which is the shape step
+ *  4 (four text fields and a textarea) has always had.
+ *
+ *  ORDER is the order an address is written: street, city, ZIP — and the telephone last, because
+ *  it is not part of the address and reads as the fourth fact rather than as part of the third.
+ *
+ *  THE PLACEHOLDERS ARE THE PRODUCT'S OWN WORKED EXAMPLE, not invented: step 1's name placeholder
+ *  is "Hill Country Animal Hospital" and step 2's are "Cedar Park" and "78613", and
+ *  `app/privacy/identity.py` carries that same practice's street as "1204 Cypress Creek Rd" and a
+ *  Cedar Park number as "(512) 555-0100" throughout its own worked examples. One fixture practice,
+ *  four placeholders.
+ *
+ *  THE HELP IS THE DESIGN'S OWN SENTENCE, byte for byte: "Never shown to buyers until you approve
+ *  a request." is what step 1 already says beside the practice NAME, and it is true of these two
+ *  in exactly the same way and for the same reason — `app/api/listings.py::serialise` releases
+ *  `street` and `phone` only on `location_disclosed AND EXACT_LOCATION in capabilities`, as it
+ *  releases the name only on `name_disclosed AND IDENTITY`. It is if anything conservative: a
+ *  seller whose ceiling stays shut is not disclosing them even after an approval, so the sentence
+ *  can never over-promise disclosure.
+ *
+ *  SAID TWICE, on both fields, deliberately — A34.7/A34.8's own holding that "said once" means one
+ *  WORDING and not one LOCATION. A seller reading the fourth field of a four-field grid must not
+ *  have to infer that the rule printed two rows above governs it too.
+ *
+ *  NO CLIENT-SIDE `next` GUARD is added, and that is the ruling rather than an omission: both
+ *  fields are required to SUBMIT (`app/api/seller_listings.py::_complete_enough`, the `sqft`
+ *  precedent) and neither is required to leave step 2 — a draft is filled in whatever order the
+ *  seller likes, and `sqft` has been required at submit with no step-4 guard since A-SL33 (1).
+ *
+ *  UNCHAINED: the whole line is pristine and no earlier family has touched step 2's fields. */
+const A58_5c: Amendment = {
+  id: 'A58.5c', ...A58,
+  ruling: RULING_S9,
+  find: 'fields: [text("city", "City or community", "Cedar Park"), text("zip", "ZIP code", "78613", "Used to place your practice on the map and to attach community data.")]',
+  replace: 'fields: [text("street", "Street address", "1204 Cypress Creek Rd", "Never shown to buyers until you approve a request."), '
+    + 'text("city", "City or community", "Cedar Park"), '
+    + 'text("zip", "ZIP code", "78613", "Used to place your practice on the map and to attach community data."), '
+    + 'text("phone", "Practice telephone", "(512) 555-0100", "Never shown to buyers until you approve a request.")]',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10157,5 +10239,11 @@ export function amendments(): Amendment[] {
     A58_1, A58_2, A58_3, A58_4a, A58_4b, A58_4c, A58_4d, A58_4e,
     // Fix round 1 (controller, 2026-09-24): the residue S8 left behind. A58.4f consumes A58.4a
     // and A58.4g consumes A58.4b, so both run after the entries whose lines they take.
-    A58_4f, A58_4g, A58_4h, A58_4i];
+    A58_4f, A58_4g, A58_4h, A58_4i,
+    // Task 6 (finding S9, 2026-09-24): step 2 collects the street and the telephone number
+    // `EXACT_LOCATION` exists to release. All three take pristine text -- A58.5a and A58.5b are
+    // anchored at the HEAD of the two `w` literals while A20.1/A20.2 edit their tails, and
+    // A58.5c's whole line is untouched -- so none of them is chained and their position here is
+    // the family's own order rather than a dependency.
+    A58_5a, A58_5b, A58_5c];
 }

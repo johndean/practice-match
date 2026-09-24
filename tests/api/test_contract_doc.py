@@ -350,14 +350,19 @@ def test_contract_doc_states_when_a_listing_gets_its_geography() -> None:
     assert "/api/seller/listings/{listing_id}/status" in flat
     # The event that invalidates a resolved geography, and what happens to it.
     assert "`practice_location`" in flat
-    assert "a changed `city` or `zip`" in flat
+    assert "a changed `street`, `city` or `zip`" in flat
     # The operator path the demo rows still take -- unchanged by this, and not the product's.
     assert "`scripts/census_load.py geocode`" in flat
     # Review minor 3: BOTH doors to a re-resolve are named, not just `--force`.
     assert "`--force` re-resolves one that has, and `--listing <id>`" in flat
     # The precision a wizard-built address can reach, stated rather than implied.
     assert "`geo_precision`" in flat
-    assert "the wizard collects a city and a ZIP and no street" in flat
+    # S9 (Task 6 of the 2026-09-23 wizard repair, ruling D-C65) collected the street, so the
+    # sentence this used to pin — "the wizard collects a city and a ZIP and no street" — is no
+    # longer true of the wizard. What the document must still state is the CONSEQUENCE, which is
+    # unchanged for every listing that carries no street: the ladder, and what it resolves them to.
+    assert "a listing with no street" in flat
+    assert "`zcta`" in flat
 
 
 def test_contract_doc_states_that_a_non_rooftop_point_is_served_its_place_band() -> None:

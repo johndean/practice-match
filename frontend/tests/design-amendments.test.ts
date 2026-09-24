@@ -551,6 +551,11 @@ describe('local design amendments (spec D15)', () => {
     // orphaned `docs:` on that row — one declaration, zero readers on both targets. A58.4f is
     // CHAINED on A58.4a and A58.4g on A58.4b (each declared `Consumes` in LOCAL_AMENDMENTS.md).
     'A58.4f', 'A58.4g', 'A58.4h', 'A58.4i',
+    // Task 6 (finding S9, 2026-09-24): step 2 collects the street address and the telephone
+    // number `EXACT_LOCATION` exists to release. A58.5a/A58.5b are the two `w` literals, anchored
+    // at their HEADS where A20.1/A20.2 edit their tails, and A58.5c is step 2's own fields array
+    // — all three on pristine text, so none is chained.
+    'A58.5a', 'A58.5b', 'A58.5c',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -763,7 +768,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(446);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(449);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

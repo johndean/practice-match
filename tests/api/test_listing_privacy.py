@@ -36,12 +36,14 @@ async def _draft(client: Any, signed: dict[str, str]) -> str:
 
 async def _submittable(client: Any, signed: dict[str, str], listing_id: str) -> None:
     """`tests/api/test_seller_listings.py::_submittable`'s own four steps — the least a listing can
-    carry and still be submitted (`REQUIRED_TO_SUBMIT`, `listing_submittable_ck`)."""
+    carry and still be submitted (`REQUIRED_TO_SUBMIT`, `listing_submittable_ck`), plus the street
+    and the telephone number `_complete_enough` has required since finding S9 (ruling D-C65)."""
     await client.patch(f"/api/seller/listings/{listing_id}?step=1",
                        json={"name": "Hill Country Animal Hospital", "type": "Small animal", "est": "1998"},
                        headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=2",
-                       json={"city": "Cedar Park", "zip": "78613"}, headers=signed)
+                       json={"street": "1204 Cypress Creek Rd", "city": "Cedar Park", "zip": "78613",
+                             "phone": "(512) 555-0100"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1,450,000"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
 

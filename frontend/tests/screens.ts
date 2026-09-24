@@ -658,7 +658,15 @@ export const SCREENS: Screen[] = [
   // here instead of the "unavailable" refusal). Appended at the end of the array, at its own
   // position, an ADDITION rather than a re-base — the same reason `wizard-step-6-review` above is
   // here rather than beside its siblings.
-  { name: 'gate-seller-needed', steps: async (p) => { await reach(p, { gate: 'seller-needed', persona: 'buyer' }); } }
+  { name: 'gate-seller-needed', steps: async (p) => { await reach(p, { gate: 'seller-needed', persona: 'buyer' }); } },
+  // A58.5 (finding S9, 2026-09-24) — step 2, which the approved states have never photographed:
+  // the four frozen `wizard-*` captures are step 1, step 7, the preview and the done card, so the
+  // two fields `EXACT_LOCATION` exists to release would have reached the design with no pixel
+  // oracle at all — the gap A27.5/D-C40 closed for the Market data strip and A20 closed for step 6,
+  // each in the release that opened it. Appended at the end of the array, at its own position, an
+  // ADDITION rather than a re-base, for the same reason `wizard-step-6-review` and
+  // `gate-seller-needed` above are here rather than beside their siblings.
+  { name: 'wizard-step-2', steps: async (p) => { await wizard(p); await btn(p, /^2/).click(); } }
 ];
 
 /**

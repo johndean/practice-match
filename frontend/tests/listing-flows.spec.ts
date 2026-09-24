@@ -32,6 +32,13 @@ test.use({ trace: process.env.PW_APP_URL ? 'off' : 'retain-on-failure' });
  *  wraps the caption AND the help line under the field, so the control's accessible name carries
  *  both ("Practice name (staff-facing only) Never shown to buyers until…"). */
 const field = (page: Page, label: string) => page.getByLabel(label);
+/** A TEXT input by its label. `field()` is a bare `getByLabel`, which matches a SUBSTRING — and
+ *  since finding S9 gave step 2 a "Street address" input, that is ambiguous for exactly one label:
+ *  the privacy toggle beneath it reads "Show only the community, not the street address", so
+ *  `field(page, 'Street address')` resolves to the input AND that checkbox. The ROLE disambiguates
+ *  without tightening the label match every other caller in this file relies on (`Practice name`
+ *  is a prefix of `Practice name (staff-facing only)`, so `exact: true` is not available here). */
+const textField = (page: Page, label: string) => page.getByRole('textbox', { name: label });
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 /** A step-rail row — `screens.ts`'s own `btn(p, /^7/)`, the way the three rail captures press it. */
 const rail = (page: Page, step: number) => page.getByRole('button', { name: new RegExp(`^${step}`) }).first();
@@ -159,11 +166,18 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     expect(row).toMatchObject({ name: NAME, type: 'Small animal', est: 1998, ownership: 'Sole proprietor' });
     await onStep(page, 2);
 
-    // 3. Step 2.
+    // 3. Step 2 — four fields since finding S9 (ruling D-C65): the street address and the
+    //    telephone number are what `EXACT_LOCATION` releases, and `_complete_enough` refuses a
+    //    submit that carries neither, so this flow (which reaches Submit at step 13) fills both.
+    await textField(page, 'Street address').fill('14 Chestnut St');
     await field(page, 'City or community').fill('Bastrop');
     await field(page, 'ZIP code').fill('78602');
+    await field(page, 'Practice telephone').fill('(512) 555-0100');
     row = await saved(page, id, 2, () => button(page, 'Continue').click());
-    expect(row).toMatchObject({ city: 'Bastrop', zip: '78602', area: 'Bastrop', anon: true });
+    expect(row).toMatchObject({
+      street: '14 Chestnut St', city: 'Bastrop', zip: '78602', phone: '(512) 555-0100',
+      area: 'Bastrop', anon: true
+    });
     await onStep(page, 3);
 
     // 4. "Save and exit" on step 3 with the asking price still BLANK (MAJOR-D). A draft is
@@ -488,12 +502,18 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     let row = await saved(page, id, 1, () => rail(page, 2).click());
     expect(row).toMatchObject({ name: 'ABC Animal Hospital', type: 'Small animal', est: 1987 });
 
-    // Step 2: city and ZIP.
+    // Step 2: city and ZIP — and, since finding S9, the street and the telephone number the
+    // SEED itself carries, which is the proof the new fields round-trip an existing row rather
+    // than only a listing typed from scratch.
     await onStep(page, 2);
     await expect(field(page, 'City or community')).toHaveValue('Houston');
     await expect(field(page, 'ZIP code')).toHaveValue('77076');
+    await expect(textField(page, 'Street address')).not.toHaveValue('');
+    await expect(field(page, 'Practice telephone')).not.toHaveValue('');
+    const seededStreet = await textField(page, 'Street address').inputValue();
+    const seededPhone = await field(page, 'Practice telephone').inputValue();
     row = await saved(page, id, 2, () => rail(page, 3).click());
-    expect(row).toMatchObject({ city: 'Houston', zip: '77076' });
+    expect(row).toMatchObject({ city: 'Houston', zip: '77076', street: seededStreet, phone: seededPhone });
 
     // Step 3: price and revenue.
     await onStep(page, 3);
@@ -579,8 +599,10 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await field(page, 'Year established').fill('1999');
     await saved(page, id, 1, () => button(page, 'Continue').click());
     await onStep(page, 2);
+    await textField(page, 'Street address').fill('14 Chestnut St');
     await field(page, 'City or community').fill(CITY);
     await field(page, 'ZIP code').fill('78640');
+    await field(page, 'Practice telephone').fill('(512) 555-0100');
     await saved(page, id, 2, () => button(page, 'Continue').click());
     await onStep(page, 3);
     await field(page, 'Asking price').fill('700,000');

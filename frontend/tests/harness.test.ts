@@ -603,8 +603,12 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     // `tests/api/test_seller_listings.py::test_a_bare_create_answers_null_for_exactly_these_columns`.
     const draft = JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)) as Record<string, unknown>;
     expect(Object.keys(draft).filter((key) => draft[key] === null).sort()).toEqual([
+      // `phone` and `street` joined the set in Task 6 of the 2026-09-23 wizard repair (finding S9,
+      // ruling D-C65): step 2 collects them and `create` inserts neither, so `serialise_draft`
+      // answers both null exactly as it does `city` and `zip`.
       'area', 'bldg', 'city', 'decline_reason', 'desc', 'docs', 'est', 'facility', 'facilityType', 'hours',
-      'market', 'name', 'ownership', 'price', 'rev', 'rooms', 'sqft', 'state', 'submitted_at', 'type', 'zip'
+      'market', 'name', 'ownership', 'phone', 'price', 'rev', 'rooms', 'sqft', 'state', 'street',
+      'submitted_at', 'type', 'zip'
     ]);
     // The three switches at the design's own values — see the report's concern on `revBand`.
     expect([draft.anon, draft.revBand, draft.docsLocked]).toEqual([true, false, true]);

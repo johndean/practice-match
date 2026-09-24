@@ -1032,7 +1032,9 @@ async def _submittable(client: Any, signed: dict[str, str], listing_id: str) -> 
     await client.patch(f"/api/seller/listings/{listing_id}?step=1",
                        json={"name": "Hill Country Animal Hospital", "type": "Small animal", "est": "1998"},
                        headers=signed)
-    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park", "zip": "78613"},
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "1204 Cypress Creek Rd", "city": "Cedar Park", "zip": "78613",
+                             "phone": "(512) 555-0100"},
                        headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1,450,000"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
@@ -1117,6 +1119,13 @@ async def test_submit_re_validates_the_three_rules_the_design_enforces_client_si
     # once a reviewer tries to publish.
     assert await _refusal() == (422, "INCOMPLETE", "Approximate square feet is needed before this listing can be submitted.")
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
+    # ...and S9's own two (Task 6, ruling D-C65), the last to be asked because they are the newest
+    # promise: `EXACT_LOCATION` cannot be kept by a listing that carries neither.
+    assert await _refusal() == (422, "INCOMPLETE", "A street address is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"street": "1204 Cypress Creek Rd"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE",
+                                "A practice telephone number is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"phone": "(512) 555-0100"}, headers=signed)
     assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
 
 
@@ -1436,11 +1445,14 @@ async def test_an_edit_to_a_paused_listing_leaves_the_browse_cache_alone(
 # the seeder's existing `WHERE source = 'seed'` scope never overwrites a seller-edited row, `status`
 # can never be reset to `published` without review, and `--reset` never deletes it."
 
+#: `phone` is here because the real seeder writes it (`scripts/seed_listings.py`'s own column
+#: list) and all twenty-nine demo hospitals carry one — this fixture simply did not, which S9's
+#: submit rule turned from a harmless omission into a row no seeded listing in the world looks like.
 _SEED_INSERT = """
-INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
+INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
                      name_disclosed, area, type, market, est, price, sqft, source, seller_id,
                      photos, photo_captions)
-VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', %(status)s,
+VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '(512) 555-0100', '24/7', %(status)s,
         true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(seller)s,
         %(photos)s::jsonb, %(photo_captions)s::jsonb)
 RETURNING id
@@ -1832,7 +1844,8 @@ STEP_FIELDS_JSON = ROOT / "frontend" / "src" / "listings" / "step-fields.json"
 #: seller has filled the wizard in, so the payloads below are the ones the adapter really sends.
 DESIGN_W: dict[str, Any] = {
     "name": "ABC Animal Hospital", "type": "Small animal", "est": "1998",
-    "ownership": "Sole proprietor", "city": "Bastrop", "zip": "78602", "anon": True,
+    "ownership": "Sole proprietor", "street": "14 Chestnut St", "city": "Bastrop", "zip": "78602",
+    "phone": "(512) 555-0100", "anon": True,
     "price": "860,000", "rev": "700,000", "revBand": False,
     "docs": "2", "rooms": "4", "sqft": "3,000", "hours": "Mon-Fri 8-6", "desc": "Dentistry",
     "bldg": "Included", "facilityType": "Standalone", "facility": "Two surgical suites",
@@ -1952,6 +1965,9 @@ BARE_DRAFT_NULLS = frozenset({
     "name", "type", "est", "ownership", "city", "zip", "price", "rev", "docs", "rooms", "sqft",
     "hours", "desc", "bldg", "facilityType", "facility", "state", "market", "area",
     "decline_reason", "submitted_at",
+    # S9 (Task 6): the two columns `EXACT_LOCATION` releases, collected by step 2 since ruling
+    # D-C65 and null on a listing nobody has filled in yet, exactly like `city` and `zip` above.
+    "street", "phone",
 })
 
 
@@ -2806,3 +2822,262 @@ async def test_a_document_never_gains_a_privacy_row_or_a_tile(
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM listing_asset_privacy WHERE listing_id = %s", (listing_id,))
         assert cur.fetchone()[0] == 0
+
+
+# --- Task 6 of the seller-wizard repair (audit finding S9, ruling D-C65) -------------------------
+#
+# `EXACT_LOCATION` is a live, requestable, approvable disclosure capability whose approval delivers
+# `street: null` and `phone: null`, because no wizard step has ever collected either: this module's
+# own `ADDRESS_COLUMNS` comment said so outright ("`street` is never written by this API"), and the
+# only writer in the repository was `scripts/seed_listings.py`. The 2026-09-08 spec deferred "the
+# exact-location switch and the street field it needs" together; the 2026-09-18 directive then
+# shipped the capability without the prerequisite. Step 2 collects both, and both are required to
+# SUBMIT — a listing that cannot deliver the address is what makes the capability a lie.
+#
+# ENFORCED AT SUBMIT, NEVER IN THE SCHEMA (the controller's ruling for this task). Wizard-created
+# listings already exist with no street; a NOT NULL column or a widened `listing_submittable_ck`
+# would strand every one of them at their next save. `_complete_enough` is where this belongs,
+# beside the `sqft` precedent A-SL33 (1) set for exactly the same reason.
+
+
+async def test_step_two_stores_a_street_and_a_telephone_number(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The write half of S9: the two columns the buyer contract has always served and nothing has
+    ever filled. Asserted as STORED DATA and as the draft the wizard reads back — `toWizardState`
+    omits a null column so the design's own `""` stands, and a draft that answered neither key
+    would have the very next Continue PATCH `street: ""` and CLEAR the column the seller just
+    typed into."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+
+    saved = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                               json={"street": "1204 Cypress Creek Rd", "city": "Cedar Park",
+                                     "zip": "78613", "phone": "(512) 555-0100"}, headers=signed)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["street"] == "1204 Cypress Creek Rd"
+    assert saved.json()["phone"] == "(512) 555-0100"
+    with conn.cursor() as cur:
+        cur.execute("SELECT street, phone FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone() == ("1204 Cypress Creek Rd", "(512) 555-0100")
+
+
+async def test_submit_requires_the_street_and_the_telephone_number(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The capability's own prerequisite, named in the envelope one field at a time — the shape
+    every other `INCOMPLETE` refusal already has, so the seller is told the first thing that is
+    actually missing rather than meeting a database error a reviewer would hit later."""
+    listing_id, signed = await _ready(client, member)
+    # `_ready()` now makes a genuinely submittable listing, street and telephone included, so this
+    # proves the refusal by CLEARING both first — the same clearing idiom a seller's own blank
+    # step-2 field uses, and `test_submit_also_requires_square_footage_named_in_the_envelope`'s
+    # own shape one field over.
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "", "phone": ""}, headers=signed)
+
+    async def _refusal() -> tuple[int, str, str]:
+        r = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+        return r.status_code, r.json()["error"]["code"], r.json()["error"]["message"]
+
+    assert await _refusal() == (422, "INCOMPLETE",
+                                "A street address is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "1204 Cypress Creek Rd"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE",
+                                "A practice telephone number is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"phone": "(512) 555-0100"}, headers=signed)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+
+
+#: Every shape `PHONE_RE` is written to take, spelled out rather than sampled: the optional country
+#: code, the optional parentheses and the three separator choices, which between them are the whole
+#: language of the pattern once the digits are fixed. `tests/api/test_seller_listings.py` sweeps the
+#: product of these against BOTH the wizard's own rule and the redaction scanner's.
+_PHONE_PREFIXES = ("", "1", "+1", "1 ", "1-", "1.", "+1 ", "+1-", "+1.")
+_PHONE_SEPARATORS = ("", " ", "-", ".")
+
+
+def _phone_shapes() -> list[str]:
+    from itertools import product
+    return [f"{prefix}{open_}512{close}{a}555{b}0100"
+            for prefix, (open_, close), a, b in product(
+                _PHONE_PREFIXES, (("(", ")"), ("", "")), _PHONE_SEPARATORS, _PHONE_SEPARATORS)]
+
+
+@pytest.mark.parametrize("written", ["(512) 555-0100", "512-555-0100", "5125550100", "+1 512 555 0100"])
+async def test_the_wizard_takes_a_telephone_number_however_it_is_conventionally_written(
+    client: Any, conn: Any, redis: Any, member: Any, written: str
+) -> None:
+    """The product's OWN data already carries two of these — `seeds/hospitals.json` writes both
+    `(214) 555-0101` and `214-555-0101` — so a single literal format would refuse the repository's
+    own seeds. The rule is a SHAPE, not a format: ten North American digits with any conventional
+    punctuation, stored exactly as the seller wrote it."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    saved = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                               json={"phone": written}, headers=signed)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["phone"] == written
+
+
+@pytest.mark.parametrize("written", [
+    "banana",
+    "555-0100",
+    "512-555-010",
+    "(512) 555-01000",
+    "+44 20 7946 0000",
+    "(512) 555-0100 x204",
+    "٥١٢٥٥٥٠١٠٠",
+])
+async def test_the_wizard_refuses_a_string_that_is_not_a_telephone_number(
+    client: Any, conn: Any, redis: Any, member: Any, written: str
+) -> None:
+    """Seven refusals, each its own reason. `banana` is the `zip`/`banana` case one field over;
+    a seven-digit local number has no area code and `app/privacy/identity.py`'s own docstring
+    names that as a shape its scanner cannot see; nine and eleven digits are neither; a
+    non-NANP international number is refused for the reason `zip` refuses a non-US postcode —
+    every market in this product is a US CBSA; an extension is not part of the number the
+    redaction scanner can recognise; and the Arabic-Indic digits are the Unicode-digit hole
+    `[0-9]` closes, the fix round 1 of the `zip` rule made one commit ago and this must not
+    re-open."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                 json={"phone": written}, headers=signed)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["code"] == "BAD_PHONE"
+    with conn.cursor() as cur:
+        cur.execute("SELECT phone FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone() == (None,), "a refused number is never stored"
+
+
+def test_the_wizard_never_stores_a_number_the_redaction_scanner_cannot_see() -> None:
+    """The one property that makes the wizard's rule the RIGHT rule rather than merely a rule.
+
+    `app/privacy/identity.py::identity_terms` reads the listing's own `phone` column as one of the
+    identity strings the image pipeline scrubs from a photograph, and `REGEX_CLASSES["phone"]` is
+    the shape that pipeline recognises a telephone number BY. So the wizard's own rule must be
+    NARROWER than the scanner's: a number this door accepts must be one that door can see.
+
+    Proved over the whole language of `PHONE_RE` rather than a sample — the pattern's alternatives
+    are a finite product once the digits are fixed, and digits are interchangeable within it. The
+    two are deliberately NOT one object: the scanner spells its digits `\\d`, which matches every
+    Unicode decimal, and that is precisely the hole `ZIP_RE`'s own fix round 1 closed at this same
+    door one commit ago."""
+    from app.api.seller_listings import PHONE_RE
+    from app.privacy.identity import REGEX_CLASSES
+
+    shapes = _phone_shapes()
+    assert len(shapes) == len(_PHONE_PREFIXES) * 2 * len(_PHONE_SEPARATORS) ** 2
+    for shape in shapes:
+        assert PHONE_RE.fullmatch(shape), shape
+        assert REGEX_CLASSES["phone"].fullmatch(shape), (
+            f"{shape!r} is a number the wizard would store and the redaction scanner cannot see")
+    # ...and the narrowing is real rather than vacuous: the scanner tolerates OCR separator runs
+    # ("512 - 555 - 0100" off van lettering) that no seller types, and the wizard does not.
+    assert REGEX_CLASSES["phone"].fullmatch("512 - 555 - 0100")
+    assert not PHONE_RE.fullmatch("512 - 555 - 0100")
+    # The Unicode-digit hole, stated as the measurement it is rather than as a claim.
+    assert REGEX_CLASSES["phone"].fullmatch("٥١٢٥٥٥٠١٠٠")
+    assert not PHONE_RE.fullmatch("٥١٢٥٥٥٠١٠٠")
+
+
+async def test_a_blank_street_or_telephone_clears_the_column_rather_than_being_refused(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """`_zip`'s own rule, one field over: the shape guards a VALUE and never an absence. A draft is
+    incomplete by nature, the wizard's autosave PATCHes the resting value of every step-2 input on
+    every visit, and a seller who has typed a number must be able to clear it again — so submit is
+    the gate and the write door is not."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "1204 Cypress Creek Rd", "phone": "(512) 555-0100"}, headers=signed)
+    cleared = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                 json={"street": "", "phone": "   "}, headers=signed)
+    assert cleared.status_code == 200, cleared.text
+    assert (cleared.json()["street"], cleared.json()["phone"]) == (None, None)
+
+
+async def test_a_changed_street_re_arms_the_geocode_the_way_a_changed_city_does(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """GEO-WIRE (2) now that the premise its comment rests on has changed. `ADDRESS_COLUMNS` is the
+    set a step-2 PATCH compares to decide whether `practice_location` still describes this
+    practice, and it named `city` and `zip` alone BECAUSE the wizard had no street field. With one,
+    a seller who corrects their street and keeps the city would otherwise keep a point, a tract and
+    a CBSA computed from somewhere else — and `app/census/geocode.py::resolve` reads `street`
+    FIRST, so a street is the difference between a rooftop match and the ZIP-centroid fallback that
+    is all S9's grant has ever delivered."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "1204 Cypress Creek Rd", "city": "Cedar Park", "zip": "78613"},
+                       headers=signed)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision,"
+                    " geocoded_at, geocoder_vintage) VALUES (%s, 'hash', 'zcta', now(), 'v')",
+                    (listing_id,))
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "400 Oak Dr"}, headers=signed)
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id = %s", (listing_id,))
+        assert cur.fetchone() == (0,), "a corrected street must re-arm the geocode, as a corrected city does"
+
+
+async def test_the_street_a_seller_typed_is_what_an_approved_buyer_receives(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """S9 end to end, through the real routes on both sides and through a real request/decide round
+    trip — the claim the finding is made of, which no test in the tree could make before because
+    every fixture wrote `street` with direct SQL.
+
+    THE PRIVACY TOGGLE GOVERNS DISPLAY ONLY, and both halves are asserted here: with `anon` ON the
+    address the seller just typed reaches nobody, and with it OFF it still reaches only a buyer the
+    seller has approved for `EXACT_LOCATION`."""
+    _sid, s_cookies, s_hdr = member(roles=("seller",), email="s9-seller@example.org")
+    signed = auth_headers(s_cookies, s_hdr)
+    listing_id = await _create(client, s_cookies, s_hdr)
+    await _submittable(client, signed, listing_id)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                       json={"street": "1204 Cypress Creek Rd", "phone": "(512) 555-0100", "anon": True},
+                       headers=signed)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id = %s", (listing_id,))
+
+    _bid, b_cookies, b_hdr = member(roles=("buyer",), email="s9-buyer@example.org")
+    buyer = auth_headers(b_cookies, b_hdr)
+
+    hidden = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert (hidden["street"], hidden["phone"]) == (None, None), "anon ON hides the address from everyone"
+
+    # The seller's own switch, through the real route — which takes a published listing back into
+    # review (D3, `EDIT_REENTERS_REVIEW`), so the reviewer's own re-publish is a fixture here: this
+    # test is about the ADDRESS, and `app/api/admin_listings.py` owns the decide path.
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"anon": False}, headers=signed)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published' WHERE id = %s", (listing_id,))
+    ungranted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert (ungranted["street"], ungranted["phone"]) == (None, None), (
+        "the ceiling alone is not the grant: collecting the address must not change what an"
+        " unapproved buyer sees")
+
+    created = await client.post("/api/requests", headers=buyer,
+                                json={"listing_id": listing_id, "disclosure_level": "EXACT_LOCATION"})
+    assert created.status_code == 201, created.text
+    decided = await client.post(f"/api/seller/requests/{created.json()['id']}/decide",
+                                headers=signed, json={"action": "approve"})
+    assert decided.status_code == 200, decided.text
+
+    granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
+    assert granted["street"] == "1204 Cypress Creek Rd"
+    assert granted["phone"] == "(512) 555-0100"

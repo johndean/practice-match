@@ -37,7 +37,7 @@ function stubFetch(...answers: Array<{ status: number; body?: unknown; text?: st
 function draft(over: Partial<Draft> = {}): Draft {
   return {
     id: 'a3f1', slug: 'listing-a3f1', status: 'draft',
-    name: null, type: null, est: null, ownership: null, city: null, zip: null,
+    name: null, type: null, est: null, ownership: null, street: null, city: null, zip: null, phone: null,
     price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
     bldg: null, facilityType: null, facility: null,
     anon: true, revBand: false, docsLocked: true, showIdentifiable: false,
@@ -271,7 +271,11 @@ describe('the adapter', () => {
     expect(calls[0].init.method).toBe('PATCH');
     expect(calls[0].init.headers['X-CSRF-Token']).toBe('tok');
     expect(calls[0].init.headers['Content-Type']).toBe('application/json');
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ city: 'Buda', zip: '78610', anon: true });
+    // `street` and `phone` are step 2's own since S9 (Task 6, ruling D-C65); the design's initial
+    // `w` holds both at `""`, which is exactly what a seller who has not typed one sends.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      street: '', city: 'Buda', zip: '78610', phone: '', anon: true
+    });
     expect(answer.w.city).toBe('Buda');
   });
 

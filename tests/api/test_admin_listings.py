@@ -125,10 +125,15 @@ async def _staff(client: Any, member: Any) -> dict[str, str]:
 async def _submitted(client: Any, member: Any) -> tuple[str, dict[str, str]]:
     """A seller's listing, complete and in review — what the queue exists to show. Complete now
     means `sqft` too (A-SL33 (1)): `REQUIRED_TO_SUBMIT` names it beside price, so a listing this
-    helper builds can also reach a real publish, which most of this module's tests go on to do."""
+    helper builds can also reach a real publish, which most of this module's tests go on to do.
+
+    ...and, since finding S9 of the 2026-09-23 wizard audit (ruling D-C65), a street address and a
+    telephone number: `EXACT_LOCATION` releases exactly those two columns, so `_complete_enough`
+    refuses a submit that carries neither."""
     listing_id, signed = await _draft(client, member)
     await client.patch(f"/api/seller/listings/{listing_id}?step=2",
-                       json={"city": "Cedar Park", "zip": "78613"}, headers=signed)
+                       json={"street": "1204 Cypress Creek Rd", "city": "Cedar Park", "zip": "78613",
+                             "phone": "(512) 555-0100"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1450000"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
     assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200

@@ -64,7 +64,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   // "no link may lead to a refusal." A40.1/A40.2 (D-C53, 2026-09-13) were RESERVED and then HELD
   // for exactly the reason this family (A55) exists to fix: the reference has no `perms` adapter
   // and no router, so it could not be told what the app already knew, and hiding the door there
-  // would have moved 28 of the 59 approved states with no oracle to check them against. `A40.1`
+  // would have moved 28 of the 60 approved states with no oracle to check them against. `A40.1`
   // and `A40.2` stay reserved and unwritten; this is A55, and the missing piece is the tenth
   // declared prototype prop, `startPerms` — the reference's only way to be handed the app's own
   // computed answer (never a role test written here; `can()`/`MATRIX` stay the one place the
@@ -7697,5 +7697,81 @@ describe('A58.4 — no buyer-facing string reads the word "null" (finding S8)', 
     withField('p1', { docs: null }, () => {
       expect(rail('p1').docs, 'it computed the word "null" for nobody').toBeUndefined();
     });
+  });
+});
+
+// A58.5 — step 2 collects the address `EXACT_LOCATION` exists to release (finding S9 of the
+// 2026-09-23 seller wizard audit, ruling D-C65).
+//
+// `EXACT_LOCATION` is a live, requestable, approvable disclosure capability whose entire payload
+// is `street` and `phone`, and no wizard step collected either — so a seller who approved a
+// request delivered `street: null, phone: null` beside `location_disclosed: true`. Step 2 gains
+// the two fields, in the step's own `text()` idiom.
+//
+// The DESIGN half is pinned byte for byte by `tests/design-amendments.test.ts` and photographed by
+// the `wizard-step-2` approved state; what this block characterises is the two things neither of
+// those can say — that the shape the design produces is the SAME shape its two existing fields
+// have, and that the initial state literal really does declare both keys, which is what keeps the
+// adapter sending `""` rather than `undefined` for a field the seller has not typed into.
+describe('A58.5 — step 2 asks for the street address and the telephone number (finding S9)', () => {
+  const step2 = (): any => { c.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 2 }); return c.wizardVals(); };
+
+  it('renders four text fields, the address in the order an address is written', () => {
+    expect(step2().fields.map((f: any) => f.label)).toEqual([
+      'Street address', 'City or community', 'ZIP code', 'Practice telephone'
+    ]);
+  });
+
+  it('gives the two new fields the step\'s own `text()` shape and nothing else', () => {
+    const [street, city, zip, phone] = step2().fields;
+    for (const [name, field] of [['street', street], ['phone', phone]] as const) {
+      expect(Object.keys(field).sort(), `${name} carries exactly the keys text() produces`)
+        .toEqual(Object.keys(city).sort());
+      expect(field.isText, name).toBe(true);
+      expect(field.wrapStyle, `${name} takes the step's own wrapper`).toBe(city.wrapStyle);
+      expect(field.hasHelp, `${name} carries help, as the ZIP field does`).toBe(true);
+    }
+    // The help is the design's OWN sentence, the one step 1 already prints beside the practice
+    // NAME — the same release condition, stated in the same words, on both fields (A34.7/A34.8's
+    // "said once means one WORDING, not one LOCATION").
+    c.setState({ step: 1 });
+    const name = c.wizardVals().fields[0];
+    expect(name.label).toBe('Practice name (staff-facing only)');
+    expect(street.help).toBe(name.help);
+    expect(phone.help).toBe(name.help);
+    expect(zip.help, 'the ZIP field keeps its own, untouched').toBe(
+      'Used to place your practice on the map and to attach community data.');
+  });
+
+  it('declares both keys in the design\'s own initial `w`, so a blank field sends "" and not undefined', () => {
+    const w = new Component({}).state.w as Record<string, unknown>;
+    expect(w.street).toBe('');
+    expect(w.phone).toBe('');
+    // Every key the wizard RENDERS is declared there — the invariant A58.5a exists to keep.
+    for (const step of [1, 2, 3, 4, 5]) {
+      c.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step });
+      for (const field of c.wizardVals().fields) {
+        expect(field.value, `step ${step}: ${field.label}`).not.toBeUndefined();
+      }
+    }
+  });
+
+  it('writes what the seller types straight through `setW`, as its two neighbours do', () => {
+    const fields = step2().fields;
+    fields[0].set({ target: { value: '1204 Cypress Creek Rd' } });
+    fields[3].set({ target: { value: '(512) 555-0100' } });
+    expect((c.state.w as any).street).toBe('1204 Cypress Creek Rd');
+    expect((c.state.w as any).phone).toBe('(512) 555-0100');
+  });
+
+  it('adds no client-side guard: step 2 still advances on a city and a ZIP alone', () => {
+    // Both fields are required to SUBMIT (`_complete_enough`, the `sqft` precedent) and neither is
+    // required to LEAVE step 2 — a draft is filled in whatever order the seller likes, and `sqft`
+    // has been required at submit with no step-4 guard since A-SL33 (1).
+    c.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 2,
+      w: { ...(new Component({}).state.w as object), city: 'Cedar Park', zip: '78613' } });
+    c.wizardVals().next();
+    expect(c.state.step).toBe(3);
+    expect(c.state.wizErr).toBe('');
   });
 });

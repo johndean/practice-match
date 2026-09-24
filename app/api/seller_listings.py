@@ -125,10 +125,17 @@ PRIVACY_ACTION = "listing.privacy"
 EDIT_REENTERS_REVIEW = ("published", "paused")
 
 # GEO-WIRE (2). The columns `app.census.geocode.resolve` reads to build an address, that a seller
-# can change: `street` is never written by this API (the approved step 2 collects a city and a
-# ZIP, and inventing a wizard field is forbidden, spec Q2) and `state` is the reviewer's at the
-# first publish and never seller-editable after it (D12).
-ADDRESS_COLUMNS = ("city", "zip")
+# can change. `street` JOINED THEM in Task 6 of the 2026-09-23 wizard repair (finding S9): this
+# comment used to read "`street` is never written by this API (the approved step 2 collects a city
+# and a ZIP, and inventing a wizard field is forbidden, spec Q2)", and that premise is exactly what
+# S9 retired — `EXACT_LOCATION` is a live, approvable capability whose whole payload is the street
+# and the telephone number, so step 2 collects both under ruling D-C65. `resolve` reads `street`
+# FIRST, so it is the difference between a rooftop match and the ZIP-centroid fallback that is all
+# that grant has ever delivered; a seller who corrects their street while keeping the city would
+# otherwise keep a point, a tract and a CBSA computed from somewhere else. `phone` is deliberately
+# NOT here — the geocoder does not read it and a telephone number is not an address — and `state`
+# is the reviewer's at the first publish and never seller-editable after it (D12).
+ADDRESS_COLUMNS = ("street", "city", "zip")
 
 # --- D10: the per-step whitelist, and the four mappings the approved design forces ---------------
 #
@@ -140,7 +147,12 @@ ADDRESS_COLUMNS = ("city", "zip")
 # 4. `facilityType` had no column at all; 030 adds `facility_type`.
 STEP_FIELDS: dict[int, tuple[str, ...]] = {
     1: ("name", "type", "est", "ownership"),
-    2: ("city", "zip", "anon"),
+    # `street` and `phone` are Task 6 of the 2026-09-23 wizard repair (finding S9, ruling D-C65):
+    # `EXACT_LOCATION` is a live, requestable, approvable capability, `app/api/listings.py` has
+    # always served both columns behind it, and no step collected either — so its approval
+    # delivered `street: null, phone: null`. Both are REQUIRED TO SUBMIT (`_complete_enough`) and
+    # neither is required to save: a draft is incomplete by nature.
+    2: ("street", "city", "zip", "phone", "anon"),
     3: ("price", "rev", "revBand"),
     4: ("docs", "rooms", "sqft", "hours", "desc"),
     5: ("bldg", "facilityType", "facility"),
@@ -187,6 +199,31 @@ BLDG_OUT = {value: key for key, value in BLDG_IN.items()}
 # fallback ladder as a ZIP no table holds. `re.ASCII` would do the same job; the character class
 # says it at the one place a reader looks.
 ZIP_RE = re.compile(r"[0-9]{5}(-[0-9]{4})?")
+# A practice's telephone number: ten North American digits, however a person conventionally writes
+# them (Task 6 of the 2026-09-23 wizard repair, finding S9). A SHAPE and never a FORMAT, and the
+# product's own data is why: `seeds/hospitals.json` already carries both `(214) 555-0101` and
+# `214-555-0101`, so a single literal layout would refuse the repository's own seeds.
+#
+# THE SHAPE IS NOT INVENTED HERE. `app/privacy/identity.py::REGEX_CLASSES["phone"]` is the pattern
+# the image-redaction pipeline recognises a telephone number BY, and `identity_terms` reads this
+# very column as one of the identity strings it scrubs from a photograph — so the product had
+# already stated, once, what a practice's number looks like, for exactly this string. This rule is
+# deliberately NARROWER than that one: everything this door accepts, that scanner can see, which
+# `tests/api/test_seller_listings.py::test_the_wizard_never_stores_a_number_the_redaction_scanner_cannot_see`
+# proves over the whole language of this pattern rather than over a sample.
+#
+# NOT the same object, and the reason is measured rather than stylistic: the scanner spells its
+# digits `\d`, which matches every Unicode decimal, and tolerates three-character separator runs
+# ("512 - 555 - 0100" off van lettering) that exist to survive OCR and that no seller types. `[0-9]`
+# here is `ZIP_RE`'s own fix round 1 (2026-09-24) applied at the same door one field over: an
+# Arabic-Indic or fullwidth "5125550100" passed `\d` and was stored VERBATIM, as the string.
+#
+# WHAT IT REFUSES, stated rather than discovered: a non-NANP international number (every market in
+# this product is a US CBSA, and `ZIP_RE` refuses a non-US postcode one field over for the same
+# reason), a seven-digit local number with no area code (`identity.py`'s own docstring names that
+# as a shape its scanner cannot see either), and an extension. The refusal names two accepted
+# forms, so a seller is never left guessing which of them this door wants.
+PHONE_RE = re.compile(r"(\+?1[ .-]?)?\(?[0-9]{3}\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}")
 MONEY_FIELDS = ("price", "rev")
 INT_FIELDS = ("est", "docs", "rooms", "sqft")
 # A-SL13 M1. D10's "refuse anything else" means garbage, not blanks. `state.w` initialises every
@@ -218,7 +255,7 @@ EST_MIN = 1900
 REQUIRED_ONCE_SUBMITTED = ("name", "city", "zip", "type", "est", "price")
 SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 
-_COLUMNS = """id, slug, name, city, zip, state, area, market, type, est, ownership, price, rev,
+_COLUMNS = """id, slug, name, street, city, zip, phone, state, area, market, type, est, ownership, price, rev,
               docs, rooms, sqft, hours, services, bldg, facility_type, facility, status,
               location_disclosed, name_disclosed, rev_disclosed, documents_disclosed,
               identifiable_content_visibility,
@@ -324,6 +361,21 @@ def _zip(raw: object) -> str | None:
     return value
 
 
+def _phone(raw: object) -> str | None:
+    """`_text`'s answer for `phone`, held to `PHONE_RE`.
+
+    `_zip`'s rule exactly, one field over: the shape guards a VALUE and never an absence, so a
+    blank clears the column and `_complete_enough` is what refuses a blank one at submit. Stored
+    EXACTLY as the seller wrote it — the punctuation is theirs, an approved buyer is going to read
+    it and dial it, and normalising it here would be this module inventing a house style for a
+    string the design displays verbatim."""
+    value = _text("phone", raw)
+    if value is not None and not PHONE_RE.fullmatch(value):
+        raise Refusal("BAD_PHONE", "phone must be a ten-digit US or Canadian telephone number"
+                                   " ((512) 555-0100 or 512-555-0100).", 422)
+    return value
+
+
 def _one_of(field: str, raw: object, allowed: tuple[str, ...]) -> str:
     """One of `allowed`, or a `Refusal`.
 
@@ -401,6 +453,8 @@ def columns_for(step: int, body: dict[str, Any], row: dict[str, Any] | None = No
             out["bldg"] = _bldg_or_unchanged(raw, row["bldg"] if row is not None else None)
         elif field == "zip":
             out["zip"] = _zip(raw)
+        elif field == "phone":
+            out["phone"] = _phone(raw)
         elif field == "desc":
             out["services"] = _text("desc", raw)
         elif field == "anon":
@@ -595,7 +649,10 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]], *,
         # payload, and the slug it writes at the first publish is what an admin tab links to.
         "id": str(row["id"]), "slug": row["slug"], "status": row["status"],
         "name": row["name"], "type": row["type"], "est": row["est"], "ownership": row["ownership"],
-        "city": row["city"], "zip": row["zip"],
+        # S9: answered so the wizard reads back what it stored. Without them `toWizardState`
+        # would leave the design's own `""` standing and the very next Continue would PATCH
+        # `street: ""` — CLEARING the column the seller had just typed into.
+        "street": row["street"], "city": row["city"], "zip": row["zip"], "phone": row["phone"],
         "price": row["price"], "rev": row["rev"],
         "docs": row["docs"], "rooms": row["rooms"], "sqft": row["sqft"], "hours": row["hours"],
         "desc": row["services"],
@@ -846,9 +903,11 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             # has to be fetched before `columns_for` can compare against it.
             columns = columns_for(step, body, row)
             # GEO-WIRE (2). Step 2 carries the ONLY address the geocoder ever sees — D12 keeps
-            # `state` and `market` the reviewer's, and the wizard has no street field — so a
-            # changed `city` or `zip` makes `practice_location` (its point, its tract, its CBSA)
-            # a description of somewhere this practice is not. `row` holds the values BEFORE this
+            # `state` and `market` the reviewer's — so a changed `street`, `city` or `zip` makes
+            # `practice_location` (its point, its tract, its CBSA) a description of somewhere this
+            # practice is not. `street` joined that set in Task 6 (S9); this sentence used to say
+            # the wizard had no street field, which is the premise that finding retired. `row`
+            # holds the values BEFORE this
             # write, which is what makes "changed" mean changed rather than "step 2 was saved":
             # the autosave fires on every visit, and `anon` is a step-2 field that moves nothing.
             moved = step == 2 and any(columns[name] != row[name] for name in ADDRESS_COLUMNS if name in columns)
@@ -1788,6 +1847,13 @@ REQUIRED_TO_SUBMIT = (("name", "A practice name"), ("est", "A year established")
                       ("type", "A practice type"), ("city", "A city"), ("zip", "A ZIP code"),
                       ("price", "An asking price"))
 INCOMPLETE_TAIL = "is needed before this listing can be submitted."
+# S9's own two, in the order step 2 asks them. Separate from `REQUIRED_TO_SUBMIT` deliberately:
+# that tuple mirrors `listing_submittable_ck` and the design's own client-side rules, and these
+# are neither — no CHECK names them and step 2's `next` guard does not block on them, because a
+# draft is filled in whatever order the seller likes and submit is the only moment the listing has
+# to be able to keep the promise `EXACT_LOCATION` makes.
+REQUIRED_FOR_EXACT_LOCATION = (("street", "A street address"),
+                               ("phone", "A practice telephone number"))
 
 
 def _complete_enough(row: dict[str, Any]) -> None:
@@ -1798,12 +1864,25 @@ def _complete_enough(row: dict[str, Any]) -> None:
     either an exact revenue figure or the range option" (logic.js:1217). `revBand` on means
     `rev_disclosed` false, so "the range option is chosen" reads here as the flag being off.
 
-    `sqft` is checked LAST and is not one of the design's own three client-side rules — it is the
-    fourth `listing_publishable_ck` (034) now names, because `frontend/src/logic.js` calls
-    `p.sqft.toLocaleString()` with no guard at six sites Browse renders a practice from: a listing
-    published with no floor area is not a blank field, it is a blank app the moment Browse next
-    renders. Told here, in the envelope, rather than met as a database error when a reviewer later
-    publishes it.
+    The three rules AFTER the loop are none of them the design's own client-side ones, and each has
+    its own reason:
+
+    `sqft` is the fourth `listing_publishable_ck` (034) now names, because `frontend/src/logic.js`
+    calls `p.sqft.toLocaleString()` with no guard at six sites Browse renders a practice from: a
+    listing published with no floor area is not a blank field, it is a blank app the moment Browse
+    next renders. Told here, in the envelope, rather than met as a database error when a reviewer
+    later publishes it.
+
+    `street` and `phone` are Task 6 of the 2026-09-23 wizard repair (finding S9, ruling D-C65).
+    `EXACT_LOCATION` is a live, requestable, approvable capability and its entire payload is those
+    two columns, so a listing that cannot deliver them makes the capability a lie the moment a
+    seller approves a request against it.
+
+    THEY ARE HERE AND NOT IN THE SCHEMA, and that is the ruling rather than an oversight: wizard-
+    created listings already exist with neither column filled, and a NOT NULL column or a widened
+    `listing_submittable_ck` would refuse every one of them at their next save — stranding sellers
+    to enforce a rule about a capability none of them has been asked about yet. Enforced at the one
+    door that can name the missing field to the person who can fill it in.
     """
     for column, label in REQUIRED_TO_SUBMIT:
         if row[column] is None:
@@ -1812,6 +1891,9 @@ def _complete_enough(row: dict[str, Any]) -> None:
         raise Refusal("INCOMPLETE", f"An exact revenue figure — or the range option — {INCOMPLETE_TAIL}", 422)
     if row["sqft"] is None:
         raise Refusal("INCOMPLETE", f"Approximate square feet {INCOMPLETE_TAIL}", 422)
+    for column, label in REQUIRED_FOR_EXACT_LOCATION:
+        if row[column] is None:
+            raise Refusal("INCOMPLETE", f"{label} {INCOMPLETE_TAIL}", 422)
 
 
 def owner_email(conn: Any, principal: S.Principal) -> str:

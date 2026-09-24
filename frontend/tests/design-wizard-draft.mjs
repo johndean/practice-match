@@ -20,7 +20,7 @@
 // Floor plan.pdf].slice(0, 3 + (w.photos || 0))` evaluated at the design's own `w.photos: 0`. Edit
 // that literal and this stub follows it; hand-copy a tile and `harness.test.ts` fails.
 //
-// Every other column is what `create` really leaves there — NULL, all twenty-one of them (A-SL27
+// Every other column is what `create` really leaves there — NULL, all twenty-three of them (A-SL27
 // (1); `harness.test.ts` pins the set, and `tests/api/test_seller_listings.py` pins the API's).
 // Until round 4 this stub answered the DESIGN's own `type`, `ownership`, `bldg` and `facilityType`
 // for a listing nobody had touched, which hid CRITICAL-C: the real API answers null for all four,
@@ -78,7 +78,11 @@ export function designWizardDraft(listingId, status = 'draft') {
   return {
     id: listingId, slug: `listing-${listingId}`, status,
     name: null, type: null, est: null, ownership: null,
-    city: null, zip: null, price: null, rev: null, docs: null, rooms: null, sqft: null,
+    // S9 (Task 6, ruling D-C65): `create` inserts neither, so `serialise_draft` answers both null
+    // exactly as it does `city` and `zip` beside them. `tests/api/test_seller_listings.py`'s own
+    // `BARE_DRAFT_NULLS` is the API-side pin of the same set.
+    street: null, city: null, zip: null, phone: null,
+    price: null, rev: null, docs: null, rooms: null, sqft: null,
     hours: null, desc: null, bldg: null, facilityType: null, facility: null,
     anon: true, revBand: false, docsLocked: true, showIdentifiable: false,
     state: null, market: null, area: null,

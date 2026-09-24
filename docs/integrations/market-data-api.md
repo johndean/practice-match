@@ -739,10 +739,14 @@ the data does not support.
 **When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
 is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is
 "Within about 5 miles of the practice". That sentence is true of a rooftop match and of nothing
-else. The seller wizard collects a city and a ZIP and no street, so the §11 fallback ladder
-resolves a real seller's listing at `zcta` — **a ZIP-code centroid**, which in a large ZIP is miles
-from the practice. Wiring the geocode onto publish (Task GEO-WIRE) made that the ordinary case
-rather than a rarity.
+else. **A listing that carries no street** resolves through the §11 fallback ladder at `zcta` —
+**a ZIP-code centroid**, which in a large ZIP is miles from the practice. Wiring the geocode onto
+publish (Task GEO-WIRE) made that the ordinary case rather than a rarity, because until ruling
+D-C65 the seller wizard collected a city and a ZIP and no street at all; step 2 collects one now
+(finding S9), so a listing whose seller has filled it in can reach a street match, and every
+listing created before that ruling — and every draft whose seller has not answered yet — still
+cannot. The rule below is keyed on `geo_precision`, never on which of those a listing is, so it is
+unchanged by that.
 
 So the area group is **served the `place` band** — the listing's own Census place — whenever
 `geo_precision` is anything but `"rooftop"`. That is the path the design already renders: **no
@@ -807,7 +811,7 @@ no pin however well it geocoded. This is the whole of what triggers it, and what
 |---|---|---|
 | A reviewer publishes a listing | `POST /api/admin/listings/{listing_id}/decide` (`action: "publish"`) | If the listing has no `practice_location` row, `census.geocode_listing` is enqueued **by name** after the transaction commits |
 | A seller puts a paused listing back on the market | `POST /api/seller/listings/{listing_id}/status` (`action: "republish"`) | The same, on the same condition |
-| A seller changes the address | `PATCH /api/seller/listings/{listing_id}?step=2` | **a changed `city` or `zip`** deletes the listing's `practice_location` row in the same transaction and forgets the dedupe below, so the next publish resolves the new address |
+| A seller changes the address | `PATCH /api/seller/listings/{listing_id}?step=2` | **a changed `street`, `city` or `zip`** deletes the listing's `practice_location` row in the same transaction and forgets the dedupe below, so the next publish resolves the new address |
 
 The enqueue is **deduped on the listing id for 600 seconds** (`app/api/market.py`'s own
 `BACKFILL_DEDUPE_TTL` shape). `practice_location` alone cannot dedupe it: that row is written by
@@ -832,10 +836,13 @@ replaces its curated pin with the Census geocoder's own match. `DEPLOY.md` carri
 Nothing above changes that command or the rows it has already written.
 
 **What precision a seller's address can reach, and why it is now on every listing payload.** The
-approved wizard's step 2 collects a city and a ZIP and nothing else — **the wizard collects a city
-and a ZIP and no street**, and inventing a field is out of scope (spec Q2, D12) — so the Census
-geocoder cannot match a street address and the §11 ladder resolves the listing at `zcta`: a
-ZIP-code centroid, not the practice. `GET /api/listings` and `GET /api/listings/{id}` therefore
+approved wizard's step 2 collected a city and a ZIP and nothing else until ruling D-C65 — **a
+listing with no street** cannot be matched to a street address by the Census geocoder, so the §11
+ladder resolves it at `zcta`: a ZIP-code centroid, not the practice. Step 2 collects a street and a
+telephone number since finding S9 of the 2026-09-23 wizard audit (both are what `EXACT_LOCATION`
+releases, and both are required to submit), so a listing filled in from here can reach a street
+match — and a listing created before it, or a draft whose seller has not answered yet, still
+cannot. `GET /api/listings` and `GET /api/listings/{id}` therefore
 carry **`geo_precision`** (`"rooftop" | "tract" | "zcta" | "place" | "county"`, or `null` for a
 listing that has never been geocoded) beside the community fields, the same value
 `GET /api/markets/{cbsa}/communities` and `GET /api/listings/{listing_id}/market` have carried

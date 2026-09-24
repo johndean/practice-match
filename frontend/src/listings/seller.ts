@@ -94,8 +94,13 @@ export interface Draft {
   type: string | null;
   est: number | null;
   ownership: string | null;
+  /** S9 (Task 6 of the 2026-09-23 wizard repair, ruling D-C65): the two columns `EXACT_LOCATION`
+   *  releases, collected by step 2 and required to submit. `serialise_draft` answers both on every
+   *  draft read, `null` for a listing nobody has filled in yet — exactly like `city` and `zip`. */
+  street: string | null;
   city: string | null;
   zip: string | null;
+  phone: string | null;
   price: number | null;
   rev: number | null;
   docs: number | null;
@@ -311,8 +316,8 @@ export function toDashboardRow(d: Draft | DesignRow): DashboardRow {
 
 /** The columns the design's fields edit as text: a number is rendered into the input, and a NULL
  *  column is left out, so that the design's own initial `w` (logic.js:204) supplies the value. */
-const TEXT_FIELDS = ['name', 'type', 'est', 'ownership', 'city', 'zip', 'price', 'rev', 'docs',
-  'rooms', 'sqft', 'hours', 'desc', 'bldg', 'facilityType', 'facility', 'state'] as const;
+const TEXT_FIELDS = ['name', 'type', 'est', 'ownership', 'street', 'city', 'zip', 'phone', 'price',
+  'rev', 'docs', 'rooms', 'sqft', 'hours', 'desc', 'bldg', 'facilityType', 'facility', 'state'] as const;
 
 /**
  * A draft as the wizard's own `state.w`.
