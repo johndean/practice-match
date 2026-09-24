@@ -569,6 +569,11 @@ describe('local design amendments (spec D15)', () => {
     // that entry's whole two-line `replace`) and A58.7d on A53.1; the other two take text no
     // earlier entry's `replace` introduced whole.
     'A58.7a', 'A58.7b', 'A58.7c', 'A58.7d',
+    // Task 10a (controller, 2026-09-25): the band filter that announced a withheld figure,
+    // the "My Requests" row that drew another practice under a request, and the missing
+    // building status published as a lease. A58.9 consumes A52.7, A58.10c consumes A58.4f
+    // (and A58.4a) and A58.10e consumes A58.3; the other four take pristine text.
+    'A58.8', 'A58.9', 'A58.10a', 'A58.10b', 'A58.10c', 'A58.10d', 'A58.10e',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -781,7 +786,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(461);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(468);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

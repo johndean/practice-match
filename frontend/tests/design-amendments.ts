@@ -10193,6 +10193,176 @@ const A58_7d: Amendment = {
   replace: '                    <sc-if value="{{ i.canRevoke }}" hint-placeholder-val="{{ false }}">\n                      <div style="display: flex; gap: 8px; margin-top: 14px;">\n                        <button onClick="{{ i.changeAccess }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Change access</button>\n                        <button onClick="{{ i.revoke }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Withdraw</button>\n'
 };
 
+// A58.8 / A58.9 / A58.10 — Task 10a of the 2026-09-23 seller-wizard repair plan (controller,
+// 2026-09-25). Three defects the D-C68 coverage measurement turned up, each recorded with its own
+// disconfirming check at `docs/superpowers/specs/2026-09-25-disclosure-coverage-proposal.md`
+// (rows E8 and E17). None of the three needs a stakeholder ruling: two are false statements the
+// product makes about data it does not have, and the third is a figure a seller withheld being
+// announced by the control that was supposed to be filtering on it.
+
+const RULING_F1 = 'Controller, Task 10a, 2026-09-25, on the measurement made for ruling D-C68 (John, 2026-09-24: "this applies to every view, address, pricing, images, etc.") and recorded at `docs/superpowers/specs/2026-09-25-disclosure-coverage-proposal.md` §3, evidence row E8 — MEASURED by running the expressions in Node rather than reasoned about. Every band filter on the Browse toolbar tests its band by ARITHMETIC on the listing\'s own figure, and a withheld figure is `null`, which JavaScript divides and compares as ZERO: `null / 1000 < 1000` is true, so a listing whose revenue the seller withheld was returned INSIDE "Under $1M" — and a buyer who filtered to the cheapest band was handed, in that result set, exactly the listings whose figures are hidden. Measured on all five: a withheld revenue reaches "Under $1M", a withheld price "Under $500K", a withheld square footage "Under 3,000" and a withheld year established "pre-1995", while a withheld doctor count fails the other way and excludes the listing (`null < 1` is `0 < 1`). REVENUE IS LIVE TODAY — it is gated on `FINANCIALS` (`app/api/listings.py`) and has been since long before this branch — and the other three are latent only because `listing_submittable_ck` (migrations/030) and `listing_publishable_ck` (034) require `price`, `est` and `sqft` on a published row. THE RULE, one rule for all five: a band filter asks a question about a figure, and a listing that does not state that figure cannot answer it, so it does not match. It keeps its place in every view not filtered on the figure it withheld, which is what the doctors filter has always done by accident and what the `building` and `type` filters already do by construction.';
+
+/** A58.8 — THE BAND FILTER ASKS A QUESTION A WITHHELD FIGURE CANNOT ANSWER (Task 10a, defect 1).
+ *
+ *  ONE rule, one line, five fields, and it is a table rather than five guards on purpose: a rule
+ *  with one field left out is not one rule, and the five arithmetic blocks below would each have
+ *  needed their own null term written in their own shape (`pr = p.price / 1000` before the bands,
+ *  `p.est >= 1995` inside them). The table is the one place a sixth field is ever added.
+ *
+ *  `f[b[0]] && f[b[0]] !== "Any"` is the UNION of the two guard shapes the blocks below already
+ *  carry — `f.price !== "Any"` for price, revenue and doctors, `f.est && f.est !== "Any"` for est
+ *  and sqft — so a filter slot that is missing or blank excludes nothing, exactly as today.
+ *  `p[b[1]] == null` and not truthiness (A58.4's rule): `0` is a figure the seller STATED, and a
+ *  practice priced at nothing really is under $500K.
+ *
+ *  WHAT IT DOES TO THE VIEW, stated rather than assumed: the listing DISAPPEARS from a view
+ *  filtered on the figure it withheld, and from no other. That is the doctors filter's own
+ *  behaviour, made explicit — and it reveals nothing the listing does not already say, because a
+ *  withheld figure is already drawn as `money()`'s em dash on the map pin and the rail card beside
+ *  it. What it stops revealing is a CLAIM about which band the figure sits in, which the listing
+ *  never made.
+ *
+ *  Bracket access (`statusMap[s.gate]`, `NAMES[p.id]`), `.some()` (`myReqs().some(...)`) and a
+ *  local table are all the bundle's own; no destructuring and no spread, which this bundle uses
+ *  nowhere. UNCHAINED: every line of the `find` is pristine. SCRIPT-ONLY and it paints nothing on
+ *  either target — all twenty-one design fixtures carry all five figures, so no branch is
+ *  reachable from the reference. */
+const A58_8: Amendment = {
+  id: 'A58.8', ...A58, date: '2026-09-25', ruling: RULING_F1, count: 1,
+  find: '  filtered() {\n'
+    + '    const f = this.state.f;\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + '    return P.filter((p) => {\n'
+    + '      if (p.status !== "published") return false;\n'
+    + '      if (p.market !== market) return false;\n',
+  replace: '  filtered() {\n'
+    + '    const f = this.state.f;\n'
+    + '    const market = this.state.market || "Austin, TX";\n'
+    + '    const bands = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"]];\n'
+    + '    return P.filter((p) => {\n'
+    + '      if (p.status !== "published") return false;\n'
+    + '      if (p.market !== market) return false;\n'
+    + '      if (bands.some((b) => f[b[0]] && f[b[0]] !== "Any" && p[b[1]] == null)) return false;\n'
+};
+
+const RULING_F2 = 'Controller, Task 10a, 2026-09-25, on the measurement made for ruling D-C68 (John, 2026-09-24: "this applies to every view, address, pricing, images, etc."), evidence row E17 of `docs/superpowers/specs/2026-09-25-disclosure-coverage-proposal.md` §7a: the buyer\'s own "My Requests" row looked its listing up by id and, when it could not find it, fell back to `P[0]` — the FIRST listing the page holds. The row\'s own request metadata is genuine (the buyer\'s message, the status pill, the date) while its title and figures were another practice\'s, so the screen read "Small animal practice — Cedar Park · $1.45M · 3 doctors · 4,200 sq ft" under a request the buyer sent about somebody else, and the row\'s own `open` handler then navigated to that other practice\'s detail screen. It is reachable rather than theoretical: `frontend/src/listings/load.ts` loads PUBLISHED listings only, so a seller who pauses or withdraws a listing after a buyer has asked about it produces exactly this row. ABSENT BEATS FAKED (D-C65): the design draws no "listing unavailable" row and one is not composed here, so the row is not drawn at all.';
+
+/** A58.9 — NO ROW RATHER THAN ANOTHER PRACTICE'S ROW (Task 10a, defect 2).
+ *
+ *  `|| P[0]` is dropped and the rows whose listing the page does not hold are filtered out BEFORE
+ *  the map, so `p` inside the body is always the listing the request actually names. Every other
+ *  value on the row is byte for byte what it was.
+ *
+ *  `.filter(…).map(…)` rather than a `null` sentinel inside the map: the design has no
+ *  `.filter(Boolean)` anywhere and does have `P.filter(…)` and `myReqs().some(…)`, so this is its
+ *  own vocabulary. The double lookup is the design's own too — `detail()` resolves the same way one
+ *  method over — and the list is a buyer's own requests, not a catalogue.
+ *
+ *  THE COST, recorded rather than hidden: a buyer whose request points at a listing that is no
+ *  longer published loses sight of that request. That is the honest half of "absent beats faked" —
+ *  the alternative is a row that names a practice the buyer never asked about — and the sentence
+ *  that would say so instead is new copy nobody has ruled on.
+ *
+ *  NOT FIXED HERE, and named rather than absorbed: the SELLER's inbox carries the identical
+ *  `|| P[0]` (`sellerVals`, "asked about " + p.area). Its treatment cannot be this one — a
+ *  disclosure product may under-offer but may not under-report, so a buyer's request must not
+ *  vanish from the seller's inbox — so it needs its own ruling and is left standing.
+ *
+ *  Consumes A52.7, whose whole `replace` (the `reqList: this.myReqs().map((r) => {` line) this
+ *  `find` takes. SCRIPT-ONLY: the design's own three fixture requests name `p1`, `p7` and `p6`,
+ *  all of them in `P`, so both targets keep every row and every pixel. */
+const A58_9: Amendment = {
+  id: 'A58.9', ...A58, date: '2026-09-25', ruling: RULING_F2, count: 1,
+  find: '      reqList: this.myReqs().map((r) => {\n'
+    + '        const p = P.filter((x) => x.id === r.pid)[0] || P[0];\n',
+  replace: '      reqList: this.myReqs().filter((r) => P.some((x) => x.id === r.pid)).map((r) => {\n'
+    + '        const p = P.filter((x) => x.id === r.pid)[0];\n'
+};
+
+const RULING_F3 = 'Controller, Task 10a, 2026-09-25, evidence row E17 of `docs/superpowers/specs/2026-09-25-disclosure-coverage-proposal.md` §7a, under ruling D-C65 (John, 2026-09-23: "implement full seller wizard audit") — the same ruling and the same class of defect A58.2 and A58.3 removed from the Property block two weeks earlier. The detail screen computed `const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable"`, and that else-arm is TOTAL: `bldg` is a plain nullable column (`migrations/016_listing.sql`), no CHECK and no submit rule requires it, and `app/api/listings.py` serves it raw — so a listing whose seller never answered step 5 was published as a leasehold, on FOUR rows of the buyer\'s detail screen at once (the asking-price note, the Property key fact, the Financial Snapshot\'s "Real estate" row and the Property block\'s "Building status" row). That is a statement about a lease that no seller made. The treatment is A58.2/A58.3\'s: the row is OMITTED rather than filled with a default, and no "not stated" wording is composed, because nobody declared it unknown either.';
+
+/** A58.10a — THE ELSE-ARM STOPS INVENTING A LEASE (Task 10a, defect 3).
+ *
+ *  The three stored values the API can serve are `Included`, `Separate` and `Leased`
+ *  (`app/api/seller_listings.py`'s `BLDG_IN`, whose keys are the design's own step-5 select), and
+ *  each keeps its own wording byte for byte. Everything else — a null, and a value no wording
+ *  exists for — becomes `null`, which the four readers below test with the design's own truthiness
+ *  idiom (`p.facilityType ? … : []`, A58.3, one line away from two of them).
+ *
+ *  UNCHAINED: the line is pristine. It occurs twice in the pristine bundle and once by the time
+ *  this family runs, the second being `bsel`'s own copy inside the `browseSel` peek card A2.2–A2.5
+ *  deleted under the bundle's dead-code rule. */
+const A58_10a: Amendment = {
+  id: 'A58.10a', ...A58, date: '2026-09-25', ruling: RULING_F3, count: 1,
+  find: '    const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable";\n',
+  replace: '    const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : p.bldg === "Leased" ? "Leased — assignable" : null;\n'
+};
+
+/** A58.10b — THE ASKING-PRICE NOTE DROPS THE CLAUSE, NOT THE SENTENCE (Task 10a, defect 3).
+ *
+ *  `"Practice only. " + bldg.toLowerCase() + "."` is a COMPOSED sentence, so A58.4c's rule applies
+ *  rather than A58.3's: a row can be omitted and a sentence cannot. Here the sentence is two
+ *  sentences, and the second one is the whole of what `bldg` says — so the design's own first
+ *  sentence stands alone and the clause nobody stated is not written. No new copy: every character
+ *  that remains is the design's own, and a listing that HAS a building status reads exactly what it
+ *  read before, which is the case the test pins for all three values.
+ *
+ *  UNCHAINED: the line is pristine. */
+const A58_10b: Amendment = {
+  id: 'A58.10b', ...A58, date: '2026-09-25', ruling: RULING_F3, count: 1,
+  find: '      priceNote: "Practice only. " + bldg.toLowerCase() + ".",\n',
+  replace: '      priceNote: "Practice only." + (bldg ? " " + bldg.toLowerCase() + "." : ""),\n'
+};
+
+/** A58.10c — THE "PROPERTY" KEY FACT IS OMITTED (Task 10a, defect 3). A58.4a's own treatment, on
+ *  the same array: the row leaves the literal and becomes a conditional member through the design's
+ *  own `.concat(COND ? [ … ] : [])`. It is LAST of the five, so the conditional member trails the
+ *  chain rather than sitting inside it, and the square-feet row loses only its comma.
+ *
+ *  Consumes A58.4f, whose whole one-line `replace` opens this `find`, and A58.4a, whose Square-feet
+ *  and Property lines and closing `]),` it takes. */
+const A58_10c: Amendment = {
+  id: 'A58.10c', ...A58, date: '2026-09-25', ruling: RULING_F3, count: 1,
+  find: '      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([\n'
+    + '        { k: "Square feet", v: p.sqft.toLocaleString() },\n'
+    + '        { k: "Property", v: bldg }\n'
+    + '      ]),\n',
+  replace: '      ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([\n'
+    + '        { k: "Square feet", v: p.sqft.toLocaleString() }\n'
+    + '      ]).concat(bldg ? [{ k: "Property", v: bldg }] : []),\n'
+};
+
+/** A58.10d — THE FINANCIAL SNAPSHOT'S "REAL ESTATE" ROW IS OMITTED (Task 10a, defect 3). The same
+ *  treatment, last of four, on a block no amendment has touched. UNCHAINED: every line is pristine.
+ */
+const A58_10d: Amendment = {
+  id: 'A58.10d', ...A58, date: '2026-09-25', ruling: RULING_F3, count: 1,
+  find: '          rows: [\n'
+    + '            { k: "Asking price", v: this.money(p.price) },\n'
+    + '            { k: "Gross revenue (most recent year)", v: this.money(p.rev) },\n'
+    + '            { k: "Revenue disclosure", v: "Exact figure released" },\n'
+    + '            { k: "Real estate", v: bldg }\n'
+    + '          ]\n',
+  replace: '          rows: [\n'
+    + '            { k: "Asking price", v: this.money(p.price) },\n'
+    + '            { k: "Gross revenue (most recent year)", v: this.money(p.rev) },\n'
+    + '            { k: "Revenue disclosure", v: "Exact figure released" }\n'
+    + '          ].concat(bldg ? [{ k: "Real estate", v: bldg }] : [])\n'
+};
+
+/** A58.10e — THE PROPERTY BLOCK'S "BUILDING STATUS" ROW IS OMITTED (Task 10a, defect 3). A58.4b's
+ *  shape rather than A58.4a's, because this row is FIRST of the three: the conditional member leads
+ *  the `.concat` chain. The Facility-type member A58.3 put beside it is carried forward byte for
+ *  byte, and the two now read as one rule — a row states the seller's own answer or it is not
+ *  there. Consumes A58.3, whose first three `replace` lines this `find` takes. */
+const A58_10e: Amendment = {
+  id: 'A58.10e', ...A58, date: '2026-09-25', ruling: RULING_F3, count: 1,
+  find: '          rows: [\n'
+    + '            { k: "Building status", v: bldg }\n'
+    + '          ].concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([\n',
+  replace: '          rows: (bldg ? [{ k: "Building status", v: bldg }] : []).concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([\n'
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10543,5 +10713,10 @@ export function amendments(): Amendment[] {
     // Fix round 2 (review Important-2): the confirmation names the tile the seller is
     // looking at. A58.6g consumes A58.6a and A58.6h consumes A58.6f, so both run last.
     A58_6g, A58_6h,
-    A58_7a, A58_7b, A58_7c, A58_7d];
+    A58_7a, A58_7b, A58_7c, A58_7d,
+    // Task 10a (controller, 2026-09-25): the three defects the D-C68 coverage measurement turned
+    // up. A58.8 and A58.10a/b/d take pristine text no earlier entry touched; A58.9 is CHAINED on
+    // A52.7, A58.10c on A58.4f (and A58.4a), and A58.10e on A58.3, so each of the three runs after
+    // the entry whose line it takes. Definition order in this file matches this list (m8).
+    A58_8, A58_9, A58_10a, A58_10b, A58_10c, A58_10d, A58_10e];
 }

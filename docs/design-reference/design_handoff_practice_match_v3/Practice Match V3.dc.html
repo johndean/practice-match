@@ -3228,9 +3228,11 @@ class Component extends DCLogic {
   filtered() {
     const f = this.state.f;
     const market = this.state.market || "Austin, TX";
+    const bands = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"]];
     return P.filter((p) => {
       if (p.status !== "published") return false;
       if (p.market !== market) return false;
+      if (bands.some((b) => f[b[0]] && f[b[0]] !== "Any" && p[b[1]] == null)) return false;
       if (f.type !== "Any" && p.type !== f.type) return false;
       if (f.doctors !== "Any" && p.docs < Number(f.doctors)) return false;
       if (f.building !== "Any" && p.bldg !== f.building) return false;
@@ -3653,7 +3655,7 @@ class Component extends DCLogic {
     const sent = s.sent.indexOf(p.id) > -1 || this.myReqs().some((r) => r.pid === p.id);
     const req = this.myReqs().filter((r) => r.pid === p.id)[0];
     const unlocked = req && req.status === "accepted";
-    const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable";
+    const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : p.bldg === "Leased" ? "Leased — assignable" : null;
     const docIcon = (open) =>
       "flex: none; width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; color: " +
       (open ? "var(--color-blue)" : "var(--color-steel)") + "; background: " + (open ? "var(--rf-band)" : "var(--color-off-white)") + ";";
@@ -3667,7 +3669,7 @@ class Component extends DCLogic {
       listed: p.listed,
       statusLabel: "Accepting inquiries",
       priceLabel: this.money(p.price),
-      priceNote: "Practice only. " + bldg.toLowerCase() + ".",
+      priceNote: "Practice only." + (bldg ? " " + bldg.toLowerCase() + "." : ""),
       morePhotos: "+6 more photos",
       photos: this.photoSet(p).map((ph) => ph.hasSrc ? Object.assign({}, ph, { open: (e) => this.openLightbox(p.id, ph.id, e), openLabel: "Expand photo: " + ph.caption }) : ph),
       photoHeroId: "ph-" + p.id + "-exterior",
@@ -3690,9 +3692,8 @@ class Component extends DCLogic {
       keyFacts: [
         { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" }
       ].concat(p.docs != null ? [{ k: "Doctors", v: p.docs + " full-time equivalent" }] : []).concat(p.rooms != null ? [{ k: "Exam rooms", v: String(p.rooms) }] : []).concat([
-        { k: "Square feet", v: p.sqft.toLocaleString() },
-        { k: "Property", v: bldg }
-      ]),
+        { k: "Square feet", v: p.sqft.toLocaleString() }
+      ]).concat(bldg ? [{ k: "Property", v: bldg }] : []),
       docs: [
         { name: "Exterior and interior photos", meta: "9 images · seller-provided", pill: "Open to approved members", pillStyle: pill(true), iconStyle: docIcon(true), isOpen: true, isLocked: false },
         { name: "Floor plan", meta: "PDF · 1 page", pill: unlocked ? "Open to you" : "Locked — seller approval", pillStyle: pill(unlocked), iconStyle: docIcon(unlocked), isOpen: !!unlocked, isLocked: !unlocked },
@@ -3715,9 +3716,8 @@ class Component extends DCLogic {
           rows: [
             { k: "Asking price", v: this.money(p.price) },
             { k: "Gross revenue (most recent year)", v: this.money(p.rev) },
-            { k: "Revenue disclosure", v: "Exact figure released" },
-            { k: "Real estate", v: bldg }
-          ]
+            { k: "Revenue disclosure", v: "Exact figure released" }
+          ].concat(bldg ? [{ k: "Real estate", v: bldg }] : [])
         },
         {
           title: "The Practice", hasProse: !!p.services, prose: p.services ? p.services + "." : "", hasNote: false, note: "",
@@ -3729,9 +3729,7 @@ class Component extends DCLogic {
         },
         {
           title: "Property", hasProse: true, prose: p.facility, hasNote: false, note: "",
-          rows: [
-            { k: "Building status", v: bldg }
-          ].concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([
+          rows: (bldg ? [{ k: "Building status", v: bldg }] : []).concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([
             { k: "Approximate square feet", v: p.sqft.toLocaleString() }
           ])
         }
@@ -4298,8 +4296,8 @@ class Component extends DCLogic {
       isRequests: s.screen === "requests",
       noRequests: s.requests.length === 0,
       goBrowseBtn: this.go("browse"),
-      reqList: this.myReqs().map((r) => {
-        const p = P.filter((x) => x.id === r.pid)[0] || P[0];
+      reqList: this.myReqs().filter((r) => P.some((x) => x.id === r.pid)).map((r) => {
+        const p = P.filter((x) => x.id === r.pid)[0];
         const label = r.status === "pending" ? "Awaiting seller" : r.status === "accepted" ? "Seller engaged" : r.status === "revoked" ? "Access withdrawn" : "Declined";
         const tone = r.status === "pending" ? ["#003a70", "#deecf7", "#deecf7"] : r.status === "accepted" ? ["#ffffff", "#003a70", "#003a70"] : ["#494949", "#ffffff", "#494949"];
         return {

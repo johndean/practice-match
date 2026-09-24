@@ -8074,3 +8074,192 @@ describe('A58.5 — step 2 asks for the street address and the telephone number 
     expect(c.state.wizErr).toBe('');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task 10a of the 2026-09-23 seller-wizard repair plan (controller, 2026-09-25) — three defects
+// the D-C68 disclosure-coverage measurement turned up, recorded with their evidence rows at
+// `docs/superpowers/specs/2026-09-25-disclosure-coverage-proposal.md` (E8, E17).
+//
+// Each has TWO directions — a stated figure and a withheld one — and they are asserted in
+// SEPARATE cases on purpose. Two gates on this plan have masked themselves in consecutive rounds
+// because the half that happened to pass came first in one test; here the present-value half and
+// the absent-value half can each go red without the other.
+// ---------------------------------------------------------------------------------------
+
+/** `body` run with `patch` laid over fixture `id`, then every field put back — the A58.4 block's
+ *  own helper, re-declared here because these are different describes in the same file. */
+function overlay(id: string, patch: Record<string, unknown>, body: () => void): void {
+  const p = (P as unknown as Record<string, unknown>[]).filter((x) => x.id === id)[0] as Record<string, unknown>;
+  const saved = Object.keys(patch).map((f) => [f, p[f]] as const);
+  Object.assign(p, patch);
+  try { body(); } finally { for (const [f, v] of saved) p[f] = v; }
+}
+
+describe('A58.8 — a band filter never announces a figure the seller withheld', () => {
+  const NONE = { type: 'Any', price: 'Any', revenue: 'Any', doctors: 'Any', building: 'Any', est: 'Any', ownership: 'Any', sqft: 'Any' };
+  /** The ids `filtered()` returns with `f` laid over the design's own all-Any filter bar. */
+  const ids = (f: Record<string, string>): string[] => {
+    c.setState({ auth: true, screen: 'browse', market: 'Austin, TX', f: { ...NONE, ...f } });
+    return c.filtered().map((p: any) => p.id);
+  };
+
+  // One row per (column, filter key, the option a WITHHELD figure reaches today, an option the
+  // fixture's own value IS in, an option it is NOT in). `p1` is Cedar Park: $1.45M asking,
+  // $2.10M revenue, 3 doctors, 4,200 sq ft, established 1998.
+  const FIELDS: Array<[string, string, string, string, string]> = [
+    ['rev', 'revenue', 'u1000', '1000-2500', 'o2500'],
+    ['price', 'price', 'u500', '1000-2000', 'u500'],
+    ['sqft', 'sqft', 'u3000', '3000-5000', 'u3000'],
+    ['est', 'est', 'pre1995', '1995-2010', 'pre1995'],
+    // Doctors is a THRESHOLD, not a band: 3 doctors is in "2 or more" and not in "4 or more".
+    // Its withheld direction has always passed — `null < 1` is `0 < 1`, true, so the listing was
+    // already excluded — and the case is kept as a characterisation of that, with the rule's own
+    // falsifiability asserted separately below.
+    ['docs', 'doctors', '1', '2', '4']
+  ];
+
+  for (const [column, key, withheldReaches, inSet, outOfSet] of FIELDS) {
+    it(`a withheld ${column} matches NO band — it is not in the ${key}="${withheldReaches}" result set`, () => {
+      overlay('p1', { [column]: null }, () => {
+        expect(ids({ [key]: withheldReaches }), `a null ${column} divides to zero and lands in the lowest band`).not.toContain('p1');
+      });
+    });
+
+    it(`a STATED ${column} is filtered on its own value, byte for byte as the design does`, () => {
+      expect(ids({ [key]: inSet }), `the fixture's own ${column} is in this set`).toContain('p1');
+      expect(ids({ [key]: outOfSet }), `and not in this one`).not.toContain('p1');
+    });
+
+    it(`a withheld ${column} keeps its place in every view not filtered on ${key}`, () => {
+      overlay('p1', { [column]: null }, () => {
+        expect(ids({}), 'no filter on the withheld figure: the listing is still browsable').toContain('p1');
+        expect(ids({ type: 'Small animal' }), 'a filter on another field does not remove it either').toContain('p1');
+      });
+    });
+  }
+
+  it('the doctors arm is the RULE and no longer the accident of `null < N`', () => {
+    // The four options the filter bar offers are 1, 2 and 4 or more, and for every one of them a
+    // null doctor count was already excluded — by coercion, not by intent: `null` becomes 0 and 0
+    // is below any positive threshold. A threshold of ZERO is the one value that separates the two,
+    // and it is asserted directly on `filtered()` because no filter-bar option produces it today.
+    // Without the explicit rule this case is green for the wrong reason the day a "0 or more"
+    // option is added; with it, removing `["doctors", "docs"]` from the table turns it red.
+    overlay('p1', { docs: null }, () => {
+      expect(ids({ doctors: '0' }), 'a withheld doctor count answers no doctors question at all').not.toContain('p1');
+    });
+    overlay('p1', { docs: 0 }, () => {
+      expect(ids({ doctors: '0' }), '...while a STATED zero is a real answer and passes "0 or more"').toContain('p1');
+    });
+  });
+
+  it('ZERO is a stated figure and is filtered on, never treated as withheld', () => {
+    // The test is `== null` and not truthiness. A practice with no doctors, or one priced at
+    // nothing, has answered the question; perturbing the rule to `!p[c]` turns this red.
+    overlay('p1', { price: 0, sqft: 0, docs: 0 }, () => {
+      expect(ids({ price: 'u500' }), 'a $0 asking price really is under $500K').toContain('p1');
+      expect(ids({ sqft: 'u3000' }), '0 sq ft really is under 3,000').toContain('p1');
+      expect(ids({ doctors: '1' }), '0 doctors is below "1 or more" — excluded on its VALUE').not.toContain('p1');
+    });
+  });
+});
+
+describe('A58.9 — the buyer\'s "My Requests" list never renders another practice under a request', () => {
+  const REQ = (over: Record<string, unknown>) => ({ id: 'r1', pid: 'p1', buyer: 'Dr B', status: 'pending', when: 'Aug 29', msg: 'Interested.', ...over });
+
+  it('a request whose listing is not loaded draws NO row', () => {
+    c.setState({ auth: true, screen: 'requests', myRequests: [REQ({ id: 'rx', pid: 'gone-from-the-page' })] });
+    expect(c.renderVals().reqList, 'absent beats faked: the design draws no row for a listing it does not hold').toHaveLength(0);
+  });
+
+  it('...and in particular never the FIRST listing\'s figures under that request', () => {
+    const first: any = (P as any[])[0];
+    c.setState({ auth: true, screen: 'requests', myRequests: [REQ({ id: 'rx', pid: 'gone-from-the-page' })] });
+    const titles = c.renderVals().reqList.map((r: any) => r.title + ' ' + r.meta);
+    expect(titles.join(' | '), `P[0] is ${first.area}; its figures must not appear under a request about another practice`).not.toContain(first.area);
+  });
+
+  it('every loaded request keeps its row, its order and its own values byte for byte', () => {
+    c.setState({
+      auth: true, screen: 'requests',
+      myRequests: [REQ({ id: 'r1', pid: 'p1', status: 'pending' }), REQ({ id: 'r2', pid: 'p7', status: 'accepted' }), REQ({ id: 'r3', pid: 'p6', status: 'declined' })]
+    });
+    const rows = c.renderVals().reqList;
+    expect(rows).toHaveLength(3);
+    expect(rows[0].title).toBe('Small animal practice — Cedar Park');
+    expect(rows[0].meta).toBe('$1.45M · 3 doctors · 4,200 sq ft');
+    expect(rows.map((r: any) => r.statusLabel)).toEqual(['Awaiting seller', 'Seller engaged', 'Declined']);
+  });
+
+  it('a mixed list drops only the unresolvable row and keeps the rest in order', () => {
+    c.setState({
+      auth: true, screen: 'requests',
+      myRequests: [REQ({ id: 'r1', pid: 'p1' }), REQ({ id: 'rx', pid: 'gone-from-the-page' }), REQ({ id: 'r3', pid: 'p6' })]
+    });
+    const rows = c.renderVals().reqList;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r: any) => r.title)).toEqual(['Small animal practice — Cedar Park', 'Emergency practice — East Austin']);
+  });
+});
+
+describe('A58.10 — a building status the seller never gave is not published as "Leased — assignable"', () => {
+  const detailOf = (id: string): any => { c.setState({ auth: true, detailId: id }); return c.detail(); };
+  const section = (id: string, title: string): any => detailOf(id).sections.filter((s: any) => s.title === title)[0];
+
+  it('the three stated values keep the design\'s own words, byte for byte', () => {
+    for (const [stored, shown] of [['Included', 'Included in sale'], ['Separate', 'Available separately'], ['Leased', 'Leased — assignable']]) {
+      overlay('p1', { bldg: stored }, () => {
+        const d = detailOf('p1');
+        expect(d.keyFacts.filter((k: any) => k.k === 'Property')[0].v, stored).toBe(shown);
+        expect(section('p1', 'Financial Snapshot').rows.filter((r: any) => r.k === 'Real estate')[0].v).toBe(shown);
+        expect(section('p1', 'Property').rows.filter((r: any) => r.k === 'Building status')[0].v).toBe(shown);
+        expect(d.priceNote).toBe('Practice only. ' + shown.toLowerCase() + '.');
+      });
+    }
+  });
+
+  it('a MISSING building status omits the Property key fact rather than claiming a lease', () => {
+    overlay('p1', { bldg: null }, () => {
+      const facts = detailOf('p1').keyFacts;
+      expect(facts.map((k: any) => k.k)).not.toContain('Property');
+      expect(JSON.stringify(facts)).not.toContain('Leased');
+    });
+  });
+
+  it('a MISSING building status omits the Financial Snapshot\'s "Real estate" row', () => {
+    overlay('p1', { bldg: null }, () => {
+      const rows = section('p1', 'Financial Snapshot').rows;
+      expect(rows.map((r: any) => r.k)).toEqual(['Asking price', 'Gross revenue (most recent year)', 'Revenue disclosure']);
+    });
+  });
+
+  it('a MISSING building status omits the Property block\'s "Building status" row', () => {
+    // The design's own fixtures carry no `facilityType` (A58.3's row is conditional too), so the
+    // block is down to its one unconditional row…
+    overlay('p1', { bldg: null }, () => {
+      expect(section('p1', 'Property').rows.map((r: any) => r.k)).toEqual(['Approximate square feet']);
+    });
+    // …and A58.3's own member is carried forward byte for byte, in its own place, on a listing
+    // that has one. This entry consumes A58.3's line, so its behaviour is pinned here as well.
+    overlay('p1', { bldg: null, facilityType: 'Medical park' }, () => {
+      expect(section('p1', 'Property').rows.map((r: any) => r.k)).toEqual(['Facility type', 'Approximate square feet']);
+    });
+    overlay('p1', { bldg: 'Leased', facilityType: 'Medical park' }, () => {
+      expect(section('p1', 'Property').rows.map((r: any) => r.k)).toEqual(['Building status', 'Facility type', 'Approximate square feet']);
+    });
+  });
+
+  it('a MISSING building status drops the clause from the price note and keeps the sentence', () => {
+    overlay('p1', { bldg: null }, () => {
+      expect(detailOf('p1').priceNote, 'the design\'s own lead sentence, minus a clause nobody stated').toBe('Practice only.');
+    });
+  });
+
+  it('a value the design has no wording for is treated as unstated, never as a lease', () => {
+    // The else-arm was total: ANYTHING that was not "Included" or "Separate" read "Leased —
+    // assignable", a null and an unknown column value alike.
+    overlay('p1', { bldg: 'Owned outright' }, () => {
+      expect(JSON.stringify(detailOf('p1'))).not.toContain('Leased — assignable');
+    });
+  });
+});
