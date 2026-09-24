@@ -1472,13 +1472,29 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
     `listing.photos` is the single home of photo order (D15 reason 3), so a reorder is one UPDATE
     of that array — no `listing_asset` row carries a position to disagree with it. The list must be
     a permutation of what is already there: a partial list would silently DELETE photographs from
-    the gallery, which is not what dragging a tile means."""
+    the gallery, which is not what dragging a tile means.
+
+    A SEEDED photograph cannot be reordered (ruling A-SL37/D-SL25, John 2026-09-10: "Keep seeded
+    photographs as seeded until the Admin & seller controls stage. Do NOT materialise them now").
+    Until Task 7 that ruling was held by the CLIENT alone — `delete_asset` refuses its half by
+    construction, its path segment being parsed as a uuid, but this route's permutation check reads
+    the non-null entries of `listing.photos` wholesale and a seed entry is one of them, so it obeyed.
+    What that costs is not recoverable: a seed tile's own words live in
+    `listing.photo_captions[position]`, read POSITIONALLY (`migrations/090`,
+    `app/api/seller_listings.py::photo_tiles`), and this route rewrites `photos` alone — so an
+    obeyed reorder puts one photograph's description under another, permanently and silently.
+    An asset id is a bare uuid and can never contain a `/`, so the seed entry is told by the value's
+    own shape, which is `app/api/listings.py::get_listing_photo`'s rule and `photo_tiles`' own
+    discriminator rather than a second query. Amendment A58.6 withholds both controls from a listing
+    carrying one as well: defence in depth, and a control must not be drawn for what this refuses."""
     hit(sync_redis(), "listing:reorder", str(principal.account_id), *LISTING_REORDER)
     try:
         body = await _json_body(request)
         ids = body.get("ids")
         if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
             raise Refusal("BAD_REQUEST", "ids must be the listing's photograph ids, in the new order.", 400)
+        if any("/" in item for item in ids):
+            raise Refusal("SEEDED_PHOTO", "A seeded photograph cannot be reordered yet.", 409)
         with closing(sync_conn()) as conn, conn:
             row = locked_row(conn, listing_id, principal)
             _writable(row)

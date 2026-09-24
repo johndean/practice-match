@@ -413,27 +413,29 @@ async def test_reorder_refuses_a_list_that_is_not_exactly_this_listings_photos(
     assert _photos(conn, listing_id) == ids
 
 
-async def test_reorder_accepts_a_seed_entry_and_leaves_its_positional_caption_behind(
+async def test_reorder_refuses_a_seed_entry_rather_than_leaving_its_caption_behind(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
-    """CHARACTERISATION, written for Task 7 (audit findings U1/U2) and asserting the behaviour as
-    it IS, not as it should be — so that the client-side gate that stands in front of it cannot be
-    removed without this failing to explain why it was there.
+    """Ruling A-SL37/D-SL25 (John, 2026-09-10) where the ruling lives, rather than in one client.
 
-    Ruling A-SL37/D-SL25 (John, 2026-09-10) blocks reordering or deleting a SEEDED photograph until
-    seed-to-asset conversion lands. `delete_asset` enforces that by construction — its path segment
-    is parsed as a uuid and a seed entry is a `<slug>/<file>` path, so a delete of one is a 404 —
-    but `reorder_photos` does NOT: the permutation is checked against the non-null entries of
-    `listing.photos` WHOLESALE, seed paths included, so a client that sends them in a new order is
-    obeyed.
+    WHAT THIS TEST USED TO PROVE, and why that changed. Written for Task 7 (audit findings U1/U2) it
+    was a CHARACTERISATION test asserting the opposite: this route OBEYED a reorder that moved a
+    seeded photograph, because the permutation is checked against the non-null entries of
+    `listing.photos` wholesale and a seed entry is one of them. `delete_asset` has always refused its
+    half by construction — its path segment is parsed as a uuid and a seed entry is a
+    `<slug>/<file>` path — so the ruling was half-held by the API and half-held by amendment A58.6's
+    UI gate, which withholds both controls while any photograph on the listing is a seed entry.
 
-    What that costs is the second half of this test. A seed tile's own words live in
+    The controller ruled on 2026-09-24 that a UI gate is one bug away from being bypassed and the
+    consequence is not recoverable: a seed tile's own words live in
     `listing.photo_captions[position]`, read POSITIONALLY (`migrations/090`, `photo_tiles`), and
-    `reorder_photos` rewrites `photos` alone — so after a reorder the photograph at position 1
-    carries the description written for the one that used to be there. THE UI IS THE ONLY THING
-    PREVENTING THIS: amendment A58.6 withholds both controls from the whole listing while ANY
-    photograph on it is a seed entry, for exactly this reason.
-    """
+    this route rewrites `photos` alone — so an obeyed reorder puts one photograph's description
+    under another, permanently and silently. The route refuses now, the UI gate STAYS (defence in
+    depth, and a control must not be drawn for something the API will refuse), and this test asserts
+    the refusal and that nothing moved.
+
+    An asset id is a bare uuid and can never contain a `/`, so the test is the value's own shape —
+    `app/api/listings.py::get_listing_photo`'s rule, and `photo_tiles`' own discriminator."""
     account_id, cookies, headers = _seller(member, email="sl4-seed-reorder@example.org")
     photos = [f"abc_animal_hospital/{n}.webp" for n in (1, 2)]
     listing_id = _seed_listing(conn, photos)
@@ -442,15 +444,42 @@ async def test_reorder_accepts_a_seed_entry_and_leaves_its_positional_caption_be
                     (account_id, json.dumps(["The front door", "The reception desk"]), listing_id))
     signed = auth_headers(cookies, headers)
 
-    response = await client.patch(f"/api/seller/listings/{listing_id}/photos",
-                                  json={"ids": list(reversed(photos))}, headers=signed)
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                 json={"ids": list(reversed(photos))}, headers=signed)
 
-    # NOT refused. The ruling is honoured by the client, and by nothing here.
-    assert response.status_code == 200, response.text
-    assert _photos(conn, listing_id) == list(reversed(photos))
-    # And the captions did not travel: photograph 2 is now first and reads photograph 1's words.
-    assert [tile["name"] for tile in response.json()["photos"]] == ["The front door", "The reception desk"]
-    assert [tile["id"] for tile in response.json()["photos"]] == list(reversed(photos))
+    assert refused.status_code == 409, refused.text
+    assert refused.json() == {"error": {
+        "code": "SEEDED_PHOTO",
+        "message": "A seeded photograph cannot be reordered yet."
+    }}
+    # Nothing moved, so the positional captions still describe the photographs they were written for.
+    assert _photos(conn, listing_id) == photos
+    body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+    assert [tile["name"] for tile in body["photos"]] == ["The front door", "The reception desk"]
+
+
+async def test_reorder_refuses_a_seed_entry_even_beside_the_sellers_own_uploads(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The MIXED listing, which is the shape the UI gate is a listing-wide rule for: a seller's own
+    uploaded photograph on a seeded hospital. Moving the asset past the seed entry moves the SEED
+    too, so naming only the asset ids would be a partial list (already refused) and naming all of
+    them is this refusal. Neither order is obeyed, which is the point."""
+    account_id, cookies, headers = _seller(member, email="sl4-seed-mixed@example.org")
+    seed = "abc_animal_hospital/1.webp"
+    listing_id = _seed_listing(conn, [seed])
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
+    signed = auth_headers(cookies, headers)
+    asset = (await _upload_photo(client, listing_id, signed)).json()["id"]
+    assert _photos(conn, listing_id) == [seed, asset]
+
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                 json={"ids": [asset, seed]}, headers=signed)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "SEEDED_PHOTO"
+    assert _photos(conn, listing_id) == [seed, asset]
 
 
 async def test_delete_of_a_seed_entry_is_a_404_because_it_is_a_path_and_not_an_asset_id(
@@ -1146,7 +1175,7 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
 
 
 async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
-    client: Any, conn: Any, redis: Any, member: Any
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
     """A-L10 (merged from `main`) stores a JSON `null` for a slot no photograph truthfully fills.
     There is nothing to show for it, so step 6 lists the photographs that exist and no blank tile.
@@ -1169,25 +1198,41 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
                "position": 3}),
     ]
 
-    moved = await client.patch(f"/api/seller/listings/{listing_id}/photos",
-                               json={"ids": ["abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]},
-                               headers=signed)
-    assert moved.status_code == 200
-    assert [tile["id"] for tile in moved.json()["photos"]] == [
-        "abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]
+    # The splicing rule, proved on the seller's OWN photographs: since 2026-09-24 a reorder that
+    # NAMES a seed entry is refused outright (A-SL37 held at the route), so this half of A-SL23 (6)
+    # m2 is exercised on a listing whose empty slot sits beside two real uploads. The rule under
+    # test is unchanged and is not weakened — an empty slot still has no id, is still compared
+    # against the non-null entries, and still stays at the position it was left at.
+    spliced = _seed_listing(conn, [None])
     with conn.cursor() as cur:
-        cur.execute("SELECT photos FROM listing WHERE id = %s", (listing_id,))
-        assert cur.fetchone()[0] == ["abc_animal_hospital/3.webp", None, "abc_animal_hospital/1.webp"], \
+        cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, spliced))
+    first = (await _upload_photo(client, spliced, signed)).json()["id"]
+    second = (await _upload_photo(client, spliced, signed)).json()["id"]
+    moved = await client.patch(f"/api/seller/listings/{spliced}/photos",
+                               json={"ids": [second, first]}, headers=signed)
+    assert moved.status_code == 200, moved.text
+    assert [tile["id"] for tile in moved.json()["photos"]] == [second, first]
+    with conn.cursor() as cur:
+        cur.execute("SELECT photos FROM listing WHERE id = %s", (spliced,))
+        assert cur.fetchone()[0] == [None, second, first], \
             "the empty slot stayed where it was; only the photographs moved"
 
     # A list that is not a permutation of the photographs is still refused — the empty slot is not
-    # a photograph a seller may name, and a partial list would silently delete one.
-    for bad in (["abc_animal_hospital/3.webp"],
-                ["abc_animal_hospital/3.webp", "", "abc_animal_hospital/1.webp"]):
-        refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+    # a photograph a seller may name, and a partial list would silently delete one. On the SAME
+    # listing as the splice above, for the same reason it moved there.
+    for bad in ([second], [second, "", first]):
+        refused = await client.patch(f"/api/seller/listings/{spliced}/photos",
                                      json={"ids": bad}, headers=signed)
         assert refused.status_code == 400
         assert refused.json()["error"]["message"] == "ids must be exactly this listing's photographs, in the new order."
+
+    # And the seeded listing this test opened with cannot be reordered at all (A-SL37 at the route),
+    # which is why the splice above needed a listing of the seller's own photographs.
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                 json={"ids": ["abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]},
+                                 headers=signed)
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "SEEDED_PHOTO"
 
 
 def test_the_seed_captions_are_read_from_the_committed_index() -> None:
@@ -1728,9 +1773,36 @@ async def test_an_asset_write_claims_a_seeded_listing_as_the_sellers_own(
         response = await _upload_document(client, listing_id, signed)
         assert response.status_code == 201, response.text
     elif write == "reorder":
-        response = await client.patch(f"/api/seller/listings/{listing_id}/photos",
-                                      json={"ids": list(reversed(photos))}, headers=signed)
+        # The seller's OWN uploads, and the `delete` arm's own set-up shape, because a reorder that
+        # names a SEED entry is refused outright since 2026-09-24 (A-SL37 held at the route, not
+        # only by amendment A58.6's UI gate) — so a reorder can only ever claim a row through the
+        # photographs the seller uploaded onto it. The set-up upload claims the row itself, so the
+        # source is put back before the write under test, exactly as `delete` does.
+        first = await _upload_photo(client, listing_id, signed)
+        second = await _upload_photo(client, listing_id, signed)
+        assert (first.status_code, second.status_code) == (201, 201), second.text
+        _reseed_source(conn, listing_id)
+        assert _listing_source(conn, listing_id) == "seed"
+        response = await client.patch(
+            f"/api/seller/listings/{listing_id}/photos",
+            json={"ids": [second.json()["id"], first.json()["id"], *photos]}, headers=signed)
+        assert response.status_code == 409, "a seed entry in the list is refused, claim or no claim"
+        response = await client.patch(
+            f"/api/seller/listings/{listing_id}/photos",
+            json={"ids": [*photos, second.json()["id"], first.json()["id"]]}, headers=signed)
+        assert response.status_code == 409, "and it is refused wherever in the list it sits"
+        assert _listing_source(conn, listing_id) == "seed", "a refused write claims nothing"
+        # A seeded listing whose seed entries are all EMPTY slots has no path to name, so the
+        # seller's own two photographs reorder and THAT is the write this arm proves claims the row.
+        empty_id = _owned_seed_listing(conn, account_id, [None])
+        a = (await _upload_photo(client, empty_id, signed)).json()["id"]
+        b = (await _upload_photo(client, empty_id, signed)).json()["id"]
+        _reseed_source(conn, empty_id)
+        assert _listing_source(conn, empty_id) == "seed"
+        response = await client.patch(f"/api/seller/listings/{empty_id}/photos",
+                                      json={"ids": [b, a]}, headers=signed)
         assert response.status_code == 200, response.text
+        listing_id = empty_id
     else:
         uploaded = await _upload_photo(client, listing_id, signed)
         assert uploaded.status_code == 201, uploaded.text

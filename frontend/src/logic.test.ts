@@ -2317,12 +2317,38 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
   describe('the step-6 tile removes a file and chooses the cover (Task 7, A58.6)', () => {
     const own = (over: Record<string, unknown> = {}) => ({ kind: 'Photo', source: 'asset', ...over });
 
-    it('Remove deletes the tile\'s own asset and refreshes the tiles from the answer', async () => {
+    /** The confirm drawer Remove opens since John's ruling of 2026-09-24 — its own primary button
+     *  is the destructive one and Cancel is the safe secondary, so a test that means to delete
+     *  must press Remove and a test that means to keep presses Cancel. */
+    const answerConfirm = (label: 'Remove' | 'Cancel'): void => {
+      const button = [...document.querySelectorAll('button')].find((b) => b.textContent === label);
+      if (button === undefined) throw new Error(`the confirm drawer has no ${label} button`);
+      button.click();
+    };
+
+    it('Remove ASKS first, and destroys nothing at all when the seller says no (2026-09-24)', async () => {
+      const c2 = onStep(6);
+      const before = [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })];
+      c2.setState({ wizAssets: before });
+      const sent = record(draft());
+      const done = c2.wizardVals().uploads[0].remove();
+      expect(document.querySelector('[role="dialog"]')?.textContent,
+        'the drawer names the photograph it is about to destroy').toContain('Reception');
+      answerConfirm('Cancel');
+      await done;
+      expect(sent, 'no request at all — the delete never left the browser').toEqual([]);
+      expect(c2.state.wizAssets).toEqual(before);
+      expect(c2.state.wizErr).toBe('');
+    });
+
+    it('Remove deletes the tile\'s own asset once confirmed, and refreshes the tiles from the answer', async () => {
       const c2 = onStep(6);
       c2.setState({ wizAssets: [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })] });
       const sent = record((url: string, method: string) => (method === 'DELETE' ? null
         : draft({ photos: [{ id: 'as-2', name: 'Lobby', source: 'asset' }] })));
-      await c2.wizardVals().uploads[0].remove();
+      const done = c2.wizardVals().uploads[0].remove();
+      answerConfirm('Remove');
+      await done;
       expect(sent.map((r) => [r.method, r.url])).toEqual([
         ['DELETE', '/api/seller/listings/a3f1/assets/as-1'],
         ['GET', '/api/seller/listings/a3f1']
@@ -2336,7 +2362,9 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       const before = [own({ name: 'Reception', id: 'as-1' })];
       c2.setState({ wizAssets: before });
       record({ error: { code: 'STATE', message: 'This listing cannot be edited.' } }, 409);
-      await c2.wizardVals().uploads[0].remove();
+      const done = c2.wizardVals().uploads[0].remove();
+      answerConfirm('Remove');
+      await done;
       expect(c2.state.wizErr).toBe('This listing cannot be edited.');
       expect(c2.state.wizAssets).toEqual(before);
     });

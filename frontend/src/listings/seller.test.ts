@@ -391,6 +391,26 @@ describe('the adapter', () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ caption: 'Reception, looking in' });
   });
 
+  // Task 7 fix round (John's ruling, 2026-09-24: Remove must ask before it destroys). The ASK is
+  // its own adapter method, the seam `describe()` already established: the design orchestrates
+  // ask-then-write in one chained promise, and the surface it asks on is app-only code.
+  it('confirmRemove() names the photograph it is about to destroy, and answers the seller\'s choice', async () => {
+    const answered = api().confirmRemove('Photo', 'The front door');
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Remove this photograph');
+    expect(dialog?.textContent).toContain('The front door');
+    expect(dialog?.textContent).toContain('cannot be brought back');
+    drawerButton('Cancel').click();
+    expect(await answered).toBe(false);
+  });
+
+  it('confirmRemove() calls a document a document, and answers true when the seller presses Remove', async () => {
+    const answered = api().confirmRemove('PDF', 'Floor plan.pdf');
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Remove this document');
+    drawerButton('Remove').click();
+    expect(await answered).toBe(true);
+  });
+
   it('remove() deletes one asset and answers the refreshed draft (Task 7)', async () => {
     // Task 7 (findings U1/U2): the step-6 tile's own Remove button needs the tiles BACK, exactly
     // as `caption` and `reorder` hand them back — `DELETE` answers 204 with no body, so the

@@ -69,6 +69,11 @@ const SUBTITLE_STYLE = 'font-size: 13px; color: #494949; margin-top: 3px;';
 const CLOSE_STYLE = 'flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);';
 const CLOSE_ICON_STYLE = 'flex: none; opacity: .75;';
 const BODY_STYLE = 'padding: 24px 26px 26px;';
+// The interest modal's own SENT branch (`modal.isSent`), which is already exactly a
+// confirmation's shape: one sentence in a padded body above a primary-and-secondary button row.
+const CONFIRM_BODY_STYLE = 'padding: 26px;';
+const CONFIRM_TEXT_STYLE = 'font-size: 15px; line-height: 1.7; color: #494949; margin: 0;';
+const CONFIRM_BUTTON_ROW_STYLE = 'display: flex; gap: 10px; margin-top: 20px;';
 const LABEL_WRAP_STYLE = 'display: flex; flex-direction: column; gap: 6px;';
 const LABEL_TEXT_STYLE = 'font-size: 12px; font-weight: 500; color: var(--color-steel);';
 const TEXTAREA_STYLE = 'padding: 10px 13px; font-size: 14px; line-height: 1.5; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical; width: 100%; box-sizing: border-box; font-family: inherit;';
@@ -76,6 +81,68 @@ const ERROR_STYLE = 'margin-top: 12px; padding: 11px 13px; background: #f5f5f5; 
 const BUTTON_ROW_STYLE = 'display: flex; gap: 10px; margin-top: 18px;';
 const PRIMARY_STYLE = 'font-family: var(--rf-display); flex: 1; height: 48px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;';
 const SECONDARY_STYLE = 'font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;';
+
+
+/**
+ * The drawer's outer shell — scrim, box, header (title, optional subtitle, 30 px close button) and
+ * a padded body — shared by BOTH surfaces in this module rather than written twice (Task 7 fix
+ * round, John's ruling of 2026-09-24). Every declaration is the INTEREST MODAL's own, copied
+ * verbatim the way `admin/users.ts`'s `cell()`/`A()` copy `adminVals()`'s: this is app-only glue
+ * the reference never renders, so it carries no amendment.
+ *
+ * The `subtitle` is drawn only when the caller has one to name — an empty element is the thing
+ * the design's own `sc-if` discipline exists to avoid.
+ */
+function shell(config: { title: string; subtitle?: string }, bodyStyle: string): {
+  scrim: HTMLElement; box: HTMLElement; closeButton: HTMLButtonElement; body: HTMLElement;
+} {
+  const scrim = document.createElement('div');
+  scrim.setAttribute('style', SCRIM_STYLE);
+
+  const box = document.createElement('div');
+  box.setAttribute('style', BOX_STYLE);
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', config.title);
+  scrim.appendChild(box);
+
+  const header = document.createElement('div');
+  header.setAttribute('style', HEADER_STYLE);
+  box.appendChild(header);
+
+  const heading = document.createElement('div');
+  const title = document.createElement('div');
+  title.setAttribute('style', TITLE_STYLE);
+  title.textContent = config.title;
+  heading.appendChild(title);
+  if (config.subtitle !== undefined) {
+    const subtitle = document.createElement('div');
+    subtitle.setAttribute('style', SUBTITLE_STYLE);
+    subtitle.textContent = config.subtitle;
+    heading.appendChild(subtitle);
+  }
+  header.appendChild(heading);
+
+  const closeButton = document.createElement('button');
+  closeButton.setAttribute('style', CLOSE_STYLE);
+  // "Close", not "Cancel" (which the secondary button below already says verbatim): the two
+  // controls do the same thing, but a shared accessible name would make them indistinguishable
+  // to anything that queries by role and name — including the smoke suite's own real Chromium.
+  closeButton.setAttribute('aria-label', 'Close');
+  const closeIcon = document.createElement('img');
+  closeIcon.src = '/assets/icons/delete-x.svg';
+  closeIcon.alt = '';
+  closeIcon.width = 12;
+  closeIcon.height = 12;
+  closeIcon.setAttribute('style', CLOSE_ICON_STYLE);
+  closeButton.appendChild(closeIcon);
+  header.appendChild(closeButton);
+
+  const body = document.createElement('div');
+  body.setAttribute('style', bodyStyle);
+  box.appendChild(body);
+  return { scrim, box, closeButton, body };
+}
 
 /**
  * Opens the drawer and resolves once it closes, however it closes — a successful `submit`, or the
@@ -88,51 +155,7 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const blankIsAnAnswer = config.allowEmpty === true;
 
-    const scrim = document.createElement('div');
-    scrim.setAttribute('style', SCRIM_STYLE);
-
-    const box = document.createElement('div');
-    box.setAttribute('style', BOX_STYLE);
-    box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-modal', 'true');
-    box.setAttribute('aria-label', config.title);
-    scrim.appendChild(box);
-
-    const header = document.createElement('div');
-    header.setAttribute('style', HEADER_STYLE);
-    box.appendChild(header);
-
-    const heading = document.createElement('div');
-    const title = document.createElement('div');
-    title.setAttribute('style', TITLE_STYLE);
-    title.textContent = config.title;
-    heading.appendChild(title);
-    if (config.subtitle !== undefined) {
-      const subtitle = document.createElement('div');
-      subtitle.setAttribute('style', SUBTITLE_STYLE);
-      subtitle.textContent = config.subtitle;
-      heading.appendChild(subtitle);
-    }
-    header.appendChild(heading);
-
-    const closeButton = document.createElement('button');
-    closeButton.setAttribute('style', CLOSE_STYLE);
-    // "Close", not "Cancel" (which the secondary button below already says verbatim): the two
-    // controls do the same thing, but a shared accessible name would make them indistinguishable
-    // to anything that queries by role and name — including the smoke suite's own real Chromium.
-    closeButton.setAttribute('aria-label', 'Close');
-    const closeIcon = document.createElement('img');
-    closeIcon.src = '/assets/icons/delete-x.svg';
-    closeIcon.alt = '';
-    closeIcon.width = 12;
-    closeIcon.height = 12;
-    closeIcon.setAttribute('style', CLOSE_ICON_STYLE);
-    closeButton.appendChild(closeIcon);
-    header.appendChild(closeButton);
-
-    const body = document.createElement('div');
-    body.setAttribute('style', BODY_STYLE);
-    box.appendChild(body);
+    const { scrim, box, closeButton, body } = shell(config, BODY_STYLE);
 
     const labelWrap = document.createElement('label');
     labelWrap.setAttribute('style', LABEL_WRAP_STYLE);
@@ -218,5 +241,80 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
 
     document.body.appendChild(scrim);
     textarea.focus();
+  });
+}
+
+
+export interface ConfirmDrawerConfig {
+  /** The action's own words, naming WHAT is being destroyed ("Remove this photograph"), never a
+   *  generic "Are you sure?" — John's ruling of 2026-09-24. */
+  title: string;
+  /** The thing itself, under the title: the photograph's own description or the document's own
+   *  filename, in the interest modal's own `modal.sub` idiom. */
+  subtitle?: string;
+  /** One sentence saying what happens and that it cannot be taken back. */
+  body: string;
+  /** The destructive button's own label — the same word as the control that opened it. */
+  confirmLabel: string;
+}
+
+/**
+ * The confirm-shaped variant of the drawer above (Task 7 fix round; John's ruling of 2026-09-24:
+ * "Remove must ask before it destroys" — a seller who misclicks loses an uploaded photograph
+ * permanently, and photographs are the field the design itself says do more than any other to
+ * bring the right buyer to a listing).
+ *
+ * The SAFE action is the SECONDARY button, which is the ruling and also the interest modal's own
+ * arrangement: the destructive act is the `flex: 1` primary the seller came here to perform, and
+ * Cancel is the bordered secondary beside it. Every dismissal the note drawer answers to — Cancel,
+ * the close button, Escape, a click on the scrim outside the box — resolves FALSE, so nothing but
+ * a deliberate press of the primary destroys anything.
+ *
+ * It asks nothing, so it carries no field, no error slot and no busy state: the caller does the
+ * work AFTER this resolves, and a refusal lands where that caller's own errors land (for the
+ * step-6 tile, the wizard's own `wizErr` slot).
+ */
+export function openConfirmDrawer(config: ConfirmDrawerConfig): Promise<boolean> {
+  return new Promise((resolve) => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const { scrim, closeButton, body } = shell(config, CONFIRM_BODY_STYLE);
+
+    const text = document.createElement('p');
+    text.setAttribute('style', CONFIRM_TEXT_STYLE);
+    text.textContent = config.body;
+    body.appendChild(text);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.setAttribute('style', CONFIRM_BUTTON_ROW_STYLE);
+    const confirmButton = document.createElement('button');
+    confirmButton.setAttribute('style', PRIMARY_STYLE);
+    confirmButton.textContent = config.confirmLabel;
+    const cancelButton = document.createElement('button');
+    cancelButton.setAttribute('style', SECONDARY_STYLE);
+    cancelButton.textContent = 'Cancel';
+    buttonRow.appendChild(confirmButton);
+    buttonRow.appendChild(cancelButton);
+    body.appendChild(buttonRow);
+
+    const close = (answer: boolean): void => {
+      document.removeEventListener('keydown', onKeydown);
+      scrim.remove();
+      if (opener !== null) opener.focus();
+      resolve(answer);
+    };
+
+    confirmButton.addEventListener('click', () => close(true));
+    cancelButton.addEventListener('click', () => close(false));
+    closeButton.addEventListener('click', () => close(false));
+    // The scrim's own click, never a bubble from the box — `openNoteDrawer`'s own reason.
+    scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(false); });
+
+    function onKeydown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+    }
+    document.addEventListener('keydown', onKeydown);
+
+    document.body.appendChild(scrim);
+    confirmButton.focus();
   });
 }

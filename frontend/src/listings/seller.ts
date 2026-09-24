@@ -15,7 +15,7 @@
  * unwrapped from the A5 envelope `{"error": {"code", "message"}}`.
  */
 import { csrfToken } from '../auth/api';
-import { openNoteDrawer } from '../admin/noteDrawer';
+import { openConfirmDrawer, openNoteDrawer } from '../admin/noteDrawer';
 import stepFields from './step-fields.json';
 
 /** A refusal, carrying the code the server chose (`src/auth/api.ts`'s `AuthError`, same reason:
@@ -447,6 +447,14 @@ export interface ListingsAdapter {
   describe(id: string, position: number, text: string): Promise<WizardDraft>;
   attach(id: string): Promise<WizardDraft | null>;
   /**
+   * Asks whether this photograph or document really is to be destroyed (Task 7 fix round; John's
+   * ruling of 2026-09-24, "Remove must ask before it destroys"). Answers the seller's choice and
+   * writes nothing either way — the ASK is its own method, the seam `describe()` already
+   * established, so the design orchestrates ask-then-write in one chained promise and the surface
+   * it asks on stays app-only code the reference never renders.
+   */
+  confirmRemove(kind: string, name: string): Promise<boolean>;
+  /**
    * One photograph or document, gone, and the tiles the step-6 grid redraws from (Task 7,
    * findings U1/U2). `DELETE` answers 204 with no body, so the draft is RE-READ here rather than
    * in the ported script: the design gets ONE promise with ONE rejection arm covering both legs,
@@ -581,6 +589,23 @@ export function makeListingsAdapter(): ListingsAdapter {
     document: (id, file, kind = 'other') => upload(`/listings/${id}/documents`, file, { kind }),
     caption: async (id, assetId, text) =>
       toWizardDraft(await json<Draft>('PATCH', `/listings/${id}/assets/${assetId}`, { caption: text })),
+    /**
+     * John's ruling of 2026-09-24. The NOUN is the tile's own kind — `Photo` for a photograph and
+     * the file's badge (`PDF`, `XLSX`, `CSV`) for a document — because "Remove this photograph"
+     * beside the photograph's own description is what names the thing being destroyed, which is
+     * what the ruling asks for in place of a generic "are you sure". The wording keeps the
+     * register of the tile's own control ("Remove this from the listing") and of the wizard's own
+     * refusal ("That could not be removed."); the SAFE choice is the drawer's secondary button.
+     */
+    confirmRemove: (kind, name) => {
+      const noun = kind === 'Photo' ? 'photograph' : 'document';
+      return openConfirmDrawer({
+        title: `Remove this ${noun}`,
+        subtitle: name,
+        body: `This ${noun} is removed from the listing and cannot be brought back.`,
+        confirmLabel: 'Remove'
+      });
+    },
     remove: async (id, assetId) => {
       await send('DELETE', `/listings/${id}/assets/${assetId}`);
       return adapter.get(id);

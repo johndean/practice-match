@@ -9962,9 +9962,12 @@ const TILE_HEAD = '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, na
   + 'src: a.src || null, hasSrc: !!a.src, noSrc: !a.src, state: a.state || "processing", '
   + 'pill: ({ processing: "Processing…", review: "Review", confirmed: "Confirmed", failed: "Failed" })[a.state || "processing"], '
   + 'open: this.openPhotoReview && this.openPhotoReview(a.id), ';
-const TILE_CONTROLS = 'cover: a.kind === "Photo" && i === 0, canRemove: a.kind !== "Photo" || ownPhotos, canCover: a.kind === "Photo" && ownPhotos && i > 0, '
-  + 'remove: (a.kind === "Photo" && !ownPhotos) || !s.editingId ? null : () => this.props.listings.remove(s.editingId, a.id).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be removed." })), '
-  + 'makeCover: a.kind !== "Photo" || !ownPhotos || i === 0 || !s.editingId ? null : () => this.props.listings.reorder(s.editingId, [a.id].concat(photoIds.filter((x) => x !== a.id))).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })), ';
+const TILE_FLAGS = 'cover: a.kind === "Photo" && i === 0, canRemove: a.kind !== "Photo" || ownPhotos, canCover: a.kind === "Photo" && ownPhotos && i > 0, ';
+const TILE_REMOVE_AT_ONCE = 'remove: (a.kind === "Photo" && !ownPhotos) || !s.editingId ? null : () => this.props.listings.remove(s.editingId, a.id).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be removed." })), ';
+const TILE_REMOVE_CONFIRMED = 'remove: (a.kind === "Photo" && !ownPhotos) || !s.editingId ? null : () => this.props.listings.confirmRemove(a.kind, a.name).then((yes) => (yes ? this.props.listings.remove(s.editingId, a.id) : null)).then((d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null), (e) => this.setState({ wizErr: (e && e.message) || "That could not be removed." })), ';
+const TILE_MAKE_COVER = 'makeCover: a.kind !== "Photo" || !ownPhotos || i === 0 || !s.editingId ? null : () => this.props.listings.reorder(s.editingId, [a.id].concat(photoIds.filter((x) => x !== a.id))).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })), ';
+const TILE_CONTROLS = TILE_FLAGS + TILE_REMOVE_AT_ONCE + TILE_MAKE_COVER;
+const TILE_CONTROLS_CONFIRMED = TILE_FLAGS + TILE_REMOVE_CONFIRMED + TILE_MAKE_COVER;
 const TILE_DESCRIBE_PROMPT = 'describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))';
 const TILE_DESCRIBE_DRAWER = 'describe: a.kind !== "Photo" || !s.editingId ? null : () => this.props.listings.describe().then((t) => (t === null ? null : (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, t) : this.props.listings.describe(s.editingId, a.position, t)))).then((d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))';
 const TILE_FALLBACK = '\n      : [{ kind: "Photo", name: "Exterior.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Lobby.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Treatment.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "PDF", name: "Floor plan.pdf", src: null, hasSrc: false, noSrc: true }].slice(0, 3 + (w.photos || 0));';
@@ -10039,6 +10042,30 @@ const A58_6e: Amendment = {
   id: 'A58.6e', ...A58, ruling: RULING_U2, count: 1,
   find: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_PROMPT + TILE_FALLBACK,
   replace: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
+};
+
+const RULING_CONFIRM = 'John, 2026-09-24, on the Task 7 review: **Remove must ask before it destroys.** His reasoning, recorded — a seller who misclicks loses an uploaded photograph permanently, and photographs are the field the design itself says do more than any other to bring the right buyer to a listing. He chose an explicit confirmation over one-click and over a soft delete, and ruled that it is the confirm-shaped variant of the drawer step 6 already reaches for rather than a new element, that the copy NAMES the thing being destroyed instead of asking a generic "are you sure", and that the SAFE action is the secondary button.';
+
+/** A58.6f — REMOVE ASKS BEFORE IT DESTROYS (John, 2026-09-24, on the Task 7 review). The tile's
+ *  `remove` handler gains ONE leg in front of the delete: `confirmRemove(a.kind, a.name)`, which
+ *  answers the seller's choice and writes nothing either way. A `false` short-circuits to `null`
+ *  and the `.then` below draws on `d` being present — A58.6e's own shape for a cancelled describe,
+ *  and `addPhoto`'s before it for a dismissed file dialog — so a seller who says no makes NO
+ *  request at all, keeps every tile, and sees no error.
+ *
+ *  THE ASK IS ITS OWN ADAPTER METHOD, not a step hidden inside `remove()`: that is the seam
+ *  `describe()` established (the ask is app-only, the write is the route, the DESIGN chains them),
+ *  and it keeps this one chained promise with one rejection arm, A-SL23 (4)'s rule. The surface
+ *  itself carries no amendment — `openConfirmDrawer` is app-only TypeScript composed from the
+ *  interest modal's own SENT branch, `frontend/src/requests/buyer.ts`'s position (A52's ruling).
+ *
+ *  Consumes A58.6e: this `find` is that entry's whole `replace`, every other tile field carried
+ *  forward byte for byte through the shared pieces — only `remove:` differs. SCRIPT-ONLY and it
+ *  paints nothing: `remove` is a handler, and it is `null` on the reference either way. */
+const A58_6f: Amendment = {
+  id: 'A58.6f', ...A58, date: '2026-09-24', ruling: RULING_CONFIRM, count: 1,
+  find: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_DRAWER + TILE_FALLBACK,
+  replace: TILE_HEAD + TILE_CONTROLS_CONFIRMED + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
 };
 
 export function amendments(): Amendment[] {
@@ -10384,5 +10411,8 @@ export function amendments(): Amendment[] {
     // so it must run after that family; the other three take pristine text.
     A58_6a, A58_6b, A58_6c, A58_6d,
     // A58.6e is CHAINED on A58.6b, whose whole `replace` its own `find` takes, so it runs last.
-    A58_6e];
+    A58_6e,
+    // Fix round (John's ruling of 2026-09-24): Remove asks first. A58.6f is CHAINED on
+    // A58.6e, whose whole `replace` its own `find` takes, so it runs after it.
+    A58_6f];
 }

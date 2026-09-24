@@ -560,6 +560,8 @@ describe('local design amendments (spec D15)', () => {
     // A58.6b is chained on A20.4 (its `find` is that entry's whole two-line `replace`); the other
     // three take pristine text.
     'A58.6a', 'A58.6b', 'A58.6c', 'A58.6d', 'A58.6e',
+    // Fix round, John's ruling of 2026-09-24: Remove asks first. Chained on A58.6e.
+    'A58.6f',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -772,7 +774,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(454);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(455);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

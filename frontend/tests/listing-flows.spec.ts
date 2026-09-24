@@ -65,6 +65,17 @@ async function draftOf(page: Page, id: string): Promise<Record<string, unknown> 
 }
 
 /**
+ * The confirm drawer Remove opens since John's ruling of 2026-09-24 ("Remove must ask before it
+ * destroys"). Its primary button is the destructive one and Cancel is the safe secondary, so a
+ * step that means to delete presses Remove and one that means to keep presses Cancel.
+ */
+async function answerConfirm(page: Page, label: 'Remove' | 'Cancel'): Promise<void> {
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor();
+  await dialog.getByRole('button', { name: label, exact: true }).click();
+}
+
+/**
  * The describe surface, since Task 7 (audit finding U2): A54's own drawer, not `window.prompt`.
  * A `page.once('dialog', ...)` handler cannot drive it — it is real DOM composed from the interest
  * modal's own elements — so the field is typed into and the primary button clicked, which is what
@@ -435,10 +446,20 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
       'the cover the seller chose is position 1 of `listing.photos`')
       .toEqual(['The reception desk', 'The front door']);
 
+    // REMOVE ASKS FIRST (John, 2026-09-24), and a NO destroys nothing — proved before the yes,
+    // because "it asked" is worth nothing if the answer is not obeyed.
+    await tiles.first().getByRole('button', { name: 'Remove this from the listing' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Remove this photograph');
+    await expect(page.getByRole('dialog')).toContainText('The reception desk');
+    await answerConfirm(page, 'Cancel');
+    await expect(tiles).toHaveCount(2);
+    expect((await draftOf(page, id)).photos, 'a cancelled Remove leaves both photographs').toHaveLength(2);
+
     // REMOVE: the cover goes, and the one behind it becomes the cover by the same rule.
     const deleted = page.waitForResponse((r) =>
       /\/assets\/[0-9a-f-]+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE');
     await tiles.first().getByRole('button', { name: 'Remove this from the listing' }).click();
+    await answerConfirm(page, 'Remove');
     expect((await deleted).status(), 'the delete').toBe(204);
     await expect(tiles).toHaveCount(1);
     const after = await draftOf(page, id);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openNoteDrawer, type NoteDrawerOutcome } from './noteDrawer';
+import { openConfirmDrawer, openNoteDrawer, type NoteDrawerOutcome } from './noteDrawer';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -265,5 +265,98 @@ describe('openNoteDrawer', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(document.body.textContent).toContain('That decision could not be recorded.');
+  });
+});
+
+/**
+ * Task 7 fix round (John's ruling, 2026-09-24: Remove must ask before it destroys). A seller who
+ * misclicks loses an uploaded photograph permanently, and photographs are the field the design
+ * itself says do more than any other to bring the right buyer — so the same drawer, in its
+ * confirm-shaped variant, stands in front of the delete. Composed from the interest modal's own
+ * SENT branch, which is already exactly this shape: one sentence in a padded body above a
+ * primary-and-secondary button row.
+ */
+describe('openConfirmDrawer', () => {
+  function confirm(overrides: Partial<Parameters<typeof openConfirmDrawer>[0]> = {}) {
+    return {
+      title: 'Remove this photograph',
+      subtitle: 'The front door',
+      body: 'This photograph is removed from the listing and cannot be brought back.',
+      confirmLabel: 'Remove',
+      ...overrides
+    };
+  }
+
+  it('names what is being destroyed — the kind in its title, the seller\'s own words beneath it', () => {
+    void openConfirmDrawer(confirm());
+    const dialog = query('[role="dialog"]');
+    expect(dialog.textContent).toContain('Remove this photograph');
+    expect(dialog.textContent).toContain('The front door');
+    expect(dialog.textContent).toContain('cannot be brought back');
+    // Never a field: this drawer asks nothing, it only confirms.
+    expect(dialog.querySelector('textarea')).toBeNull();
+  });
+
+  it('puts the SAFE action on the secondary button and the destructive one on the primary', () => {
+    void openConfirmDrawer(confirm());
+    // The interest modal's own pair: the primary is the `flex: 1` blue one, the secondary the
+    // bordered white one. The safe choice is the secondary, which is the ruling.
+    expect(submitButton('Remove').getAttribute('style')).toContain('background: var(--color-blue)');
+    expect(cancelButton().getAttribute('style')).toContain('border: 1px solid var(--border-subtle)');
+  });
+
+  it('resolves true only when the destructive button is pressed', async () => {
+    const answered = openConfirmDrawer(confirm());
+    submitButton('Remove').click();
+    expect(await answered).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it.each([
+    ['Cancel', () => cancelButton().click()],
+    ['the close button', () => query<HTMLButtonElement>('button[aria-label="Close"]').click()],
+    ['Escape', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))]
+  ])('resolves false on %s, so a misclick destroys nothing', async (_name, dismiss) => {
+    const answered = openConfirmDrawer(confirm());
+    dismiss();
+    expect(await answered).toBe(false);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('resolves false on a click outside the box, and not on one inside it', async () => {
+    const answered = openConfirmDrawer(confirm());
+    query('[role="dialog"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    const scrim = query('[role="dialog"]').parentElement!;
+    scrim.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    expect(await answered).toBe(false);
+  });
+
+  it('a caller with no subtitle draws no subtitle element here either', () => {
+    const { subtitle: _drop, ...rest } = confirm();
+    void openConfirmDrawer(rest);
+    expect(query('[role="dialog"]').textContent).not.toContain('The front door');
+  });
+
+  it('returns focus to the element that opened it', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    const answered = openConfirmDrawer(confirm());
+    cancelButton().click();
+    await answered;
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does not throw returning focus when the active element is not an HTMLElement', async () => {
+    // `openNoteDrawer`'s own case, one surface over: `document.activeElement` is typed
+    // `Element | null` and an SVG element can be it, which has no `focus()` of `Element`'s own.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    document.body.appendChild(svg);
+    const spy = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(svg);
+    const answered = openConfirmDrawer(confirm());
+    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click();
+    expect(await answered).toBe(false);
+    spy.mockRestore();
   });
 });
