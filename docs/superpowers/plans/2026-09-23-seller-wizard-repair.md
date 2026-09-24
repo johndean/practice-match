@@ -378,13 +378,15 @@ answer.
 
 ### Part A — the coverage gap, measured
 
-`app/disclosure/levels.py:8` models five capabilities: `IDENTITY`, `EXACT_LOCATION`,
+`app/disclosure/levels.py:10` models five capabilities: `IDENTITY`, `EXACT_LOCATION`,
 `UNREDACTED_IMAGES`, `FINANCIALS`, `FLOOR_PLANS`. Measured against `app/api/listings.py`'s
-serialiser, these are served with **no gate of any kind**:
+serialiser, these are served with **no gate of any kind** (line numbers RE-MEASURED at `0064c57`,
+after Tasks 8 and 9 grew that file by about seventy lines — the plan's original 552-611 are stale
+and must not be used):
 
-`price` (:557) · `type`, `est` (:558-559) · `city`, `state`, `area` (:552) · `hours` (:556) ·
-`docs`, `rooms`, `sqft`, `bldg` (:558-559) · `ownership` (:611) · `services` (:601) ·
-`facilityType` (Task 4)
+`price` (:631) · `type` (:625), `est` (:633) · `city`, `state` (:626), `area` (:625) ·
+`hours` (:630) · `docs`, `rooms` (:632), `sqft`, `bldg` (:633) · `ownership` (:695) ·
+`services` (:694) · `facilityType` (:652, Task 4)
 
 **`price` is the one that is not merely an omission.** The audit recorded it as deliberate — "Asking
 price is public by design and promises nothing else … no privacy control is offered for it on step 3
@@ -408,6 +410,33 @@ off photographs. A free-text field is where a seller defeats their own anonymity
 which existing capability each field joins or which new one it needs, and STOP for John's ruling
 before adding any new capability. Adding a capability changes `REQUESTABLE_LEVELS`, the buyer's
 request surface and the seller's chooser, so it is his call, not an implementer's.
+
+### Controller addenda (2026-09-25, after Tasks 8 and 9)
+
+**One more surface for Part B, routed here by Task 8's own review.** `app/api/market.py:618-624`
+re-derives the location decision on `location_disclosed` ALONE, with no capability term, and serves
+the **exact rooftop coordinate** to any `market.read` holder. So the ~1.1 km rounding Task 8 fix
+round 1 exists to preserve is bypassable one route over — true today and true before any of this
+work, so it is PRE-EXISTING and not a regression. It is exactly this task's subject: one served
+answer, honoured by every surface. Measure it, include it in the Step 1 matrix, and treat it as a
+disclosure finding rather than a tidy-up.
+
+**What Tasks 8 and 9 already changed underneath this task.** The ceilings are `ceiling OR grant`,
+not `ceiling AND grant` (D-C66), so a datum with no gate is public to every signed-in member
+regardless of any seller setting — which sharpens Part A rather than changing it. The seller now
+grants an arbitrary SUBSET per buyer, stored as `request.approved_capabilities text[]`
+(`migrations/097`), so any capability this task proposes joins a live mechanism. The accepted-row
+note now reads the served `grantedLabel` and falls back to the design's own sentence, so a new
+capability must be named there too.
+
+**The detail screen is still rendered from the LIST payload** — verified at `0064c57`: no caller
+anywhere fetches `/api/listings/{id}`, so `_documents` has no reader in the product. That is Part
+B's own finding and it is unchanged.
+
+**Two gates have now masked themselves in consecutive rounds** — releasing the street hid a pin that
+stayed withheld, and an approve-side cache drop hid a broken withdraw path — each because the half
+that happened to pass came first. Every (datum x surface) cell in the Step 2 matrix has two
+directions; drive and watch each separately.
 
 ### Part B — every surface honours the same answer
 
