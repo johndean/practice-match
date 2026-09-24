@@ -372,3 +372,36 @@ hidden on all of them, and a datum released to a buyer must appear on all of the
       capability.
 - [ ] **Step 4:** implement, fail closed throughout.
 - [ ] **Step 5:** full gates, measured re-basing, and the price-filter leak proved closed.
+
+---
+
+## Task 11: The buyer's screens DRAW the released address (S9, second half)
+
+**Found by Task 6, measured not assumed:** `p.street` and `p.phone` occur **ZERO** times in
+`frontend/src/logic.js`, and `frontend/src/listings/load.ts::toPractice` copies neither onto the
+design's `Practice`. Task 6 closed S9's DATA gap — an approved buyer's payload now carries the real
+street and telephone — but **no screen shows either**. The detail's "General location" row is still
+`p.area + ", " + stateOf(p.market)` (`logic.js:1902`).
+
+So `EXACT_LOCATION` today: the seller supplies an address, the seller approves a buyer, the API
+serves it to that buyer, and the buyer sees the same city they saw before. The capability is
+honest on the wire and invisible on the screen.
+
+**RUN AFTER TASK 8** — D-C66 changes when the address is released, and this draws what is released.
+
+**Required:** the detail screen shows the street and the telephone when the payload carries them,
+and shows today's area-and-state line when it does not. Absent beats faked: no placeholder, no
+"address withheld" copy unless John rules one.
+
+**This is a NEW ELEMENT in the approved design**, so it takes the A41-A47 composition process:
+compose from V3's own declarations, invent no new row style, colour or copy. The Community Context
+card's own ` · `-joined label-and-value idiom and the key-fact grid are the two existing shapes.
+Family A58, next free sub-id.
+
+- [ ] **Step 1: RED** — a vitest that `toPractice` carries `street`/`phone`, and a logic test that
+      the detail renders them when present and renders today's line when absent.
+- [ ] **Step 2:** `load.ts` — copy both onto `Practice`, omitting the key when absent (the
+      `facilityType` precedent from Task 4).
+- [ ] **Step 3:** the design half, composed from V3's own elements.
+- [ ] **Step 4:** measured re-basing; the states that render the detail WILL move and `detail` is a
+      frozen hash — report it, do not re-pin without saying so.
