@@ -8263,3 +8263,71 @@ describe('A58.10 — a building status the seller never gave is not published as
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task 10a fix round 1 (controller ruling, 2026-09-25): `ownership` is defect 1's own disease in
+// a non-numeric shape, and the controller ruled the brief's "fix only these three" was drawn one
+// member too tight. `/Sole proprietor/.test(null)` is FALSE, so an unstated ownership was not
+// merely omitted from "Sole proprietor" — it was ANNOUNCED under "Partnership or multi-doctor".
+// ---------------------------------------------------------------------------------------
+
+describe('A58.11 — an unstated ownership is never announced as a partnership', () => {
+  const NONE = { type: 'Any', price: 'Any', revenue: 'Any', doctors: 'Any', building: 'Any', est: 'Any', ownership: 'Any', sqft: 'Any' };
+  const ids = (f: Record<string, string>): string[] => {
+    c.setState({ auth: true, screen: 'browse', market: 'Austin, TX', f: { ...NONE, ...f } });
+    return c.filtered().map((p: any) => p.id);
+  };
+  const overview = (id: string): any => {
+    c.setState({ auth: true, detailId: id });
+    return c.detail().sections.filter((s: any) => s.title === 'Overview')[0];
+  };
+
+  it('a withheld ownership is NOT returned under "Partnership or multi-doctor" (A58.11a)', () => {
+    // The live direction. `/Sole proprietor/.test(null)` coerces the null to the string "null",
+    // which does not match, so `solo` was false and the Multi arm kept the listing: a definite
+    // claim about a practice whose seller said nothing.
+    overlay('p1', { ownership: null }, () => {
+      expect(ids({ ownership: 'Multi' }), 'a null ownership must answer no ownership question at all').not.toContain('p1');
+    });
+  });
+
+  it('...and is not returned under "Sole proprietor" either — one rule, both arms (A58.11a)', () => {
+    // Green before the change as well as after, and kept as a characterisation: the Sole arm
+    // excluded a null by the same accident the doctors filter did, and now excludes it by rule.
+    overlay('p1', { ownership: null }, () => {
+      expect(ids({ ownership: 'Sole' })).not.toContain('p1');
+    });
+  });
+
+  it('a withheld ownership keeps its place in every view not filtered on ownership (A58.11a)', () => {
+    overlay('p1', { ownership: null }, () => {
+      expect(ids({})).toContain('p1');
+      expect(ids({ type: 'Small animal' })).toContain('p1');
+    });
+  });
+
+  it('a STATED ownership is partitioned exactly as the design partitions it (A58.11a)', () => {
+    // Both arms, both directions, on the design's own two shapes — every `Sole proprietor*` value
+    // is solo and every N-doctor one is not. Byte for byte the behaviour the design shipped.
+    overlay('p1', { ownership: 'Sole proprietor (LLC)' }, () => {
+      expect(ids({ ownership: 'Sole' })).toContain('p1');
+      expect(ids({ ownership: 'Multi' })).not.toContain('p1');
+    });
+    overlay('p1', { ownership: 'Three-doctor LLC' }, () => {
+      expect(ids({ ownership: 'Multi' })).toContain('p1');
+      expect(ids({ ownership: 'Sole' })).not.toContain('p1');
+    });
+  });
+
+  it('the Overview block omits the Ownership row rather than drawing a label with no value (A58.11b)', () => {
+    overlay('p1', { ownership: null }, () => {
+      expect(overview('p1').rows.map((r: any) => r.k)).toEqual(['Practice type', 'General location', 'Established']);
+    });
+  });
+
+  it('...and keeps it, in the design\'s own place and wording, when the seller answered (A58.11b)', () => {
+    const rows = overview('p1').rows;
+    expect(rows.map((r: any) => r.k)).toEqual(['Practice type', 'General location', 'Established', 'Ownership structure']);
+    expect(rows[3].v).toBe('Sole proprietor (S-corp)');
+  });
+});

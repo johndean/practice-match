@@ -3228,11 +3228,11 @@ class Component extends DCLogic {
   filtered() {
     const f = this.state.f;
     const market = this.state.market || "Austin, TX";
-    const bands = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"]];
+    const asked = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"], ["ownership", "ownership"]];
     return P.filter((p) => {
       if (p.status !== "published") return false;
       if (p.market !== market) return false;
-      if (bands.some((b) => f[b[0]] && f[b[0]] !== "Any" && p[b[1]] == null)) return false;
+      if (asked.some((q) => f[q[0]] && f[q[0]] !== "Any" && p[q[1]] == null)) return false;
       if (f.type !== "Any" && p.type !== f.type) return false;
       if (f.doctors !== "Any" && p.docs < Number(f.doctors)) return false;
       if (f.building !== "Any" && p.bldg !== f.building) return false;
@@ -3706,9 +3706,8 @@ class Component extends DCLogic {
           rows: [
             { k: "Practice type", v: p.type },
             { k: "General location", v: p.area + ", " + this.stateOf(p.market) },
-            { k: "Established", v: String(p.est) },
-            { k: "Ownership structure", v: p.ownership }
-          ]
+            { k: "Established", v: String(p.est) }
+          ].concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])
         },
         {
           title: "Financial Snapshot", hasProse: false, prose: "",

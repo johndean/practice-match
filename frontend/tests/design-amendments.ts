@@ -10363,6 +10363,69 @@ const A58_10e: Amendment = {
   replace: '          rows: (bldg ? [{ k: "Building status", v: bldg }] : []).concat(p.facilityType ? [{ k: "Facility type", v: p.facilityType }] : []).concat([\n'
 };
 
+const RULING_F4 = 'Controller ruling, Task 10a fix round 1, 2026-09-25, widening the brief that produced A58.8: "`ownership` IS IN SCOPE — build it … the brief\'s \'fix only these three\' was drawn one member too tight." MEASURED: the Browse "Ownership structure" filter partitions on `/Sole proprietor/.test(p.ownership)`, and `.test` coerces a null to the STRING "null", which does not match — so an unstated ownership was not merely dropped from "Sole proprietor", it was ANNOUNCED under "Partnership or multi-doctor". That is A58.8\'s own disease in a non-numeric shape and the same class ruling D-C65 removed from the Property block (A58.2/A58.3, A58.10): a definite claim about a practice whose seller said nothing. `ownership` is a plain nullable column (`migrations/016_listing.sql:43`), named by no CHECK and by no submit rule, and `app/api/listings.py` serves it raw; the wizard\'s step-1 select defaults to "Sole proprietor", which is why the claim is latent rather than live on today\'s data, and that is recorded rather than used as a reason to leave it.';
+
+/** A58.11a — THE RULE COVERS EVERY FILTER, NOT EVERY BAND (Task 10a fix round 1).
+ *
+ *  `ownership` joins A58.8's table, and the table is RENAMED with it: `bands` was true of the five
+ *  numeric range filters and is false the moment a two-way string partition is in it, and a name
+ *  that is true of most of its members is the class of thing A24.34 and A34 spent whole rounds
+ *  removing from this design. `asked` says what the table is — the filter keys the toolbar can ask
+ *  a question with, each beside the listing field it asks about — and the rule beneath it is
+ *  unchanged in every other respect: `== null` and not truthiness, one line, one place.
+ *
+ *  `building` and `type` are deliberately NOT added, measured rather than assumed: both compare a
+ *  stored value to an option string by equality (`p.bldg !== f.building`, `p.type !== f.type`), so
+ *  an unstated value already matches nothing, and adding a member that changes no answer would be
+ *  noise in the one place this rule is stated.
+ *
+ *  Consumes A58.8, whose whole five-line `replace` region this `find` spans: both of its
+ *  introduced lines are rewritten and the three design lines between them are carried forward byte
+ *  for byte. SCRIPT-ONLY and it paints nothing — every design fixture carries an ownership. */
+const A58_11a: Amendment = {
+  id: 'A58.11a', ...A58, date: '2026-09-25', ruling: RULING_F4, count: 1,
+  find: '    const bands = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"]];\n'
+    + '    return P.filter((p) => {\n'
+    + '      if (p.status !== "published") return false;\n'
+    + '      if (p.market !== market) return false;\n'
+    + '      if (bands.some((b) => f[b[0]] && f[b[0]] !== "Any" && p[b[1]] == null)) return false;\n',
+  replace: '    const asked = [["doctors", "docs"], ["price", "price"], ["est", "est"], ["sqft", "sqft"], ["revenue", "rev"], ["ownership", "ownership"]];\n'
+    + '    return P.filter((p) => {\n'
+    + '      if (p.status !== "published") return false;\n'
+    + '      if (p.market !== market) return false;\n'
+    + '      if (asked.some((q) => f[q[0]] && f[q[0]] !== "Any" && p[q[1]] == null)) return false;\n'
+};
+
+/** A58.11b — AND THE ROW STATES THE SELLER'S OWN ANSWER OR IS NOT THERE (Task 10a fix round 1).
+ *
+ *  MEASURED, and it is a different thing from A58.11a: with `ownership` null the Overview block
+ *  rendered `{ k: "Ownership structure", v: null }`, and `App.vue` mounts the value span inside
+ *  `v-if="__s(r?.v) !== null"` — so the row drew its LABEL beside nothing. That states nothing
+ *  false, which is why it is recorded here as a consistency application of this family's own rule
+ *  rather than as a second fabrication: A58.3, A58.4a, A58.4b, A58.4f, A58.4g and A58.10c–A58.10e
+ *  all say a row states the seller's own answer or it is not drawn, and `ownership` was the one
+ *  nullable member of the one block that had not been given it. Of the Overview block's four rows
+ *  it is also the ONLY one that can be unstated: `type`, `est`, `area` and `market` are all
+ *  required of a published row by `listing_submittable_ck` and `listing_publishable_ck`.
+ *
+ *  A58.10d's shape — last of four, so the conditional member trails the literal — and `!= null`
+ *  rather than truthiness, which is the family's rule throughout. UNCHAINED: every line of the
+ *  `find` is pristine. */
+const A58_11b: Amendment = {
+  id: 'A58.11b', ...A58, date: '2026-09-25', ruling: RULING_F4, count: 1,
+  find: '          rows: [\n'
+    + '            { k: "Practice type", v: p.type },\n'
+    + '            { k: "General location", v: p.area + ", " + this.stateOf(p.market) },\n'
+    + '            { k: "Established", v: String(p.est) },\n'
+    + '            { k: "Ownership structure", v: p.ownership }\n'
+    + '          ]\n',
+  replace: '          rows: [\n'
+    + '            { k: "Practice type", v: p.type },\n'
+    + '            { k: "General location", v: p.area + ", " + this.stateOf(p.market) },\n'
+    + '            { k: "Established", v: String(p.est) }\n'
+    + '          ].concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])\n'
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10718,5 +10781,9 @@ export function amendments(): Amendment[] {
     // up. A58.8 and A58.10a/b/d take pristine text no earlier entry touched; A58.9 is CHAINED on
     // A52.7, A58.10c on A58.4f (and A58.4a), and A58.10e on A58.3, so each of the three runs after
     // the entry whose line it takes. Definition order in this file matches this list (m8).
-    A58_8, A58_9, A58_10a, A58_10b, A58_10c, A58_10d, A58_10e];
+    A58_8, A58_9, A58_10a, A58_10b, A58_10c, A58_10d, A58_10e,
+    // Fix round 1 (controller, 2026-09-25): `ownership` is A58.8's own disease in a
+    // non-numeric shape and the brief was one member too tight. A58.11a is CHAINED on A58.8,
+    // whose two introduced lines it rewrites; A58.11b takes pristine text.
+    A58_11a, A58_11b];
 }

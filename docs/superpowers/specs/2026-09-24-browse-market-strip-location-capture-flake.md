@@ -47,8 +47,23 @@ touches no Browse surface) applied:
    | re-capture 2 (change applied) | `fdc147067d1396bfda9b08a61738a766885a625d1667aca385827fe536112bcb` |
    | re-capture 3 (change applied) | `fdc147067d1396bfda9b08a61738a766885a625d1667aca385827fe536112bcb` |
 
-   Three captures of the same code, two distinct hashes. The `11b4963d…` value appeared once and
-   never again.
+   Three captures of the same code, two distinct hashes.
+
+   **Corrected 2026-09-25 (Task 10a fix round 1).** This paragraph used to end "The `11b4963d…`
+   value appeared once and never again", and that is no longer true — it has now been seen three
+   times, across code that did not change between the sightings:
+
+   | sighting | when | context |
+   |---|---|---|
+   | 1 | 2026-09-24, Task 2 | the post-change baseline run above |
+   | 2 | 2026-09-24, Task 5 (A58.4) | that task's own full 120-test run |
+   | 3 | 2026-09-25, Task 10a | the cold BEFORE run produced it; the cold AFTER run of the same measurement did not; and one of three single-state re-captures taken immediately afterwards produced it again — `11b4963d…` once, `fdc14706…` twice |
+
+   What every sighting has in common is what matters for a reader deciding whether a red baseline
+   is real: **the DOM snapshot has never moved**. Both rasters are produced by the same code, and
+   the state flips between them of its own accord. The frequency is not settled — sighting 3 came
+   from a cold full run AND from a single-state re-capture, which weakens the earlier guess that
+   full runs are implicated — and the correlation this record opened with remains open.
 
 3. **The app's own visual-parity case for that state passes** against the `fdc14706…` baseline
    (`npm run test:e2e`, 220/220). So the app and the reference agree at `maxDiffPixels: 0` — which a
