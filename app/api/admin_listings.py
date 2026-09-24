@@ -293,12 +293,13 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         return _error("NOT_FOUND", "No such listing.", 404)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, name, state, seller_id, sqft, identifiable_content_visibility"
+            cur.execute("SELECT status, name, state, seller_id, sqft, identifiable_content_visibility,"
+                        " street, phone"
                         " FROM listing WHERE id = %s FOR UPDATE", (parsed,))
             row = cur.fetchone()
             if row is None:
                 return _error("NOT_FOUND", "No such listing.", 404)
-            before, name, state, seller_id, sqft, visibility = row
+            before, name, state, seller_id, sqft, visibility, street, phone = row
             if before not in allowed_from:
                 return _error("STATE", f"cannot {body.action} a listing in state {before}", 409)
             # A-SL33 (1), fix round 1 on the SL8 review's Critical finding: `listing_publishable_ck`
@@ -311,6 +312,31 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             # REPUBLISH can meet the same missing field the first publish could have.
             if body.action == "publish" and sqft is None:
                 return _error("FIELDS_REQUIRED", "square footage is required to publish this listing.", 422)
+            # S9 fix round 1 (John's ruling of 2026-09-24, on the measurement below). `street` and
+            # `phone` are the ENTIRE payload of the `EXACT_LOCATION` disclosure capability
+            # (`app/api/listings.py::serialise`), which is live, requestable and approvable — so a
+            # listing put on the market without them can be granted an approval it cannot keep,
+            # which is the whole of finding S9, met at the last door before a buyer sees the
+            # listing at all. The `sqft` check above is the precedent in every respect, and this
+            # is checked on EVERY publish for that check's own reason restated: unlike
+            # `state`/`market` (D12, never seller-editable once set), these two can be emptied
+            # behind the reviewer's back by a later step-2 edit, so a REPUBLISH can meet the same
+            # missing field the first publish could have.
+            #
+            # IT STRANDS NOBODY, and that is MEASURED rather than reasoned (QA, 2026-09-24): the
+            # six wizard-created listings carrying no street are all DRAFTS — five entirely empty,
+            # one part-filled — and all 29 listings currently published or in review carry one. A
+            # draft reaches a reviewer only through submit, which `_complete_enough` now gates on
+            # these same two columns, so this refuses no row that exists. It is the door BEHIND
+            # `seller_listings.PRESERVED_ONCE_SUBMITTED`, which already refuses the seller-side
+            # clear; what is left for this to catch is a row that reaches `published` by some
+            # other route.
+            if body.action == "publish":
+                for column, value in (("street", street), ("phone", phone)):
+                    if value is None:
+                        return _error("FIELDS_REQUIRED",
+                                      f"{column} is required to publish this listing: an approved"
+                                      " EXACT_LOCATION request releases it.", 422)
             # GEO-WIRE (1). Read inside the transaction, enqueued after it commits (below): a
             # published listing with no `practice_location` row has no pin on Browse, no Community
             # Context card and no metro in `GET /api/markets`, because every one of those reads

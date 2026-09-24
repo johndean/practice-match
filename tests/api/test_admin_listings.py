@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from tests.api.conftest import auth_headers
 
 
@@ -463,6 +465,66 @@ async def test_publish_also_requires_square_footage_named_in_the_envelope(client
     assert _row(conn, listing_id)[0] == "in_review"
 
 
+@pytest.mark.parametrize("column", ["street", "phone"])
+async def test_publish_also_requires_the_address_exact_location_releases(
+    client: Any, conn: Any, member: Any, column: str
+) -> None:
+    """S9 fix round 1, the SECOND half (John's ruling of 2026-09-24, measured). `EXACT_LOCATION` is
+    a live, approvable capability whose entire payload is `street` and `phone`, so a listing the
+    reviewer puts on the market without them can be granted an approval it cannot keep — the
+    defect S9 is made of, at the last door before a buyer can see the listing at all. The `sqft`
+    check above is the precedent in every respect: same route, same envelope, same register, and
+    checked on EVERY publish rather than only the first.
+
+    THE STATE IS CONSTRUCTED WITH SQL, DELIBERATELY, and that is the point rather than a shortcut.
+    `PRESERVED_ONCE_SUBMITTED` (`app/api/seller_listings.py`) already refuses a seller who tries to
+    clear either field on a listing past draft, so the API no longer offers a route into this row —
+    this gate is what closes the door BEHIND that one, for a row that reaches `published` by any
+    other means: a listing written before either rule existed, a direct database edit, or a future
+    code path nobody has written yet. A test that could set it up through the wizard would be a
+    test that the first guard had failed.
+
+    MEASURED BEFORE SHIPPING (QA, 2026-09-24): the six wizard-created listings with no street are
+    all DRAFTS — five of them entirely empty, one part-filled — and every one of the 29 listings
+    currently published or in review carries a street. A draft reaches a reviewer only through
+    submit, which `_complete_enough` now gates on these same two columns, so this refuses nothing
+    that exists and strands nobody."""
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    with conn.cursor() as cur:
+        # `column` is this case's own parameter, one of two literals above — never input.
+        cur.execute(f"UPDATE listing SET {column} = NULL WHERE id = %s", (listing_id,))
+
+    refused = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                json={"action": "publish", "state": "TX", "market": "Austin, TX"}, headers=staff)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["code"] == "FIELDS_REQUIRED"
+    assert refused.json()["error"]["message"] == (
+        f"{column} is required to publish this listing: an approved EXACT_LOCATION request"
+        " releases it.")
+    assert _row(conn, listing_id)[0] == "in_review", "the refused write must not have landed"
+
+    # ...and the same listing publishes the moment the column is there again.
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE listing SET {column} = %s WHERE id = %s",
+                    ("1204 Cypress Creek Rd" if column == "street" else "(512) 555-0100", listing_id))
+    published = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                  json={"action": "publish", "state": "TX", "market": "Austin, TX"}, headers=staff)
+    assert published.status_code == 200, published.text
+    assert _row(conn, listing_id)[0] == "published"
+
+    # A REPUBLISH is checked too — not only the first publish — for the reason the `sqft` check
+    # above states: unlike `state`/`market` (D12, never seller-editable once set), this column can
+    # still be emptied behind the reviewer's back, so the same missing field can meet a republish.
+    await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"}, headers=staff)
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE listing SET {column} = NULL WHERE id = %s", (listing_id,))
+    refused_again = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                      json={"action": "publish"}, headers=staff)
+    assert refused_again.status_code == 422 and refused_again.json()["error"]["code"] == "FIELDS_REQUIRED"
+    assert _row(conn, listing_id)[0] == "paused", "the refused republish must not have landed"
+
+
 async def test_publish_rewrites_the_slug_once_and_never_again(client: Any, conn: Any, member: Any) -> None:
     """D13. `listing-<id>` becomes the name in slug form plus the first eight characters of the id,
     so a seller's "Hill Country Animal Hospital" can never collide with a seed slug of the same
@@ -588,9 +650,14 @@ async def test_a_seed_listing_with_no_owner_is_decided_without_a_mail(
     not to a person — so a decision on one has nobody to write to. It is still audited."""
     staff = await _staff(client, member)
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO listing (slug, name, city, state, zip, area, type, market, source,"
-                    " status, est, price, sqft) VALUES ('unowned','Unowned','Austin','TX','78701','Austin',"
-                    "'Small animal','Austin, TX','seed','in_review',2015,750000,3000) RETURNING id")
+        # `street` and `phone` are here because the real seeder writes both (`scripts/
+        # seed_listings.py`'s own column list) and every seeded hospital carries them — this
+        # inline row simply did not, which S9's publish gate turns from a harmless omission into
+        # a row no seeded listing in the world looks like.
+        cur.execute("INSERT INTO listing (slug, name, street, city, state, zip, phone, area, type, market,"
+                    " source, status, est, price, sqft) VALUES ('unowned','Unowned','1 Main St','Austin',"
+                    "'TX','78701','(512) 555-0100','Austin','Small animal','Austin, TX','seed','in_review',"
+                    "2015,750000,3000) RETURNING id")
         listing_id = str(cur.fetchone()[0])
     response = await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
     assert response.status_code == 200 and _row(conn, listing_id)[0] == "published"

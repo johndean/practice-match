@@ -2951,7 +2951,14 @@ async def test_the_wizard_refuses_a_string_that_is_not_a_telephone_number(
     refused = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
                                  json={"phone": written}, headers=signed)
     assert refused.status_code == 422, refused.text
-    assert refused.json()["error"]["code"] == "BAD_PHONE"
+    # The WHOLE envelope, `_zip`'s own pin one field over (fix round 1, Minor-2): the two accepted
+    # forms named in this message are the only thing standing between a refused seller and
+    # guessing, so the wording is part of the contract and not decoration.
+    assert refused.json()["error"] == {
+        "code": "BAD_PHONE",
+        "message": "phone must be a ten-digit US or Canadian telephone number"
+                   " ((512) 555-0100 or 512-555-0100).",
+    }
     with conn.cursor() as cur:
         cur.execute("SELECT phone FROM listing WHERE id = %s", (listing_id,))
         assert cur.fetchone() == (None,), "a refused number is never stored"
@@ -3081,3 +3088,111 @@ async def test_the_street_a_seller_typed_is_what_an_approved_buyer_receives(
     granted = (await client.get(f"/api/listings/{listing_id}", headers=buyer)).json()
     assert granted["street"] == "1204 Cypress Creek Rd"
     assert granted["phone"] == "(512) 555-0100"
+
+
+# --- S9 fix round 1 (review Important-1): the submit gate alone was ONE-WAY ------------------------
+#
+# `_complete_enough` runs at `POST …/submit` and at no other door. `_re_enter_review` sets
+# `in_review` directly and never calls it, and `admin_listings.decide_listing` selects
+# `status, name, state, seller_id, sqft, identifiable_content_visibility` — not these two. So the
+# whole of S9's own defect was reachable again from the other side: a seller of an in_review,
+# published or paused listing PATCHes step 2 with `street: ""` (step 2's autosave sends the resting
+# value of every input, so deleting the text and moving on is sufficient), the edit re-enters
+# review with no completeness rule to meet, and the reviewer republishes it — `street: null`,
+# `phone: null`, live, with an approved `EXACT_LOCATION` grant against it. It silently dropped the
+# listing's resolved geography too, the clear counting as `moved`.
+#
+# The guard is its OWN tuple and not a widening of `REQUIRED_ONCE_SUBMITTED`: that one mirrors
+# `listing_submittable_ck` and has to go on doing exactly that, no CHECK names these two, and the
+# rule they need is a different one anyway — it refuses an edit that REMOVES an address a listing
+# already has, never one that supplies the address it has not. That distinction is what keeps every
+# addressless listing already on QA editable, and the last two cases below are what prove it.
+
+
+async def _in_review(client: Any, member: Any) -> tuple[str, dict[str, str]]:
+    """A listing through the real submit — the state the seller may keep editing from."""
+    listing_id, signed = await _ready(client, member)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    return listing_id, signed
+
+
+@pytest.mark.parametrize(("field", "column"), [("street", "street"), ("phone", "phone")])
+async def test_a_submitted_listing_cannot_have_its_street_or_telephone_cleared(
+    client: Any, conn: Any, redis: Any, member: Any, field: str, column: str
+) -> None:
+    """The other door, closed. Asserted as STORED DATA as well as a refusal: the point is not the
+    status code, it is that the column the buyer's `EXACT_LOCATION` grant releases is still there
+    afterwards."""
+    listing_id, signed = await _in_review(client, member)
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                 json={field: ""}, headers=signed)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "NOT_SUBMITTABLE"
+    assert refused.json()["error"]["message"] == f"A submitted listing cannot have {column} cleared."
+    with conn.cursor() as cur:
+        # `column` is this case's own parameter, one of two literals above — never input.
+        cur.execute(f"SELECT {column} FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone() != (None,), "the address a granted buyer is owed survived the edit"
+
+
+async def test_the_whole_one_way_path_is_closed_at_its_first_step(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The exploit as a sequence, not as a unit: a PUBLISHED listing, the seller's own step-2
+    autosave clearing the street, the edit's own re-entry into review, and the reviewer's
+    republish. The refusal lands on the FIRST step, so the listing never reaches the reviewer with
+    a null address — and, because the clear is refused, `practice_location` is not deleted either
+    (`ADDRESS_COLUMNS` counts a cleared street as `moved`)."""
+    listing_id, signed = await _in_review(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id = %s", (listing_id,))
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision,"
+                    " geocoded_at, geocoder_vintage) VALUES (%s, 'hash', 'rooftop', now(), 'v')",
+                    (listing_id,))
+
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                 json={"street": "", "phone": ""}, headers=signed)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["message"] == "A submitted listing cannot have street, phone cleared."
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, street, phone FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone() == ("published", "1204 Cypress Creek Rd", "(512) 555-0100")
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id = %s", (listing_id,))
+        assert cur.fetchone() == (1,), "a refused clear must not re-arm the geocode either"
+
+
+async def test_a_draft_may_still_clear_its_street_and_telephone(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """`SUBMITTABLE_EXEMPT`'s own exemption, unchanged: a draft is incomplete by nature and a
+    seller who has typed a number must be able to clear it again."""
+    listing_id, signed = await _ready(client, member)
+    cleared = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                 json={"street": "", "phone": ""}, headers=signed)
+    assert cleared.status_code == 200, cleared.text
+    assert (cleared.json()["street"], cleared.json()["phone"]) == (None, None)
+
+
+async def test_a_submitted_listing_that_has_no_address_yet_can_still_be_given_one(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """THE ANTI-STRANDING PROPERTY, and the reason this is not a widening of
+    `REQUIRED_ONCE_SUBMITTED`. Wizard-created listings already exist on QA with neither column
+    filled in; a rule that refused every step-2 save carrying a blank street would hold every one
+    of them at their own edit door for ever. The guard fires on REMOVAL alone, so an addressless
+    listing past draft saves a blank exactly as it always did — and saves a real address the moment
+    its seller types one."""
+    listing_id, signed = await _in_review(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET street = NULL, phone = NULL WHERE id = %s", (listing_id,))
+
+    # The autosave of a step the seller has not filled in: blank in, 200, nothing removed.
+    blank = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                               json={"street": "", "phone": ""}, headers=signed)
+    assert blank.status_code == 200, blank.text
+    # ...and then the address itself.
+    supplied = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                  json={"street": "400 Oak Dr", "phone": "512-555-0100"}, headers=signed)
+    assert supplied.status_code == 200, supplied.text
+    assert (supplied.json()["street"], supplied.json()["phone"]) == ("400 Oak Dr", "512-555-0100")

@@ -210,7 +210,9 @@ ZIP_RE = re.compile(r"[0-9]{5}(-[0-9]{4})?")
 # already stated, once, what a practice's number looks like, for exactly this string. This rule is
 # deliberately NARROWER than that one: everything this door accepts, that scanner can see, which
 # `tests/api/test_seller_listings.py::test_the_wizard_never_stores_a_number_the_redaction_scanner_cannot_see`
-# proves over the whole language of this pattern rather than over a sample.
+# proves by sweeping every prefix, parenthesis and separator combination this pattern admits, with
+# the digits held fixed — exhaustive over its STRUCTURE, which is the part that could differ
+# between the two, and not over its digits, which cannot.
 #
 # NOT the same object, and the reason is measured rather than stylistic: the scanner spells its
 # digits `\d`, which matches every Unicode decimal, and tolerates three-character separator runs
@@ -223,6 +225,17 @@ ZIP_RE = re.compile(r"[0-9]{5}(-[0-9]{4})?")
 # reason), a seven-digit local number with no area code (`identity.py`'s own docstring names that
 # as a shape its scanner cannot see either), and an extension. The refusal names two accepted
 # forms, so a seller is never left guessing which of them this door wants.
+#
+# `street` HAS NO SHAPE RULE, and that is judged rather than skipped (fix round 1, Minor-5). A US
+# street address has no closed form to hold it to — "1204 Cypress Creek Rd", "4140 FM 1431",
+# "Suite 210, 3435 Marvin D. Love Fwy" are all real, and `app/privacy/identity.py` needs FOUR
+# regex arms to recognise one at all, each written to over-match OCR noise rather than to judge
+# input. A pattern strict enough to refuse nonsense would refuse real addresses, and there is no
+# `ZIP_RE`-shaped consequence to justify the trade: unlike a malformed ZIP, which sends
+# `app/census/geocode.py` to a CITY CENTROID and silently places the practice somewhere it is not,
+# an unrecognisable street simply fails to match and the listing degrades to the same ZIP-ladder
+# fallback it had before the field existed. `_text`'s own rules — a string, bounded, no NUL,
+# stripped — are the whole of it, and `_complete_enough` is what refuses a blank one at submit.
 PHONE_RE = re.compile(r"(\+?1[ .-]?)?\(?[0-9]{3}\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}")
 MONEY_FIELDS = ("price", "rev")
 INT_FIELDS = ("est", "docs", "rooms", "sqft")
@@ -253,6 +266,16 @@ EST_MIN = 1900
 # `listing_submittable_ck`'s own list and its own exemptions (030). Mirrored rather than inferred:
 # when the CHECK changes, this is the line that has to change with it (review M2).
 REQUIRED_ONCE_SUBMITTED = ("name", "city", "zip", "type", "est", "price")
+# S9's own two, on the OTHER door (Task 6 fix round 1, review Important-1). A SEPARATE tuple, not a
+# widening of the line above: that one MIRRORS `listing_submittable_ck` and has to go on doing only
+# that, no CHECK names these two, and the rule they need is a different rule anyway. It refuses an
+# edit that REMOVES an address a listing already has, and never one that supplies the address it
+# has not — which is what keeps every listing already created with neither column editable by its
+# own seller. `_complete_enough` alone was ONE-WAY: it runs at `POST …/submit` and nowhere else,
+# `_re_enter_review` sets `in_review` directly, and `admin_listings.decide_listing` reads `sqft`
+# and not these, so a cleared street could re-enter review and be republished into exactly the
+# `street: null` + approved `EXACT_LOCATION` state this family exists to remove.
+PRESERVED_ONCE_SUBMITTED = ("street", "phone")
 SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 
 _COLUMNS = """id, slug, name, street, city, zip, phone, state, area, market, type, est, ownership, price, rev,
@@ -921,6 +944,14 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             # editing" an in-review listing (App.vue:1259). Refused BEFORE the statement, so the
             # CHECK can never become the 500 this module's own comment promises it never will.
             cleared = [name for name in REQUIRED_ONCE_SUBMITTED if name in columns and columns[name] is None]
+            # ...and S9's own two, on the same door and in the same refusal, on the narrower test
+            # `PRESERVED_ONCE_SUBMITTED` explains: `row[name] is not None` is what makes this a
+            # rule against REMOVING an address rather than a rule against not having one. Step 2's
+            # autosave sends the resting value of every input, so without the stored-value term a
+            # seller of an addressless in-review listing would be refused for a field they never
+            # touched — the stranding this task's own constraint forbids.
+            cleared += [name for name in PRESERVED_ONCE_SUBMITTED
+                        if name in columns and columns[name] is None and row[name] is not None]
             if cleared and row["status"] not in SUBMITTABLE_EXEMPT:
                 raise Refusal("NOT_SUBMITTABLE",
                               f"A submitted listing cannot have {', '.join(cleared)} cleared.", 409)

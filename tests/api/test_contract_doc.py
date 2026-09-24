@@ -359,10 +359,12 @@ def test_contract_doc_states_when_a_listing_gets_its_geography() -> None:
     assert "`geo_precision`" in flat
     # S9 (Task 6 of the 2026-09-23 wizard repair, ruling D-C65) collected the street, so the
     # sentence this used to pin — "the wizard collects a city and a ZIP and no street" — is no
-    # longer true of the wizard. What the document must still state is the CONSEQUENCE, which is
-    # unchanged for every listing that carries no street: the ladder, and what it resolves them to.
-    assert "a listing with no street" in flat
-    assert "`zcta`" in flat
+    # longer true of the wizard. ONE PHRASE replaces it, not two substrings (fix round 1, Minor-4):
+    # the first draft of this pin also asserted the bare token `` `zcta` ``, which occurs twice in
+    # the document and therefore asserted almost nothing. What must still be stated is the
+    # CONSEQUENCE, unchanged for every listing that carries no street, and it is one sentence.
+    assert ("cannot be matched to a street address by the Census geocoder, so the §11 ladder"
+            " resolves it at `zcta`: a ZIP-code centroid") in flat
 
 
 def test_contract_doc_states_that_a_non_rooftop_point_is_served_its_place_band() -> None:
