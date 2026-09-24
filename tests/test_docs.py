@@ -1247,6 +1247,71 @@ def test_the_describe_drawers_caption_bound_matches_the_api():
     assert json.loads(match.group(1)) == MAX_TEXT
 
 
+def _capabilities_ts_literal(name: str) -> object:
+    """One of the two exported JSON literals in `frontend/src/disclosure/capabilities.ts`.
+
+    `_users_ts_literal`'s own convention and its own reason: each is written as double-quoted JSON
+    on ONE line so this cross-language pin can read it without a TypeScript parser, and the file
+    says so beside them."""
+    source = (ROOT / "frontend" / "src" / "disclosure" / "capabilities.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/disclosure/capabilities.ts: {name} is not a single-line exported literal, "
+        f"so this cross-language pin cannot read it. CAPABILITY_ORDER and LEVEL_LABEL are each "
+        f"written as double-quoted JSON on ONE line for exactly that reason."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/disclosure/capabilities.ts: {name} is not readable as JSON ({reason}). "
+        f"Keep it double-quoted on one line so this pin stays exact."
+    )
+
+
+def test_the_capability_vocabulary_matches_the_api():
+    """Ruling D-C67 (2026-09-24), fix round 1 (review Minor-3): the five disclosure capabilities
+    live in FOUR homes — `app.disclosure.levels.CAPABILITIES`, migration 097's own CHECK,
+    `CAPABILITY_ORDER` and `LEVEL_LABEL` — and until this pin only the first two were tied
+    together (`tests/disclosure/test_levels.py` reads the CHECK out of `pg_constraint`).
+
+    THE FAILURE THIS CATCHES, and it is not symmetric with the client's other guards. Add a sixth
+    capability to Python and the CHECK and leave `CAPABILITY_ORDER` short, and two things happen.
+    The chooser cannot offer the new capability, which is merely fail-closed and fine. But
+    `orderedCapabilities` FILTERS through the same array, so `r.granted` and `r.grantedLabel` —
+    the seller's own read-back of what a buyer currently holds — silently DROP it: the seller is
+    shown a buyer with less access than that buyer really has, on the surface D-C67 built for
+    telling them exactly that. A disclosure product may under-offer; it may not under-report.
+
+    Both directions, because a subset check in one direction alone is how a vocabulary drifts:
+    every capability Python names has a slot and a word here, and nothing here names a capability
+    Python does not. `LEVEL_LABEL` is keyed on `REQUESTABLE_LEVELS` rather than `CAPABILITIES`
+    because the admin Requests tab labels a buyer's REQUESTED level too, and that may be the
+    umbrella `FULL_CONFIDENTIAL` — which `CAPABILITY_ORDER` must NOT carry, since it is a level a
+    buyer may ask for and never a capability a grant may store (migration 097's CHECK)."""
+    from app.disclosure.levels import CAPABILITIES, REQUESTABLE_LEVELS
+
+    order = cast("list[str]", _capabilities_ts_literal("CAPABILITY_ORDER"))
+    labels = cast("dict[str, str]", _capabilities_ts_literal("LEVEL_LABEL"))
+
+    assert set(order) == set(CAPABILITIES), (
+        "frontend/src/disclosure/capabilities.ts: CAPABILITY_ORDER and "
+        "app.disclosure.levels.CAPABILITIES name different capabilities. `orderedCapabilities` "
+        "filters a served grant through this array, so a capability missing here is dropped from "
+        "what the seller is told a buyer holds."
+    )
+    assert len(order) == len(set(order)), "CAPABILITY_ORDER lists a capability twice"
+    assert set(labels) == set(REQUESTABLE_LEVELS), (
+        "frontend/src/disclosure/capabilities.ts: LEVEL_LABEL and "
+        "app.disclosure.levels.REQUESTABLE_LEVELS name different levels."
+    )
+    assert all(word.strip() for word in labels.values()), "a level is labelled with nothing"
+    # Every capability a grant can hold has a word, which is what lets `capabilityOptions` and
+    # `capabilityPhrase` drop their `?? value` fallbacks (measured, and recorded in that file).
+    assert set(CAPABILITIES) <= set(labels)
+
+
 def _listings_ts_literal(name: str) -> object:
     """One of the three exported JSON literals in `frontend/src/admin/listings.ts` — the same
     single-line-double-quoted-JSON convention `_users_ts_literal` reads, applied to Task SL8's

@@ -36,7 +36,7 @@ def covers(level: str | None) -> frozenset[str]:
 
 def granted(values: Sequence[str] | None) -> frozenset[str]:
     """Every capability a STORED grant actually confers (`request.approved_capabilities`, migration
-    101) -- the door `covers()` is for the buyer's single requested level, one column over.
+    097) -- the door `covers()` is for the buyer's single requested level, one column over.
 
     Three inputs, three meanings, and the middle one is the whole point of D-C67's fail-closed rule:
 

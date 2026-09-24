@@ -10,6 +10,29 @@
 -- alone, and neither later file creates or reads that table, so filename order is correct on a
 -- fresh database (proved by applying the whole ladder into an empty one).
 --
+-- THIS RELEASE CANNOT BE ROLLED BACK BY REDEPLOYING THE PREVIOUS IMAGE, and that is stated here
+-- because nothing else in this repository would say it (fix round 1, review Important-2). The
+-- `DROP COLUMN` below is the FIRST in this repository's history -- `grep -l "DROP COLUMN"
+-- migrations/*.sql` returns this file and nothing else, every prior migration being additive --
+-- and `scripts/migrate.py` has no down mechanism at all. The previous image's
+-- `app/disclosure/access.py` and `app/disclosure/requests.py` both SELECT
+-- `approved_disclosure_level`, so redeploying it makes `GET /api/listings`, `GET /api/listings/{id}`,
+-- the seller inbox and the decide route raise `UndefinedColumn`. The same window opens for the
+-- length of a rolling restart, since migrations run at api start.
+--
+-- THE RECOVERY IS FORWARD, NEVER BACKWARD: re-deploy THIS release (or later). The data is safe and
+-- the mapping is invertible -- the backfill below is a total function with an inverse, so a down
+-- migration could be written if one is ever wanted -- but no code reads the old column any more, so
+-- restoring it would be restoring a column with no reader.
+--
+-- WHAT LIMITS THE BLAST RADIUS, measured rather than assumed (2026-09-24): production answers
+-- `"site_mode":"coming_soon"` on `GET /api/healthz`, and `app/main.py:130` mounts `listings_router`,
+-- `seller_listings_router`, `requests_router` and `seller_requests_router` ONLY under
+-- `site_mode == "app"`. On production today those routes are not mounted at all -- they fall
+-- through to `not_found_router`'s JSON 404 -- so there is nothing there for a rollback to break.
+-- The window is real on QA (which may never run `coming_soon`, `app/config.py:129`) and on
+-- production from the day it switches to `app`. Ship to QA first and verify there, as always.
+--
 -- A grant is a SET of capabilities, not one named level. Until now `request.approved_disclosure_level`
 -- held exactly one of six values, so of the thirty-two subsets of the five capabilities a seller
 -- could store six: each capability alone, or all five. The product's own approved sentence for an

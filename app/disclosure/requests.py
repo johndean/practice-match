@@ -125,11 +125,15 @@ def list_inbox(conn: Any, *, seller_account_id: str) -> list[dict[str, Any]]:
         return rows
 
 
-def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id: str, required_status: tuple[str, ...]) -> None:
+def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id: str, required_status: tuple[str, ...]) -> str:
     """`required_status` is a TUPLE since D-C67 (2026-09-24), because `decide`'s approve arm now
     accepts an already-APPROVED row: a seller who granted three capabilities must be able to narrow
     the grant to one without withdrawing the buyer's access entirely and making them ask again.
-    Every other caller passes a one-tuple and reads exactly as it did."""
+    Every other caller passes a one-tuple and reads exactly as it did.
+
+    RETURNS the status it just read (fix round 1, review Important-1). It is the only place this
+    function's own query runs, and `decide` needs to know whether it is looking at a FIRST decision
+    or a SECOND one -- a distinction that did not exist until the tuple above admitted two."""
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM request WHERE id = %s AND seller_user_id = %s", (request_id, seller_account_id))
         found = cur.fetchone()
@@ -138,10 +142,11 @@ def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id:
     if found[0] not in required_status:
         wanted = " or ".join(status.lower() for status in required_status)
         raise Refusal("STATE", f"This request is {found[0].lower()}, not {wanted}.", 409)
+    return str(found[0])
 
 
 def _chosen_capabilities(cur: Any, *, request_id: str, disclosure_level: str | None,
-                        disclosure_capabilities: Sequence[str] | None) -> list[str]:
+                        disclosure_capabilities: Sequence[str] | None, already_approved: bool) -> list[str]:
     """What this approval releases, as a sorted list of capability names — the ONE place that
     decision is made (D-C67, John, 2026-09-24).
 
@@ -156,11 +161,33 @@ def _chosen_capabilities(cur: Any, *, request_id: str, disclosure_level: str | N
     * a SET was named (including the empty one) — that set, exactly, is what is stored;
     * a LEVEL was named — `covers()` expands it, so the existing all-five path (`FULL_CONFIDENTIAL`)
       and every single-capability one stay reachable exactly as they were;
-    * neither — the level the BUYER asked for, `decide`'s own long-standing default.
+    * neither — the level the BUYER asked for, `decide`'s own long-standing default, and ONLY on
+      a FIRST decision. See `already_approved` below.
 
     Naming both at once is refused rather than silently preferring one: two callers' worth of
     intent in one body is a caller bug, and guessing which half to honour is how a grant ends up
-    wider than anybody asked for."""
+    wider than anybody asked for.
+
+    **`already_approved` CLOSES THE THIRD ARM ON A SECOND DECISION (fix round 1, review
+    Important-1), and it is the same stance one paragraph up rather than a new one.** That arm was
+    written when PENDING was the only status `decide` could see, where "the caller named no set"
+    sensibly means "the level the buyer asked for". Once the approve arm also accepts an APPROVED
+    row — which is how a seller NARROWS — the same reading silently UNDOES the narrowing: every
+    request in this product is created `FULL_CONFIDENTIAL` (`app/api/requests.py`), so a bare
+    `{"action": "approve"}` on a row narrowed to `{FINANCIALS}` would restore identity, the street,
+    the telephone, the exact pin, the unredacted photographs, the financial packet and the floor
+    plans, with no 409, no warning and no mail (the outbox idempotency key has already fired).
+
+    It refuses `BAD_REQUEST` (400) rather than `STATE` (409), deliberately: the ROW is in a state
+    this action is allowed from — re-approving an approved request is the whole feature — and it
+    is the BODY that is insufficient. A 409 would tell the caller "this request is approved, not
+    pending", which is false and would send them looking in the wrong place. 400 is also what the
+    sibling refusal on the line below answers for the other under-specified body, and both say the
+    same thing: a decision this module cannot read unambiguously is refused, never resolved.
+
+    The refusal is NARROW. An APPROVED row still takes an EXPLICIT set or an EXPLICIT level,
+    including `FULL_CONFIDENTIAL` — a widening a seller actually asked for is their decision, and
+    only the one nobody stated is refused."""
     if disclosure_capabilities is not None and disclosure_level is not None:
         raise Refusal("BAD_REQUEST", "Send disclosure_capabilities or disclosure_level, not both.", 400)
     if disclosure_capabilities is not None:
@@ -169,6 +196,8 @@ def _chosen_capabilities(cur: Any, *, request_id: str, disclosure_level: str | N
             raise Refusal("BAD_LEVEL", f"disclosure_capabilities may only contain {', '.join(sorted(CAPABILITIES))}.", 400)
         return sorted(set(disclosure_capabilities))
     if disclosure_level is None:
+        if already_approved:
+            raise Refusal("BAD_REQUEST", "This request is already approved. Name disclosure_capabilities to say what it releases now.", 400)
         cur.execute("SELECT requested_disclosure_level FROM request WHERE id = %s", (request_id,))
         return sorted(covers(cur.fetchone()[0]))
     if disclosure_level not in REQUESTABLE_LEVELS:
@@ -183,14 +212,18 @@ def decide(conn: Any, *, request_id: str, seller_account_id: str, action: str,
     APPROVED row, which is how a seller narrows (or widens) what one buyer holds without
     withdrawing their access entirely; deny stays PENDING-only, because a decision the seller wants
     to take back after approving it is `revoke`, which has its own status, its own audit action and
-    its own mail."""
+    its own mail.
+
+    A SECOND approval must SAY what it releases (fix round 1, review Important-1): the default arm
+    is closed on an already-APPROVED row, so an under-specified re-approval is refused rather than
+    read as "restore everything the buyer originally asked for". See `_chosen_capabilities`."""
     allowed = ("PENDING", "APPROVED") if action == "approve" else ("PENDING",)
-    _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status=allowed)
+    status = _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status=allowed)
     with conn.cursor() as cur:
         if action == "approve":
             capabilities = _chosen_capabilities(
                 cur, request_id=request_id, disclosure_level=disclosure_level,
-                disclosure_capabilities=disclosure_capabilities)
+                disclosure_capabilities=disclosure_capabilities, already_approved=status == "APPROVED")
             cur.execute(
                 f"UPDATE request SET status = 'APPROVED', approved_capabilities = %s, reviewed_at = now(),"
                 f" reviewed_by = %s, updated_at = now() WHERE id = %s RETURNING {_COLUMNS}",

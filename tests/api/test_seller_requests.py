@@ -409,7 +409,7 @@ async def test_revoke_after_approval_writes_an_audit_row(client, conn, member, a
     assert row["target_type"] == "request" and row["target_id"] == request_id
     assert row["after"]["listing_id"] == listing_id and row["after"]["buyer_user_id"] == buyer_id
     assert row["after"]["status"] == "REVOKED"
-    # migration 096's own comment (101's too): a REVOKED row keeps its capabilities for history —
+    # migration 096's own comment (097's too): a REVOKED row keeps its capabilities for history —
     # the audit row names what was revoked, not merely that something was.
     assert sorted(row["after"]["capabilities"]) == sorted(CAPABILITIES)
 
@@ -699,3 +699,41 @@ async def test_decide_refuses_a_set_and_a_level_in_one_body(client, conn, member
                                  json={"action": "approve", "disclosure_level": "IDENTITY",
                                        "disclosure_capabilities": ["FINANCIALS"]})
     assert response.status_code == 400 and response.json()["error"]["code"] == "BAD_REQUEST"
+
+
+# --- Fix round 1, review Important-1: the omission surface, at the door a caller actually posts ---
+
+
+@pytest.mark.asyncio
+async def test_a_bare_approve_on_a_narrowed_row_is_refused_and_changes_nothing(client, conn, member) -> None:
+    """The scenario the review names, driven through the real route: a seller narrows a buyer to
+    `{FINANCIALS}`, and a later `{"action": "approve"}` with the field omitted — a retry, a script,
+    an integration, a future client — must NOT restore the buyer's own `FULL_CONFIDENTIAL` ask.
+
+    The grant is re-read from the API afterwards rather than trusted from the refusal: a refusal
+    that had already written would satisfy the status assertion alone."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s37@x.org", "b37@x.org")
+    narrowed = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert narrowed.status_code == 200, narrowed.text
+
+    bare = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                             json={"action": "approve"})
+    assert bare.status_code == 400, bare.text
+    assert bare.json()["error"]["code"] == "BAD_REQUEST"
+
+    still = await client.get("/api/seller/requests", headers=seller_headers)
+    assert [r["approved_capabilities"] for r in still.json()] == [["FINANCIALS"]]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_approve_on_a_PENDING_row_still_takes_the_documented_fallback(client, conn, member) -> None:
+    """THE OTHER DIRECTION, and it is why the refusal above is written on the row's STATUS rather
+    than on the body alone: a FIRST decision that names nothing is the long-standing default and
+    must keep working, or every caller that has ever approved a request breaks. Driven separately
+    from its twin so neither can pass on the other's behalf."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s38@x.org", "b38@x.org")
+    first = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                              json={"action": "approve"})
+    assert first.status_code == 200, first.text
+    assert sorted(first.json()["approved_capabilities"]) == sorted(CAPABILITIES)

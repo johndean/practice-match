@@ -130,7 +130,7 @@ def test_granted_never_answers_full_confidential_as_a_member() -> None:
 
 def test_capabilities_matches_the_approved_capabilities_check(conn: Any) -> None:
     """The `approved_disclosure_level` pin above, moved to the column that replaced it (migration
-    101). The array CHECK is `approved_capabilities <@ ARRAY[...]::text[]`, so `_permitted_levels`'
+    097). The array CHECK is `approved_capabilities <@ ARRAY[...]::text[]`, so `_permitted_levels`'
     own regex reads the five element literals out of `pg_get_constraintdef` exactly as it read the
     six out of an IN-list, and the set is `CAPABILITIES` rather than `REQUESTABLE_LEVELS`:
     `FULL_CONFIDENTIAL` is a name a buyer may ASK for and never one a grant may STORE."""

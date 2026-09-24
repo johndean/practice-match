@@ -120,9 +120,18 @@ describe('makeSellerRequestsAdapter', () => {
 
 describe('makeSellerRequestsAdapter and the per-capability grant', () => {
   it('sends an EMPTY array as a real decision rather than dropping it', async () => {
-    // THE FAIL-CLOSED SEAM ON THE CLIENT. `...(capabilities ? {...} : {})` would omit an empty
-    // array, the route would see no set, and `_chosen_capabilities` would fall back to the level
-    // the BUYER asked for — `FULL_CONFIDENTIAL` on every request this product creates.
+    // THE OUTCOME D-C67 RULES ON, and NOT the fail-closed seam — the rationale this comment
+    // carried was wrong and is corrected rather than deleted (fix round 1, review Minor-1). It
+    // said `...(capabilities ? {...} : {})` would omit an empty array. It would not: `[]` is
+    // TRUTHY in JavaScript, so that spelling includes the key and this case passes identically
+    // under both. The seam the two spellings actually differ on is `null`, which is the test below
+    // this one. `logic.test.ts` has stated this correctly since it was written, and the two files
+    // disagreed until now; the Python twin
+    // (`test_approve_with_an_empty_array_releases_nothing_over_the_wire`) IS a real fail-closed
+    // gate, because `[]` really is falsy there.
+    //
+    // The assertion stays exactly as it was: what must remain true is that an empty set reaches
+    // the wire as a decision, whatever a later refactor spells the guard.
     const { fn, calls } = fakeFetch({ status: 200, body: ROW({ status: 'APPROVED', approved_capabilities: [] }) });
     const adapter = makeSellerRequestsAdapter(fn);
     const row = await adapter.decide('r1', 'approve', []);

@@ -14,22 +14,29 @@
 /** `app.disclosure.levels.CAPABILITIES`, in the order this product states them everywhere else
  *  (`app/disclosure/levels.py`, `migrations/097_request_approved_capabilities.sql`'s own CHECK,
  *  the directive's §16 list). A set has no order of its own, so a stable one has to be declared
- *  somewhere or a seller would read their own choices back in whatever order they ticked them. */
-export const CAPABILITY_ORDER: readonly string[] = [
-  'IDENTITY', 'EXACT_LOCATION', 'UNREDACTED_IMAGES', 'FINANCIALS', 'FLOOR_PLANS'
-];
+ *  somewhere or a seller would read their own choices back in whatever order they ticked them.
+ *
+ *  PINNED AS A SET AGAINST PYTHON by `tests/test_docs.py::test_the_capability_vocabulary_matches_
+ *  the_api` (fix round 1, review Minor-3). Without it, a SIXTH capability added to
+ *  `app.disclosure.levels.CAPABILITIES` and the CHECK would leave this array short, and
+ *  `orderedCapabilities` below FILTERS through it — so the chooser would silently fail to offer
+ *  the new capability (safe) and `granted`/`grantedLabel` would silently DROP it from what a
+ *  buyer holds, telling the seller their buyer has less access than they really do (not safe).
+ *  The ORDER is this file's own decision and is pinned only as an order; the MEMBERSHIP is
+ *  Python's. */
+export const CAPABILITY_ORDER: readonly string[] = ["IDENTITY", "EXACT_LOCATION", "UNREDACTED_IMAGES", "FINANCIALS", "FLOOR_PLANS"];
 
-/** `app.disclosure.levels.REQUESTABLE_LEVELS`, pinned by equality in
- *  `frontend/src/admin/requests.test.ts`. Title case, the design's own vocabulary register (its
- *  fixture rows read "Small animal", "Emergency", never a shouted enum). */
-export const LEVEL_LABEL: Record<string, string> = {
-  IDENTITY: 'Identity',
-  EXACT_LOCATION: 'Exact location',
-  UNREDACTED_IMAGES: 'Unredacted images',
-  FINANCIALS: 'Financials',
-  FLOOR_PLANS: 'Floor plans',
-  FULL_CONFIDENTIAL: 'Full confidential'
-};
+/** `app.disclosure.levels.REQUESTABLE_LEVELS`. Title case, the design's own vocabulary register
+ *  (its fixture rows read "Small animal", "Emergency", never a shouted enum).
+ *
+ *  PINNED BY EQUALITY OF ITS KEYS against Python, in `tests/test_docs.py`. The claim this comment
+ *  used to make — "pinned by equality in `frontend/src/admin/requests.test.ts`" — was an
+ *  overstatement and is corrected rather than moved (fix round 1, review Minor-3): that test
+ *  compares these keys to a hand-typed array in the SAME language, which catches a typo here and
+ *  nothing at all about drift from `REQUESTABLE_LEVELS`. Written as double-quoted JSON on ONE
+ *  line, `admin/users.ts`'s own convention, precisely so the Python side can read it without a
+ *  TypeScript parser. */
+export const LEVEL_LABEL: Record<string, string> = {"IDENTITY": "Identity", "EXACT_LOCATION": "Exact location", "UNREDACTED_IMAGES": "Unredacted images", "FINANCIALS": "Financials", "FLOOR_PLANS": "Floor plans", "FULL_CONFIDENTIAL": "Full confidential"};
 
 /** The five, in declared order, as a chooser's own rows — `{ value, label }`, which is what
  *  `openChoiceDrawer` takes. No help line per row: this product names these five in exactly one

@@ -26,6 +26,7 @@
  * the level actually granted) — real data the route does serve, and the one fact this column can
  * state without opening a door the design's own prose says is investigation-only.
  */
+import { LEVEL_LABEL, orderedCapabilities } from '../disclosure/capabilities';
 
 export interface Cell {
   hasMain: boolean; main: string;
@@ -52,7 +53,6 @@ export function cell(main: string | null, sub?: string | null, pill?: string | n
   };
 }
 
-import { LEVEL_LABEL, orderedCapabilities } from '../disclosure/capabilities';
 
 /** `request.status`'s own CHECK constraint (`migrations/096_request.sql`), pinned by equality in
  *  `tests/test_docs.py` against `app/api/admin_requests.py::STATUSES`. `[label, tone]` per value:

@@ -479,3 +479,45 @@ def test_a_second_sellers_request_cannot_be_narrowed_by_this_seller(conn) -> Non
                   disclosure_level=None, reason=None, disclosure_capabilities=[])
     assert exc.value.code == "NOT_FOUND"
     assert access.authorized_capabilities(conn, listing_id=listing, seller_id=seller_a, buyer_account_id=buyer) == frozenset({"FINANCIALS"})
+
+
+# --- Fix round 1, review Important-1: an approve that names NOTHING must not re-expand a grant ----
+
+
+def test_decide_approve_naming_nothing_is_refused_on_an_already_approved_row(conn) -> None:
+    """**THE WIDENING-BY-OMISSION SURFACE.** `decide`'s default arm predates this ruling: it was
+    written when PENDING was the only status it could see, where "the caller named no set" sensibly
+    means "the level the buyer asked for". Once the approve arm also accepts an APPROVED row that
+    reading is wrong in the dangerous direction — every request in this product is created
+    `FULL_CONFIDENTIAL` (`app/api/requests.py`), so a bare `{"action": "approve"}` on a row the
+    seller had narrowed to `{FINANCIALS}` would restore identity, the street, the telephone, the
+    exact pin, the unredacted photographs, the financial packet and the floor plans, with no 409, no
+    warning and no mail (the outbox idempotency key has already fired).
+
+    It is refused, and the grant is asserted UNCHANGED afterwards rather than only the refusal — a
+    refusal that had already written would pass the first assertion alone."""
+    seller, buyer = _account(conn, "s41@x.org"), _account(conn, "b41@x.org")
+    listing = _listing(conn, seller)
+    created = req.create(conn, listing_id=listing, buyer_account_id=buyer, message=None)
+    req.decide(conn, request_id=created["id"], seller_account_id=seller, action="approve",
+              disclosure_level=None, reason=None, disclosure_capabilities=["FINANCIALS"])
+
+    with pytest.raises(Refusal) as exc:
+        req.decide(conn, request_id=created["id"], seller_account_id=seller, action="approve",
+                  disclosure_level=None, reason=None)
+    assert exc.value.code == "BAD_REQUEST"
+    assert access.authorized_capabilities(conn, listing_id=listing, seller_id=seller, buyer_account_id=buyer) == frozenset({"FINANCIALS"})
+
+
+def test_decide_approve_on_an_approved_row_still_takes_an_explicitly_named_level(conn) -> None:
+    """The refusal above is NARROW, and this is what keeps it so: it refuses an UNDER-SPECIFIED
+    decision, never a widening the caller actually asked for. A seller who names
+    `FULL_CONFIDENTIAL` on a narrowed row gets exactly that — it is their decision, stated."""
+    seller, buyer = _account(conn, "s42@x.org"), _account(conn, "b42@x.org")
+    listing = _listing(conn, seller)
+    created = req.create(conn, listing_id=listing, buyer_account_id=buyer, message=None)
+    req.decide(conn, request_id=created["id"], seller_account_id=seller, action="approve",
+              disclosure_level=None, reason=None, disclosure_capabilities=["FINANCIALS"])
+    widened = req.decide(conn, request_id=created["id"], seller_account_id=seller, action="approve",
+                        disclosure_level="FULL_CONFIDENTIAL", reason=None)
+    assert sorted(widened["approved_capabilities"]) == sorted(levels.CAPABILITIES)
