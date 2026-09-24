@@ -324,6 +324,12 @@ plus tests both sides.
 to manage it all and per seller."** Read with D-C66: the ceilings become per-buyer releasable, and
 the seller is the one who decides, per buyer, what is released.
 
+**Pre-flight, 2026-09-25 (controller).** Both of this task's load-bearing claims were re-checked at
+`45a6223` and BOTH HOLD: `p.street` and `p.phone` occur ZERO times in `logic.js`, and `toPractice`
+references neither — `load.ts`'s two mentions are `ApiListing` type declarations (`:45`, `:47`), not
+copies, which was checked rather than assumed because the grep count alone looked like a
+contradiction. The only correction is the line number above.
+
 **RUN AFTER TASK 8** — D-C66 makes the ceilings releasable; this gives the seller the control that
 chooses what a given buyer receives. Before Task 8 there is nothing to choose between.
 
@@ -469,7 +475,10 @@ hidden on all of them, and a datum released to a buyer must appear on all of the
 `frontend/src/logic.js`, and `frontend/src/listings/load.ts::toPractice` copies neither onto the
 design's `Practice`. Task 6 closed S9's DATA gap — an approved buyer's payload now carries the real
 street and telephone — but **no screen shows either**. The detail's "General location" row is still
-`p.area + ", " + stateOf(p.market)` (`logic.js:1902`).
+`p.area + ", " + stateOf(p.market)` — at `logic.js:1911` when re-measured at `45a6223`, NOT the
+`:1902` this plan was written against. **Cite it by its content, not its line:** `logic.js` is
+GENERATED and every task that adds an amendment moves it, so a line number here is stale the moment
+the next family lands. Re-measure at dispatch.
 
 So `EXACT_LOCATION` today: the seller supplies an address, the seller approves a buyer, the API
 serves it to that buyer, and the buyer sees the same city they saw before. The capability is
