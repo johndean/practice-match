@@ -10068,6 +10068,47 @@ const A58_6f: Amendment = {
   replace: TILE_HEAD + TILE_CONTROLS_CONFIRMED + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
 };
 
+const RULING_NAMES = 'John, 2026-09-24, on the Task 7 review: the confirmation NAMES the thing being destroyed instead of asking a generic "are you sure". Fix round 2, review Important-2 — the drawer was handed the photograph’s RAW `name`, which `app/api/seller_listings.py::photo_tiles` serves as `""` for a photograph nobody has described, while the tile’s own DISPLAYED name (the design’s slot caption, or "Photo N") sat computed on the same line. A seller who uploads three photographs and cancels the describe drawer on each — a path A58.6e makes first-class — then read three identical dialogs naming nothing at all. The ruling is satisfied by the name the seller is looking at.';
+
+/** The tile's DISPLAYED name, computed once for the two readers that need it (fix round 2,
+ *  Important-2). `inbox.map((r) => { const label = … })` is the design's own idiom for exactly
+ *  this — one derived value, two places in the returned object — and a helper beside `slots` keeps
+ *  the uploads map on its own single line rather than converting it to a block body. */
+const TILE_NAME_HELPER = '    const tileName = (a, i) => a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1));';
+const TILE_HEAD_NAMED = TILE_HEAD.replace(
+  'name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), ', 'name: tileName(a, i), ');
+const TILE_REMOVE_NAMED = TILE_REMOVE_CONFIRMED.replace(
+  'this.props.listings.confirmRemove(a.kind, a.name)', 'this.props.listings.confirmRemove(a.kind, tileName(a, i))');
+const TILE_CONTROLS_NAMED = TILE_FLAGS + TILE_REMOVE_NAMED + TILE_MAKE_COVER;
+
+/** A58.6g — THE TILE'S DISPLAYED NAME, COMPUTED ONCE (fix round 2, Important-2). One helper beside
+ *  A58.6a's own three consts, closing over the `slots` declared on the line above it, so the map
+ *  below can give the same string to the TILE and to the confirmation that names what it destroys.
+ *  Nothing about the name itself changes: this is A16.4's own expression, moved.
+ *
+ *  Consumes A58.6a, whose whole four-line `replace` this `find` takes. */
+const A58_6g: Amendment = {
+  id: 'A58.6g', ...A58, date: '2026-09-24', ruling: RULING_NAMES, count: 1,
+  find: A58_6a.replace,
+  replace: A58_6a.replace + '\n' + TILE_NAME_HELPER
+};
+
+/** A58.6h — THE CONFIRMATION NAMES WHAT THE SELLER IS LOOKING AT (fix round 2, Important-2). Two
+ *  substitutions on one line: the tile's `name` becomes `tileName(a, i)` — the same string it
+ *  always was — and `confirmRemove`'s second argument stops being the RAW `a.name`, which is `""`
+ *  for a photograph nobody has described and therefore named NOTHING in the dialog that destroys
+ *  it. A58.6e made cancelling the describe drawer a first-class path, so undescribed photographs
+ *  are ordinary now rather than a corner.
+ *
+ *  Consumes A58.6f, whose whole `replace` this `find` takes; every other field is carried forward
+ *  byte for byte through the shared pieces. SCRIPT-ONLY: the drawer paints nothing until it opens,
+ *  and the tile's own rendered name is unchanged by construction. */
+const A58_6h: Amendment = {
+  id: 'A58.6h', ...A58, date: '2026-09-24', ruling: RULING_NAMES, count: 1,
+  find: TILE_HEAD + TILE_CONTROLS_CONFIRMED + TILE_DESCRIBE_DRAWER + TILE_FALLBACK,
+  replace: TILE_HEAD_NAMED + TILE_CONTROLS_NAMED + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10414,5 +10455,8 @@ export function amendments(): Amendment[] {
     A58_6e,
     // Fix round (John's ruling of 2026-09-24): Remove asks first. A58.6f is CHAINED on
     // A58.6e, whose whole `replace` its own `find` takes, so it runs after it.
-    A58_6f];
+    A58_6f,
+    // Fix round 2 (review Important-2): the confirmation names the tile the seller is
+    // looking at. A58.6g consumes A58.6a and A58.6h consumes A58.6f, so both run last.
+    A58_6g, A58_6h];
 }

@@ -559,10 +559,11 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     // conversion lands, so NEITHER control is drawn here — on ANY tile, not merely the seeded
     // ones, because moving an asset past a seed entry moves the seed too.
     //
-    // The API does not hold this for reorder (`tests/api/test_listing_assets.py::
-    // test_reorder_accepts_a_seed_entry_and_leaves_its_positional_caption_behind` measures that
-    // through the real route), so THIS is where the ruling is enforced — and what it protects is
-    // the caption that was just written two lines above: a seed tile's own words live in
+    // The API holds this too since 2026-09-24 (`tests/api/test_listing_assets.py::
+    // test_reorder_refuses_a_seed_entry_rather_than_leaving_its_caption_behind`, which drives the
+    // real route and whose docstring records that it used to measure the opposite) — so this is
+    // defence in depth, and a control must not be DRAWN for what the API will refuse. What both
+    // halves protect is the caption written two lines above: a seed tile's own words live in
     // `listing.photo_captions[position]`, read positionally, and no reorder or delete rewrites
     // that column.
     // -----------------------------------------------------------------------------------

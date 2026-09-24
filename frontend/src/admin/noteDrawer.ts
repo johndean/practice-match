@@ -91,7 +91,10 @@ const SECONDARY_STYLE = 'font-family: var(--rf-display); height: 48px; padding: 
  * the reference never renders, so it carries no amendment.
  *
  * The `subtitle` is drawn only when the caller has one to name — an empty element is the thing
- * the design's own `sc-if` discipline exists to avoid.
+ * the design's own `sc-if` discipline exists to avoid, and the test is TRUTHINESS rather than
+ * `!== undefined` (fix round 2, Important-2) because `""` is a caller with nothing to name just as
+ * surely as an omitted one, and the design's own idiom is truthy: `sc-if value="{{ u.pill }}"`
+ * ports to `v-if="u?.pill"`. The sentence above was false for `""` until this said so.
  */
 function shell(config: { title: string; subtitle?: string }, bodyStyle: string): {
   scrim: HTMLElement; box: HTMLElement; closeButton: HTMLButtonElement; body: HTMLElement;
@@ -115,7 +118,7 @@ function shell(config: { title: string; subtitle?: string }, bodyStyle: string):
   title.setAttribute('style', TITLE_STYLE);
   title.textContent = config.title;
   heading.appendChild(title);
-  if (config.subtitle !== undefined) {
+  if (config.subtitle) {
     const subtitle = document.createElement('div');
     subtitle.setAttribute('style', SUBTITLE_STYLE);
     subtitle.textContent = config.subtitle;
@@ -270,6 +273,13 @@ export interface ConfirmDrawerConfig {
  * the close button, Escape, a click on the scrim outside the box — resolves FALSE, so nothing but
  * a deliberate press of the primary destroys anything.
  *
+ * AND THE SAFE ACTION IS THE ONE THAT TAKES FOCUS (fix round 2, Important-1), which the ruling
+ * reaches as surely as the layout does: a keyboard seller presses Enter on a tile's Remove button
+ * and keydown -> click -> this drawer opens inside ONE keystroke, so a focused PRIMARY would be
+ * sitting under the OS's own auto-repeat (~500 ms) and the photograph would be destroyed without
+ * the dialog having been read. `openNoteDrawer` focuses its field because a field is where that
+ * reviewer's work begins; here there is nothing to type and the thing to protect is the default.
+ *
  * It asks nothing, so it carries no field, no error slot and no busy state: the caller does the
  * work AFTER this resolves, and a refusal lands where that caller's own errors land (for the
  * step-6 tile, the wizard's own `wizErr` slot).
@@ -315,6 +325,6 @@ export function openConfirmDrawer(config: ConfirmDrawerConfig): Promise<boolean>
     document.addEventListener('keydown', onKeydown);
 
     document.body.appendChild(scrim);
-    confirmButton.focus();
+    cancelButton.focus();
   });
 }

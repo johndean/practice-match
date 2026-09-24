@@ -305,6 +305,17 @@ describe('openConfirmDrawer', () => {
     expect(cancelButton().getAttribute('style')).toContain('border: 1px solid var(--border-subtle)');
   });
 
+  it('focuses the SAFE action on open, never the destructive one (fix round 2, Important-1)', () => {
+    // A keyboard seller presses Enter on a tile's Remove button: keydown -> click -> this drawer
+    // opens, all inside ONE keystroke. If the destructive primary took focus, the OS's own
+    // auto-repeat (~500 ms) would fire a second keydown straight onto it and the photograph would
+    // be gone without the dialog ever having been read. John's ruling — "the SAFE action is the
+    // secondary button" — has to hold for the KEYBOARD and not only for the layout.
+    void openConfirmDrawer(confirm());
+    expect(document.activeElement).toBe(cancelButton());
+    expect(document.activeElement).not.toBe(submitButton('Remove'));
+  });
+
   it('resolves true only when the destructive button is pressed', async () => {
     const answered = openConfirmDrawer(confirm());
     submitButton('Remove').click();
@@ -330,6 +341,20 @@ describe('openConfirmDrawer', () => {
     const scrim = query('[role="dialog"]').parentElement!;
     scrim.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     expect(await answered).toBe(false);
+  });
+
+  it('an EMPTY subtitle draws no element either, not a blank line (fix round 2, Important-2)', () => {
+    // `shell()`'s own docstring says an empty element is the thing it exists to avoid, and `''`
+    // is not `undefined`, so the `!== undefined` test let one through. The design's own `sc-if`
+    // idiom is TRUTHINESS (`sc-if value="{{ u.pill }}"` becomes `v-if="u?.pill"`), which is what
+    // this now matches — defence in depth beside the caller fix, since a caller with nothing to
+    // name is a caller with nothing to name however it spells it.
+    openConfirmDrawer(confirm({ subtitle: '' })).catch(() => undefined);
+    // The heading is the header's own first child — title, then the subtitle when there is one.
+    // Selected explicitly rather than by `querySelector('div')`, which finds the HEADER and whose
+    // second child is the close button: that reads as a blank line and is not one.
+    const heading = query('[role="dialog"] > div > div');
+    expect([...heading.children].map((c) => c.textContent)).toEqual(['Remove this photograph']);
   });
 
   it('a caller with no subtitle draws no subtitle element here either', () => {

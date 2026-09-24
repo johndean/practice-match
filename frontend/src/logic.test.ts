@@ -2341,6 +2341,22 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       expect(c2.state.wizErr).toBe('');
     });
 
+    it('the confirmation names the tile the seller is looking at, described or not (fix round 2)', async () => {
+      // `photo_tiles` serves `"name": … or ""` for a photograph nobody has described, and A58.6e
+      // makes CANCELLING the describe drawer a first-class path — so three undescribed uploads
+      // gave three identical dialogs naming nothing. The drawer takes the tile's own DISPLAYED
+      // name (the design's own slot caption, or "Photo N"), which is the thing being destroyed.
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', id: 'as-1', source: 'asset', name: '' }] });
+      const [tile] = c2.wizardVals().uploads;
+      expect(tile.name, 'the tile itself falls back, so there IS a name to pass').not.toBe('');
+      record(draft());
+      const done = tile.remove();
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain(tile.name);
+      answerConfirm('Cancel');
+      await done;
+    });
+
     it('Remove deletes the tile\'s own asset once confirmed, and refreshes the tiles from the answer', async () => {
       const c2 = onStep(6);
       c2.setState({ wizAssets: [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })] });
