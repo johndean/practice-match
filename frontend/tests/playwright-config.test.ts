@@ -347,17 +347,24 @@ describe('listing-flows.spec.ts — the live seller lifecycle (A-SL27 (5))', () 
     expect(spec).toMatch(/\bguard\(page\)/);
   });
 
-  it('stands aside on exactly one condition — a LIVE target that answered 503 to the upload route — and only for the photograph', () => {
+  it('stands aside on exactly one condition — a LIVE target that answered 503 to the upload route — and only where a photograph is uploaded', () => {
     // Locally and in CI the api is `tests/e2e/api_under_test.py`, which holds an in-process moto
-    // bucket, so the photograph test runs for real and has nothing to skip on (A-SL28 (1)). A live
-    // target may have no bucket: the spec asks the upload route itself, out of band, and stands
-    // aside only on its 503 — quoting it (A-SL28 (2)). The lifecycle test — every wizard step
-    // against the real API — has no skip at all.
+    // bucket, so the tests that upload run for real and have nothing to skip on (A-SL28 (1)). A
+    // live target may have no bucket: each such test asks the upload route itself, out of band,
+    // and stands aside only on its 503 — quoting it (A-SL28 (2)). The lifecycle test — every
+    // wizard step against the real API — has no skip at all.
+    //
+    // TWO tests carry it since Task 7 (findings U1/U2) gave the cover-and-remove chain its own
+    // end-to-end gate, which uploads two photographs. That is still ONE condition, which is what
+    // this asserts: the set of skip conditions, not their count, and every one of them quoting
+    // the server's own answer.
     const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
     const skips = [...spec.matchAll(/test\.skip\(([^,]+),/g)].map((m) => m[1].trim());
-    expect(skips).toEqual(['probe.status() === 503']);
+    expect(skips.length, 'a spec with no skip at all would pass the set assertion below vacuously').toBeGreaterThan(0);
+    expect([...new Set(skips)]).toEqual(['probe.status() === 503']);
     expect(spec, 'the probe is made on a live target alone').toMatch(/if \(process\.env\.PW_APP_URL\) \{[\s\S]*?page\.request\.post\(`\/api\/seller\/listings\/\$\{id\}\/photos`/);
-    expect(spec, 'the reason quotes the answer').toContain('the live target answered 503 ${answer}');
+    expect(spec.split('the live target answered 503 ${answer}'),
+      'every one of them quotes the answer').toHaveLength(skips.length + 1);
     // No environment-derived gate remains: the four S3 names decide nothing in the spec.
     for (const name of ['S3_ENDPOINT_URL', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
       expect(spec).not.toContain(`process.env.${name}`);

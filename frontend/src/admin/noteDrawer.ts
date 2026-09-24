@@ -40,14 +40,22 @@ export interface NoteDrawerConfig {
   /** The drawer's own title — the action's own label ("Decline", "Request info", "Suspend"), so
    *  the drawer reads the same word as the button that opened it. */
   title: string;
-  /** Who the decision is about, under the title, the interest modal's own `modal.sub` idiom. */
-  subtitle: string;
+  /** Who the decision is about, under the title, the interest modal's own `modal.sub` idiom.
+   *  OPTIONAL (Task 7): a caller with nobody to name draws no element rather than an empty one,
+   *  which is the `sc-if` discipline every conditional line in the design already follows. */
+  subtitle?: string;
   /** The field's own label — the exact question `window.prompt` used to ask. */
   label: string;
   /** The primary button's own label. */
   submitLabel: string;
   /** The server's real bound (`admin/users.ts`'s `MAX_NOTE`), applied as the field's `maxlength`. */
   maxLength: number;
+  /** Whether a BLANK field may be submitted (Task 7, findings U1/U2). A decision's note is
+   *  mandatory, so the default is false and the primary button stays disabled until something is
+   *  typed. The step-6 tile's describe surface sets it: `caption_asset` treats blank and null as
+   *  one intent — "the seller is taking the description back" — so a blank there is an answer,
+   *  not a missing one. */
+  allowEmpty?: boolean;
   /** Attempts the decision with the CURRENT text. Resolving `{ ok: true }` closes the drawer;
    *  `{ ok: false, message }` shows `message` in the drawer's own error slot and keeps the text. */
   submit: (note: string) => Promise<NoteDrawerOutcome>;
@@ -78,6 +86,7 @@ const SECONDARY_STYLE = 'font-family: var(--rf-display); height: 48px; padding: 
 export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
   return new Promise((resolve) => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const blankIsAnAnswer = config.allowEmpty === true;
 
     const scrim = document.createElement('div');
     scrim.setAttribute('style', SCRIM_STYLE);
@@ -97,11 +106,13 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     const title = document.createElement('div');
     title.setAttribute('style', TITLE_STYLE);
     title.textContent = config.title;
-    const subtitle = document.createElement('div');
-    subtitle.setAttribute('style', SUBTITLE_STYLE);
-    subtitle.textContent = config.subtitle;
     heading.appendChild(title);
-    heading.appendChild(subtitle);
+    if (config.subtitle !== undefined) {
+      const subtitle = document.createElement('div');
+      subtitle.setAttribute('style', SUBTITLE_STYLE);
+      subtitle.textContent = config.subtitle;
+      heading.appendChild(subtitle);
+    }
     header.appendChild(heading);
 
     const closeButton = document.createElement('button');
@@ -146,7 +157,7 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     const submitButton = document.createElement('button');
     submitButton.setAttribute('style', PRIMARY_STYLE);
     submitButton.textContent = config.submitLabel;
-    submitButton.disabled = true;
+    submitButton.disabled = !blankIsAnAnswer;
     const cancelButton = document.createElement('button');
     cancelButton.setAttribute('style', SECONDARY_STYLE);
     cancelButton.textContent = 'Cancel';
@@ -154,6 +165,7 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     buttonRow.appendChild(cancelButton);
     body.appendChild(buttonRow);
 
+    const unanswered = (): boolean => !blankIsAnAnswer && textarea.value.trim() === '';
     let busy = false;
 
     const close = (): void => {
@@ -171,13 +183,13 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     const setBusy = (value: boolean): void => {
       busy = value;
       cancelButton.disabled = value;
-      submitButton.disabled = value || textarea.value.trim() === '';
+      submitButton.disabled = value || unanswered();
       textarea.disabled = value;
     };
 
     const attemptSubmit = (): void => {
       const note = textarea.value;
-      if (busy || note.trim() === '') return;
+      if (busy || unanswered()) return;
       setBusy(true);
       config.submit(note).then((outcome) => {
         if (outcome.ok) { close(); return; }
@@ -189,7 +201,7 @@ export function openNoteDrawer(config: NoteDrawerConfig): Promise<void> {
     };
 
     textarea.addEventListener('input', () => {
-      submitButton.disabled = textarea.value.trim() === '';
+      submitButton.disabled = unanswered();
     });
     submitButton.addEventListener('click', attemptSubmit);
     cancelButton.addEventListener('click', cancel);

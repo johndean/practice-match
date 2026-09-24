@@ -4,6 +4,7 @@ import { Component } from '../logic.js';
 import { designWizardDraft, designWizardTiles } from '../../tests/design-wizard-draft.mjs';
 import {
   ListingError,
+  MAX_CAPTION,
   MAX_PAGES,
   REQUIRED_NUMERIC,
   STEP_FIELDS,
@@ -390,11 +391,25 @@ describe('the adapter', () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ caption: 'Reception, looking in' });
   });
 
-  it('remove() deletes one asset and reads nothing back', async () => {
-    const calls = stubFetch({ status: 204, text: 'no content' });
-    await api().remove('a3f1', 'as-1');
+  it('remove() deletes one asset and answers the refreshed draft (Task 7)', async () => {
+    // Task 7 (findings U1/U2): the step-6 tile's own Remove button needs the tiles BACK, exactly
+    // as `caption` and `reorder` hand them back — `DELETE` answers 204 with no body, so the
+    // adapter re-reads the draft itself and the design gets ONE promise with ONE rejection arm
+    // (A-SL23 (4)'s `attach` shape) rather than a two-step chain in the ported script.
+    const calls = stubFetch(
+      { status: 204, text: 'no content' },
+      { status: 200, body: draft({ photos: [{ id: 'as-2', name: 'Lobby', source: 'asset' }] }) }
+    );
+    const back = await api().remove('a3f1', 'as-1');
     expect(calls[0].url).toBe('/api/seller/listings/a3f1/assets/as-1');
     expect(calls[0].init.method).toBe('DELETE');
+    expect(calls[1].url).toBe('/api/seller/listings/a3f1');
+    expect(calls[1].init.method).toBe('GET');
+    expect(back.assets).toEqual([{
+      kind: 'Photo', name: 'Lobby', id: 'as-2', source: 'asset', position: undefined,
+      src: undefined, variant: undefined, state: undefined, masks: undefined,
+      width: undefined, height: undefined
+    }]);
   });
 
   it('reorder() sends the full ordered list', async () => {
@@ -452,10 +467,43 @@ describe('the adapter', () => {
     vi.restoreAllMocks();
   });
 
-  it('describe() asks the seller what the photograph shows, and trims what they say', () => {
-    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('  Reception, looking in  ').mockReturnValueOnce(null));
-    expect(api().describe()).toBe('Reception, looking in');
-    expect(api().describe()).toBe('');
+  // Task 7 (finding U2): `window.prompt` is replaced by A54's own drawer — the same surface,
+  // composed from V3's own elements, that the admin note already uses. The question is unchanged
+  // (A-SL20's own words); what changes is that it is a real field, bounded to the server's own
+  // MAX_TEXT, on a surface that can show a refusal, and that CANCEL is now distinguishable from
+  // a deliberate blank. Blank still CLEARS, which is `caption_asset`'s own "blank and null are
+  // one intent"; cancel answers `null` and writes nothing at all, which the prompt could not say.
+  const drawerField = (): HTMLTextAreaElement => {
+    const el = document.querySelector('textarea');
+    if (el === null) throw new Error('the describe drawer is not open');
+    return el;
+  };
+  const drawerButton = (label: string): HTMLButtonElement => {
+    const found = [...document.querySelectorAll('button')].find((b) => b.textContent === label);
+    if (found === undefined) throw new Error(`no button labelled ${label}`);
+    return found;
+  };
+
+  it('describe() asks the seller what the photograph shows on A54\'s drawer, and trims what they say', async () => {
+    const answered = api().describe();
+    expect(document.querySelector('[role="dialog"]')?.textContent)
+      .toContain('What does this photograph show?');
+    expect(drawerField().maxLength).toBe(MAX_CAPTION);
+    drawerField().value = '  Reception, looking in  ';
+    drawerButton('Save description').click();
+    expect(await answered).toBe('Reception, looking in');
+  });
+
+  it('describe() answers the empty string for a blank the seller saved — the caption is taken back', async () => {
+    const answered = api().describe();
+    drawerButton('Save description').click();
+    expect(await answered).toBe('');
+  });
+
+  it('describe() answers null when the seller cancels, so nothing is written at all', async () => {
+    const answered = api().describe();
+    drawerButton('Cancel').click();
+    expect(await answered).toBeNull();
   });
 
   // SL7b, A-SL25 (10): describe(id, position, text) is the OTHER overload — the positional write
@@ -549,8 +597,11 @@ describe('the adapter', () => {
       { status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception, looking in', source: 'asset' }] }) }
     );
     pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
-    vi.stubGlobal('prompt', vi.fn().mockReturnValue('Reception, looking in'));
-    const answer = await api().attach('a3f1');
+    const pending = api().attach('a3f1');
+    await vi.waitFor(() => drawerField());
+    drawerField().value = 'Reception, looking in';
+    drawerButton('Save description').click();
+    const answer = await pending;
     expect(answer?.assets).toEqual([{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1', source: 'asset' }]);
     expect(calls.map((c) => c.url)).toEqual([
       '/api/seller/listings/a3f1/photos', '/api/seller/listings/a3f1/assets/as-1'
@@ -563,8 +614,6 @@ describe('the adapter', () => {
       { status: 201, body: { id: 'as-2', kind: 'other', name: 'Floor plan.pdf', content_type: 'application/pdf', byte_size: 9 } },
       { status: 200, body: draft({ documents: [{ id: 'as-2', kind: 'other', name: 'Floor plan.pdf', content_type: 'application/pdf', byte_size: 9, url: '/x' }] }) }
     );
-    const prompt = vi.fn();
-    vi.stubGlobal('prompt', prompt);
     pickReturns(new File([new Uint8Array([1])], 'Floor plan.pdf', { type: 'application/pdf' }));
     const answer = await api().attach('a3f1');
     expect(answer?.assets).toEqual([{ kind: 'PDF', name: 'Floor plan.pdf', id: 'as-2' }]);
@@ -572,7 +621,8 @@ describe('the adapter', () => {
       '/api/seller/listings/a3f1/documents', '/api/seller/listings/a3f1'
     ]);
     expect((calls[0].init.body as FormData).get('kind')).toBe('other');
-    expect(prompt, 'a document is not a photograph and has no caption to write').not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]'),
+      'a document is not a photograph and has no caption to write').toBeNull();
     vi.restoreAllMocks();
   });
 
@@ -592,8 +642,29 @@ describe('the adapter', () => {
       { status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many requests.' } } }
     );
     pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
-    vi.stubGlobal('prompt', vi.fn().mockReturnValue('Reception'));
-    await expect(api().attach('a3f1')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    const pending = api().attach('a3f1');
+    await vi.waitFor(() => drawerField());
+    drawerField().value = 'Reception';
+    drawerButton('Save description').click();
+    await expect(pending).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    vi.restoreAllMocks();
+  });
+
+  it('attach() leaves a cancelled description unwritten, rather than clearing it to blank (Task 7)', async () => {
+    // The dismissed `window.prompt` answered `null` and the old code sent `caption: ''` for it.
+    const calls = stubFetch(
+      { status: 201, body: { id: 'as-1', kind: 'photo', name: 'x.jpg', content_type: 'image/webp', byte_size: 9 } },
+      { status: 200, body: draft({ photos: [{ id: 'as-1', name: '', source: 'asset' }] }) }
+    );
+    pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
+    const pending = api().attach('a3f1');
+    await vi.waitFor(() => drawerField());
+    drawerButton('Cancel').click();
+    const answer = await pending;
+    expect(answer?.assets).toEqual([{ kind: 'Photo', name: '', id: 'as-1', source: 'asset' }]);
+    expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
+      'POST /api/seller/listings/a3f1/photos', 'GET /api/seller/listings/a3f1'
+    ]);
     vi.restoreAllMocks();
   });
 });

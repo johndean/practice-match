@@ -64,6 +64,19 @@ async function draftOf(page: Page, id: string): Promise<Record<string, unknown> 
   return page.evaluate((listingId) => fetch(`/api/seller/listings/${listingId}`, { credentials: 'same-origin' }).then((r) => r.json()), id);
 }
 
+/**
+ * The describe surface, since Task 7 (audit finding U2): A54's own drawer, not `window.prompt`.
+ * A `page.once('dialog', ...)` handler cannot drive it — it is real DOM composed from the interest
+ * modal's own elements — so the field is typed into and the primary button clicked, which is what
+ * a seller does. `Save description` is the drawer's own primary label for this caller.
+ */
+async function describeInDrawer(page: Page, text: string): Promise<void> {
+  const field = page.getByRole('dialog').locator('textarea');
+  await field.waitFor();
+  await field.fill(text);
+  await page.getByRole('button', { name: 'Save description', exact: true }).click();
+}
+
 /** Does `act`, which must make the wizard PATCH `step`, and requires that PATCH to be a 200 — the
  *  assertion three rounds never made — then reads the row back. */
 async function saved(page: Page, id: string, step: number, act: () => Promise<void>) {
@@ -336,7 +349,6 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await saved(page, id, 1, () => rail(page, 6).click());
     await onStep(page, 6);
 
-    page.once('dialog', (dialog) => { void dialog.accept(CAPTION); });
     const chooser = page.waitForEvent('filechooser');
     const uploaded = page.waitForResponse((r) => r.url().endsWith(`/api/seller/listings/${id}/photos`) && r.request().method() === 'POST');
     const captioned = page.waitForResponse((r) => r.url().includes(`/api/seller/listings/${id}/assets/`) && r.request().method() === 'PATCH');
@@ -344,6 +356,8 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await (await chooser).setFiles({ name: 'exterior.png', mimeType: 'image/png', buffer: photograph() });
     const uploadResponse = await uploaded;
     expect(uploadResponse.status(), `the upload: ${await uploadResponse.text()}`).toBe(201);
+    // "Add files" chains ask-then-write (A16.5), and the ask is the drawer now.
+    await describeInDrawer(page, CAPTION);
     const captionResponse = await captioned;
     expect(captionResponse.status(), `the caption PATCH: ${await captionResponse.text()}`).toBe(200);
     // A-IDP-P11 finding (2026-09-16): A20's step-6 tile now renders a loaded photograph through
@@ -364,6 +378,72 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await rail(page, 8).click();
     await expect(page.getByText('Preview — this is what an approved buyer sees')).toBeVisible();
     await expect(previewValue(page, 'Photos attached')).toHaveText('1');
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Task 7 (audit findings U1/U2, amendment A58.6): the two routes that had ZERO callers get one.
+  // The whole chain end to end, against the real API — design template -> tile field -> adapter ->
+  // route -> database — because "built and unreachable" is exactly the finding that a unit test on
+  // either side cannot close.
+  //
+  // `listing.photos[0]` IS the cover (`heroSrc`), so "Make this the cover photograph" is a reorder
+  // and the assertion is about the ARRAY, read back from the API rather than off the screen.
+  // -------------------------------------------------------------------------------------
+  test('a seller chooses the cover photograph and removes one, through the real routes', async ({ page }) => {
+    guard(page);
+    await signInAs(page, 'seller', '/seller');
+    expectApiStatus(page, 403);   // the seller's own `GET /api/requests`, D-C59 — the note above
+
+    const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
+    await button(page, 'Create a listing').click();
+    const id = ((await (await created).json()) as { id: string }).id;
+    await onStep(page, 1);
+
+    if (process.env.PW_APP_URL) {
+      const csrf = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
+      const probe = await page.request.post(`/api/seller/listings/${id}/photos`, { headers: { 'X-CSRF-Token': csrf!.value, Origin: appOrigin() } });
+      const answer = await probe.text();
+      test.skip(probe.status() === 503, `the live target answered 503 ${answer} — it has no object store, so the controls are proven where a bucket exists (A-SL28 (2))`);
+    }
+
+    await saved(page, id, 1, () => rail(page, 6).click());
+    await onStep(page, 6);
+
+    for (const caption of ['The front door', 'The reception desk']) {
+      const chooser = page.waitForEvent('filechooser');
+      const captioned = page.waitForResponse((r) => r.url().includes(`/api/seller/listings/${id}/assets/`) && r.request().method() === 'PATCH');
+      await button(page, 'Add files').click();
+      await (await chooser).setFiles({ name: 'p.png', mimeType: 'image/png', buffer: photograph() });
+      await describeInDrawer(page, caption);
+      expect((await captioned).status()).toBe(200);
+    }
+    const uploaded = await draftOf(page, id);
+    expect(uploaded.photos.map((p) => p.name)).toEqual(['The front door', 'The reception desk']);
+
+    // The FIRST tile says what position 1 already means, and offers no Make cover — it IS one.
+    const tiles = page.locator('div[style*="width: 92px"]');
+    await expect(tiles.first().getByText('Cover', { exact: true })).toBeVisible();
+    await expect(tiles.first().getByRole('button', { name: 'Make this the cover photograph' })).toHaveCount(0);
+
+    // REORDER: the second photograph becomes the cover, and `listing.photos` says so.
+    const reordered = page.waitForResponse((r) =>
+      r.url().endsWith(`/api/seller/listings/${id}/photos`) && r.request().method() === 'PATCH');
+    await tiles.nth(1).getByRole('button', { name: 'Make this the cover photograph' }).click();
+    expect((await reordered).status(), 'the reorder PATCH').toBe(200);
+    await expect(tiles.first().getByText('Cover', { exact: true })).toBeVisible();
+    expect((await draftOf(page, id)).photos.map((p) => p.name),
+      'the cover the seller chose is position 1 of `listing.photos`')
+      .toEqual(['The reception desk', 'The front door']);
+
+    // REMOVE: the cover goes, and the one behind it becomes the cover by the same rule.
+    const deleted = page.waitForResponse((r) =>
+      /\/assets\/[0-9a-f-]+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE');
+    await tiles.first().getByRole('button', { name: 'Remove this from the listing' }).click();
+    expect((await deleted).status(), 'the delete').toBe(204);
+    await expect(tiles).toHaveCount(1);
+    const after = await draftOf(page, id);
+    expect(after.photos.map((p) => p.name)).toEqual(['The front door']);
+    expect(after.assets).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------------------
@@ -439,10 +519,10 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     // rewritten, by an earlier run of this very test) caption.
     const tile = page.locator('div[style*="width: 92px"]').first();
     const NEW_CAPTION = 'Freshly repainted entrance, photographed this spring';
-    page.once('dialog', (dialog) => { void dialog.accept(NEW_CAPTION); });
     const described = page.waitForResponse((r) =>
       r.url().endsWith(`/api/seller/listings/${id}/photos/1`) && r.request().method() === 'PATCH');
     await tile.click();
+    await describeInDrawer(page, NEW_CAPTION);
     const describedResponse = await described;
     expect(describedResponse.status(), `the positional caption PATCH: ${await describedResponse.text()}`).toBe(200);
     await expect(page.getByText(NEW_CAPTION, { exact: true })).toBeVisible();
@@ -451,6 +531,26 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     expect(after.photos[0]).toMatchObject({ name: NEW_CAPTION, source: 'seed', position: 1 });
     // The claim (A-SL21): the row is the seller's own, source flipped, the moment they touch it.
     expect(after.status, 're-describing a photograph is an edit and re-enters review').toBe('in_review');
+
+    // -----------------------------------------------------------------------------------
+    // Task 7's OWN assertion on this same screen, and the one that matters most: ruling
+    // A-SL37/D-SL25 blocks reordering or deleting a SEEDED photograph until seed-to-asset
+    // conversion lands, so NEITHER control is drawn here — on ANY tile, not merely the seeded
+    // ones, because moving an asset past a seed entry moves the seed too.
+    //
+    // The API does not hold this for reorder (`tests/api/test_listing_assets.py::
+    // test_reorder_accepts_a_seed_entry_and_leaves_its_positional_caption_behind` measures that
+    // through the real route), so THIS is where the ruling is enforced — and what it protects is
+    // the caption that was just written two lines above: a seed tile's own words live in
+    // `listing.photo_captions[position]`, read positionally, and no reorder or delete rewrites
+    // that column.
+    // -----------------------------------------------------------------------------------
+    await expect(page.getByRole('button', { name: 'Make this the cover photograph' }),
+      'A-SL37: a listing carrying a seeded photograph offers no reorder').toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Remove this from the listing' }),
+      'A-SL37: a listing carrying a seeded photograph offers no delete').toHaveCount(0);
+    // Describing one is what the ruling explicitly KEEPS (SL7b's positional route), and the
+    // lines above have just done it, so the tile is still the click target it was.
   });
 
   // -------------------------------------------------------------------------------------

@@ -1293,7 +1293,8 @@
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <template v-for="(u, $index) in __arr(v.wiz?.uploads)" :key="$index">
-                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" @click="u?.describe">
+                            <div style="width: 92px;">
+                            <div style="cursor: pointer;" title="Change what this photograph shows" @click="u?.describe">
                               <template v-if="u?.hasSrc">
                                 <div style="height: 68px; border-radius: 8px; overflow: hidden;">
                                   <ImageSlot shape="rect" :src="u?.src" :placeholder="u?.name"></ImageSlot>
@@ -1303,7 +1304,21 @@
                                 <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;"><span v-if="__s(u?.kind) !== null" class="sc-interp">{{ __s(u?.kind) }}</span></div>
                               </template>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;"><span v-if="__s(u?.name) !== null" class="sc-interp">{{ __s(u?.name) }}</span></div>
+                              <template v-if="u?.cover"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;">Cover</span></template>
                               <template v-if="u?.pill"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;"><span v-if="__s(u?.pill) !== null" class="sc-interp">{{ __s(u?.pill) }}</span></span></template>
+                            </div>
+                            <template v-if="u?.canRemove">
+                              <div style="display: flex; gap: 6px; margin-top: 6px;">
+                                <template v-if="u?.canCover">
+                                  <button @click="u?.makeCover" title="Make this the cover photograph" style="flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);">
+                                    <img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="flex: none; opacity: .75;">
+                                  </button>
+                                </template>
+                                <button @click="u?.remove" title="Remove this from the listing" style="flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);">
+                                  <img src="/assets/icons/delete-x.svg" alt width="12" height="12" style="flex: none; opacity: .75;">
+                                </button>
+                              </div>
+                            </template>
                             </div>
                           </template>
                         </div>

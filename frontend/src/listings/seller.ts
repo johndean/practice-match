@@ -15,6 +15,7 @@
  * unwrapped from the A5 envelope `{"error": {"code", "message"}}`.
  */
 import { csrfToken } from '../auth/api';
+import { openNoteDrawer } from '../admin/noteDrawer';
 import stepFields from './step-fields.json';
 
 /** A refusal, carrying the code the server chose (`src/auth/api.ts`'s `AuthError`, same reason:
@@ -244,6 +245,16 @@ const PAGE_LIMIT = 200;
 export const MAX_PAGES = 20;
 
 /**
+ * The longest description the API will take for one photograph (Task 7, finding U2). It is
+ * `app/api/seller_listings.py`'s own `MAX_TEXT`, which `_text()` applies to every text field on
+ * this router, `caption` among them — read from ONE place rather than retyped, and pinned to it by
+ * equality in `tests/test_docs.py`, A54's own `MAX_NOTE` mechanism. Applied as the describe
+ * drawer's real HTML `maxlength`, so the browser refuses the keystroke that would cross it rather
+ * than the seller discovering the bound only from a `caption is too long.` 400.
+ */
+export const MAX_CAPTION = 4000;
+
+/**
  * `logic.js`'s own `money()` (logic.js:251), ported value for value.
  *
  * A port rather than an import: `money` is a method on the prototype's `Component` and this
@@ -420,16 +431,28 @@ export interface ListingsAdapter {
   document(id: string, file: File, kind?: string): Promise<ApiAsset>;
   caption(id: string, assetId: string, text: string): Promise<WizardDraft>;
   /**
-   * Overloaded rather than two names (SL7b, A-SL25 (10)): the ZERO-ARG form is the browser's own
-   * prompt (unchanged from SL7's `attach()`), and the THREE-ARG form is the positional caption
-   * write for a SEED photograph — a path in `listing.photos`, not an asset id, so `caption()` has
-   * nothing to match one against. The step-6 tile's click handler chains them exactly as "Add
-   * files" chains ask-then-write (A16.5): `describe(id, position, describe())`.
+   * Overloaded rather than two names (SL7b, A-SL25 (10)): the ZERO-ARG form ASKS the seller what
+   * the photograph shows, and the THREE-ARG form is the positional caption write for a SEED
+   * photograph — a path in `listing.photos`, not an asset id, so `caption()` has nothing to match
+   * one against. The step-6 tile's click handler chains them exactly as "Add files" chains
+   * ask-then-write (A16.5): `describe(id, position, await describe())`.
+   *
+   * The ASK is A54's own drawer since Task 7 (finding U2), not `window.prompt`, so it ANSWERS A
+   * PROMISE — and answers `null` for a cancel, which the prompt could not distinguish from a
+   * deliberate blank: a blank the seller SAVES is the empty string and clears the caption, which
+   * is `caption_asset`'s own "blank and null are one intent … the seller is taking the
+   * description back", while a cancel writes nothing at all.
    */
-  describe(): string;
+  describe(): Promise<string | null>;
   describe(id: string, position: number, text: string): Promise<WizardDraft>;
   attach(id: string): Promise<WizardDraft | null>;
-  remove(id: string, assetId: string): Promise<void>;
+  /**
+   * One photograph or document, gone, and the tiles the step-6 grid redraws from (Task 7,
+   * findings U1/U2). `DELETE` answers 204 with no body, so the draft is RE-READ here rather than
+   * in the ported script: the design gets ONE promise with ONE rejection arm covering both legs,
+   * which is `attach`'s own shape and the reason A-SL23 (4) gave for it.
+   */
+  remove(id: string, assetId: string): Promise<WizardDraft>;
   reorder(id: string, ids: string[]): Promise<WizardDraft>;
   submit(id: string): Promise<WizardDraft>;
   setStatus(id: string, action: StatusAction): Promise<WizardDraft>;
@@ -449,21 +472,47 @@ const DOCUMENT_TYPES = ['application/pdf', 'text/csv',
 const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', ...DOCUMENT_TYPES].join(',');
 
 /**
+ * The seller's own words for one photograph, asked for on A54's drawer (Task 7, finding U2).
+ *
+ * `window.prompt` was the whole of step 6's photo management: one line, no bound, no error
+ * surface, and — the reason this is not merely nicer — NO WAY TO SAY "cancel". A dismissed prompt
+ * answers `null`, the old code read that as `''`, and `''` CLEARS the caption, so a seller who
+ * opened the prompt by mistake and pressed Escape silently erased their own description. The
+ * drawer separates the two: Cancel answers `null` and writes nothing, Save with a blank field
+ * answers `''` and clears, which is `caption_asset`'s own "blank and null are one intent".
+ *
+ * The QUESTION is unchanged — A-SL20's own words — and the drawer's title is the design's own
+ * words for this action, the step-6 tile's own `title` attribute. `allowEmpty` is what lets the
+ * blank through; `MAX_CAPTION` is the server's own bound, applied as the field's real `maxlength`.
+ */
+function askWhatItShows(): Promise<string | null> {
+  let answer: string | null = null;
+  return openNoteDrawer({
+    title: 'Change what this photograph shows',
+    label: 'What does this photograph show?',
+    submitLabel: 'Save description',
+    maxLength: MAX_CAPTION,
+    allowEmpty: true,
+    submit: (note) => { answer = note.trim(); return Promise.resolve({ ok: true }); }
+  }).then(() => answer);
+}
+
+/**
  * The two jobs `ListingsAdapter#describe` names, as ONE function (SL7b, A-SL25 (10)) rather than
  * two, so the click-to-caption handler can chain them exactly as "Add files" chains ask-then-write
- * (A16.5): `describe(id, position, describe())`.
+ * (A16.5): `describe(id, position, await describe())`.
  *
- * ZERO args: "have the user articulate what it is" (A-SL20), through the browser's own prompt, for
- * the same reason `pick()` uses the browser's own file dialog — unchanged from SL7's upload flow.
+ * ZERO args: "have the user articulate what it is" (A-SL20), through A54's own drawer since
+ * Task 7 — `askWhatItShows` above says why, and why it answers a promise.
  *
  * THREE args: the positional caption write for a SEED photograph — `listing.photos[position]` is
  * a path, not an asset id, so `caption()` has nothing to match it against. Same shape as `caption`:
  * `PATCH .../photos/{position}`, `{ caption: text }`, the refreshed draft back.
  */
-function describe(): string;
+function describe(): Promise<string | null>;
 function describe(id: string, position: number, text: string): Promise<WizardDraft>;
-function describe(id?: string, position?: number, text?: string): string | Promise<WizardDraft> {
-  if (id === undefined) return window.prompt('What does this photograph show?')?.trim() ?? '';
+function describe(id?: string, position?: number, text?: string): Promise<string | null | WizardDraft> {
+  if (id === undefined) return askWhatItShows();
   return json<Draft>('PATCH', `/listings/${id}/photos/${position}`, { caption: text }).then(toWizardDraft);
 }
 
@@ -532,7 +581,10 @@ export function makeListingsAdapter(): ListingsAdapter {
     document: (id, file, kind = 'other') => upload(`/listings/${id}/documents`, file, { kind }),
     caption: async (id, assetId, text) =>
       toWizardDraft(await json<Draft>('PATCH', `/listings/${id}/assets/${assetId}`, { caption: text })),
-    remove: async (id, assetId) => { await send('DELETE', `/listings/${id}/assets/${assetId}`); },
+    remove: async (id, assetId) => {
+      await send('DELETE', `/listings/${id}/assets/${assetId}`);
+      return adapter.get(id);
+    },
     reorder: async (id, ids) => toWizardDraft(await json<Draft>('PATCH', `/listings/${id}/photos`, { ids })),
     submit: async (id) => toWizardDraft(await json<Draft>('POST', `/listings/${id}/submit`)),
     setStatus: async (id, action) => {
@@ -583,7 +635,13 @@ export function makeListingsAdapter(): ListingsAdapter {
         return adapter.get(id);
       }
       const asset = await adapter.upload(id, file);
-      return adapter.caption(id, asset.id, adapter.describe());
+      // Task 7 (finding U2): the ask is a real surface now, so it can be CANCELLED. A cancelled
+      // ask leaves the photograph exactly as it was uploaded — undescribed — rather than writing
+      // the empty caption the dismissed prompt used to send; the draft is re-read either way, so
+      // the new tile appears on both paths and this is still ONE promise with ONE rejection arm
+      // (A-SL23 (4)).
+      const said = await adapter.describe();
+      return said === null ? adapter.get(id) : adapter.caption(id, asset.id, said);
     }
   };
   return adapter;

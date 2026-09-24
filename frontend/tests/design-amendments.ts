@@ -9908,6 +9908,139 @@ const A58_5c: Amendment = {
   count: 1
 };
 
+const RULING_U1 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on findings U1 and U2 of the eight-step audit — a complete photo-management backend has existed since the seller lifecycle shipped (`reorder_photos` and `delete_asset`, row-locked, permutation-checked, rate-limited, audited and tested) with ZERO callers, and step 6 offered exactly ONE action per photograph, a `window.prompt`. A seller could not delete a photograph they had uploaded by mistake and could not choose which one a buyer sees first. THERE IS NO COVER COLUMN AND THERE NEVER WAS: `listing.photos` is an ordered jsonb array whose migration says there is deliberately no position column because "two homes for one fact is how orders drift" (`migrations/031_listing_asset.sql`), and the design reads `heroSrc(p) = p.photos[0]`. Position 1 IS the cover, so the tile at position 1 is LABELLED as what it already is and "Make this the cover photograph" moves a photograph to the front of that one array. BOTH CONTROLS ARE WITHHELD FROM THE WHOLE LISTING while ANY photograph on it is a SEED entry — ruling A-SL37/D-SL25 (John, 2026-09-10: "Keep seeded photographs as seeded until the Admin & seller controls stage. Do NOT materialise them now"), and the same gate is what keeps the audit’s latent caption defect latent: a seed tile’s own words live in `listing.photo_captions[position]`, read POSITIONALLY, and neither route rewrites that column, so a reorder that moved a seed entry — or a delete that shifted one — would put another photograph’s description under it. An asset’s caption travels with its id and is safe either way.';
+
+/** A58.6a — THE LISTING'S OWN PHOTOGRAPHS, COUNTED ONCE (findings U1/U2). Three consts beside the
+ *  design's own `slots`, so the tile map below can ask two questions without asking them per tile:
+ *  which of `wizAssets` are photographs, whether EVERY one of them is the seller's own asset, and
+ *  the ordered id list `reorder_photos` demands in full (it refuses a partial one, because "a
+ *  partial list would silently DELETE photographs").
+ *
+ *  `ownPhotos` IS THE A-SL37 GATE and the M6 gate at once, and it is deliberately a property of
+ *  the LISTING rather than of the tile: moving an asset past a seed entry moves the SEED too, and
+ *  deleting an asset that sits before one shifts it, so a per-tile test would leave both defects
+ *  reachable from the tile next door. `wizPhotos.length > 0` keeps it FALSE for a listing with no
+ *  photographs at all, which is the fail-closed direction.
+ *
+ *  UNCHAINED: `const slots = this.photoSet(...)` is pristine text no amendment has touched. */
+const A58_6a: Amendment = {
+  id: 'A58.6a', ...A58, ruling: RULING_U1, count: 1,
+  find: '    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });',
+  replace: '    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });\n'
+    + '    const wizPhotos = (s.wizAssets || []).filter((a) => a.kind === "Photo");\n'
+    + '    const ownPhotos = wizPhotos.length > 0 && wizPhotos.filter((a) => a.source !== "asset").length === 0;\n'
+    + '    const photoIds = wizPhotos.map((a) => a.id);'
+};
+
+/** A58.6b — THE STEP-6 TILE GAINS REMOVE AND MAKE COVER (findings U1/U2). Five fields, in the
+ *  order the tile renders them: `cover` (the first PHOTOGRAPH tile, the one `heroSrc` reads),
+ *  `canRemove`/`canCover` (what is DRAWN) and `remove`/`makeCover` (what is CALLED).
+ *
+ *  THE TWO ARE SEPARATED ON PURPOSE. What is drawn is keyed on the DATA alone, never on adapter
+ *  presence, because the reference receives no adapter and a control that renders on one target
+ *  and not the other is a pixel the oracle can never reconcile (A40.1/A40.2's own held lesson).
+ *  What is CALLED is keyed on `s.editingId` exactly as A16.21's `describe` already is, so the
+ *  reference's own tile carries an inert control precisely as its click target is inert today.
+ *
+ *  A DOCUMENT KEEPS ITS REMOVE whatever the photographs are: `delete_asset` rewrites
+ *  `listing.photos` for `kind = 'photo'` only, so removing a document cannot shift a seed entry's
+ *  positional caption, and it is never a cover.
+ *
+ *  `makeCover` sends the FULL ordered list with this photograph first — the route refuses a
+ *  partial one — and documents are excluded because they are not in `listing.photos` at all.
+ *  "That could not be removed." is the design's own error sentence one verb over ("That could not
+ *  be saved.", "That file could not be uploaded.", "That could not be submitted."), landing in the
+ *  design's own `wizErr` slot.
+ *
+ *  Consumes A20.4: this `find` is that entry's whole two-line `replace`, the fallback branch
+ *  carried forward byte for byte, so the no-adapter path keeps every pixel. */
+/** The step-6 tile map, in the pieces two entries of this family rewrite between them
+ *  (A48.5/A48.6's own idiom: a string two rows share is DECLARED once and interpolated,
+ *  never typed twice). `TILE_HEAD` + `TILE_DESCRIBE_PROMPT` + `TILE_FALLBACK` is A20.4's own
+ *  `replace` byte for byte, which is what makes A58.6b's `find` that entry's whole output. */
+const TILE_HEAD = '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), '
+  + 'src: a.src || null, hasSrc: !!a.src, noSrc: !a.src, state: a.state || "processing", '
+  + 'pill: ({ processing: "Processing…", review: "Review", confirmed: "Confirmed", failed: "Failed" })[a.state || "processing"], '
+  + 'open: this.openPhotoReview && this.openPhotoReview(a.id), ';
+const TILE_CONTROLS = 'cover: a.kind === "Photo" && i === 0, canRemove: a.kind !== "Photo" || ownPhotos, canCover: a.kind === "Photo" && ownPhotos && i > 0, '
+  + 'remove: (a.kind === "Photo" && !ownPhotos) || !s.editingId ? null : () => this.props.listings.remove(s.editingId, a.id).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be removed." })), '
+  + 'makeCover: a.kind !== "Photo" || !ownPhotos || i === 0 || !s.editingId ? null : () => this.props.listings.reorder(s.editingId, [a.id].concat(photoIds.filter((x) => x !== a.id))).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })), ';
+const TILE_DESCRIBE_PROMPT = 'describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))';
+const TILE_DESCRIBE_DRAWER = 'describe: a.kind !== "Photo" || !s.editingId ? null : () => this.props.listings.describe().then((t) => (t === null ? null : (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, t) : this.props.listings.describe(s.editingId, a.position, t)))).then((d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))';
+const TILE_FALLBACK = '\n      : [{ kind: "Photo", name: "Exterior.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Lobby.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "Photo", name: "Treatment.jpg", src: null, hasSrc: false, noSrc: true }, { kind: "PDF", name: "Floor plan.pdf", src: null, hasSrc: false, noSrc: true }].slice(0, 3 + (w.photos || 0));';
+
+const A58_6b: Amendment = {
+  id: 'A58.6b', ...A58, ruling: RULING_U1, count: 1,
+  find: TILE_HEAD + TILE_DESCRIBE_PROMPT + TILE_FALLBACK,
+  replace: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_PROMPT + TILE_FALLBACK
+};
+
+/** A58.6c — THE CLICK TARGET STOPS BEING THE WHOLE TILE (findings U1/U2). The tile's own 92 px
+ *  box carried `cursor: pointer` and `onClick="{{ u.describe }}"` on the OUTER element, so a
+ *  button placed anywhere inside it would open the describe surface on the way up. The box keeps
+ *  its width and becomes a plain wrapper; the photograph, the name and the pills keep every
+ *  declaration they had and move inside an inner element that carries the cursor, the title and
+ *  the handler. Nothing else changes and the wrapper adds no pixel: a block element inside a
+ *  92 px box is 92 px wide.
+ *
+ *  Consumes A16.22: that entry is what put `onClick="{{ u.describe }}"` on this element in the
+ *  first place (SL7b's click-to-recaption wiring), and this `find` takes its whole line. A20.5 and
+ *  A20.6 edit the tile's CHILDREN and are untouched. */
+const A58_6c: Amendment = {
+  id: 'A58.6c', ...A58, ruling: RULING_U1, count: 1,
+  find: '                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" onClick="{{ u.describe }}">',
+  replace: '                            <div style="width: 92px;">\n'
+    + '                            <div style="cursor: pointer;" title="Change what this photograph shows" onClick="{{ u.describe }}">'
+};
+
+/** A58.6d — THE COVER LABEL AND THE TWO CONTROLS (findings U1/U2). Composed from V3's own
+ *  elements and nothing else:
+ *    * the COVER label is the tile's own state pill, declaration for declaration (A20.6's
+ *      `#f5f5f5` lozenge), reading the one word the position already means;
+ *    * each button is the INTEREST MODAL's own 30 px close button, verbatim — same tag, same
+ *      style string, same 12 px icon at `opacity: .75`;
+ *    * the glyphs are the bundle's own `navigate-arrow.svg`, which points LEFT unrotated (A18) and
+ *      is therefore the direction "move to the front" travels, and `delete-x.svg`, the glyph that
+ *      same close button already carries.
+ *  TWO controls and not three, and the reason is MEASURED: three 30 px buttons with the row's own
+ *  6 px gaps are 102 px inside a 92 px tile. "Make this the cover photograph" is the reorder that
+ *  matters — it is the one the ordering exists to express — and repeated use of it reaches any
+ *  arrangement, so nothing is unreachable. A per-step "move left/move right" pair is a COMPOSITION
+ *  ITEM for the seller-control spec, named here rather than invented.
+ *
+ *  The row is gated on `u.canRemove`, which `u.canCover` implies, so a tile with nothing to offer
+ *  draws no empty row (A39.3a's own reason for the badge pill). Both `title` attributes are the
+ *  only new copy in this family, and each names exactly what its button does.
+ *
+ *  UNCHAINED — nothing is consumed: A20.6's own pill line is re-emitted byte for byte and the
+ *  `</div>` that closes the tile is pristine. */
+const A58_6d: Amendment = {
+  id: 'A58.6d', ...A58, ruling: RULING_U1, count: 1,
+  find: '                              <sc-if value="{{ u.pill }}" hint-placeholder-val="{{ false }}"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;">{{ u.pill }}</span></sc-if>\n                            </div>',
+  replace: '                              <sc-if value="{{ u.cover }}" hint-placeholder-val="{{ false }}"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;">Cover</span></sc-if>\n                              <sc-if value="{{ u.pill }}" hint-placeholder-val="{{ false }}"><span style="display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px; color: #494949; background: #f5f5f5; border: 1px solid #d4dde5;">{{ u.pill }}</span></sc-if>\n                            </div>\n                            <sc-if value="{{ u.canRemove }}" hint-placeholder-val="{{ false }}">\n                              <div style="display: flex; gap: 6px; margin-top: 6px;">\n                                <sc-if value="{{ u.canCover }}" hint-placeholder-val="{{ false }}">\n                                  <button onClick="{{ u.makeCover }}" title="Make this the cover photograph" style="flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);">\n                                    <img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="flex: none; opacity: .75;">\n                                  </button>\n                                </sc-if>\n                                <button onClick="{{ u.remove }}" title="Remove this from the listing" style="flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);">\n                                  <img src="assets/icons/delete-x.svg" alt="" width="12" height="12" style="flex: none; opacity: .75;">\n                                </button>\n                              </div>\n                            </sc-if>\n                            </div>'
+};
+
+const RULING_U2 = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on finding U2 of the eight-step audit — step 6 offered exactly ONE action per photograph and it was a `window.prompt`. The ask moves to the drawer ruling D-C60 already composed from V3’s own elements (`frontend/src/admin/noteDrawer.ts`, app-only and carrying no amendment of its own), so the question is asked on a real field bounded to the server’s own limit, on a surface that can show a refusal. THE DEFECT THE PROMPT CARRIED, and the reason this is not merely nicer: a dismissed prompt answers `null`, the adapter read `null` as `""`, and `""` CLEARS the caption (`caption_asset`: "blank and null are one intent … the seller is taking the description back") — so a seller who opened the prompt by mistake and pressed Escape silently erased their own words. Cancel now writes nothing at all, and a blank the seller deliberately SAVES still clears.';
+
+/** A58.6e — THE DESCRIBE SURFACE IS A REAL FIELD (finding U2). The handler's shape is unchanged
+ *  — same routing by the tile's own `source`, same one chained promise, same single rejection arm
+ *  into `wizErr` — and two things are new. The ask is AWAITED, because the adapter's `describe()`
+ *  now answers a promise; and `null` from that promise means CANCEL, which short-circuits to `null`
+ *  and writes nothing, so the `.then` below draws on `d` being present exactly as `addPhoto`'s own
+ *  `(d) => (d ? this.setState(...) : null)` already does for a dismissed file dialog. A blank the
+ *  seller SAVED is the empty string, not null, so it still reaches the route and still clears the
+ *  caption.
+ *
+ *  Consumes A58.6b: this `find` is that entry's whole `replace`, the tile's five control fields
+ *  carried forward byte for byte through the shared `TILE_HEAD`/`TILE_CONTROLS`/`TILE_FALLBACK`
+ *  pieces, so only the `describe:` field differs between the two. SCRIPT-ONLY and it paints
+ *  nothing: `describe` is a handler, `null` on the reference either way. */
+const A58_6e: Amendment = {
+  id: 'A58.6e', ...A58, ruling: RULING_U2, count: 1,
+  find: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_PROMPT + TILE_FALLBACK,
+  replace: TILE_HEAD + TILE_CONTROLS + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10245,5 +10378,11 @@ export function amendments(): Amendment[] {
     // anchored at the HEAD of the two `w` literals while A20.1/A20.2 edit their tails, and
     // A58.5c's whole line is untouched -- so none of them is chained and their position here is
     // the family's own order rather than a dependency.
-    A58_5a, A58_5b, A58_5c];
+    A58_5a, A58_5b, A58_5c,
+    // Task 7 (findings U1/U2, 2026-09-24): the step-6 tile removes a file and chooses the
+    // cover. A58.6b is CHAINED on A20.4, whose whole two-line `replace` its own `find` takes,
+    // so it must run after that family; the other three take pristine text.
+    A58_6a, A58_6b, A58_6c, A58_6d,
+    // A58.6e is CHAINED on A58.6b, whose whole `replace` its own `find` takes, so it runs last.
+    A58_6e];
 }

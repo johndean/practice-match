@@ -1228,6 +1228,25 @@ def test_the_admin_users_note_bound_matches_the_api():
     assert _users_ts_literal("MAX_NOTE") == MAX_NOTE
 
 
+def test_the_describe_drawers_caption_bound_matches_the_api():
+    """Task 7 (audit finding U2): step 6's describe surface is a real field now, not a
+    `window.prompt`, and it bounds what the seller may type against the server's OWN limit rather
+    than a number retyped beside it — `frontend/src/listings/seller.ts`'s `MAX_CAPTION`, applied as
+    the drawer's HTML `maxlength`, against `app/api/seller_listings.MAX_TEXT`, which `_text()`
+    applies to `caption` as it does to every other text field on that router. A54's own `MAX_NOTE`
+    mechanism, one file over: without it a server-side change would leave the field claiming a
+    limit that is no longer real and the seller meeting `caption is too long.` at the 400."""
+    from app.api.seller_listings import MAX_TEXT
+
+    source = (ROOT / "frontend" / "src" / "listings" / "seller.ts").read_text()
+    match = re.search(r"^export const MAX_CAPTION(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        "frontend/src/listings/seller.ts: MAX_CAPTION is not a single-line exported literal, so "
+        "this cross-language pin cannot read it."
+    )
+    assert json.loads(match.group(1)) == MAX_TEXT
+
+
 def _listings_ts_literal(name: str) -> object:
     """One of the three exported JSON literals in `frontend/src/admin/listings.ts` — the same
     single-line-double-quoted-JSON convention `_users_ts_literal` reads, applied to Task SL8's

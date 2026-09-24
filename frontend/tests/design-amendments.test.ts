@@ -556,6 +556,10 @@ describe('local design amendments (spec D15)', () => {
     // at their HEADS where A20.1/A20.2 edit their tails, and A58.5c is step 2's own fields array
     // — all three on pristine text, so none is chained.
     'A58.5a', 'A58.5b', 'A58.5c',
+    // Task 7 (findings U1/U2, 2026-09-24): the step-6 tile removes a file and chooses the cover.
+    // A58.6b is chained on A20.4 (its `find` is that entry's whole two-line `replace`); the other
+    // three take pristine text.
+    'A58.6a', 'A58.6b', 'A58.6c', 'A58.6d', 'A58.6e',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -768,7 +772,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(449);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(454);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

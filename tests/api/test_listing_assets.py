@@ -413,6 +413,65 @@ async def test_reorder_refuses_a_list_that_is_not_exactly_this_listings_photos(
     assert _photos(conn, listing_id) == ids
 
 
+async def test_reorder_accepts_a_seed_entry_and_leaves_its_positional_caption_behind(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """CHARACTERISATION, written for Task 7 (audit findings U1/U2) and asserting the behaviour as
+    it IS, not as it should be — so that the client-side gate that stands in front of it cannot be
+    removed without this failing to explain why it was there.
+
+    Ruling A-SL37/D-SL25 (John, 2026-09-10) blocks reordering or deleting a SEEDED photograph until
+    seed-to-asset conversion lands. `delete_asset` enforces that by construction — its path segment
+    is parsed as a uuid and a seed entry is a `<slug>/<file>` path, so a delete of one is a 404 —
+    but `reorder_photos` does NOT: the permutation is checked against the non-null entries of
+    `listing.photos` WHOLESALE, seed paths included, so a client that sends them in a new order is
+    obeyed.
+
+    What that costs is the second half of this test. A seed tile's own words live in
+    `listing.photo_captions[position]`, read POSITIONALLY (`migrations/090`, `photo_tiles`), and
+    `reorder_photos` rewrites `photos` alone — so after a reorder the photograph at position 1
+    carries the description written for the one that used to be there. THE UI IS THE ONLY THING
+    PREVENTING THIS: amendment A58.6 withholds both controls from the whole listing while ANY
+    photograph on it is a seed entry, for exactly this reason.
+    """
+    account_id, cookies, headers = _seller(member, email="sl4-seed-reorder@example.org")
+    photos = [f"abc_animal_hospital/{n}.webp" for n in (1, 2)]
+    listing_id = _seed_listing(conn, photos)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET seller_id=%s, photo_captions=%s::jsonb WHERE id=%s",
+                    (account_id, json.dumps(["The front door", "The reception desk"]), listing_id))
+    signed = auth_headers(cookies, headers)
+
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                  json={"ids": list(reversed(photos))}, headers=signed)
+
+    # NOT refused. The ruling is honoured by the client, and by nothing here.
+    assert response.status_code == 200, response.text
+    assert _photos(conn, listing_id) == list(reversed(photos))
+    # And the captions did not travel: photograph 2 is now first and reads photograph 1's words.
+    assert [tile["name"] for tile in response.json()["photos"]] == ["The front door", "The reception desk"]
+    assert [tile["id"] for tile in response.json()["photos"]] == list(reversed(photos))
+
+
+async def test_delete_of_a_seed_entry_is_a_404_because_it_is_a_path_and_not_an_asset_id(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The other half of ruling A-SL37/D-SL25, and this one the API really does hold: a seed entry
+    is a `<slug>/<file>` path, `_asset_uuid` cannot parse one, and the route answers the 404 that
+    segment names. Nothing is removed from `listing.photos`."""
+    account_id, cookies, headers = _seller(member, email="sl4-seed-delete@example.org")
+    photos = ["abc_animal_hospital/1.webp"]
+    listing_id = _seed_listing(conn, photos)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
+
+    refused = await client.delete(f"/api/seller/listings/{listing_id}/assets/{photos[0]}",
+                                  headers=auth_headers(cookies, headers))
+
+    assert refused.status_code == 404, refused.text
+    assert _photos(conn, listing_id) == photos
+
+
 @pytest.mark.parametrize("body", [["a", "b"], {"ids": "abc"}, {"ids": [1, 2]}, {}])
 async def test_reorder_refuses_a_body_that_is_not_a_list_of_ids(
     client: Any, conn: Any, redis: Any, member: Any, store: Any, body: Any

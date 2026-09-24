@@ -2213,40 +2213,67 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
   // the positional route for a seed entry. Photographs only; a document tile has no handler.
   // ---------------------------------------------------------------------------------------
   describe('the step-6 tile re-describes an existing photograph on click (A-SL25 (10), A16.21/A16.22)', () => {
+    // Task 7 (finding U2, A58.6e): the ask is A54's drawer now, not `window.prompt`. The write
+    // and its routing are unchanged; what is new is that a CANCEL is distinguishable from a
+    // deliberate blank, and writes nothing at all.
+    const answerDrawer = (text: string): void => {
+      const field = document.querySelector('textarea');
+      if (field === null) throw new Error('the describe drawer is not open');
+      field.value = text;
+      const save = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Save description');
+      if (save === undefined) throw new Error('the describe drawer has no Save description button');
+      save.click();
+    };
+
     it('an asset-backed tile\'s describe writes through caption(), and refreshes the tiles (A16.21)', async () => {
       const c2 = onStep(6);
       c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
       const sent = record(draft({ photos: [{ id: 'as-1', name: 'The lobby', source: 'asset' }] }));
-      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The lobby'));
-      await c2.wizardVals().uploads[0].describe();
+      const done = c2.wizardVals().uploads[0].describe();
+      answerDrawer('The lobby');
+      await done;
       expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/assets/as-1']]);
       expect(sent[0].body).toEqual({ caption: 'The lobby' });
       expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'as-1', name: 'The lobby', source: 'asset' }]);
       expect(c2.state.wizErr).toBe('');
-      vi.unstubAllGlobals();
     });
 
     it('a seed-backed tile\'s describe writes through the positional route, by its own position (A16.21)', async () => {
       const c2 = onStep(6);
       c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Exterior — front', id: 'a/3.webp', source: 'seed', position: 3 }] });
       const sent = record(draft({ photos: [{ id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }] }));
-      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The exam room'));
-      await c2.wizardVals().uploads[0].describe();
+      const done = c2.wizardVals().uploads[0].describe();
+      answerDrawer('The exam room');
+      await done;
       expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/photos/3']]);
       expect(sent[0].body).toEqual({ caption: 'The exam room' });
       expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }]);
-      vi.unstubAllGlobals();
     });
 
     it('a refused re-caption sets wizErr and leaves the tiles as they were (A16.21)', async () => {
       const c2 = onStep(6);
       c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
       record({ error: { code: 'BAD_REQUEST', message: 'caption is too long.' } }, 400);
-      vi.stubGlobal('prompt', vi.fn().mockReturnValue('x'));
-      await c2.wizardVals().uploads[0].describe();
+      const done = c2.wizardVals().uploads[0].describe();
+      answerDrawer('x');
+      await done;
       expect(c2.state.wizErr).toBe('caption is too long.');
       expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }]);
-      vi.unstubAllGlobals();
+    });
+
+    it('a CANCELLED describe writes nothing and leaves the caption alone (Task 7, A58.6e)', async () => {
+      // `window.prompt` answered `null` for a dismissal and the old adapter read that as `''`,
+      // which CLEARS the caption — so Escape used to erase the seller's own words in silence.
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
+      const sent = record(draft());
+      const done = c2.wizardVals().uploads[0].describe();
+      const cancel = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel');
+      cancel!.click();
+      await done;
+      expect(sent).toEqual([]);
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }]);
+      expect(c2.state.wizErr).toBe('');
     });
 
     it('a document tile has no describe handler (photographs only, A16.21)', () => {
@@ -2268,6 +2295,127 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       const plain: any = new Component({});
       plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6 });
       expect(plain.wizardVals().uploads[0].describe).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Task 7 (audit findings U1/U2, amendment A58.6): the step-6 tile can REMOVE a file and can
+  // make a photograph the COVER. `listing.photos[0]` is the buyer-facing hero (`heroSrc`), so
+  // reordering that array is choosing the cover and there is no cover column to invent.
+  //
+  // THE SEED GATE is ruling A-SL37/D-SL25 (John, 2026-09-10: "Keep seeded photographs as seeded
+  // until the Admin & seller controls stage"), and it is also what keeps the audit's latent
+  // caption defect latent: a SEED tile's own words live in `listing.photo_captions[position]`
+  // (`migrations/090`, read positionally by `app/api/seller_listings.py::photo_tiles`) and
+  // NEITHER `reorder_photos` NOR `delete_asset` rewrites that column — so a reorder that moved a
+  // seed entry, or a delete that shifted one, would put another photograph's description under
+  // it. Both controls are therefore withheld from the WHOLE listing while ANY photograph on it
+  // is a seed entry, not merely from the seed tile itself: moving an asset past a seed moves the
+  // seed too, and deleting an asset before one shifts it. An ASSET's caption travels with its
+  // id (`listing_asset.caption`) and is safe either way.
+  // ---------------------------------------------------------------------------------------
+  describe('the step-6 tile removes a file and chooses the cover (Task 7, A58.6)', () => {
+    const own = (over: Record<string, unknown> = {}) => ({ kind: 'Photo', source: 'asset', ...over });
+
+    it('Remove deletes the tile\'s own asset and refreshes the tiles from the answer', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })] });
+      const sent = record((url: string, method: string) => (method === 'DELETE' ? null
+        : draft({ photos: [{ id: 'as-2', name: 'Lobby', source: 'asset' }] })));
+      await c2.wizardVals().uploads[0].remove();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([
+        ['DELETE', '/api/seller/listings/a3f1/assets/as-1'],
+        ['GET', '/api/seller/listings/a3f1']
+      ]);
+      expect(c2.state.wizAssets.map((a: any) => a.id)).toEqual(['as-2']);
+      expect(c2.state.wizErr).toBe('');
+    });
+
+    it('a refused Remove sets wizErr and leaves the tiles as they were', async () => {
+      const c2 = onStep(6);
+      const before = [own({ name: 'Reception', id: 'as-1' })];
+      c2.setState({ wizAssets: before });
+      record({ error: { code: 'STATE', message: 'This listing cannot be edited.' } }, 409);
+      await c2.wizardVals().uploads[0].remove();
+      expect(c2.state.wizErr).toBe('This listing cannot be edited.');
+      expect(c2.state.wizAssets).toEqual(before);
+    });
+
+    it('Make cover reorders the listing\'s photographs with the clicked one first', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [
+        own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' }),
+        own({ name: 'Theatre', id: 'as-3' }), { kind: 'PDF', name: 'Floor plan.pdf', id: 'd1' }
+      ] });
+      const sent = record(draft({ photos: [{ id: 'as-3', name: 'Theatre', source: 'asset' }] }));
+      await c2.wizardVals().uploads[2].makeCover();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/photos']]);
+      // The FULL ordered list, documents excluded: `reorder_photos` refuses a partial one because
+      // "a partial list would silently DELETE photographs".
+      expect(sent[0].body).toEqual({ ids: ['as-3', 'as-1', 'as-2'] });
+      expect(c2.state.wizAssets.map((a: any) => a.id)).toEqual(['as-3']);
+    });
+
+    it('the first photograph IS the cover, is labelled so, and is offered no Make cover', () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })] });
+      const [first, second] = c2.wizardVals().uploads;
+      expect(first.cover).toBe(true);
+      expect(first.canCover).toBe(false);
+      expect(first.makeCover).toBeNull();
+      expect(second.cover).toBe(false);
+      expect(second.canCover).toBe(true);
+    });
+
+    it('a SEEDED photograph on the listing withholds both controls from EVERY photo tile (A-SL37)', () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [
+        own({ name: 'Reception', id: 'as-1' }),
+        { kind: 'Photo', name: 'Exterior', id: 'abc/1.webp', source: 'seed', position: 2 }
+      ] });
+      for (const tile of c2.wizardVals().uploads) {
+        expect(tile.canRemove, tile.name).toBe(false);
+        expect(tile.canCover, tile.name).toBe(false);
+        expect(tile.remove, tile.name).toBeNull();
+        expect(tile.makeCover, tile.name).toBeNull();
+      }
+    });
+
+    it('a DOCUMENT keeps its Remove beside a seeded photograph, and is never a cover', () => {
+      // `delete_asset` rewrites `listing.photos` for `kind = 'photo'` only, so removing a
+      // document cannot shift a seed entry's positional caption at all.
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [
+        { kind: 'Photo', name: 'Exterior', id: 'abc/1.webp', source: 'seed', position: 1 },
+        { kind: 'PDF', name: 'Floor plan.pdf', id: 'd1' }
+      ] });
+      const [photo, doc] = c2.wizardVals().uploads;
+      expect(photo.canRemove).toBe(false);
+      expect(doc.canRemove).toBe(true);
+      expect(doc.canCover).toBe(false);
+      expect(doc.cover).toBe(false);
+      expect(typeof doc.remove).toBe('function');
+    });
+
+    it('neither control has a handler when there is no listing to act on', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({
+        auth: true, screen: 'seller', sellerView: 'wizard', step: 6, editingId: null,
+        wizAssets: [own({ name: 'Reception', id: 'as-1' }), own({ name: 'Lobby', id: 'as-2' })]
+      });
+      const [, second] = c2.wizardVals().uploads;
+      expect(second.remove).toBeNull();
+      expect(second.makeCover).toBeNull();
+    });
+
+    it('the design\'s own fixture tiles offer neither control and no cover label', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6 });
+      for (const tile of plain.wizardVals().uploads) {
+        expect(tile.canRemove).toBeUndefined();
+        expect(tile.canCover).toBeUndefined();
+        expect(tile.cover).toBeUndefined();
+      }
     });
   });
 });

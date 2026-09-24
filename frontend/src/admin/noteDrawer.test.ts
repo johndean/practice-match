@@ -232,6 +232,29 @@ describe('openNoteDrawer', () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------------------
+  // Task 7 (findings U1/U2): the step-6 tile's own describe surface reuses this drawer, and it
+  // asks for something a DECISION never does — a caller may need the field's blank to MEAN
+  // something. `caption_asset` treats blank and null as one intent, "the seller is taking the
+  // description back", so a drawer that can never submit an empty field would take that away.
+  // -------------------------------------------------------------------------------------
+  it('allowEmpty lets a blank field submit, so a caller whose blank MEANS something can take it', async () => {
+    const c = config({ allowEmpty: true, submitLabel: 'Save description' });
+    const done = openNoteDrawer(c);
+    expect(submitButton('Save description').disabled).toBe(false);
+    submitButton('Save description').click();
+    await done;
+    expect(c.submit).toHaveBeenCalledWith('');
+  });
+
+  it('a caller with no subtitle draws no subtitle element, rather than an empty one', () => {
+    const { subtitle: _drop, ...rest } = config();
+    openNoteDrawer(rest);
+    expect(query('[role="dialog"]').textContent).not.toContain('Dr. Priya Raghavan');
+    expect([...query('[role="dialog"]').querySelectorAll('div')]
+      .filter((d) => d.getAttribute('style')?.includes('margin-top: 3px'))).toEqual([]);
+  });
+
   it('falls back to a generic message when a refusal names none', async () => {
     const submit = vi.fn<(note: string) => Promise<NoteDrawerOutcome>>().mockResolvedValueOnce({ ok: false });
     void openNoteDrawer(config({ submit }));
