@@ -207,7 +207,8 @@ seed-to-asset conversion lands. Respect it — the control must not offer what t
 
 ## Task 8: The disclosure toggles say what they do (S1, S3, S4, S7, design + app)
 
-**RUN THIS TASK LAST** — it changes the disclosure model and depends on what Tasks 1-7 make true.
+**RUN THIS TASK BEFORE 9, 10 AND 11** — it sets the disclosure model those three build on, and it
+depends on what Tasks 1-7 made true. It is the last of the original set, not the last of the plan.
 
 **RULED BY JOHN, 2026-09-24 — D-C66: CORRECT THE BEHAVIOUR, not the copy.** The ceilings become
 per-buyer releasable. This knowingly changes the 2026-09-18 per-buyer disclosure directive's
@@ -216,14 +217,15 @@ contradicted.
 
 **Why this is the right direction and not merely the bigger one:** the labels have ALWAYS promised
 release on approval ("Keep practice name and address hidden **until I approve a buyer**",
-`frontend/src/logic.js:1758`; "Release revenue as a range **until I approve a buyer**", `:1759`).
+`frontend/src/logic.js:1757`; "Release revenue as a range **until I approve a buyer**", `:1758`).
 The behaviour is what diverged from the promise, so correcting the behaviour honours what every
 seller was told, while correcting the copy would have ratified a narrower product than the one they
-were sold.
+were sold. (Those two line numbers moved during Tasks 1-7 and are re-measured as of `047db60`;
+`docsLocked` is now `:1759`. `logic.js` is generated — read them, never edit them.)
 
 **The precedent is already in the codebase.** `showIdentifiable` is the one toggle of the four that
 works as a genuine per-buyer gate: `NOT_SHOW` + no grant serves the redacted derivative, `NOT_SHOW`
-+ `UNREDACTED_IMAGES` serves the display variant (`app/privacy/delivery.py:78-85`). Tasks here make
++ `UNREDACTED_IMAGES` serves the display variant (`app/privacy/delivery.py:80-86`). Tasks here make
 `anon`, `revBand` and `docsLocked` behave the way it already does. Follow that shape rather than
 inventing one.
 
@@ -235,27 +237,84 @@ inventing one.
 | `docsLocked` ON | document TITLES visible, bytes refused | titles and bytes — via the document's own capability |
 | `showIdentifiable` OFF | redacted derivative | display variant — via `UNREDACTED_IMAGES` (already correct, do not change) |
 
-**`docsLocked`'s help text is the one that also needs its own correction**: it promises "Buyers see
-the document titles and can ask for access", and `_documents` currently returns `[]` before it
-queries (`app/api/listings.py:412-413`). Under D-C66 the titles must actually be served to an
-unapproved buyer, which is what the help has always claimed.
+### The shape of the change: AND becomes OR
 
-**SAFETY — the one thing that must not be got wrong.** This ruling makes data MORE reachable than
-it is today. Every step must fail closed: an absent capability, an unknown level, a missing grant
-or an error must all resolve to the hidden state, never the disclosed one. `app/disclosure/access.py`
-already defaults to `frozenset()` and `covers()` already returns `frozenset()` for an unknown level
-— keep both. Add no path where a missing value reads as permission.
+Every ceiling term in `serialise` (`app/api/listings.py`) today reads *ceiling AND grant*. Measured
+at `047db60`, the three that change are:
+
+```python
+disclosed = ceiling and "EXACT_LOCATION" in capabilities          # ceiling = bool(row["location_disclosed"])
+named     = bool(row["name_disclosed"]) and "IDENTITY" in capabilities
+"rev": row["rev"] if row.get("rev_disclosed") and "FINANCIALS" in capabilities else None
+```
+
+Under D-C66 the ceiling becomes the PUBLIC DEFAULT and the grant RELEASES on top of it, so each
+becomes *ceiling OR grant*. A seller who leaves a ceiling open is publishing to everyone (unchanged);
+a seller who shuts it is publishing to nobody until they approve a buyer (the promise the label makes).
+
+**THE TRAP — the pin.** `_point(row["lat"], exact=disclosed, ceiling=ceiling)` takes the ceiling as a
+SEPARATE argument from `disclosed`, and returns `None` whenever `ceiling` is false. Flip `disclosed`
+to OR and leave `ceiling` alone and a granted buyer gets the street, postcode and telephone number
+but **still no pin** — three quarters of the table's first row, which reads as done. The `ceiling`
+argument must take the same OR. A25's "no point, no pin" is a different guard (`value is None`, for a
+listing with no coordinates at all) and stays exactly as it is.
+
+### `docsLocked` — and the one comment that will mislead you
+
+The brief this task was first written from said `_documents` "returns `[]` before it queries". That is
+true only of the CEILING-SHUT branch, and the rest of that function is already right: with the ceiling
+OPEN, titles are served to an unapproved buyer UNCAPPED, and an ungranted buyer sees a generic label
+(`"Financial packet"` / `"Floor plan"`, `_DOCUMENT_LABEL`) in place of the seller's own filename,
+because a filename like `123_Main_St_Floor_Plan.pdf` would publish the address straight past
+`location_disclosed` (security review, 2026-09-19). **That control is correct, is not part of D-C66,
+and must survive this task unchanged.**
+
+So the only change on the list side is that `ceiling_open` stops gating the LIST: under D-C66 titles
+are visible whether or not `docsLocked` is on. Expect a cost, and note it rather than hide it — today a
+locked listing runs no query at all, and after this it runs one per single-listing read.
+
+**On the bytes route (`app/api/seller_listings.py:1850-1856`), read the docstring above it before you
+touch it.** It records a real past incident: a round of that module once let disclosure and "published"
+stand in for authorization alone, and any signed-in member could download a seller's documents the
+moment one ceiling flag flipped. D-C66 removes `bool(disclosed)` from that `and` chain. **That is not
+the same change and you must be able to say why:** the incident removed the GRANT, this removes the
+CEILING and keeps `has_capability` and `status == "published"` exactly where they are. If your diff
+weakens or short-circuits `has_capability`, you have reproduced the incident — stop.
+
+### SAFETY — the one thing that must not be got wrong
+
+This ruling makes data MORE reachable than it is today, and the AND→OR flip moves where the risk
+lives. Under AND, a bug that wrongly added a capability still met a shut ceiling. Under OR, the
+capability set is the ONLY thing standing between a listing and disclosure — its blast radius grows,
+so re-prove its fail-closed behaviour rather than inheriting it.
+
+Verified present at `047db60` and to be kept: `authorized_capabilities` returns `frozenset()` for an
+absent buyer and for a missing row (`app/disclosure/access.py:36`, `:40`); `authorized_capabilities_bulk`
+seeds every listing to `frozenset()` before it queries (`:54`); `covers()` returns `frozenset()` for an
+unknown or absent level (`app/disclosure/levels.py:26`); `capability_for_document_kind` falls back to
+`FULL_CONFIDENTIAL`, the broadest grant, for any kind the table has not been taught
+(`app/disclosure/levels.py:34-39`). Add no path where a missing value reads as permission.
 
 **Not in scope:** the buyer's document list is four hard-coded fixtures with no reader for the real
 `documents[]` (finding S7). Wiring that is its own task; note it in the report.
 
-**Files:** `app/api/listings.py` (the serialiser's ceiling terms), `docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md` (amended, with the ruling recorded), `frontend/tests/design-amendments.ts` if any copy still misstates the corrected behaviour, plus tests both sides.
+**Files:** `app/api/listings.py` (the three ceiling terms, `_point`'s `ceiling` argument, `_documents`'
+list gate), `app/api/seller_listings.py` (the bytes route's ceiling term),
+`docs/superpowers/specs/2026-09-18-per-buyer-disclosure-directive.md` (amended, with the ruling
+recorded), `frontend/tests/design-amendments.ts` if any copy still misstates the corrected behaviour,
+plus tests both sides.
 
-- [ ] **Step 1: RED** — pytest per toggle: ceiling shut + no grant hides; ceiling shut + matching grant RELEASES. The second assertion is the one that fails today.
-- [ ] **Step 2:** change the serialiser's ceiling terms, one toggle at a time, keeping fail-closed.
-- [ ] **Step 3:** amend the 2026-09-18 directive to record D-C66 and what it supersedes.
-- [ ] **Step 4:** re-read every step-7 and step-2 label against the new behaviour; correct only what is still false. Measure re-basing.
-- [ ] **Step 5:** full gates both sides; report the measured re-basing and the fail-closed proof.
+- [ ] **Step 1: RED** — pytest per toggle, and per FIELD within `anon` (name, street, zip, phone AND
+      the pin are five separate assertions, not one): ceiling shut + no grant hides; ceiling shut +
+      matching grant RELEASES. The second assertion is the one that fails today. Watch each fail.
+- [ ] **Step 2:** change the ceiling terms, one toggle at a time, keeping fail-closed. Run the suite
+      between toggles so you know which change moved which test.
+- [ ] **Step 3:** amend the 2026-09-18 directive to record D-C66, quote what it supersedes, and say
+      why. Do not delete the superseded sentence — supersede it in place.
+- [ ] **Step 4:** re-read every step-7 and step-2 label against the new behaviour; correct only what is
+      still false. Measure re-basing the A33 way.
+- [ ] **Step 5:** full gates both sides; report the measured re-basing and the fail-closed proof —
+      including one test that proves a buyer with NO grant still sees nothing after the flip.
 
 ---
 
