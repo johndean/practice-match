@@ -21,6 +21,7 @@
  * carry no `data-props` entry of their own.
  */
 import { csrfToken } from '../auth/api';
+import { capabilityPhrase, orderedCapabilities } from '../disclosure/capabilities';
 
 /** One `request` row, exactly as `app/disclosure/requests.py::_row` serialises it. A buyer's own
  *  reads (`GET /api/requests/mine`, the response `POST /api/requests` answers) never carry
@@ -40,7 +41,10 @@ export interface ApiRequestRow {
   status: 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
   message: string | null;
   requested_disclosure_level: string;
-  approved_disclosure_level: string | null;
+  /** The SET the seller released (`request.approved_capabilities`, migration 097, ruling D-C67):
+   *  `null` while nothing has been decided or where the decision was a refusal, `[]` where the
+   *  seller approved and released nothing, and otherwise exactly the capabilities they ticked. */
+  approved_capabilities: string[] | null;
   requested_at: string;
   reviewed_at: string | null;
   denial_reason: string | null;
@@ -64,6 +68,17 @@ export interface DesignRequestRow {
   // the same way.
   reply?: string;
   when: string;
+  /** What this buyer CURRENTLY holds, in the product's own declared order (ruling D-C67, John,
+   *  2026-09-24: the seller must be able to SEE what a given buyer holds, and narrow it later).
+   *  Present only where the API answered — the design's own fixture rows carry none, so every
+   *  approved state keeps the design's own sentence byte for byte. `[]` is a real answer (approved,
+   *  released nothing) and is NOT the same as absent, which is why `granted` and `grantedLabel`
+   *  are two fields: a template cannot tell `[]` from `undefined` with a truthiness test, and the
+   *  label is the one the template actually renders. */
+  granted?: string[];
+  /** The sentence the seller reads on their own inbox row, composed HERE rather than in the design
+   *  so the capability words live in exactly one place (`../disclosure/capabilities`). */
+  grantedLabel?: string;
 }
 
 /** The design's own FOUR-word vocabulary (`logic.js`'s `sellerVals`/`detail`/`reqList`:
@@ -119,6 +134,10 @@ export function formatWhen(iso: string): string {
  * every row the real endpoint sends takes the other arm. */
 export function toDesignRow(row: ApiRequestRow | DesignRequestRow): DesignRequestRow {
   if ('pid' in row) return { ...row, reply: row.reply || '' };
+  // `granted`/`grantedLabel` only where this row really carries a decision (D-C67): a PENDING or
+  // DENIED row has `null`, and handing the design an empty array there would make its own
+  // "released nothing" sentence true of a request nobody has answered yet.
+  const held = row.approved_capabilities === null ? undefined : orderedCapabilities(row.approved_capabilities);
   return {
     id: row.id,
     pid: row.listing_id,
@@ -129,7 +148,17 @@ export function toDesignRow(row: ApiRequestRow | DesignRequestRow): DesignReques
     status: toDesignStatus(row.status),
     msg: row.message || '',
     reply: row.denial_reason || '',
-    when: formatWhen(row.requested_at)
+    when: formatWhen(row.requested_at),
+    granted: held,
+    // D-C67's new copy, in the design's OWN sentence shape for this line ("You released the
+    // financial packet and floor plan to this buyer.") with the object replaced by what was
+    // actually released — that sentence named a two-capability grant the old single-value column
+    // could never store, and said it whatever the seller had actually approved.
+    grantedLabel: held === undefined
+      ? undefined
+      : held.length === 0
+        ? 'You approved this buyer and released nothing.'
+        : `You released ${capabilityPhrase(held)} to this buyer.`
   };
 }
 

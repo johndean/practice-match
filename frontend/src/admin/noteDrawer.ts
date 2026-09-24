@@ -78,6 +78,15 @@ const LABEL_WRAP_STYLE = 'display: flex; flex-direction: column; gap: 6px;';
 const LABEL_TEXT_STYLE = 'font-size: 12px; font-weight: 500; color: var(--color-steel);';
 const TEXTAREA_STYLE = 'padding: 10px 13px; font-size: 14px; line-height: 1.5; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical; width: 100%; box-sizing: border-box; font-family: inherit;';
 const ERROR_STYLE = 'margin-top: 12px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; color: #494949;';
+// The WIZARD STEP 7 toggle row, declaration for declaration (`Practice Match V3.dc.html`'s own
+// `wiz.toggles` block): the design's established shape for a set of disclosure choices, which is
+// exactly what this drawer asks for one surface over. The intro paragraph is the wizard step's own
+// `blurb` style.
+const CHOICE_INTRO_STYLE = 'font-size: 14px; line-height: 1.55; color: #494949; margin: 0 0 16px; max-width: 60ch;';
+const CHOICE_LIST_STYLE = 'display: flex; flex-direction: column; gap: 10px;';
+const CHOICE_ROW_STYLE = 'display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 8px; cursor: pointer;';
+const CHOICE_BOX_STYLE = 'margin-top: 3px; width: 16px; height: 16px; accent-color: var(--color-blue);';
+const CHOICE_LABEL_STYLE = 'display: block; font-size: 14px; font-weight: 500; color: var(--color-navy);';
 const BUTTON_ROW_STYLE = 'display: flex; gap: 10px; margin-top: 18px;';
 const PRIMARY_STYLE = 'font-family: var(--rf-display); flex: 1; height: 48px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;';
 const SECONDARY_STYLE = 'font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;';
@@ -326,5 +335,138 @@ export function openConfirmDrawer(config: ConfirmDrawerConfig): Promise<boolean>
 
     document.body.appendChild(scrim);
     cancelButton.focus();
+  });
+}
+
+
+export interface ChoiceDrawerOption {
+  /** The value handed back — a capability name (`app.disclosure.levels.CAPABILITIES`). */
+  value: string;
+  /** What the seller reads — `LEVEL_LABEL`'s own word for it (`frontend/src/admin/requests.ts`),
+   *  never a second spelling written here. */
+  label: string;
+}
+
+export interface ChoiceDrawerConfig {
+  /** The drawer's own title — the action's own label, so it reads the same word as the button that
+   *  opened it (`openNoteDrawer`'s own rule). */
+  title: string;
+  /** Who the decision is about, under the title — the buyer's own name. */
+  subtitle?: string;
+  /** One sentence above the list saying what the choice is. */
+  intro: string;
+  options: ChoiceDrawerOption[];
+  /** Ticked when the drawer opens — on the CHANGE path, exactly what this buyer already holds, so
+   *  a seller narrowing a grant starts from the truth rather than from blank. */
+  selected: string[];
+  /** The primary button's own label. */
+  submitLabel: string;
+}
+
+/**
+ * The third variant of this module's shell (D-C67, John, 2026-09-24: "all toggles must be fully
+ * functional and SELLER must be able to manage it all and per seller"): a set of choices, answered
+ * with the ones ticked.
+ *
+ * COMPOSED FROM V3'S OWN ELEMENTS and inventing no control, colour or copy. The shell — scrim, box,
+ * title, subtitle, 30 px close button, padded body and the primary/secondary pair — is the one
+ * `openNoteDrawer` and `openConfirmDrawer` already share, which is the INTEREST MODAL's own. The
+ * rows are the WIZARD STEP 7 toggle rows, whose own blurb ("You decide what an approved buyer sees
+ * before you have spoken to them.") is the sentence this drawer's callers pass as `intro`: step 7
+ * is where this product already asks a seller this question, one buyer wider.
+ *
+ * WHAT IT ANSWERS: the ticked values, or `null` for every dismissal — Cancel, the close button,
+ * Escape, and a click on the scrim outside the box, the same four every drawer here answers to.
+ * `null` is "the seller did not decide" and is NOT `[]`, which is "the seller decided to release
+ * nothing"; the two are different answers and `app.disclosure.requests._chosen_capabilities` reads
+ * them as different answers, so this surface must not flatten them either.
+ *
+ * THE PRIMARY IS DISABLED WHILE NOTHING IS TICKED — `openNoteDrawer`'s own `allowEmpty: false`
+ * default, for the same reason: a "Share more" that shares nothing is a decline, and Decline is
+ * the button beside it. The server nevertheless accepts and stores an empty set, fail-closed,
+ * because a client is not the place that guarantee lives (`tests/api/test_seller_requests.py`'s
+ * own `test_approve_with_an_empty_array_releases_nothing_over_the_wire`).
+ */
+export function openChoiceDrawer(config: ChoiceDrawerConfig): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const { scrim, closeButton, body } = shell(config, BODY_STYLE);
+    const chosen = new Set(config.selected);
+
+    const intro = document.createElement('p');
+    intro.setAttribute('style', CHOICE_INTRO_STYLE);
+    intro.textContent = config.intro;
+    body.appendChild(intro);
+
+    const list = document.createElement('div');
+    list.setAttribute('style', CHOICE_LIST_STYLE);
+    body.appendChild(list);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.setAttribute('style', BUTTON_ROW_STYLE);
+    const submitButton = document.createElement('button');
+    submitButton.setAttribute('style', PRIMARY_STYLE);
+    submitButton.textContent = config.submitLabel;
+    const cancelButton = document.createElement('button');
+    cancelButton.setAttribute('style', SECONDARY_STYLE);
+    cancelButton.textContent = 'Cancel';
+    buttonRow.appendChild(submitButton);
+    buttonRow.appendChild(cancelButton);
+    body.appendChild(buttonRow);
+
+    const settle = (): void => {
+      submitButton.disabled = chosen.size === 0;
+    };
+
+    for (const option of config.options) {
+      const row = document.createElement('label');
+      row.setAttribute('style', CHOICE_ROW_STYLE);
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.setAttribute('style', CHOICE_BOX_STYLE);
+      box.value = option.value;
+      box.checked = chosen.has(option.value);
+      const text = document.createElement('span');
+      text.setAttribute('style', CHOICE_LABEL_STYLE);
+      text.textContent = option.label;
+      box.addEventListener('change', () => {
+        if (box.checked) chosen.add(option.value);
+        else chosen.delete(option.value);
+        settle();
+      });
+      row.appendChild(box);
+      row.appendChild(text);
+      list.appendChild(row);
+    }
+    settle();
+
+    const close = (answer: string[] | null): void => {
+      document.removeEventListener('keydown', onKeydown);
+      scrim.remove();
+      if (opener !== null) opener.focus();
+      resolve(answer);
+    };
+
+    // The ORDER the options were declared in, never the order the seller happened to tick them:
+    // the caller hands these to an API and reads them back in a sentence, and a set has no order
+    // of its own to preserve.
+    const ticked = (): string[] => config.options.filter((o) => chosen.has(o.value)).map((o) => o.value);
+
+    submitButton.addEventListener('click', () => { if (chosen.size > 0) close(ticked()); });
+    cancelButton.addEventListener('click', () => close(null));
+    closeButton.addEventListener('click', () => close(null));
+    // The scrim's own click, never a bubble from the box — `openNoteDrawer`'s own reason.
+    scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(null); });
+
+    function onKeydown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') { e.preventDefault(); close(null); }
+    }
+    document.addEventListener('keydown', onKeydown);
+
+    document.body.appendChild(scrim);
+    // The first choice takes focus, `openNoteDrawer`'s own reason: the seller's work begins at the
+    // list. Nothing here is destructive, so `openConfirmDrawer`'s safe-action rule does not apply.
+    const first = list.querySelector('input');
+    if (first instanceof HTMLInputElement) first.focus();
   });
 }

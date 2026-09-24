@@ -617,3 +617,73 @@ async def test_every_shut_ceiling_still_hides_everything_from_a_buyer_with_no_gr
     assert "5125551234" not in response.text
     assert "Real Practice Name" not in response.text
     assert "500000" not in response.text
+
+
+# --- D-C67 (John, 2026-09-24): the SELLER chooses which capabilities one buyer receives ---------
+
+
+@pytest.mark.asyncio
+async def test_a_seller_releasing_only_financials_on_a_full_request_gives_the_revenue_and_not_the_address(
+    client: Any, conn: Any, member: Any,
+) -> None:
+    """**THE POINT WHERE D-C66 AND D-C67 MEET, and the case the task brief names as the proof.**
+
+    Every request defaults to `FULL_CONFIDENTIAL` (`app/api/requests.py`), and under D-C66 the
+    grant alone decides for a listing whose ceilings are shut — so before D-C67 one click of
+    Accept released the practice name, the street, the postcode, the telephone, the exact map pin,
+    the unredacted photographs, the financial packet and the floor plans together, and the seller
+    could not release less. Here the buyer asks for all of it and the seller releases ONE.
+
+    Both directions are asserted separately, and neither can pass on the other's behalf: what was
+    released IS there, and every field that was not released is NOT."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="dc67-seller@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers,
+                                                  name_disclosed=False, location_disclosed=False, rev_disclosed=False)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="dc67-buyer@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    created = await client.post("/api/requests", headers=buyer_headers, json={"listing_id": listing_id})
+    assert created.status_code == 201, created.text
+    assert created.json()["requested_disclosure_level"] == "FULL_CONFIDENTIAL"
+    decided = await client.post(f"/api/seller/requests/{created.json()['id']}/decide", headers=seller_headers,
+                                json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert decided.status_code == 200, decided.text
+
+    body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert body["rev"] == 500000                                   # released
+    assert body["name"] != "Real Practice Name"                    # withheld — IDENTITY
+    assert body["street"] is None                                  # withheld — EXACT_LOCATION
+    assert body["lat"] is None and body["lng"] is None             # withheld — EXACT_LOCATION
+
+
+@pytest.mark.asyncio
+async def test_a_narrowed_grant_takes_back_the_field_it_dropped_and_keeps_the_field_it_did_not(
+    client: Any, conn: Any, member: Any,
+) -> None:
+    """D-C67's second half, through the real routes: the seller sees what the buyer holds and
+    narrows it, without withdrawing their access entirely.
+
+    Each direction is a separate assertion, because a two-sided change masks itself when only the
+    half that happens to pass is checked (Task 8's fix rounds 1 and 2, twice in a row)."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="dc67n-seller@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id = await _published_seller_listing(conn, client, seller_headers,
+                                                  name_disclosed=False, location_disclosed=False, rev_disclosed=False)
+    _bid, b_cookies, b_hdr = member(("buyer",), email="dc67n-buyer@x.org")
+    buyer_headers = auth_headers(b_cookies, b_hdr)
+
+    created = await client.post("/api/requests", headers=buyer_headers, json={"listing_id": listing_id})
+    request_id = created.json()["id"]
+    wide = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                             json={"action": "approve", "disclosure_capabilities": ["IDENTITY", "FINANCIALS"]})
+    assert wide.status_code == 200, wide.text
+    before = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert before["name"] == "Real Practice Name" and before["rev"] == 500000
+
+    narrow = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                               json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert narrow.status_code == 200, narrow.text
+    after = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
+    assert after["name"] != "Real Practice Name"   # taken back
+    assert after["rev"] == 500000                  # kept

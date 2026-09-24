@@ -23,13 +23,42 @@
  * `sellerVals` now wires `revoke` beside `accept`/`decide`.
  */
 import { csrfToken } from '../auth/api';
+import { openChoiceDrawer } from '../admin/noteDrawer';
+import { capabilityOptions } from '../disclosure/capabilities';
 import { type ApiRequestRow, type DesignRequestRow, toDesignRow } from './buyer';
 
 /** What `logic.js` sees as `this.props.sellerRequests`. */
 export interface SellerRequestsAdapter {
   inbox(): Promise<DesignRequestRow[]>;
-  decide(id: string, action: 'approve' | 'deny', level?: string, reason?: string): Promise<DesignRequestRow>;
+  /**
+   * Approve or deny. `capabilities` is the SET the seller chose (ruling D-C67, John, 2026-09-24):
+   *
+   * * an ARRAY — including the EMPTY one — is sent as `disclosure_capabilities` and is stored
+   *   exactly as it stands;
+   * * `undefined` sends no set at all, which is the API's own default arm: the level the BUYER
+   *   asked for, which every request defaults to `FULL_CONFIDENTIAL`.
+   *
+   * The test below is `!== undefined` rather than truthiness, and the reason is MEASURED rather
+   * than inherited from the server's own `is None`: an empty array is TRUTHY in JavaScript, so the
+   * two spellings agree about `[]` and a test asserting otherwise would pass against both. What
+   * they disagree about is `null`, which is exactly the value `chooseAccess` answers when the
+   * seller dismisses the drawer — under truthiness a caller who forwarded it would send NO set and
+   * be given the buyer's own `FULL_CONFIDENTIAL` ask; under `!== undefined` it reaches the route as
+   * `disclosure_capabilities: null` and is REFUSED (`app/api/seller_requests.py` tells absent from
+   * null deliberately). One spelling fails open on a caller's mistake and the other fails closed.
+   */
+  decide(id: string, action: 'approve' | 'deny', capabilities?: string[], reason?: string): Promise<DesignRequestRow>;
   revoke(id: string): Promise<DesignRequestRow>;
+  /**
+   * Asks the seller WHICH capabilities this buyer receives, and answers the ones they ticked, or
+   * `null` if they dismissed the drawer without deciding. Writes nothing: the design chains this
+   * into `decide`, which is the seam `listings.describe`/`listings.confirmRemove` established —
+   * the ask is app-only, the write is the route, and the DESIGN chains them (A58.6e/A58.6f).
+   *
+   * `held` pre-ticks what the buyer already holds, so the CHANGE path starts from the truth rather
+   * than from blank; `title` is the word on the button that opened it, `openNoteDrawer`'s own rule.
+   */
+  chooseAccess(buyer: string, held: string[], title: string): Promise<string[] | null>;
 }
 
 /** A refusal, carrying the server's own code — `./buyer.ts`'s own `RequestError`, kept as its own
@@ -70,14 +99,27 @@ async function send<T>(fetchFn: typeof fetch, method: string, path: string, body
 export function makeSellerRequestsAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(globalThis)): SellerRequestsAdapter {
   return {
     inbox: async () => (await send<ApiRequestRow[]>(fetchFn, 'GET', '/api/seller/requests')).map(toDesignRow),
-    decide: async (id, action, level, reason) =>
+    decide: async (id, action, capabilities, reason) =>
       toDesignRow(
         await send<ApiRequestRow>(fetchFn, 'POST', `/api/seller/requests/${id}/decide`, {
           action,
-          ...(level ? { disclosure_level: level } : {}),
+          // `!== undefined`, never truthiness — see `SellerRequestsAdapter.decide`'s own doc
+          // comment. An empty array is a decision and must reach the server as one.
+          ...(capabilities !== undefined ? { disclosure_capabilities: capabilities } : {}),
           ...(reason ? { reason } : {})
         })
       ),
-    revoke: async (id) => toDesignRow(await send<ApiRequestRow>(fetchFn, 'POST', `/api/seller/requests/${id}/revoke`, {}))
+    revoke: async (id) => toDesignRow(await send<ApiRequestRow>(fetchFn, 'POST', `/api/seller/requests/${id}/revoke`, {})),
+    chooseAccess: (buyer, held, title) =>
+      openChoiceDrawer({
+        title,
+        subtitle: buyer,
+        // The WIZARD STEP 7 blurb, verbatim (`src/logic.js`'s `byStep[7].blurb`): step 7 is where
+        // this product already asks a seller this question, and D-C67 asks it one buyer wider.
+        intro: 'You decide what an approved buyer sees before you have spoken to them.',
+        options: capabilityOptions(),
+        selected: held,
+        submitLabel: title
+      })
   };
 }

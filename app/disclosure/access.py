@@ -9,13 +9,17 @@ all" and "did the seller approve THIS buyer") cannot be quietly merged back into
 future edit that does not know they must stay apart.
 
 Fails closed (directive §19): every branch below that cannot prove a specific capability is
-authorized returns/omits it. There is no "assume yes" branch anywhere in this file."""
+authorized returns/omits it. There is no "assume yes" branch anywhere in this file.
+
+Under D-C67 (John, 2026-09-24) the stored grant is a SET rather than one named level, so the door
+from a row to a capability set is `app.disclosure.levels.granted` -- which has no default arm at
+all, so a grant of `{}` is the empty set here and can never become everything."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
 
-from app.disclosure.levels import covers
+from app.disclosure.levels import granted
 
 # migrations/096_request.sql's `request_one_active_per_buyer_listing_uq` is a UNIQUE index on
 # (listing_id, buyer_user_id) WHERE status IN ('PENDING','APPROVED') -- so at most ONE row can ever
@@ -23,7 +27,7 @@ from app.disclosure.levels import covers
 # that database invariant directly: this is a single-row lookup, not an aggregation, and there is
 # deliberately no ORDER BY/LIMIT to pick "the latest" among several, because several can never exist.
 _ACTIVE_GRANT_SQL = (
-    "SELECT approved_disclosure_level FROM request"
+    "SELECT approved_capabilities FROM request"
     " WHERE listing_id = %s AND buyer_user_id = %s AND status = 'APPROVED'"
     "   AND (expires_at IS NULL OR expires_at > now())"
 )
@@ -37,7 +41,7 @@ def authorized_capabilities(conn: Any, *, listing_id: str, seller_id: str | None
     with conn.cursor() as cur:
         cur.execute(_ACTIVE_GRANT_SQL, (listing_id, buyer_account_id))
         row = cur.fetchone()
-    return covers(row[0]) if row is not None else frozenset()
+    return granted(row[0]) if row is not None else frozenset()
 
 
 def has_capability(conn: Any, *, listing_id: str, seller_id: str | None, buyer_account_id: str | None, capability: str) -> bool:
@@ -65,11 +69,11 @@ def authorized_capabilities_bulk(
         # cast for free). The explicit cast makes this the same single indexed `= ANY(...)` lookup
         # the plan intended, just spelled so PostgreSQL agrees on both sides' types.
         cur.execute(
-            "SELECT listing_id, approved_disclosure_level FROM request"
+            "SELECT listing_id, approved_capabilities FROM request"
             " WHERE listing_id = ANY(%s::uuid[]) AND buyer_user_id = %s AND status = 'APPROVED'"
             "   AND (expires_at IS NULL OR expires_at > now())",
             (ids, buyer_account_id),
         )
-        for listing_id, level in cur.fetchall():
-            result[str(listing_id)] = covers(level)
+        for listing_id, capabilities in cur.fetchall():
+            result[str(listing_id)] = granted(capabilities)
     return result

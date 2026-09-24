@@ -32,7 +32,7 @@ function fakeFetch(...answers: Array<{ status: number; body?: unknown; badJson?:
 const ROW = (over: Partial<ApiRequestRow> = {}): ApiRequestRow => ({
   id: 'r1', listing_id: 'p1', buyer_user_id: 'b1', status: 'PENDING',
   message: 'Interested in a phased transition.', requested_disclosure_level: 'FULL_CONFIDENTIAL',
-  approved_disclosure_level: null, requested_at: '2026-08-29T10:00:00Z', reviewed_at: null,
+  approved_capabilities: null, requested_at: '2026-08-29T10:00:00Z', reviewed_at: null,
   denial_reason: null, ...over
 });
 

@@ -23,7 +23,7 @@ function fakeFetch(...answers: Array<{ status: number; body?: unknown; badJson?:
 const ROW = (over: Partial<ApiRequestRow> = {}): ApiRequestRow => ({
   id: 'r1', listing_id: 'p1', buyer_user_id: 'b1', status: 'PENDING',
   message: 'Would like to see the last three years of production by doctor.', requested_disclosure_level: 'FULL_CONFIDENTIAL',
-  approved_disclosure_level: null, requested_at: '2026-08-21T10:00:00Z', reviewed_at: null,
+  approved_capabilities: null, requested_at: '2026-08-21T10:00:00Z', reviewed_at: null,
   denial_reason: null, ...over
 });
 
@@ -69,14 +69,14 @@ describe('makeSellerRequestsAdapter', () => {
     expect(result.status).toBe('accepted');
   });
 
-  it('decide() includes disclosure_level and reason only when given', async () => {
+  it('decide() includes disclosure_capabilities and reason only when given', async () => {
     const { fn, calls } = fakeFetch(
-      { status: 200, body: ROW({ status: 'APPROVED', approved_disclosure_level: 'FULL_CONFIDENTIAL' }) },
+      { status: 200, body: ROW({ status: 'APPROVED', approved_capabilities: ['FINANCIALS', 'FLOOR_PLANS'] }) },
       { status: 200, body: ROW({ status: 'DENIED', denial_reason: 'Under contract with another buyer.' }) }
     );
     const adapter = makeSellerRequestsAdapter(fn);
-    await adapter.decide('r1', 'approve', 'FULL_CONFIDENTIAL');
-    expect(JSON.parse(calls[0].init.body!)).toEqual({ action: 'approve', disclosure_level: 'FULL_CONFIDENTIAL' });
+    await adapter.decide('r1', 'approve', ['FINANCIALS', 'FLOOR_PLANS']);
+    expect(JSON.parse(calls[0].init.body!)).toEqual({ action: 'approve', disclosure_capabilities: ['FINANCIALS', 'FLOOR_PLANS'] });
     const denied = await adapter.decide('r1', 'deny', undefined, 'Under contract with another buyer.');
     expect(JSON.parse(calls[1].init.body!)).toEqual({ action: 'deny', reason: 'Under contract with another buyer.' });
     expect(denied.reply).toBe('Under contract with another buyer.');
@@ -113,5 +113,86 @@ describe('makeSellerRequestsAdapter', () => {
 
   it('defaults to the real global fetch when no fetchFn is given', () => {
     expect(() => makeSellerRequestsAdapter()).not.toThrow();
+  });
+});
+
+// --- D-C67 (John, 2026-09-24): the seller chooses WHICH capabilities this buyer receives --------
+
+describe('makeSellerRequestsAdapter and the per-capability grant', () => {
+  it('sends an EMPTY array as a real decision rather than dropping it', async () => {
+    // THE FAIL-CLOSED SEAM ON THE CLIENT. `...(capabilities ? {...} : {})` would omit an empty
+    // array, the route would see no set, and `_chosen_capabilities` would fall back to the level
+    // the BUYER asked for — `FULL_CONFIDENTIAL` on every request this product creates.
+    const { fn, calls } = fakeFetch({ status: 200, body: ROW({ status: 'APPROVED', approved_capabilities: [] }) });
+    const adapter = makeSellerRequestsAdapter(fn);
+    const row = await adapter.decide('r1', 'approve', []);
+    expect(JSON.parse(calls[0].init.body!)).toEqual({ action: 'approve', disclosure_capabilities: [] });
+    expect(row.granted).toEqual([]);
+    expect(row.grantedLabel).toBe('You approved this buyer and released nothing.');
+  });
+
+  it('sends a null set as null, so the route refuses it rather than defaulting to everything', async () => {
+    // The direction `!== undefined` actually buys over truthiness — an empty array is truthy in
+    // JavaScript, so the two spellings agree about `[]` and disagree only here. `chooseAccess`
+    // answers `string[] | null`, so this is the value a caller reaches by forwarding a dismissal.
+    const { fn, calls } = fakeFetch({ status: 400, body: { error: { code: 'BAD_LEVEL', message: 'no' } } });
+    const adapter = makeSellerRequestsAdapter(fn);
+    await expect(adapter.decide('r1', 'approve', null as unknown as string[])).rejects.toThrow();
+    expect(JSON.parse(calls[0].init.body!)).toEqual({ action: 'approve', disclosure_capabilities: null });
+  });
+
+  it('sends NO set at all when the caller names none, which is the API default arm', async () => {
+    const { fn, calls } = fakeFetch({ status: 200, body: ROW({ status: 'APPROVED', approved_capabilities: ['IDENTITY'] }) });
+    const adapter = makeSellerRequestsAdapter(fn);
+    await adapter.decide('r1', 'approve');
+    expect(JSON.parse(calls[0].init.body!)).toEqual({ action: 'approve' });
+  });
+
+  it('carries what the buyer holds, and the sentence naming it, onto the design row', async () => {
+    const { fn } = fakeFetch({ status: 200, body: [ROW({ status: 'APPROVED', approved_capabilities: ['FLOOR_PLANS', 'FINANCIALS'] })] });
+    const [row] = await makeSellerRequestsAdapter(fn).inbox();
+    expect(row.granted).toEqual(['FINANCIALS', 'FLOOR_PLANS']);
+    expect(row.grantedLabel).toBe('You released financials and floor plans to this buyer.');
+  });
+
+  it('carries NOTHING onto a row that has had no decision, so the design keeps its own sentence', async () => {
+    const { fn } = fakeFetch({ status: 200, body: [ROW({ status: 'PENDING', approved_capabilities: null })] });
+    const [row] = await makeSellerRequestsAdapter(fn).inbox();
+    // `undefined`, never `[]`: an empty array here would make "released nothing" true of a request
+    // the seller has not answered yet.
+    expect(row.granted).toBeUndefined();
+    expect(row.grantedLabel).toBeUndefined();
+  });
+});
+
+describe('makeSellerRequestsAdapter().chooseAccess', () => {
+  afterEach(() => { document.body.innerHTML = ''; });
+
+  it('opens the composed chooser with the buyer named, the five capabilities offered and what they hold pre-ticked', async () => {
+    const adapter = makeSellerRequestsAdapter(fakeFetch().fn);
+    const promise = adapter.chooseAccess('Dr. Rachel Mendes', ['FINANCIALS'], 'Change access');
+    expect(document.body.textContent).toContain('Dr. Rachel Mendes');
+    // The wizard step 7 blurb, verbatim — this product's own sentence for exactly this decision.
+    expect(document.body.textContent).toContain('You decide what an approved buyer sees before you have spoken to them.');
+    const boxes = [...document.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    expect(boxes.map((b) => b.value)).toEqual(['IDENTITY', 'EXACT_LOCATION', 'UNREDACTED_IMAGES', 'FINANCIALS', 'FLOOR_PLANS']);
+    expect(boxes.filter((b) => b.checked).map((b) => b.value)).toEqual(['FINANCIALS']);
+    // `FULL_CONFIDENTIAL` is never offered: it is a level a BUYER may ask for, not a capability a
+    // grant may store (`migrations/097_request_approved_capabilities.sql`'s own CHECK).
+    expect(document.body.textContent).not.toContain('Full confidential');
+
+    const floorPlans = boxes[4];
+    floorPlans.checked = true; floorPlans.dispatchEvent(new Event('change'));
+    const submit = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Change access')!;
+    submit.click();
+    await expect(promise).resolves.toEqual(['FINANCIALS', 'FLOOR_PLANS']);
+  });
+
+  it('answers null when the seller dismisses it, and asks the server nothing either way', async () => {
+    const { fn, calls } = fakeFetch();
+    const promise = makeSellerRequestsAdapter(fn).chooseAccess('Dr. Rachel Mendes', [], 'Share more');
+    ([...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel') as HTMLButtonElement).click();
+    await expect(promise).resolves.toBeNull();
+    expect(calls).toEqual([]);
   });
 });

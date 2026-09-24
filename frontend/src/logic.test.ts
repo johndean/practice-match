@@ -7474,6 +7474,113 @@ describe('A53 — the seller\'s Revoke control and the buyer\'s distinct revoked
       expect(revoked.resolvedNote).toBe('You withdrew this buyer\'s access. The buyer no longer sees the financial packet or floor plan.');
     });
 
+    // --- D-C67 (John, 2026-09-24): the seller chooses WHICH capabilities this buyer receives ----
+
+    it('accept() asks the chooser FIRST and approves exactly the set it answered', async () => {
+      const chooseAccess = vi.fn().mockResolvedValue(['FINANCIALS', 'FLOOR_PLANS']);
+      const decide = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([ROW({ id: 'r1', status: 'accepted' })]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'pending' })] });
+      await c.sellerVals().inbox[0].accept();
+      expect(chooseAccess).toHaveBeenCalledWith('Dr. Rachel Mendes', [], 'Share more');
+      expect(decide).toHaveBeenCalledWith('r1', 'approve', ['FINANCIALS', 'FLOOR_PLANS']);
+      expect(inbox, 'reloads the inbox on success').toHaveBeenCalledTimes(1);
+    });
+
+    it('accept() sends NOTHING when the seller dismisses the chooser — no decide, no reload, no error', async () => {
+      // The direction that matters as much as the other: a cancelled drawer must not fall through
+      // to an approval, and `null` must not be forwarded as a set (which the route refuses).
+      const chooseAccess = vi.fn().mockResolvedValue(null);
+      const decide = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'pending' })] });
+      await c.sellerVals().inbox[0].accept();
+      expect(decide).not.toHaveBeenCalled();
+      expect(inbox).not.toHaveBeenCalled();
+    });
+
+    it('accept() forwards an EMPTY set as a real decision rather than dropping it', async () => {
+      // `[]` is truthy in JavaScript, so this passes under either spelling of the guard — it is
+      // here because the OUTCOME is what D-C67 rules on, and a later refactor to `set ? … : …`
+      // would still have to keep it true.
+      const chooseAccess = vi.fn().mockResolvedValue([]);
+      const decide = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'pending' })] });
+      await c.sellerVals().inbox[0].accept();
+      expect(decide).toHaveBeenCalledWith('r1', 'approve', []);
+    });
+
+    it('accept(), with an adapter, ALSO reloads the inbox when the server refuses the chosen set', async () => {
+      const chooseAccess = vi.fn().mockResolvedValue(['FINANCIALS']);
+      const decide = vi.fn().mockRejectedValue(new Error('This request is denied, not pending or approved.'));
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'pending' })] });
+      await c.sellerVals().inbox[0].accept();
+      expect(inbox, 'reloads the inbox even on a refusal').toHaveBeenCalledTimes(1);
+    });
+
+    it('accept(), with NO adapter, is the design\'s own optimistic local transition, byte for byte', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'seller', requests: [ROW({ id: 'r1', pid: 'p1', status: 'pending' })] });
+      c.sellerVals().inbox[0].accept();
+      expect(c.state.requests[0].status).toBe('accepted');
+      expect(c.state.requests[0].reply).toBe('Happy to share more. Financial packet unlocked.');
+    });
+
+    it('changeAccess() pre-ticks what this buyer already holds and stores the narrowed set', async () => {
+      const chooseAccess = vi.fn().mockResolvedValue(['FINANCIALS']);
+      const decide = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({
+        auth: true, screen: 'seller',
+        myInbox: [ROW({ id: 'r1', status: 'accepted', granted: ['IDENTITY', 'FINANCIALS'] })]
+      });
+      await c.sellerVals().inbox[0].changeAccess();
+      expect(chooseAccess).toHaveBeenCalledWith('Dr. Rachel Mendes', ['IDENTITY', 'FINANCIALS'], 'Change access');
+      expect(decide).toHaveBeenCalledWith('r1', 'approve', ['FINANCIALS']);
+    });
+
+    it('changeAccess() sends nothing when the seller dismisses the chooser', async () => {
+      const chooseAccess = vi.fn().mockResolvedValue(null);
+      const decide = vi.fn().mockResolvedValue({});
+      const inbox = vi.fn().mockResolvedValue([]);
+      const c: any = new Component({ sellerRequests: { inbox, decide, chooseAccess } });
+      c.setState({ auth: true, screen: 'seller', myInbox: [ROW({ id: 'r1', status: 'accepted', granted: ['IDENTITY'] })] });
+      await c.sellerVals().inbox[0].changeAccess();
+      expect(decide).not.toHaveBeenCalled();
+      expect(inbox).not.toHaveBeenCalled();
+    });
+
+    it('changeAccess() is null with NO adapter, so the reference draws a control it cannot complete nowhere else', () => {
+      const c: any = new Component({});
+      c.setState({ auth: true, screen: 'seller', requests: [ROW({ id: 'r1', pid: 'p1', status: 'accepted' })] });
+      // A58.6a's rule: what is DRAWN is keyed on the data (`canRevoke`), what is CALLED on whether
+      // there is anything to call. In the product the app's own default factory always supplies one.
+      expect(c.sellerVals().inbox[0].changeAccess()).toBeNull();
+    });
+
+    it('resolvedNote names what was ACTUALLY released once the API says so, and keeps the design\'s own sentence when it does not', () => {
+      const c: any = new Component({});
+      c.setState({
+        auth: true, screen: 'seller',
+        myInbox: [
+          ROW({ id: 'r1', status: 'accepted', grantedLabel: 'You released financials and floor plans to this buyer.' }),
+          ROW({ id: 'r2', status: 'accepted' })
+        ]
+      });
+      const [served, unserved] = c.sellerVals().inbox;
+      expect(served.resolvedNote).toBe('You released financials and floor plans to this buyer.');
+      // The design's own fixtures carry no `grantedLabel`, which is why no approved state moves for
+      // A58.7a and why the reference and the app agree on this row.
+      expect(unserved.resolvedNote).toBe('You released the financial packet and floor plan to this buyer.');
+    });
+
     it('revoke(), with an adapter, calls sellerRequests.revoke(id) and reloads the inbox on success', async () => {
       const revoke = vi.fn().mockResolvedValue({});
       const inbox = vi.fn().mockResolvedValue([ROW({ id: 'r1', status: 'revoked' })]);

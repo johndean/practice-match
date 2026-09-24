@@ -189,6 +189,85 @@ test.describe('smoke', () => {
   });
 
   // ---------------------------------------------------------------------------------------
+  // Ruling D-C67 (John, 2026-09-24): "all toggles must be fully functional and SELLER must be able
+  // to manage it all and per seller." The per-capability chooser (A58.7), in a real browser.
+  //
+  // WHY A BROWSER AND NOT ANOTHER UNIT TEST. Three suites already prove three links of this chain
+  // — `logic.test.ts` that the row's handler asks `chooseAccess` and then `decide` with whatever it
+  // answered, `noteDrawer.test.ts` that the drawer answers the ticked set, and `seller.test.ts`
+  // that the adapter's `chooseAccess` really opens that drawer — and none of them can prove the
+  // rendered BUTTON reaches the handler, or that what finally leaves the browser is the set the
+  // seller ticked. That last one is the whole of D-C67: before it, one click released all five.
+  //
+  // The inbox rows come from `prepare()`'s own design fixture (the design's three requests, of
+  // which `r2` is the accepted one); the decide POST is routed here rather than seeded, for the
+  // A39 test's own stated reason one describe block up — this asserts the app's behaviour against
+  // a known payload, and the API path is pytest's.
+  // ---------------------------------------------------------------------------------------
+  test('the seller picks WHICH capabilities a buyer receives, and only those reach the wire (A58.7)', async ({ page }) => {
+    await prepare(page);
+    const posted: unknown[] = [];
+    await page.route((url) => /\/api\/seller\/requests\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      return route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'r2', listing_id: 'p7', buyer_user_id: 'b2', buyer_name: 'Dr. Rachel Mendes',
+          status: 'APPROVED', message: 'Interested.', requested_disclosure_level: 'FULL_CONFIDENTIAL',
+          approved_capabilities: ['FINANCIALS', 'FLOOR_PLANS'],
+          requested_at: '2026-08-29T10:00:00Z', reviewed_at: '2026-09-24T10:00:00Z', denial_reason: null
+        })
+      });
+    });
+
+    await signInAs(page, 'seller', '/seller');
+    // The accepted row is the one that carries both controls; the pending row carries neither.
+    await page.getByRole('button', { name: 'Change access', exact: true }).click();
+
+    const drawer = page.getByRole('dialog');
+    await expect(drawer).toContainText('You decide what an approved buyer sees before you have spoken to them.');
+    // The five capabilities, and the umbrella level is NOT among them — it is a name a buyer may
+    // ask for, never a capability a grant may store.
+    for (const label of ['Identity', 'Exact location', 'Unredacted images', 'Financials', 'Floor plans']) {
+      await expect(drawer.getByText(label, { exact: true })).toBeVisible();
+    }
+    await expect(drawer.getByText('Full confidential', { exact: true })).toHaveCount(0);
+
+    // Nothing ticked yet — the design's own fixture row carries no served grant — so the primary
+    // is refused: a "Change access" that changes nothing to something is not a decision.
+    const submit = drawer.getByRole('button', { name: 'Change access', exact: true });
+    await expect(submit).toBeDisabled();
+
+    await drawer.getByText('Financials', { exact: true }).click();
+    await drawer.getByText('Floor plans', { exact: true }).click();
+    await expect(submit).toBeEnabled();
+    await submit.click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // THE ASSERTION THE RULING IS MADE OF: two capabilities left the browser, not five, and not a
+    // bare `{ action: 'approve' }` that the server would have expanded to the buyer's own
+    // FULL_CONFIDENTIAL ask.
+    expect(posted).toEqual([{ action: 'approve', disclosure_capabilities: ['FINANCIALS', 'FLOOR_PLANS'] }]);
+  });
+
+  test('a dismissed chooser asks the server nothing at all (A58.7)', async ({ page }) => {
+    // The other direction, and the one a fail-open bug would pass: cancelling must not fall
+    // through to an approval.
+    await prepare(page);
+    const posted: unknown[] = [];
+    await page.route((url) => /\/api\/seller\/requests\/[^/]+\/decide$/.test(url.pathname), (route) => {
+      posted.push(JSON.parse(route.request().postData() ?? 'null'));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+
+    await signInAs(page, 'seller', '/seller');
+    await page.getByRole('button', { name: 'Change access', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(posted, 'a cancelled chooser makes no request at all').toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------------------
   // Ruling D-C54 (John, 2026-09-13, verbatim): "as logged in VIN FOUNDATION ADMIN i can no longer
   // access nor see MY REQUEST and LIST A PRACTICE - this is not right as SUPERADMIN JOHN DEAN i
   // need to see it all!!!"

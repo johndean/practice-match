@@ -43,7 +43,7 @@ mismatch should move:
    sweep built this way cannot, by itself, distinguish "the database enforces this" from "the
    Python guard in `access.py` enforces this" -- both are true today, and either alone would
    suffice; only a schema change could make the distinction observable.)
-2. `request_pending_has_no_decision_ck` requires `approved_disclosure_level IS NULL` whenever
+2. `request_pending_has_no_decision_ck` requires `approved_capabilities IS NULL` whenever
    `status = 'PENDING'`. RED, verbatim (`status="PENDING", level="EXACT_LOCATION"`, a level the
    plan's cross product happily attaches to a still-pending row):
        psycopg2.errors.CheckViolation: new row for relation "request" violates check constraint
@@ -52,21 +52,29 @@ mismatch should move:
    non-`None` `level` is written as `NULL` whenever `status == "PENDING"`; the expected value is
    unaffected either way, since `should_be_authorized` is already `False` for every non-`APPROVED`
    status regardless of what level a decision would eventually record.
-3. `request_approved_needs_decision_ck` requires `approved_disclosure_level IS NOT NULL` whenever
+3. `request_approved_needs_decision_ck` requires `approved_capabilities IS NOT NULL` whenever
    `status = 'APPROVED'`. RED, verbatim (`status="APPROVED", level=None`, an approval with no level
    at all):
        psycopg2.errors.CheckViolation: new row for relation "request" violates check constraint
        "request_approved_needs_decision_ck"
-   The database itself refuses to represent "approved, granting nothing" -- there is no such state
-   to sweep, so it is skipped, the same way the plan's own draft already skips the one combination
-   its author had noticed for a different axis.
+   The database refuses to represent "approved, and no decision was recorded" -- there is no such
+   state to sweep, so it is skipped, the same way the plan's own draft already skips the one
+   combination its author had noticed for a different axis.
+
+   **THE SENTENCE THAT USED TO STAND HERE SAID "approved, granting nothing", AND D-C67 MAKES THAT
+   FALSE (2026-09-24).** Migration 097 replaces the single-value column with
+   `approved_capabilities text[]`, where `'{}'` is a real, stored decision that released nothing
+   and is NOT `NULL`. So "approved, granting nothing" IS representable now, it is the whole
+   fail-closed point of that ruling, and it is SWEPT rather than skipped -- the `""` member of
+   `LEVELS` below. What stays unrepresentable, and is what this skip is really about, is an
+   APPROVED row carrying no decision at all.
 
 Two more states directive §19 and this task's own brief name explicitly ("every disclosure level
 including one the code has never heard of", "a listing that does not exist") cannot be reached
-through a `request` row at all -- migration 096's own CHECK on `approved_disclosure_level` accepts
-only the six capability names plus `FULL_CONFIDENTIAL` (`levels.py`'s own comment: "so Python and
-the database cannot silently drift apart"), so there is no row to insert with an unrecognised
-level, and a `request` row can never outlive the `listing` it references (`ON DELETE CASCADE`).
+through a `request` row at all -- migration 097's own CHECK on `approved_capabilities` accepts only
+the five capability names (`levels.py`'s own comment: "so Python and the database cannot silently
+drift apart"; the umbrella `FULL_CONFIDENTIAL` is a level a buyer may REQUEST and never a capability
+a grant may store), so there is no row to insert with an unrecognised capability, and a `request` row can never outlive the `listing` it references (`ON DELETE CASCADE`).
 Both are proved directly below, calling the boundary the same way a route would rather than through
 a planted row, since none can exist."""
 from __future__ import annotations
@@ -83,7 +91,14 @@ from tests.disclosure.test_access import _account, _listing, _request
 
 STATUSES = ("PENDING", "APPROVED", "DENIED", "REVOKED")
 EXPIRIES = ("none", "future", "past")
-LEVELS = (None, *sorted(REQUESTABLE_LEVELS))
+# `""` is the EMPTY GRANT -- an approval that released nothing -- and it is on this axis because
+# migration 097 (D-C67) makes that state REPRESENTABLE for the first time: the column is
+# `approved_capabilities text[]` and `'{}'` is a real, stored decision distinct from the `NULL`
+# of a row with no decision at all. It travels as `""` rather than as a list because `_request`
+# already converts a level through `covers()`, and `covers("")` is `frozenset()` -- the design
+# under test -- so both the STORED value and the EXPECTED value fall out of the existing helpers
+# with nothing special-cased for this case anywhere in the sweep.
+LEVELS = (None, "", *sorted(REQUESTABLE_LEVELS))
 BUYER_IS_SELLER = (False, True)
 
 
@@ -103,10 +118,16 @@ def _expiry(kind: str) -> str | None:
 def test_the_grant_soundness_property_holds_for_every_generated_state(
     conn, status: str, expiry: str, level: str | None, buyer_is_seller: bool
 ) -> None:
-    """168 generated cases (4 statuses x 3 expiries x 7 levels-or-none [`REQUESTABLE_LEVELS`'s five
-    named capabilities plus `FULL_CONFIDENTIAL`, plus `None`] x 2 buyer-is-seller states), six
-    skipped as unrepresentable by the schema itself (deviation 3, above) -- 162 exercised, every one
-    asserting the SAME soundness formula with no case exempted from it."""
+    """192 generated cases (4 statuses x 3 expiries x 8 levels [`REQUESTABLE_LEVELS`'s five named
+    capabilities plus `FULL_CONFIDENTIAL`, plus `None` for "no decision", plus `""` for D-C67's
+    EMPTY GRANT] x 2 buyer-is-seller states), six skipped as unrepresentable by the schema itself
+    (deviation 3, above) -- 186 exercised, every one asserting the SAME soundness formula with no
+    case exempted from it.
+
+    The empty-grant row is the case this sweep could not previously hold, and it is the one D-C67's
+    fail-closed rule is about: an APPROVED, unexpired row for a real buyer whose stored set is `{}`
+    must still answer `frozenset()`, and it does so here through the same formula every other case
+    is judged by rather than through an exemption written for it."""
     seller = _account(conn, f"seller-{uuid4().hex}@x.org")
     listing = _listing(conn, seller)
 
@@ -172,8 +193,8 @@ def test_a_null_buyer_grants_nothing_even_with_a_real_active_grant_on_the_same_l
 
 def test_a_capability_the_code_has_never_heard_of_is_never_granted(conn) -> None:
     """directive §19/this task's own brief: "every disclosure level including one the code has
-    never heard of." Migration 096's own CHECK on `approved_disclosure_level` makes an unrecognised
-    STORED level unrepresentable as a row (deviation note, module docstring) -- proved instead at
+    never heard of." Migration 097's own CHECK on `approved_capabilities` makes an unrecognised
+    STORED capability unrepresentable as a row (deviation note, module docstring) -- proved instead at
     the boundary `authorized_capabilities`/`covers` themselves present, with no database read
     needed for that half: an unrecognised value reaching `covers()` by any future path (a level
     added to the CHECK before Python's own table is updated to match, a differently-sourced caller)

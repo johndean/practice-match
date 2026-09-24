@@ -35,7 +35,7 @@ const ITEM: AdminRequestItem = {
   id: 'req-1',
   status: 'PENDING',
   requested_disclosure_level: 'FULL_CONFIDENTIAL',
-  approved_disclosure_level: null,
+  approved_capabilities: null,
   requested_at: '2026-09-10T12:00:00+00:00',
   reviewed_at: null,
   listing_id: 'listing-1',
@@ -82,10 +82,26 @@ describe('toRequestRows renders the design\'s Requests table from the admin queu
   });
 
   it('shows an APPROVED request as "Engaged", the design\'s own ok tone, and names the APPROVED level', () => {
-    const [row] = rows([item({ status: 'APPROVED', approved_disclosure_level: 'FINANCIALS' })]);
+    const [row] = rows([item({ status: 'APPROVED', approved_capabilities: ['FINANCIALS'] })]);
     expect(row[2].pill).toBe('Engaged');
     expect(row[2].pillStyle).toBe(PILL.ok);
     expect(row[0].sub).toBe('Approved: Financials');
+  });
+
+  // D-C67 (John, 2026-09-24): a grant is a SET, so this cell names however many the seller
+  // released — in this tab's own Title-case register and in the product's own declared order,
+  // never the order the array happened to arrive in.
+  it('names every capability an APPROVED request released, in the declared order', () => {
+    const [row] = rows([item({ status: 'APPROVED', approved_capabilities: ['FLOOR_PLANS', 'IDENTITY'] })]);
+    expect(row[0].sub).toBe('Approved: Identity, Floor plans');
+  });
+
+  it('says so, rather than falling back to what the buyer asked for, when an approval released nothing', () => {
+    // `[]` is a real decision and `!= null` is what tells it from "no decision yet" — a truthiness
+    // test here would print "Requested: Full confidential" over a grant that released nothing,
+    // which is the reading D-C67 exists to remove one surface over.
+    const [row] = rows([item({ status: 'APPROVED', approved_capabilities: [] })]);
+    expect(row[0].sub).toBe('Approved: nothing released');
   });
 
   it('shows a DENIED request as "Declined", the design\'s own bad tone', () => {

@@ -19,14 +19,15 @@ claim to, recall a file the buyer already downloaded before the seller revoked -
 this system's control the moment it was served."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from app.api.seller_listings import Refusal
-from app.disclosure.levels import REQUESTABLE_LEVELS
+from app.disclosure.levels import CAPABILITIES, REQUESTABLE_LEVELS, covers
 
 _COLUMNS = (
     "id, listing_id, buyer_user_id, seller_user_id, message, status, requested_disclosure_level,"
-    " approved_disclosure_level, requested_at, reviewed_at, reviewed_by, denial_reason, expires_at"
+    " approved_capabilities, requested_at, reviewed_at, reviewed_by, denial_reason, expires_at"
 )
 
 
@@ -100,7 +101,7 @@ def list_mine(conn: Any, *, buyer_account_id: str) -> list[dict[str, Any]]:
 #: rather than showing a seller nothing, "None", or a name nobody gave.
 _INBOX_COLUMNS = (
     "r.id, r.listing_id, r.buyer_user_id, r.seller_user_id, r.message, r.status,"
-    " r.requested_disclosure_level, r.approved_disclosure_level, r.requested_at, r.reviewed_at,"
+    " r.requested_disclosure_level, r.approved_capabilities, r.requested_at, r.reviewed_at,"
     " r.reviewed_by, r.denial_reason, r.expires_at, b.display_name, b.email"
 )
 
@@ -124,29 +125,76 @@ def list_inbox(conn: Any, *, seller_account_id: str) -> list[dict[str, Any]]:
         return rows
 
 
-def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id: str, required_status: str) -> None:
+def _owned_pending_or_approved(conn: Any, *, request_id: str, seller_account_id: str, required_status: tuple[str, ...]) -> None:
+    """`required_status` is a TUPLE since D-C67 (2026-09-24), because `decide`'s approve arm now
+    accepts an already-APPROVED row: a seller who granted three capabilities must be able to narrow
+    the grant to one without withdrawing the buyer's access entirely and making them ask again.
+    Every other caller passes a one-tuple and reads exactly as it did."""
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM request WHERE id = %s AND seller_user_id = %s", (request_id, seller_account_id))
         found = cur.fetchone()
     if found is None:
         raise Refusal("NOT_FOUND", "No such request.", 404)  # seller_listings.py:18's rule: not yours, not found
-    if found[0] != required_status:
-        raise Refusal("STATE", f"This request is {found[0].lower()}, not {required_status.lower()}.", 409)
+    if found[0] not in required_status:
+        wanted = " or ".join(status.lower() for status in required_status)
+        raise Refusal("STATE", f"This request is {found[0].lower()}, not {wanted}.", 409)
+
+
+def _chosen_capabilities(cur: Any, *, request_id: str, disclosure_level: str | None,
+                        disclosure_capabilities: Sequence[str] | None) -> list[str]:
+    """What this approval releases, as a sorted list of capability names — the ONE place that
+    decision is made (D-C67, John, 2026-09-24).
+
+    THE TEST ON `disclosure_capabilities` IS `is None`, NEVER TRUTHINESS, AND THAT IS THE WHOLE
+    FAIL-CLOSED RULE OF THIS FAMILY. `disclosure_capabilities or covers(...)` would read an EMPTY
+    list — a seller who deliberately released nothing — as "the caller said nothing", fall through
+    to the requested level, and `app/api/requests.py` defaults every request to
+    `FULL_CONFIDENTIAL`, so that one falsy check would silently release the practice name, the
+    street, the postcode, the telephone, the exact map pin, the unredacted photographs, the
+    financial packet and the floor plans together. The three arms are three different questions:
+
+    * a SET was named (including the empty one) — that set, exactly, is what is stored;
+    * a LEVEL was named — `covers()` expands it, so the existing all-five path (`FULL_CONFIDENTIAL`)
+      and every single-capability one stay reachable exactly as they were;
+    * neither — the level the BUYER asked for, `decide`'s own long-standing default.
+
+    Naming both at once is refused rather than silently preferring one: two callers' worth of
+    intent in one body is a caller bug, and guessing which half to honour is how a grant ends up
+    wider than anybody asked for."""
+    if disclosure_capabilities is not None and disclosure_level is not None:
+        raise Refusal("BAD_REQUEST", "Send disclosure_capabilities or disclosure_level, not both.", 400)
+    if disclosure_capabilities is not None:
+        unknown = sorted({value for value in disclosure_capabilities if value not in CAPABILITIES})
+        if unknown:
+            raise Refusal("BAD_LEVEL", f"disclosure_capabilities may only contain {', '.join(sorted(CAPABILITIES))}.", 400)
+        return sorted(set(disclosure_capabilities))
+    if disclosure_level is None:
+        cur.execute("SELECT requested_disclosure_level FROM request WHERE id = %s", (request_id,))
+        return sorted(covers(cur.fetchone()[0]))
+    if disclosure_level not in REQUESTABLE_LEVELS:
+        raise Refusal("BAD_LEVEL", f"disclosure_level must be one of {', '.join(sorted(REQUESTABLE_LEVELS))}.", 400)
+    return sorted(covers(disclosure_level))
 
 
 def decide(conn: Any, *, request_id: str, seller_account_id: str, action: str,
-          disclosure_level: str | None, reason: str | None) -> dict[str, Any]:
-    _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status="PENDING")
+          disclosure_level: str | None, reason: str | None,
+          disclosure_capabilities: Sequence[str] | None = None) -> dict[str, Any]:
+    """Approve or deny. Since D-C67 (John, 2026-09-24) the approve arm also accepts an ALREADY
+    APPROVED row, which is how a seller narrows (or widens) what one buyer holds without
+    withdrawing their access entirely; deny stays PENDING-only, because a decision the seller wants
+    to take back after approving it is `revoke`, which has its own status, its own audit action and
+    its own mail."""
+    allowed = ("PENDING", "APPROVED") if action == "approve" else ("PENDING",)
+    _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status=allowed)
     with conn.cursor() as cur:
         if action == "approve":
-            cur.execute("SELECT requested_disclosure_level FROM request WHERE id = %s", (request_id,))
-            level = disclosure_level or cur.fetchone()[0]
-            if level not in REQUESTABLE_LEVELS:
-                raise Refusal("BAD_LEVEL", f"disclosure_level must be one of {', '.join(sorted(REQUESTABLE_LEVELS))}.", 400)
+            capabilities = _chosen_capabilities(
+                cur, request_id=request_id, disclosure_level=disclosure_level,
+                disclosure_capabilities=disclosure_capabilities)
             cur.execute(
-                f"UPDATE request SET status = 'APPROVED', approved_disclosure_level = %s, reviewed_at = now(),"
+                f"UPDATE request SET status = 'APPROVED', approved_capabilities = %s, reviewed_at = now(),"
                 f" reviewed_by = %s, updated_at = now() WHERE id = %s RETURNING {_COLUMNS}",
-                (level, seller_account_id, request_id),
+                (capabilities, seller_account_id, request_id),
             )
         elif action == "deny":
             cur.execute(
@@ -160,7 +208,7 @@ def decide(conn: Any, *, request_id: str, seller_account_id: str, action: str,
 
 
 def revoke(conn: Any, *, request_id: str, seller_account_id: str) -> dict[str, Any]:
-    _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status="APPROVED")
+    _owned_pending_or_approved(conn, request_id=request_id, seller_account_id=seller_account_id, required_status=("APPROVED",))
     with conn.cursor() as cur:
         cur.execute(
             f"UPDATE request SET status = 'REVOKED', updated_at = now() WHERE id = %s RETURNING {_COLUMNS}",

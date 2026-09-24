@@ -455,7 +455,7 @@ async def test_an_unauthenticated_caller_receives_no_confidential_information(
 
 
 @pytest.mark.asyncio
-async def test_a_partial_approval_reveals_only_the_approved_disclosure_level(
+async def test_a_partial_approval_reveals_only_the_approved_capabilities(
     client: Any, conn: Any, member: Any, store: Any,
 ) -> None:
     """directive §21: "Buyer with partial approval -> only approved disclosure level." A buyer who
@@ -477,7 +477,7 @@ async def test_a_partial_approval_reveals_only_the_approved_disclosure_level(
     decided = await client.post(
         f"/api/seller/requests/{created.json()['id']}/decide", headers=seller_headers, json={"action": "approve"}
     )
-    assert decided.status_code == 200 and decided.json()["approved_disclosure_level"] == "EXACT_LOCATION"
+    assert decided.status_code == 200 and decided.json()["approved_capabilities"] == ["EXACT_LOCATION"]
 
     body = (await client.get(f"/api/listings/{listing_id}", headers=buyer_headers)).json()
     assert body["street"] == "4200 Preston Rd", "the ONE granted capability must be delivered"
@@ -598,3 +598,54 @@ async def test_a_withdrawn_grant_stops_reaching_the_buyers_cached_browse_page_at
     detail = (await client.get(f"/api/listings/{listing_id}", headers=a_headers)).json()
     assert (detail["name"], detail["street"], detail["rev"]) == (
         after[listing_id]["name"], after[listing_id]["street"], after[listing_id]["rev"])
+
+
+@pytest.mark.asyncio
+async def test_a_narrowed_grant_stops_reaching_the_buyers_cached_browse_page_at_once(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """D-C67 (John, 2026-09-24) puts a THIRD door on the same cache, and it is the one that both
+    directions at once: a narrowing takes some fields back and leaves the others standing.
+
+    The withdraw case above proved the all-or-nothing arm. This one is what the seller's new
+    control actually does, and the order is again the whole test — Buyer A reads the WIDE page
+    first, so it is really in Redis, before the seller narrows. Each direction is asserted
+    separately on the LIST route (the cached one; the detail route has never been cached and is
+    why the isolation suite caught nothing here for weeks)."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="narrow-cache-seller@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, _photo, _doc = await _seller_listing_with_everything_confidential(
+        conn, client, store, seller_headers)
+    _aid, a_cookies, a_hdr = member(("buyer",), email="narrow-cache-buyer@x.org")
+    a_headers = auth_headers(a_cookies, a_hdr)
+
+    def listed() -> Any:
+        return client.get("/api/listings", headers=a_headers)
+
+    created = await client.post("/api/requests", headers=a_headers, json={"listing_id": listing_id})
+    assert created.status_code == 201, created.text
+    request_id = created.json()["id"]
+    wide = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                             json={"action": "approve", "disclosure_capabilities": ["IDENTITY", "FINANCIALS"]})
+    assert wide.status_code == 200, wide.text
+
+    # (1) The wide page is read, so it is cached under this buyer's own key.
+    before = {row["id"]: row for row in (await listed()).json()["items"]}
+    assert before[listing_id]["name"] == "Highland Park Veterinary"
+    assert before[listing_id]["rev"] == 900000
+
+    narrowed = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert narrowed.status_code == 200, narrowed.text
+
+    # (2) The narrowing must reach that cached page at once, and only as far as it goes: the
+    # capability the seller took back is gone, the one they kept is still there.
+    after = {row["id"]: row for row in (await listed()).json()["items"]}
+    assert after[listing_id]["name"] != "Highland Park Veterinary", (
+        "a narrowed grant went on reaching the buyer's cached Browse page for up to 60 seconds")
+    assert after[listing_id]["rev"] == 900000, (
+        "narrowing must not take back a capability the seller kept")
+
+    # ...and the two routes agree, the property the detail-only cases cannot see.
+    detail = (await client.get(f"/api/listings/{listing_id}", headers=a_headers)).json()
+    assert (detail["name"], detail["rev"]) == (after[listing_id]["name"], after[listing_id]["rev"])

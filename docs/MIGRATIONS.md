@@ -31,14 +31,24 @@ failure it names is not a ledger.
 | 094 | `094_registry_blocked_reason.sql` | `feat/admin-data-sources` | the member-facing "why is this blocked" column |
 | 095 | `095_ingest_run_notes.sql` | `fix/census-204` | per-run notes (which states were skipped, and why) |
 | 096 | `096_request.sql` | `feat/per-buyer-disclosure` | the buyer/listing access-request table (supersedes A43's draft shape — see the migration's own header comment) |
+| 097 | `097_request_approved_capabilities.sql` | `fix/wizard-submit-truth` | ruling D-C67 — a grant is a SET: `request.approved_disclosure_level` (one of six values) is REPLACED by `approved_capabilities text[]`, so a seller can release two of the five, or none. Depends on `096` ALONE and on nothing in `099` or `100`, which is why it takes the free number below them rather than the next one above: on a fresh database `scripts/migrate.py` applies it straight after the table it alters, and neither later file touches `request`. |
 | 099 | `099_avma_pet_rate_registry.sql` | `feat/pet-rate-provenance` | the AVMA cited-statistic registry row, and the blocked per-geography feed's note stops standing in for it |
 
-**Next free: 097.** `097` WAS held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
+**Next free: 098.** `097` WAS held by `feat/admin-data-sources` and `098` by `feat/a41-settings` — both
 were told "097" in briefs written minutes apart by the same author who wrote this file, and were
 deconflicted by message before either wrote a file. **Both numbers returned to free on 2026-09-15**,
 when those two branches merged to `main` having written no migration at all: this file's own rule is
-that a row here means a file exists, and the per-ref loop above finds no `096`, `097` or `098` on any
-ref. `096` stays RESERVED for A43 (the row above), which is a reservation and not a file. `099` is
-claimed — the row above, and the file beside it.
+that a row here means a file exists, and the per-ref loop above found no `096`, `097` or `098` on any
+ref ON THAT DAY. It finds `096` and `097` today — `096` was written by `feat/per-buyer-disclosure`
+and `097` by this branch, both rowed above — and still no `098`, re-run 2026-09-24. `096` stays RESERVED for A43 (the row above), which is a reservation and not a file. `099` is
+claimed — the row above, and the file beside it. `097` was FREE and is now claimed by
+`fix/wizard-submit-truth` (the row above), taken rather than `101` because the file depends on
+`096` alone: this file's own rule is that numbers are reserved by plan, not by highest-plus-one.
+
+**`100` is TAKEN and carries no row here**, measured 2026-09-24 by the per-ref loop above:
+`migrations/100_role_exclusivity.sql` is on `main` and applied on QA. It is recorded in this
+sentence rather than given a row, because describing another branch's claim is that branch's own
+to write — but a reader must not take the gap in the table for a free number. After `098`, the
+next free numbers are `101` onward.
 
 The identifiability sub-project holds its own carve-out at `040`–`049` (amendment A-C12); `044`–`049` are still free inside it (`043` is claimed in the table above).

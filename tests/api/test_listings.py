@@ -20,6 +20,7 @@ from app.api.listings import (
     serialise,
 )
 from app.census.serve import CommunityRow
+from app.disclosure.levels import covers
 from tests.api.conftest import auth_headers
 
 INSERT = (
@@ -87,10 +88,14 @@ def _grant(conn: Any, member: Any, listing_id: str, buyer_id: str, *, level: str
     seller_id, _cookies, _headers = member(("seller",), email=f"grant-seller-{uuid4().hex[:8]}@example.org")
     with conn.cursor() as cur:
         cur.execute(
+            # `approved_capabilities` (migration 097, D-C67): the grant is a SET now, and this
+            # helper keeps its own single-`level` parameter -- every caller reads the same and means
+            # the same -- by expanding it through the one door that always did,
+            # `app.disclosure.levels.covers`.
             "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status,"
-            " approved_disclosure_level, reviewed_at, reviewed_by)"
+            " approved_capabilities, reviewed_at, reviewed_by)"
             " VALUES (%s,%s,%s,'APPROVED',%s,now(),%s)",
-            (listing_id, buyer_id, seller_id, level, seller_id),
+            (listing_id, buyer_id, seller_id, sorted(covers(level)), seller_id),
         )
 
 

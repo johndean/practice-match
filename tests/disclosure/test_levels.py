@@ -79,10 +79,59 @@ def test_requestable_levels_matches_the_requested_disclosure_level_check(conn: A
     assert levels.REQUESTABLE_LEVELS == _permitted_levels(conn, "requested_disclosure_level")
 
 
-def test_requestable_levels_matches_the_approved_disclosure_level_check(conn: Any) -> None:
-    """Same pin, the grant column. `approved_disclosure_level` carries no NOT NULL (a PENDING or
-    DENIED row has none), but its CHECK lists the identical six levels as the request column's --
-    a future migration that widened one column's list without the other's would be exactly the
-    "two copies of a value list that nothing compares" defect this test exists to catch, one
-    column over from the first."""
-    assert levels.REQUESTABLE_LEVELS == _permitted_levels(conn, "approved_disclosure_level")
+# `test_requestable_levels_matches_the_approved_disclosure_level_check` stood here and is RETIRED
+# by D-C67 (2026-09-24): migration 097 replaced `approved_disclosure_level` with
+# `approved_capabilities`, so there is no such column to read a CHECK from. What it PROVED -- that
+# the grant column's admitted values and Python's own list cannot drift apart -- is unchanged and
+# is proved by `test_capabilities_matches_the_approved_capabilities_check` at the foot of this
+# file, against the column that replaced it and against the narrower set that column admits.
+
+
+# --- D-C67 (John, 2026-09-24: "all toggles must be fully functional and SELLER must be able to
+# manage it all and per seller"): a grant is a SET of capabilities, not one named level. `covers()`
+# above is untouched and keeps its own six-value contract -- it is still the one door from the
+# BUYER's single requested level to the default grant -- and `granted()` below is the one door from
+# what is actually STORED (`request.approved_capabilities`, migration 097) to what a buyer holds.
+
+
+def test_granted_is_empty_for_no_grant_at_all() -> None:
+    """`None` is "this row carries no decision" -- a PENDING or DENIED row. Fail closed, exactly as
+    `covers(None)` does one function up."""
+    assert levels.granted(None) == frozenset()
+
+
+def test_granted_is_empty_for_a_stored_empty_set() -> None:
+    """THE WHOLE RISK OF THIS FAMILY (D-C67's own fail-closed rule): an approval that names no
+    capability grants NOTHING. An empty list is a real, stored decision -- distinct from `None` --
+    and it must never collapse into "everything"."""
+    assert levels.granted([]) == frozenset()
+
+
+def test_granted_returns_exactly_the_capabilities_stored() -> None:
+    assert levels.granted(["FINANCIALS", "FLOOR_PLANS"]) == frozenset({"FINANCIALS", "FLOOR_PLANS"})
+
+
+def test_granted_drops_a_member_this_python_has_never_heard_of() -> None:
+    """`covers()`'s own precedent, applied per MEMBER rather than per value: an unrecognised
+    capability (a future migration adding one Python does not know about yet) confers nothing,
+    while the recognised members beside it still confer themselves. Denying the whole set on one
+    unknown member would be the other reading, and it would STRIP a buyer's existing access on the
+    deploy that added the new name -- fail-closed about the unknown thing, never about the known
+    ones."""
+    assert levels.granted(["FINANCIALS", "TELEPATHY"]) == frozenset({"FINANCIALS"})
+
+
+def test_granted_never_answers_full_confidential_as_a_member() -> None:
+    """`FULL_CONFIDENTIAL` is a REQUESTABLE level, never a stored capability -- `CAPABILITIES` is
+    the five, and migration 097's own CHECK admits only those. A row that somehow carried the
+    umbrella name confers nothing for it rather than silently expanding to all five."""
+    assert levels.granted(["FULL_CONFIDENTIAL"]) == frozenset()
+
+
+def test_capabilities_matches_the_approved_capabilities_check(conn: Any) -> None:
+    """The `approved_disclosure_level` pin above, moved to the column that replaced it (migration
+    101). The array CHECK is `approved_capabilities <@ ARRAY[...]::text[]`, so `_permitted_levels`'
+    own regex reads the five element literals out of `pg_get_constraintdef` exactly as it read the
+    six out of an IN-list, and the set is `CAPABILITIES` rather than `REQUESTABLE_LEVELS`:
+    `FULL_CONFIDENTIAL` is a name a buyer may ASK for and never one a grant may STORE."""
+    assert levels.CAPABILITIES == _permitted_levels(conn, "approved_capabilities")

@@ -132,7 +132,7 @@ def queue_counts(conn: Any) -> dict[str, int]:
 
 
 _COLUMNS = (
-    "r.id, r.status, r.requested_disclosure_level, r.approved_disclosure_level,"
+    "r.id, r.status, r.requested_disclosure_level, r.approved_capabilities,"
     " r.requested_at, r.reviewed_at, r.listing_id, r.buyer_user_id, r.seller_user_id,"
     # ALIASED, not bare — `b.display_name`/`se.display_name` (and `.email` beside each) would
     # otherwise both land in a dict key named `display_name`/`email`, and `dict(zip(names, row))`
@@ -195,7 +195,7 @@ async def list_requests(request: Request) -> Response:
                 "id": str(row["id"]),
                 "status": row["status"],
                 "requested_disclosure_level": row["requested_disclosure_level"],
-                "approved_disclosure_level": row["approved_disclosure_level"],
+                "approved_capabilities": row["approved_capabilities"],
                 "requested_at": row["requested_at"].isoformat(),
                 "reviewed_at": _iso(row["reviewed_at"]),
                 "listing_id": str(row["listing_id"]),

@@ -23,6 +23,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.disclosure.levels import CAPABILITIES
 from tests.api.conftest import auth_headers
 from tests.api.test_requests import _seller_listing
 
@@ -175,7 +176,9 @@ async def test_approve_grants_the_requested_level_by_default(client, conn, membe
     response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "APPROVED" and body["approved_disclosure_level"] == "FULL_CONFIDENTIAL"
+    # `approved_capabilities` and a LIST since D-C67 (migration 097) — the payload names the SET
+    # the seller released, and the default arm still expands the buyer's own requested level.
+    assert body["status"] == "APPROVED" and sorted(body["approved_capabilities"]) == sorted(CAPABILITIES)
     # Deviation 2's own proof, inherited from Task 5: `reviewed_at` is a real `datetime.datetime`
     # on the model side and must survive `_serialisable` as a string here too.
     assert isinstance(body["reviewed_at"], str) and body["reviewed_at"]
@@ -186,7 +189,7 @@ async def test_approve_grants_the_requested_level_by_default(client, conn, membe
     # Directive §14 / this task's brief: "for which buyer and listing" — not merely the request id.
     assert row["after"]["listing_id"] == listing_id
     assert row["after"]["buyer_user_id"] == buyer_id
-    assert row["after"]["status"] == "APPROVED" and row["after"]["level"] == "FULL_CONFIDENTIAL"
+    assert row["after"]["status"] == "APPROVED" and sorted(row["after"]["capabilities"]) == sorted(CAPABILITIES)
 
 
 @pytest.mark.asyncio
@@ -194,16 +197,24 @@ async def test_approve_can_override_the_level_below_what_was_requested(client, c
     seller_headers, _buyer_headers, _listing_id, request_id, _buyer_id = await _pair(conn, client, member, "s3b@x.org", "b3b@x.org")
     response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
                                  json={"action": "approve", "disclosure_level": "IDENTITY"})
-    assert response.status_code == 200 and response.json()["approved_disclosure_level"] == "IDENTITY"
+    assert response.status_code == 200 and response.json()["approved_capabilities"] == ["IDENTITY"]
 
 
 @pytest.mark.asyncio
-async def test_approve_refused_once_already_decided(client, conn, member) -> None:
-    """The task brief's own required case: "approve refused on an already-decided request.\""""
+async def test_deny_refused_once_already_decided(client, conn, member) -> None:
+    """The task brief's own required case: "approve refused on an already-decided request."
+
+    **RE-KEYED ONTO DENY BY D-C67 (2026-09-24), and renamed from
+    `test_approve_refused_once_already_decided`.** A second APPROVE is exactly how a seller narrows
+    a grant now (`test_approve_narrows_an_already_approved_grant` below), so asserting that it is
+    refused would assert the feature absent. The refusal the brief is about — a decision cannot be
+    quietly re-taken on a row that has already had one — is unchanged for deny, which is the arm
+    that has no other door: taking back an approval is `revoke`."""
     seller_headers, _buyer_headers, _listing_id, request_id, _buyer_id = await _pair(conn, client, member, "s3c@x.org", "b3c@x.org")
     first = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
     assert first.status_code == 200
-    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
+    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                               json={"action": "deny", "reason": "changed my mind"})
     assert second.status_code == 409 and second.json()["error"]["code"] == "STATE"
 
 
@@ -221,7 +232,7 @@ async def test_deny_records_the_sellers_reason(client, conn, member, audit_rows)
     assert len(rows) == 1
     row = rows[0]
     assert row["after"]["listing_id"] == listing_id and row["after"]["buyer_user_id"] == buyer_id
-    assert row["after"]["status"] == "DENIED" and row["after"]["level"] is None
+    assert row["after"]["status"] == "DENIED" and row["after"]["capabilities"] is None
     # The seller's own free-text words, on `audit_log.reason` — `app/api/admin_listings.py`'s own
     # shape for a decision's rationale, not duplicated a second time inside `after`.
     assert row["reason"] == "Not a good fit"
@@ -398,9 +409,9 @@ async def test_revoke_after_approval_writes_an_audit_row(client, conn, member, a
     assert row["target_type"] == "request" and row["target_id"] == request_id
     assert row["after"]["listing_id"] == listing_id and row["after"]["buyer_user_id"] == buyer_id
     assert row["after"]["status"] == "REVOKED"
-    # migration 096's own comment: a REVOKED row keeps its `approved_disclosure_level` for
-    # history — the audit row names what was revoked, not merely that something was.
-    assert row["after"]["level"] == "FULL_CONFIDENTIAL"
+    # migration 096's own comment (101's too): a REVOKED row keeps its capabilities for history —
+    # the audit row names what was revoked, not merely that something was.
+    assert sorted(row["after"]["capabilities"]) == sorted(CAPABILITIES)
 
 
 @pytest.mark.asyncio
@@ -575,15 +586,116 @@ async def test_a_grant_on_a_disclosed_listing_names_the_practice_in_the_approved
 
 @pytest.mark.asyncio
 async def test_a_retried_decision_does_not_mail_the_buyer_twice(client, conn, member) -> None:
-    """A second `decide` on an already-decided request is refused (409, proved above by
-    `test_approve_refused_once_already_decided`) before `notify_decision` is ever reached — this
-    proves the OUTCOME an idempotency key exists for: at most one `access_approved` row for one
-    decision, whatever a client's retry does."""
+    """At most one `access_approved` row for one request, whatever a client's retry does.
+
+    **RE-KEYED BY D-C67 (2026-09-24), and it proves MORE than it used to.** It used to rest on the
+    second `decide` being refused 409 before `notify_decision` was ever reached — the premise
+    `app/disclosure/notify.py`'s own docstring stated, and the one D-C67 retires: the second
+    approve is a NARROWING and it succeeds. So the idempotency key is now load-bearing rather than
+    belt-and-braces, and this is the case that says so: the decision lands, the grant really
+    changes, and the buyer is mailed exactly once.
+
+    That the second decision mails NOTHING is deliberate and is recorded as a ruling item rather
+    than fixed here: `access_approved` reads "Sign in to see what is newly available", which is
+    false of a narrowing, and D-C62's own sentence covers access that "opens, closes or is
+    refused" and names no fourth case. A narrowed-access notification is new copy."""
     seller_headers, _buyer_headers, _listing_id, request_id, buyer_id = await _pair(conn, client, member, "s-idem1@x.org", "b-idem1@x.org")
     first = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
     assert first.status_code == 200
-    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers, json={"action": "approve"})
-    assert second.status_code == 409
+    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                               json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert second.status_code == 200, second.text
+    assert second.json()["approved_capabilities"] == ["FINANCIALS"]
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM email_outbox o JOIN account a ON a.email = o.to_email WHERE a.id = %s", (buyer_id,))
         assert cur.fetchone()[0] == 1
+
+
+# --- decide: the per-capability chooser (D-C67, John, 2026-09-24) -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_approve_stores_exactly_the_capabilities_the_seller_sent(client, conn, member, audit_rows) -> None:
+    """The wire half of D-C67. The buyer asked for FULL_CONFIDENTIAL — every request does — and the
+    seller released two of the five."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s30@x.org", "b30@x.org")
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_capabilities": ["FLOOR_PLANS", "FINANCIALS"]})
+    assert response.status_code == 200, response.text
+    assert response.json()["approved_capabilities"] == ["FINANCIALS", "FLOOR_PLANS"]
+    row = next(r for r in audit_rows() if r["action"] == "access.approved")
+    assert row["after"]["capabilities"] == ["FINANCIALS", "FLOOR_PLANS"]
+
+
+@pytest.mark.asyncio
+async def test_approve_with_an_empty_array_releases_nothing_over_the_wire(client, conn, member) -> None:
+    """THE FAIL-CLOSED CASE, at the door a client actually posts through. `[]` is falsy in Python
+    and `body.get("disclosure_capabilities")` answers it without complaint, so a truthiness test
+    anywhere on this path — the route's own, or `_chosen_capabilities`' — would read it as "absent"
+    and fall through to the buyer's own FULL_CONFIDENTIAL ask."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s31@x.org", "b31@x.org")
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_capabilities": []})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "APPROVED"
+    assert response.json()["approved_capabilities"] == []
+
+
+@pytest.mark.asyncio
+async def test_approve_narrows_an_already_approved_grant_over_the_wire(client, conn, member) -> None:
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s32@x.org", "b32@x.org")
+    first = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                              json={"action": "approve", "disclosure_capabilities": ["IDENTITY", "FINANCIALS"]})
+    assert first.status_code == 200, first.text
+    second = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                               json={"action": "approve", "disclosure_capabilities": ["FINANCIALS"]})
+    assert second.status_code == 200, second.text
+    assert second.json()["approved_capabilities"] == ["FINANCIALS"]
+
+
+@pytest.mark.asyncio
+async def test_decide_refuses_disclosure_capabilities_that_is_not_an_array_of_strings(client, conn, member) -> None:
+    """Deviation 1's fourth-gap class, one field over: `value not in CAPABILITIES` raises
+    `TypeError` for an unhashable member rather than answering False, so a nested array or object
+    would reach a 500 without this guard."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s33@x.org", "b33@x.org")
+    for bad in ("FINANCIALS", {"a": 1}, ["FINANCIALS", ["FLOOR_PLANS"]], ["FINANCIALS", 7]):
+        response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                     json={"action": "approve", "disclosure_capabilities": bad})
+        assert response.status_code == 400, (bad, response.text)
+        assert response.json()["error"]["code"] == "BAD_LEVEL"
+
+
+@pytest.mark.asyncio
+async def test_decide_refuses_an_explicit_null_rather_than_reading_it_as_absent(client, conn, member) -> None:
+    """The one place this route tells an ABSENT key from a `null` one, and the reason is the shape a
+    client reaches by accident: the seller's chooser answers `string[] | null` (`null` = they
+    dismissed the drawer), so a caller who forwarded it unchecked would, if `null` read as absent,
+    be handed the buyer's own `FULL_CONFIDENTIAL` ask — the widest grant this product has — from a
+    decision the seller never took. Both directions, so neither passes for the other: `null` is
+    refused, and an OMITTED key still takes the default arm."""
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s36@x.org", "b36@x.org")
+    refused = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                json={"action": "approve", "disclosure_capabilities": None})
+    assert refused.status_code == 400 and refused.json()["error"]["code"] == "BAD_LEVEL"
+    accepted = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve"})
+    assert accepted.status_code == 200, accepted.text
+    assert sorted(accepted.json()["approved_capabilities"]) == sorted(CAPABILITIES)
+
+
+@pytest.mark.asyncio
+async def test_decide_refuses_an_unknown_capability_over_the_wire(client, conn, member) -> None:
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s34@x.org", "b34@x.org")
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_capabilities": ["FINANCIALS", "EVERYTHING"]})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "BAD_LEVEL"
+
+
+@pytest.mark.asyncio
+async def test_decide_refuses_a_set_and_a_level_in_one_body(client, conn, member) -> None:
+    seller_headers, _b, _listing_id, request_id, _bid = await _pair(conn, client, member, "s35@x.org", "b35@x.org")
+    response = await client.post(f"/api/seller/requests/{request_id}/decide", headers=seller_headers,
+                                 json={"action": "approve", "disclosure_level": "IDENTITY",
+                                       "disclosure_capabilities": ["FINANCIALS"]})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "BAD_REQUEST"

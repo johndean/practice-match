@@ -564,6 +564,11 @@ describe('local design amendments (spec D15)', () => {
     'A58.6f',
     // Fix round 2, review Important-2: the confirmation names the tile's DISPLAYED name.
     'A58.6g', 'A58.6h',
+    // D-C67 (John, 2026-09-24): the seller chooses WHICH capabilities one buyer receives, reads
+    // back what that buyer holds, and changes it later. A58.7b is chained on A52.4 (its `find` is
+    // that entry's whole two-line `replace`) and A58.7d on A53.1; the other two take text no
+    // earlier entry's `replace` introduced whole.
+    'A58.7a', 'A58.7b', 'A58.7c', 'A58.7d',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -776,7 +781,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(457);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(461);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

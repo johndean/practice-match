@@ -18,6 +18,7 @@ import pytest
 from PIL import Image
 
 from app.config import settings
+from app.disclosure.levels import covers
 from app.privacy import redacted_key
 from tests.api.conftest import _draft, auth_headers
 
@@ -546,10 +547,14 @@ def _grant(conn: Any, listing_id: str, buyer_id: str, seller_id: str, *, level: 
     route (Task 6) here too."""
     with conn.cursor() as cur:
         cur.execute(
+            # `approved_capabilities` (migration 097, D-C67): the grant is a SET now, and this
+            # helper keeps its own single-`level` parameter -- every caller reads the same and means
+            # the same -- by expanding it through the one door that always did,
+            # `app.disclosure.levels.covers`.
             "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status,"
-            " approved_disclosure_level, reviewed_at, reviewed_by)"
+            " approved_capabilities, reviewed_at, reviewed_by)"
             " VALUES (%s,%s,%s,'APPROVED',%s,now(),%s) RETURNING id",
-            (listing_id, buyer_id, seller_id, level, seller_id),
+            (listing_id, buyer_id, seller_id, sorted(covers(level)), seller_id),
         )
         return str(cur.fetchone()[0])
 

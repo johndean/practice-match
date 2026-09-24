@@ -1204,6 +1204,7 @@
                     </template>
                     <template v-if="i?.canRevoke">
                       <div style="display: flex; gap: 8px; margin-top: 14px;">
+                        <button @click="i?.changeAccess" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Change access</button>
                         <button @click="i?.revoke" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Withdraw</button>
                       </div>
                     </template>

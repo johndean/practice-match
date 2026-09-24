@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openConfirmDrawer, openNoteDrawer, type NoteDrawerOutcome } from './noteDrawer';
+import { openChoiceDrawer, openConfirmDrawer, openNoteDrawer, type NoteDrawerOutcome } from './noteDrawer';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -382,6 +382,115 @@ describe('openConfirmDrawer', () => {
     const answered = openConfirmDrawer(confirm());
     [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click();
     expect(await answered).toBe(false);
+    spy.mockRestore();
+  });
+});
+
+
+// --- openChoiceDrawer (D-C67, John, 2026-09-24) -------------------------------------------------
+
+function choiceConfig(overrides: Partial<Parameters<typeof openChoiceDrawer>[0]> = {}) {
+  return {
+    title: 'Share more',
+    subtitle: 'Dr. Rachel Mendes',
+    intro: 'You decide what an approved buyer sees before you have spoken to them.',
+    options: [
+      { value: 'IDENTITY', label: 'Identity' },
+      { value: 'FINANCIALS', label: 'Financials' },
+      { value: 'FLOOR_PLANS', label: 'Floor plans' }
+    ],
+    selected: [] as string[],
+    submitLabel: 'Share more',
+    ...overrides
+  };
+}
+
+function boxes(): HTMLInputElement[] {
+  return [...document.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+}
+
+describe('openChoiceDrawer', () => {
+  it("renders one row per option, in the caller's own order, with the intro above them", () => {
+    void openChoiceDrawer(choiceConfig());
+    expect(query('[role="dialog"]')).toBeTruthy();
+    expect(document.body.textContent).toContain('You decide what an approved buyer sees before you have spoken to them.');
+    expect(document.body.textContent).toContain('Dr. Rachel Mendes');
+    expect(boxes().map((b) => b.value)).toEqual(['IDENTITY', 'FINANCIALS', 'FLOOR_PLANS']);
+  });
+
+  it('pre-ticks exactly what the buyer already holds, and nothing else', () => {
+    void openChoiceDrawer(choiceConfig({ selected: ['FINANCIALS'] }));
+    const ticked = boxes().filter((b) => b.checked).map((b) => b.value);
+    // BOTH directions, separately: what is held is ticked, and what is not held is not.
+    expect(ticked).toEqual(['FINANCIALS']);
+    expect(boxes().find((b) => b.value === 'IDENTITY')!.checked).toBe(false);
+  });
+
+  it('answers the ticked values in the options own order, never the order they were clicked', async () => {
+    const promise = openChoiceDrawer(choiceConfig());
+    const [identity, , floorPlans] = boxes();
+    floorPlans.checked = true; floorPlans.dispatchEvent(new Event('change'));
+    identity.checked = true; identity.dispatchEvent(new Event('change'));
+    submitButton('Share more').click();
+    await expect(promise).resolves.toEqual(['IDENTITY', 'FLOOR_PLANS']);
+  });
+
+  it('un-ticking takes a value back out of the answer', async () => {
+    const promise = openChoiceDrawer(choiceConfig({ selected: ['IDENTITY', 'FINANCIALS'] }));
+    const identity = boxes()[0];
+    identity.checked = false; identity.dispatchEvent(new Event('change'));
+    submitButton('Share more').click();
+    await expect(promise).resolves.toEqual(['FINANCIALS']);
+  });
+
+  it('keeps the primary disabled until something is ticked, and disables it again when nothing is', () => {
+    void openChoiceDrawer(choiceConfig());
+    expect(submitButton('Share more').disabled).toBe(true);
+    const box = boxes()[0];
+    box.checked = true; box.dispatchEvent(new Event('change'));
+    expect(submitButton('Share more').disabled).toBe(false);
+    box.checked = false; box.dispatchEvent(new Event('change'));
+    expect(submitButton('Share more').disabled).toBe(true);
+  });
+
+  it('answers null — never an empty array — for every dismissal', async () => {
+    // `null` is "the seller did not decide" and `[]` is "the seller decided to release nothing".
+    // Flattening the two here would turn a cancelled drawer into an approval that releases nothing.
+    for (const dismiss of [
+      () => cancelButton().click(),
+      () => query<HTMLButtonElement>('button[aria-label="Close"]').click(),
+      () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
+      () => query<HTMLElement>('body > div').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    ]) {
+      const promise = openChoiceDrawer(choiceConfig({ selected: ['FINANCIALS'] }));
+      dismiss();
+      await expect(promise).resolves.toBeNull();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('closes and returns focus to whatever opened it', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    const promise = openChoiceDrawer(choiceConfig({ selected: ['FINANCIALS'] }));
+    submitButton('Share more').click();
+    await promise;
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does not throw returning focus when the active element is not an HTMLElement', async () => {
+    // `openNoteDrawer`'s and `openConfirmDrawer`'s own case, a third surface over: an SVG element
+    // (or any foreign element focused via `tabindex`) is a legal `document.activeElement` and is
+    // not an `HTMLElement`, so `Element#focus` is not on it. This drawer's own guard is the same
+    // instance check, and it is exercised rather than trusted.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    document.body.appendChild(svg);
+    const spy = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(svg);
+    const done = openChoiceDrawer(choiceConfig({ selected: ['FINANCIALS'] }));
+    cancelButton().click();
+    await expect(done).resolves.toBeNull();
     spy.mockRestore();
   });
 });

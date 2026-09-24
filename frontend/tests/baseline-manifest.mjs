@@ -93,6 +93,24 @@
 // (`v.d?.sections` has exactly one reader in `App.vue`), so it has never drawn the Property block.
 // The node-level diff on `detail` is TWO removals of 121 lines each and ZERO additions — the two
 // row <div>s — with "Building status" and "Approximate square feet" surviving once each.
+// Ruling D-C67 (John, 2026-09-24 — "all toggles must be fully functional and SELLER must be able
+// to manage it all and per seller", amendment entries A58.7a-A58.7d) then re-based ONE of the
+// thirteen again, `seller-dash`, and for the SAME reason A53 did: the family's one template edit
+// (A58.7d) puts a "Change access" button beside the Withdraw button A53.1 already draws inside its
+// own `i.canRevoke` block, and this screen's default fixture carries the accepted row (`r2`, `p7`)
+// that block renders on. The ruling asks for a control the product has never drawn and a control
+// is pixels, so the re-pin is intrinsic to it rather than a gate made to pass — the A18/A34/A38/
+// A53/A55/A57 mechanism, a DESIGN change through the D15 engine with the app and the oracle moving
+// together. The family's other three entries are SCRIPT-ONLY and reach no pixel: A58.7a's
+// `r.grantedLabel` is absent on the design's own fixtures and on the oracle's `design-requests.mjs`
+// rows alike, so both targets read the design's own sentence byte for byte, and A58.7b/A58.7c are
+// handlers. Measured the A33 method: baselines were regenerated cold before the change and again
+// after it and all 60 PNG and 60 DOM hashes diffed — exactly TWO approved states move,
+// `seller-dash` and `seller-dash-empty`, in BOTH oracles, which is the identical pair A57's own
+// measurement named and for the identical structural reason (`seller-dash-empty` is the EMPTY
+// LISTINGS dashboard and renders the same inbox; it is not among these thirteen and carries no
+// entry here). The other TWELVE are unmoved, re-hashed from the regenerated PNGs after the write
+// rather than inferred from this file's own test passing.
 // Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.

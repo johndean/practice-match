@@ -54,12 +54,25 @@ asked FRESH after the decision, never from the listing row directly:
 * The SELLER is never mailed here (they performed the act) -- this module looks up only the
   buyer's own account.
 
-Idempotency is `<request_id>:<template>`: each of the three statuses is reachable from a given
-`request` row AT MOST ONCE -- `app.disclosure.requests.decide` refuses a request that is not
-`PENDING` (`_owned_pending_or_approved`'s own `STATE` refusal), and `.revoke` is equally final -- so
-the pair can never legitimately repeat for the same row, and a caller that somehow reached this
-twice for the same decision collides on the outbox's own `idempotency_key` UNIQUE constraint
-(`ON CONFLICT DO NOTHING`) rather than mailing the buyer twice."""
+Idempotency is `<request_id>:<template>`.
+
+**THAT PREMISE CHANGED UNDER D-C67 (John, 2026-09-24) and is restated rather than left as it was
+(the A27.5 rule).** It used to read: each of the three statuses is reachable from a given `request`
+row AT MOST ONCE, because `decide` refused any row that was not `PENDING` and `revoke` was equally
+final. `decide`'s approve arm now also accepts an ALREADY APPROVED row -- that is how a seller
+narrows what one buyer holds without withdrawing their access entirely -- so `APPROVED` is
+reachable more than once and this function is called again on the second decision. The
+`ON CONFLICT DO NOTHING` on the outbox's own `idempotency_key` is what happens next: the buyer is
+mailed ONCE, when their access first opened, and a later CHANGE to that grant enqueues nothing.
+
+That is deliberate for what the templates say rather than an oversight of what they omit.
+`access_approved` reads "A seller has approved your request for additional access ... Sign in to
+see what is newly available", which is false of a narrowing, and `access_revoked` reads "has ended
+your previously approved access", which is false of a grant that still carries three capabilities.
+Neither may be sent for a change, and D-C62's own ruled sentence covers access that "opens, closes
+or is refused" and names no fourth case, so a NARROWED-ACCESS notification is new copy and is
+recorded as a ruling item for John rather than invented here. The seller IS told, on their own
+inbox row, which names exactly what the buyer now holds."""
 from __future__ import annotations
 
 from typing import Any, cast

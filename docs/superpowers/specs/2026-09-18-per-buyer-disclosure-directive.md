@@ -70,6 +70,53 @@ the seller published to them on purpose.
 
 ---
 
+## AMENDED 2026-09-24 — RULING D-C67: THE SELLER CHOOSES WHICH CAPABILITIES, PER BUYER
+
+**John, 2026-09-24, verbatim: "all toggles must be fully functional and SELLER must be able to
+manage it all and per seller."** Ruled the same day as D-C66 above and read with it: D-C66 makes
+the ceilings releasable, and this gives the seller the control that chooses WHAT a given buyer
+receives.
+
+**What D-C66 left, measured.** Every access request is created `FULL_CONFIDENTIAL`
+(`app/api/requests.py`; the interest modal sends no level), the seller inbox's "Share more" passed
+no level to `decide`, and `decide` fell back to the requested one. So the day D-C66 made the grant
+live, ONE CLICK of Accept released the practice name, the street, the postcode, the telephone, the
+exact map pin, the unredacted photographs, the financial packet and the floor plans together — and
+the seller could not release less.
+
+**What §16 below could not express, and this amends.** That section models disclosure as one named
+LEVEL per grant, and §18 states authorization as `listing_id + buyer_user_id + disclosure_level +
+status`. Implemented faithfully, `request.approved_disclosure_level` held exactly one of six
+values — so six of the thirty-two subsets of the five capabilities were storable and the other
+twenty-six, the empty one included, were not. The product's own accepted-row sentence, "You released
+the financial packet and floor plan to this buyer.", describes a grant of TWO that no column could
+hold. **The grant is a SET of capabilities.** `migrations/097_request_approved_capabilities.sql`
+replaces that column with `approved_capabilities text[]`; §16's six names are unchanged and
+`FULL_CONFIDENTIAL` keeps its meaning as the umbrella a BUYER may ask for, never a capability a
+grant stores. §18's own sentence reads `disclosure_level` as the set from here.
+
+**FAIL CLOSED is where the risk of this amendment lives, and §19 is strengthened again.** An
+approval that names NO capability grants NOTHING — never everything. The empty set is a real,
+stored decision (`'{}'`, distinct from the `NULL` of a row with no decision at all) and
+`app.disclosure.levels.granted` has no default arm to fall through to. The tempting bug is a falsy
+test on the chosen set collapsing to the requested level; the API refuses an explicit `null` for
+the same reason rather than reading it as "absent".
+
+**Narrowing is part of the control, not a second feature.** `decide`'s approve arm accepts an
+already-APPROVED row, so a seller who released three capabilities can release one without
+withdrawing the buyer's access entirely and making them ask again. §15 (revocation) is unchanged:
+ending access altogether is still `revoke`, with its own status, audit action and mail.
+
+**ONE THING THIS AMENDMENT DOES NOT DO, recorded rather than left to be found.** A narrowing sends
+the buyer NO notification. D-C62's own ruled sentence covers access that "opens, closes or is
+refused" and names no fourth case; `access_approved` reads "Sign in to see what is newly
+available", which is false of a narrowing, and `access_revoked` reads "has ended your previously
+approved access", which is false of a grant that still carries three capabilities. A
+narrowed-access notification is NEW COPY and is John's to rule on. The outbox's own idempotency key
+(`<request_id>:<template>`) is what makes the second decision silent rather than wrong.
+
+---
+
 Do NOT rewrite the five pieces of copy to describe a global disclosure switch.
 
 The product is a permissioned veterinary-practice marketplace in which a seller controls
@@ -224,6 +271,14 @@ IDENTITY, EXACT_LOCATION, UNREDACTED_IMAGES, FINANCIALS, FLOOR_PLANS, FULL_CONFI
 Use the actual Practice Match terminology if equivalent concepts already exist. Do not create
 redundant permission systems.
 
+> **AMENDED IN PART by D-C67 (2026-09-24): a grant is a SET of these, not one of them.** The names
+> above are unchanged and no new permission system is created — the amendment is only that
+> `request.approved_capabilities` (migration 097) holds however many of the five the seller chose,
+> including none, where `approved_disclosure_level` held exactly one of six. `FULL_CONFIDENTIAL`
+> keeps its place as the umbrella a BUYER may request and `app.disclosure.levels.covers()` keeps
+> mapping it to the five; it is never stored as a capability, because a stored umbrella would be a
+> second spelling of a set the array already states plainly.
+
 ## 17. COPY
 The existing five pieces of copy promising buyer-specific disclosure are CORRECT. Preserve them or
 make only the minimum wording changes necessary to accurately describe the implemented workflow.
@@ -235,6 +290,10 @@ it."
 Do not create a global field such as `listing.confidentiality_approved = true` and use that as the
 sole authorization mechanism. Authorization must include the buyer identity. Conceptually:
 `listing_id + buyer_user_id + disclosure_level + status` must determine authorization.
+
+> **AMENDED by D-C67 (2026-09-24) for the third term alone.** `disclosure_level` is the SET of
+> capabilities the seller released to this buyer (`approved_capabilities`, migration 097). Every
+> other term, and the rule that authorization must include the buyer identity, is unchanged.
 
 > **SUPERSEDED IN PART by D-C66 (2026-09-24), for this section's FIRST sentence alone.** No such
 > field was created; the pre-existing per-field ceilings are what that sentence was implemented

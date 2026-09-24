@@ -52,6 +52,8 @@ export function cell(main: string | null, sub?: string | null, pill?: string | n
   };
 }
 
+import { LEVEL_LABEL, orderedCapabilities } from '../disclosure/capabilities';
+
 /** `request.status`'s own CHECK constraint (`migrations/096_request.sql`), pinned by equality in
  *  `tests/test_docs.py` against `app/api/admin_requests.py::STATUSES`. `[label, tone]` per value:
  *  PENDING/APPROVED/DENIED take the design's OWN three words and tones off its "activity" fixture
@@ -66,17 +68,11 @@ export const STATUS_PILL: Record<string, [string, string]> = {
   REVOKED: ['Revoked', 'bad']
 };
 
-/** `app.disclosure.levels.REQUESTABLE_LEVELS`, pinned by equality in `tests/test_docs.py`. Title
- *  case, the design's own vocabulary register (its fixture rows read "Small animal", "Emergency",
- *  never a shouted enum). */
-export const LEVEL_LABEL: Record<string, string> = {
-  IDENTITY: 'Identity',
-  EXACT_LOCATION: 'Exact location',
-  UNREDACTED_IMAGES: 'Unredacted images',
-  FINANCIALS: 'Financials',
-  FLOOR_PLANS: 'Floor plans',
-  FULL_CONFIDENTIAL: 'Full confidential'
-};
+/** MOVED to `frontend/src/disclosure/capabilities.ts` under ruling D-C67 (2026-09-24), which gave
+ *  these words a second reader — the seller's own per-capability chooser — and re-exported here so
+ *  every existing importer of this module reads the same one table rather than a second copy of
+ *  it. */
+export { LEVEL_LABEL } from '../disclosure/capabilities';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -111,7 +107,10 @@ export interface AdminRequestItem {
   id: string;
   status: string;
   requested_disclosure_level: string;
-  approved_disclosure_level: string | null;
+  /** The SET the seller released (`request.approved_capabilities`, migration 097) — one name, five
+   *  names, or the empty array a seller who approved and released nothing leaves behind. `null`
+   *  while no decision has been taken, or where the decision was a refusal. */
+  approved_capabilities: string[] | null;
   requested_at: string;
   reviewed_at: string | null;
   listing_id: string;
@@ -160,10 +159,22 @@ export function countsOf(body: QueuePage): AdminRequestCounts | null {
 /** Given/approved disclosure level, or requested — the module note's own choice for what the
  *  Request column's sub-line names, since the raw message is never served at all. */
 function levelLine(item: AdminRequestItem): string {
-  const approved = item.status === 'APPROVED' && item.approved_disclosure_level;
-  const level = approved || item.requested_disclosure_level;
-  const verb = approved ? 'Approved' : 'Requested';
-  return `${verb}: ${LEVEL_LABEL[level] ?? level}`;
+  // `!= null`, never truthiness: an APPROVED row whose seller released NOTHING carries `[]`, which
+  // is a real decision and must read as one rather than falling back to what the buyer asked for
+  // (D-C67's own fail-closed rule, on the surface that merely reports it).
+  const approved = item.status === 'APPROVED' && item.approved_capabilities != null;
+  if (approved) {
+    // A LIST, not the seller inbox's SENTENCE: this is a table cell, so it keeps this tab's own
+    // Title-case register (`LEVEL_LABEL`) and joins with commas, where `capabilityPhrase` is
+    // lower-case and ends in "and" because it is read inside a sentence one surface over.
+    // No fallback: `orderedCapabilities` answers only names `LEVEL_LABEL` has a word for. The
+    // `?? level` on the REQUESTED line below stays, because that column carries whatever the API
+    // serves and an unrecognised level there is a real possibility rather than a dead branch.
+    const names = orderedCapabilities(item.approved_capabilities).map((name) => LEVEL_LABEL[name]);
+    return names.length === 0 ? 'Approved: nothing released' : `Approved: ${names.join(', ')}`;
+  }
+  const level = item.requested_disclosure_level;
+  return `Requested: ${LEVEL_LABEL[level] ?? level}`;
 }
 
 /** The practice's own name, or `admin/listings.ts`'s own `type practice — city` composed label, or

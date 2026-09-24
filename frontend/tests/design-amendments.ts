@@ -10109,6 +10109,90 @@ const A58_6h: Amendment = {
   replace: TILE_HEAD_NAMED + TILE_CONTROLS_NAMED + TILE_DESCRIBE_DRAWER + TILE_FALLBACK
 };
 
+
+const A58_7 = { date: '2026-09-24', ruling: 'John, 2026-09-24 (ruling D-C67): \"all toggles must be fully functional and SELLER must be able to manage it all and per seller.\" Read with D-C66, ruled the same day, which made the seller\'s listing-wide ceilings per-buyer RELEASABLE and so made the grant the only thing left between a listing and disclosure. Measured on the branch as it then stood: every access request is created `FULL_CONFIDENTIAL` (`app/api/requests.py`), the inbox\'s \"Share more\" passed no level at all, and `decide` fell back to the requested one — so ONE CLICK released the practice name, the street, the postcode, the telephone, the exact map pin, the unredacted photographs, the financial packet and the floor plans together, and the seller could not release less. The server could not have stored less either: `request.approved_disclosure_level` held ONE of six values, so six of the thirty-two subsets were representable and the product\'s own accepted-row sentence — \"You released the financial packet and floor plan to this buyer.\" — described a grant of TWO that no column could hold. `migrations/097_request_approved_capabilities.sql` replaces that column with the set itself; these entries are the design\'s own half: the seller chooses WHICH capabilities one buyer receives, reads back what that buyer holds, and changes it later.' };
+
+/** A58.7a — THE ACCEPTED ROW NAMES WHAT WAS ACTUALLY RELEASED. The design's own sentence says "the
+ *  financial packet and floor plan" whatever the seller approved, which was a fair description
+ *  while every approval was `FULL_CONFIDENTIAL` and is a false one the moment a seller can choose.
+ *  `r.grantedLabel` is composed by the adapter (`frontend/src/disclosure/capabilities.ts`, app-only
+ *  and carrying no amendment) so the capability WORDS live in exactly one place and the design
+ *  gains no vocabulary of its own — `buyer`, `msg` and `when` on this same row are already
+ *  pre-formatted the same way.
+ *
+ *  The design's own fixture rows carry no `grantedLabel` at all, and `toDesignRow`'s design-shaped
+ *  arm (the oracle's own `design-requests.mjs`) hands none back either, so BOTH targets read the
+ *  design's own sentence byte for byte and this entry moves no pixel. */
+const A58_7a: Amendment = {
+  id: 'A58.7a', ...A58_7, count: 1,
+  find: 'r.status === "accepted" ? "You released the financial packet and floor plan to this buyer." :',
+  replace: 'r.status === "accepted" ? (r.grantedLabel || "You released the financial packet and floor plan to this buyer.") :'
+};
+
+/** A58.7b — "SHARE MORE" ASKS WHICH CAPABILITIES BEFORE IT RELEASES ANY. The handler keeps A52.4's
+ *  own two arms and its own no-adapter path byte for byte, and gains one leg in front of the
+ *  decide: `chooseAccess`, which answers the set the seller ticked or `null` if they dismissed the
+ *  drawer. `null` short-circuits and NOTHING is sent, so a cancelled chooser makes no request,
+ *  changes no row and shows no error — A58.6e's own shape for a cancelled describe and
+ *  A58.6f's for a cancelled remove, one chained promise with one rejection arm (A-SL23 (4)).
+ *
+ *  THE ASK IS ITS OWN ADAPTER METHOD rather than a step hidden inside `decide`, the seam
+ *  `describe()`/`confirmRemove()` established: the ask is app-only, the write is the route, and the
+ *  DESIGN chains them. `openChoiceDrawer` (`frontend/src/admin/noteDrawer.ts`) carries no amendment
+ *  — it is the third variant of the shell that module already shares, composed from the interest
+ *  modal's own scrim, box, title, 30 px close button and primary/secondary pair, with the WIZARD
+ *  STEP 7 toggle rows for the choices and step 7's own blurb above them.
+ *
+ *  Consumes A52.4, whose whole two-line `replace` this `find` takes; the `decline:` line is carried
+ *  forward byte for byte. SCRIPT-ONLY and it paints nothing: `accept` is a handler, and on the
+ *  reference — which is handed no adapter — it is the same `setState` it always was. */
+const A58_7b: Amendment = {
+  id: 'A58.7b', ...A58_7, count: 1,
+  find: '          accept: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "approve").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) }))),\n' + '          decline: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "deny").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) })))',
+  replace: '          accept: () => (this.props.sellerRequests ? this.props.sellerRequests.chooseAccess(r.buyer, r.granted || [], "Share more").then((set) => (set === null ? null : this.props.sellerRequests.decide(r.id, "approve", set))).then((d) => (d ? this.reloadInbox() : null), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "accepted", reply: "Happy to share more. Financial packet unlocked." }) : x)) }))),\n' + '          decline: () => (this.props.sellerRequests ? this.props.sellerRequests.decide(r.id, "deny").then(() => this.reloadInbox(), () => this.reloadInbox()) : this.setState((st) => ({ requests: st.requests.map((x) => (x.id === r.id ? Object.assign({}, x, { status: "declined", reply: "Not engaging further at this time. Thank you for reaching out." }) : x)) })))'
+};
+
+/** A58.7c — AND THE SELLER CAN CHANGE IT LATER. `changeAccess` is A58.7b's own handler with the
+ *  drawer pre-ticked to what this buyer already holds (`r.granted`) and the button's own word as
+ *  its title, so a seller who narrows a grant starts from the truth rather than from blank. The
+ *  route it reaches is the same `decide`, which accepts an already-APPROVED row since
+ *  `app/disclosure/requests.py`'s own D-C67 change: narrowing must not mean withdrawing the
+ *  buyer's access entirely and making them ask again.
+ *
+ *  No new flag: the button below is a sibling of the Withdraw button inside A53.1's own
+ *  `i.canRevoke` block, which is already exactly "this buyer is engaged right now".
+ *
+ *  The no-adapter arm is `null` — the reference has no chooser to open, and a control that is
+ *  drawn on one target and not the other is a pixel `maxDiffPixels: 0` can never reconcile
+ *  (A40.1/A40.2's own held lesson, and A58.6a's rule: what is DRAWN is keyed on the data alone,
+ *  what is CALLED on whether there is anything to call). In the product the app's own default
+ *  factory means the drawn control always completes. UNCHAINED: A53.3's `canRevoke` line is
+ *  re-emitted byte for byte and the new field is appended after it. */
+const A58_7c: Amendment = {
+  id: 'A58.7c', ...A58_7, count: 1,
+  find: '          canRevoke: r.status === "accepted",\n',
+  replace: '          canRevoke: r.status === "accepted",\n          changeAccess: () => (this.props.sellerRequests ? this.props.sellerRequests.chooseAccess(r.buyer, r.granted || [], "Change access").then((set) => (set === null ? null : this.props.sellerRequests.decide(r.id, "approve", set))).then((d) => (d ? this.reloadInbox() : null), () => this.reloadInbox()) : null),\n'
+};
+
+/** A58.7d — the button itself, the family's ONE template edit and its ONE piece of new copy.
+ *  Composed from the row it joins: same tag, same style string, same 8 px gap as the Withdraw
+ *  button A53.1 put there — no new class, colour or layout. It is placed FIRST, before Withdraw,
+ *  because managing a grant is the ordinary act and ending it is the destructive one, which is
+ *  `openConfirmDrawer`'s own ruling about where a destructive control sits.
+ *
+ *  "Change access" is new copy and is recorded as such: D-C67 asks for a control the product has
+ *  never drawn, and a control needs a label (A53's own eight new pieces of copy, same mechanism).
+ *
+ *  THIS IS THE FAMILY'S ONLY PIXEL. It draws on BOTH targets — the flag is `i.canRevoke`, which is
+ *  data — so the approved states that render an ACCEPTED inbox row re-base, measured rather than
+ *  predicted. Consumes A53.1, whose whole `replace` this `find` takes (A57.1's "Withdraw" carried
+ *  forward byte for byte within it). */
+const A58_7d: Amendment = {
+  id: 'A58.7d', ...A58_7, count: 1,
+  find: '                    <sc-if value="{{ i.canRevoke }}" hint-placeholder-val="{{ false }}">\n                      <div style="display: flex; gap: 8px; margin-top: 14px;">\n                        <button onClick="{{ i.revoke }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Withdraw</button>\n',
+  replace: '                    <sc-if value="{{ i.canRevoke }}" hint-placeholder-val="{{ false }}">\n                      <div style="display: flex; gap: 8px; margin-top: 14px;">\n                        <button onClick="{{ i.changeAccess }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Change access</button>\n                        <button onClick="{{ i.revoke }}" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Withdraw</button>\n'
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10458,5 +10542,6 @@ export function amendments(): Amendment[] {
     A58_6f,
     // Fix round 2 (review Important-2): the confirmation names the tile the seller is
     // looking at. A58.6g consumes A58.6a and A58.6h consumes A58.6f, so both run last.
-    A58_6g, A58_6h];
+    A58_6g, A58_6h,
+    A58_7a, A58_7b, A58_7c, A58_7d];
 }

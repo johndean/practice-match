@@ -63,6 +63,9 @@ from app.disclosure.notify import notify_decision
 
 router = APIRouter(prefix="/api/seller")
 
+#: Tells "the key was not sent" from "the key was sent as JSON `null`" — see `decide_request`.
+_ABSENT: Any = object()
+
 # Hoisted to a module-level constant, never wrapped (Global Constraint 10) — the route-guard and
 # audit-drift tests resolve a route's permission by the guard object's IDENTITY
 # (`app.auth.deps.permission_of`), so a wrapper would read as unguarded.
@@ -83,7 +86,11 @@ def _audit_after(row: dict[str, Any]) -> dict[str, Any]:
         "listing_id": row["listing_id"],
         "buyer_user_id": row["buyer_user_id"],
         "status": row["status"],
-        "level": row.get("approved_disclosure_level"),
+        # D-C67 (2026-09-24): the grant is a SET, so the audit records the set. `None` on a denied
+        # row, exactly as the single `level` was, and a LIST on an approved one — including the
+        # empty list, which is a decision that released nothing and must be as legible in the trail
+        # as one that released everything.
+        "capabilities": row.get("approved_capabilities"),
     }
 
 
@@ -120,6 +127,30 @@ async def decide_request(request_id: str, request: Request, principal: Answerer)
         level = body.get("disclosure_level")
         if level is not None and not isinstance(level, str):
             raise Refusal("BAD_LEVEL", "disclosure_level must be a string.", 400)
+        # D-C67 (John, 2026-09-24): the seller chooses WHICH capabilities this buyer receives.
+        # `disclosure_capabilities` is the SET; `disclosure_level` above stays for the named levels
+        # a buyer may ask for, which `app.disclosure.requests._chosen_capabilities` expands through
+        # `covers()` — so the existing all-five path is still reachable from either spelling.
+        #
+        # ABSENT AND `null` ARE DIFFERENT ANSWERS HERE, which no other field on this route needs
+        # and this one does. An absent key is "the caller named no set" and takes the default arm
+        # (the level the buyer asked for). An explicit JSON `null` is REFUSED rather than read as
+        # absent, because that is the shape a client reaches by accident: `chooseAccess` answers
+        # `string[] | null` — `null` meaning the seller dismissed the drawer — and a caller who
+        # forwarded it without checking would otherwise be handed the requested level, which every
+        # request in this product defaults to `FULL_CONFIDENTIAL`. A refusal is the fail-closed
+        # answer to "I do not know what you meant" about a disclosure decision.
+        #
+        # An EMPTY array is a real decision and reaches `_chosen_capabilities` as one: see that
+        # function's own docstring for what a falsy test would cost. The element type guard is the
+        # fourth-gap class Deviation 1 records, one field over: `value not in CAPABILITIES` raises
+        # `TypeError` for an unhashable member (a nested array or object) rather than answering
+        # False.
+        capabilities = body.get("disclosure_capabilities", _ABSENT)
+        if capabilities is _ABSENT:
+            capabilities = None
+        elif not isinstance(capabilities, list) or any(not isinstance(v, str) for v in capabilities):
+            raise Refusal("BAD_LEVEL", "disclosure_capabilities must be an array of strings.", 400)
         reason = body.get("reason")
         if reason is not None and not isinstance(reason, str):
             raise Refusal("BAD_REQUEST", "reason must be a string.", 400)
@@ -127,6 +158,7 @@ async def decide_request(request_id: str, request: Request, principal: Answerer)
             row = req.decide(
                 conn, request_id=request_id, seller_account_id=str(principal.account_id),
                 action=action, disclosure_level=level, reason=reason,
+                disclosure_capabilities=capabilities,
             )
             # `action` is guaranteed "approve" or "deny" here: any other value made `req.decide`
             # raise `BAD_ACTION` above, before `row` was ever assigned.

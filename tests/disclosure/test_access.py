@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.disclosure.access import authorized_capabilities, authorized_capabilities_bulk, has_capability
+from app.disclosure.levels import covers
 
 
 def _account(conn, email: str) -> str:
@@ -45,10 +46,15 @@ def _request(conn, listing_id, buyer_id, seller_id, *, status="PENDING", level=N
     # concretely-typed branch, so the pair resolves to timestamptz without help.
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status, approved_disclosure_level,"
+            # `approved_capabilities` (migration 097, D-C67): the grant is a SET now, and this
+            # helper keeps its own single-`level` parameter -- every caller reads the same and means
+            # the same -- by expanding it through the one door that always did,
+            # `app.disclosure.levels.covers`.
+            "INSERT INTO request (listing_id, buyer_user_id, seller_user_id, status, approved_capabilities,"
             " reviewed_at, reviewed_by, expires_at)"
             " VALUES (%s,%s,%s,%s,%s, CASE WHEN %s <> 'PENDING' THEN now() END, CASE WHEN %s <> 'PENDING' THEN %s::uuid END, %s)",
-            (listing_id, buyer_id, seller_id, status, level, status, status, seller_id, expires_at),
+            (listing_id, buyer_id, seller_id, status, None if level is None else sorted(covers(level)),
+             status, status, seller_id, expires_at),
         )
 
 
