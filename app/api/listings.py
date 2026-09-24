@@ -49,10 +49,9 @@ ONE FIELD IS NOT THAT SHAPE and it is the exception rather than an oversight: th
 answers to the GRANT ALONE. `location_disclosed OR EXACT_LOCATION` decides whether there is a pin,
 an address, a postcode and a telephone number at all; `EXACT_LOCATION` alone decides whether the
 pin is the exact coordinate or directive §11's rounding at 2 decimal places. `_point`'s own
-docstring carries the reasoning (D-C66 fix round 1), and the short of it is that an open ceiling
-publishes the address only where there IS one -- `street` is NULL on every wizard listing predating
-amendment A58.5 -- so collapsing the two into one expression would widen disclosure past what the
-ruling asked for on exactly the listings with least to lose it by.
+docstring carries the reasoning (D-C66 fix round 1), and the short of it is that D-C66 asked for
+ceilings to become releasable and not for an ungranted buyer to be shown a finer point than
+before -- widening past a ruling is out of scope by construction.
 
 It was *flag AND capability* between 2026-09-18 and that ruling, and the defect that produced is
 the ruling's own subject: all four of the seller's step-7 switches SHUT a ceiling and three of them
@@ -138,13 +137,19 @@ _SELECT = """
 -- capability lookup (`app.disclosure.access.authorized_capabilities`/`_bulk`, called by the two
 -- routes below) never costs a second query to learn who a listing's own seller is -- and so the
 -- self-authorization guard those functions apply has a real value to check rather than always
--- seeing None. `documents_disclosed` joins its three siblings for Task 9's own use -- the
--- `documents_disclosed`/FINANCIALS-or-FLOOR_PLANS-or-FULL_CONFIDENTIAL ceiling `_documents` below
--- applies to the very SELECT that put it here, so Task 9 costs no second query of its own either.
--- Neither `seller_id` nor `documents_disclosed` is added to `serialise`'s OUTPUT directly --
--- `seller_id` never has been and never should be (it is an internal account id, not part of the
--- buyer contract), and `documents_disclosed` is a ceiling `_documents` consumes, not a fact a
--- buyer is shown by name (the `documents` array it gates IS the buyer-facing fact).
+-- seeing None. `seller_id` is never added to `serialise`'s OUTPUT and never should be: it is an
+-- internal account id, not part of the buyer contract.
+--
+-- `documents_disclosed` is SELECTED AND READ BY NOTHING IN THIS MODULE since ruling D-C66
+-- (2026-09-24), and that is recorded rather than quietly tidied. Task 9 added it as the ceiling
+-- `_documents` applied before it would list a title; D-C66 took the ceiling off that list, because
+-- hiding the titles left a buyer nothing to ask about on exactly the listings where asking is the
+-- point, and took it off the BYTES route too (`app/api/seller_listings.py::read_document`, where
+-- the grant alone now decides). The column is kept in this SELECT deliberately: it is still the
+-- seller's own `docsLocked` switch, `app/api/seller_listings.py::serialise_draft` still answers it
+-- to the wizard, and whether a switch that no longer changes what any buyer sees should remain at
+-- all is John's ruling and not this module's (D-C53's own subject). Dropping it from the SELECT
+-- would make that question invisible to the next reader.
 SELECT id, seller_id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, rev_disclosed, documents_disclosed, identifiable_content_visibility,
        ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
@@ -439,8 +444,11 @@ def _documents(conn: Any, listing_id: str, *, capabilities: frozenset[str]) -> l
     # brief). Step 7's approved copy — which directive §17 declares CORRECT and preserves — reads
     # "Buyers see the document titles and can ask for access." A buyer cannot ask for access to a
     # document they cannot see exists, so filtering the TITLES makes that promise false and leaves
-    # the request flow with nothing to request. The ceiling (`documents_disclosed`) decides whether
-    # the LIST appears at all; the per-buyer grant decides whether `read_document` serves the BYTES.
+    # the request flow with nothing to request. NOTHING gates the LIST any more (D-C66, 2026-09-24
+    # -- this function's own docstring above): the titles are served whichever way the seller's
+    # `docsLocked` switch is set, and the per-buyer grant alone decides both the LABEL here and
+    # whether `read_document` serves the BYTES. Until that ruling this line read "the ceiling
+    # (`documents_disclosed`) decides whether the LIST appears at all", which it no longer does.
     # Directive §10's "do not expose the original merely because the buyer knows its URL" is about
     # CONTENT, and that refusal lives in the bytes route, which Task 9 also built and tests.
     # The TITLE is generic until this buyer holds the capability that opens the document (security
@@ -476,23 +484,27 @@ def _point(value: Any, *, exact: bool, ceiling: bool) -> float | None:
       representation", coarser than the catchment ring already drawn publicly around the listing.
     * Released AND granted -> the exact point.
 
-    **RULING D-C66 (2026-09-24) MOVED `ceiling` AND DELIBERATELY LEFT `exact` ALONE, and the one
-    commit in which it did not is recorded here because the argument for collapsing them is
-    plausible and wrong.** `ceiling` is now `location_disclosed OR the buyer's EXACT_LOCATION
-    grant` -- so the buyer the seller has just approved gets a pin at all, which under the old
-    `ceiling`-alone reading they never did (three quarters of that ruling's own first table row).
-    `exact` stays the GRANT alone.
+    **RULING D-C66 (2026-09-24) MOVED `ceiling` AND DELIBERATELY LEFT `exact` ALONE.** `ceiling` is
+    now `location_disclosed OR the buyer's EXACT_LOCATION grant` -- so the buyer the seller has just
+    approved gets a pin at all, which under the old `ceiling`-alone reading they never did (three
+    quarters of that ruling's own first table row). `exact` stays the GRANT alone.
 
-    The collapse was argued this way and it does not hold: an open ceiling publishes the street,
-    so a coarsened pin beside a payload naming 123 Main St is one question answered two ways, up to
-    1.1 km apart. True of a listing that HAS a street -- and `street` is NULL on every wizard
-    listing predating finding S9 (amendment A58.5 is what first collected the column; six such
-    drafts were measured on QA on 2026-09-24), while `location_disclosed` can be true on any of
-    them. There the pin is the ONLY location signal the payload carries, the street answers
-    nothing, and this rounding is the whole of §11's protection for it. D-C66 asked that a shut
-    ceiling become RELEASABLE per buyer; it did not ask that an ungranted buyer be shown a finer
-    point than before, and widening disclosure past what a ruling asked for is the one direction
-    that task was told not to go (controller, fix round 1).
+    **THE REASON IS THE RULING'S OWN SCOPE and nothing cleverer.** D-C66 asked that a shut ceiling
+    become RELEASABLE per buyer. It did not ask that an ungranted buyer be shown a finer point than
+    before, and a change that widens disclosure past what its ruling asked for is out of scope by
+    construction -- which is what the first pass of that task did, for one commit, by reading "the
+    `ceiling` argument must take the same OR" literally and collapsing both arguments into one
+    expression.
+
+    **ONE ARGUMENT FOR COLLAPSING THEM WAS TRIED, IS WRONG, AND IS RECORDED HERE SO NOBODY
+    REINSTATES IT.** It ran: an open ceiling publishes the street, so a coarsened pin beside a
+    payload naming 123 Main St answers one question two ways -- and the tier therefore matters most
+    for a listing whose `street` is NULL, where the pin would be its only location signal.
+    MEASURED, the second half is false: a street-less listing is not pinless. `app.census.geocode`
+    falls back to the ZCTA centroid, and then to the place or county centroid, for exactly the
+    city-and-ZIP listing a real seller creates -- so it has a point, and rounding an already-coarse
+    centroid buys little. The tier does not stand on that premise. It stands on the scope sentence
+    above.
 
     `tests/api/test_geo_wire.py` is the tier's own pin and records the same round trip."""
     if not ceiling or value is None:
@@ -513,12 +525,17 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     not a leak to close here. Wave 2b's UI says so beside the two switches. Do not "fix" this by
     making one flag imply the other.
 
-    **Per-buyer disclosure plan Task 8 (2026-09-18): `capabilities` is a SECOND, independent gate,
-    ANDed against each flag rather than replacing it (directive §8, §24).** The default is the
-    EMPTY set -- fail closed (directive §19): a caller that passes no `capabilities` argument at
-    all gets the SAME redacted shape an unapproved buyer does, never the pre-Task-8 "ceiling alone
-    decides" behaviour, so a future caller that forgets to compute one cannot accidentally leak a
-    confidential field by omission.
+    **`capabilities` is a SECOND, independent gate, ORed with each flag rather than replacing it**
+    (per-buyer disclosure plan Task 8, 2026-09-18; the join became OR under ruling D-C66,
+    2026-09-24, and this sentence said "ANDed" until then). The flag is the seller's public default
+    and the capability releases on top of it; the block at the head of this function's body carries
+    the whole reasoning and the one field that is NOT that shape.
+
+    The default is the EMPTY set -- fail closed (directive §19): a caller that passes no
+    `capabilities` argument at all gets the same shape a buyer with no grant does, so a future
+    caller that forgets to compute one cannot leak a confidential field by omission. That guard
+    matters MORE under OR than it did under AND, because there is no longer a shut ceiling standing
+    behind it.
 
     **Community data is optional (Task B7).** When provided (a CommunityRow from serve.community_rows),
     the six fields are populated; absence means they remain null.

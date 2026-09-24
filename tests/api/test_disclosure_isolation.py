@@ -515,3 +515,86 @@ async def test_a_seller_can_manage_access_for_their_own_listings(
     inbox = await client.get("/api/seller/requests", headers=seller_headers)
     assert inbox.status_code == 200
     assert any(row["id"] == request_id and row["status"] == "REVOKED" for row in inbox.json())
+
+
+# --- Task 8 fix round 2 (review Important-2): the LIST route, and its 60-second cache -------------
+#
+# Every case above reads the DETAIL route, which is uncached, so none of them could see the defect
+# this one is for: `GET /api/listings` caches its first page for `LIST_TTL_S` (60 s) under a key
+# that carries the buyer's own account id (Task 8 of the per-buyer plan added the id, precisely so
+# one buyer's disclosed payload could not be served to another) -- and NOTHING dropped that cache
+# when a grant changed. `app/api/seller_requests.py`'s decide and revoke routes wrote the decision,
+# audited it and mailed it, and left the buyer's own cached page standing.
+#
+# WHAT THAT MEANT, in the seller's own words rather than the cache's: A53 and A57 put a Withdraw
+# button on the inbox and tell the seller "You withdrew this buyer's access. The buyer no longer
+# sees the financial packet or floor plan." For up to a minute afterwards the buyer went on reading
+# the released name, address and revenue on Browse. The class is PRE-EXISTING -- the cache has been
+# dropped by every seller-listing and admin writer since spec D16 and by no request route ever --
+# and ruling D-C66 ENLARGES it from ceiling-open listings to the whole per-buyer feature, which is
+# why it is closed here rather than left to the surface that inherited it.
+#
+# The fix is `drop_list_cache_quietly()` on both routes, after their own transaction commits, which
+# is D16's own ordering and the same guarded helper the ten existing writers use. A narrower drop is
+# possible -- the key ends in the account id, so `listings:v1:*::<id>` would match this buyer's
+# pages alone -- and was rejected: `scan_iter(match=...)` walks the whole keyspace either way, so
+# the saving is in DELETEs and nothing else, while a suffix pattern silently stops matching if the
+# key shape ever changes, where `drop_list_cache`'s prefix scan is pinned by a test that plants two
+# keys. Bluntness costs one recompute of a 60-second first page; precision costs a silent miss.
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_grant_stops_reaching_the_buyers_cached_browse_page_at_once(
+    client: Any, conn: Any, member: Any, store: Any,
+) -> None:
+    """Directive §15's "IMMEDIATELY", on the surface a buyer actually browses.
+
+    The order is the whole test: Buyer A must READ the list while approved, so their own first page
+    is really in Redis, BEFORE the seller withdraws. A test that revoked first would pass against
+    the defect."""
+    _sid, s_cookies, s_hdr = member(("seller",), email="cache-seller@x.org")
+    seller_headers = auth_headers(s_cookies, s_hdr)
+    listing_id, _photo, _doc = await _seller_listing_with_everything_confidential(
+        conn, client, store, seller_headers)
+    _aid, a_cookies, a_hdr = member(("buyer",), email="cache-buyer@x.org")
+    a_headers = auth_headers(a_cookies, a_hdr)
+
+    def listed() -> Any:
+        return client.get("/api/listings", headers=a_headers)
+
+    # (1) Before any grant, and cached: the redacted page.
+    before = {row["id"]: row for row in (await listed()).json()["items"]}
+    assert before[listing_id]["name"] != "Highland Park Veterinary"
+
+    created = await client.post("/api/requests", headers=a_headers, json={"listing_id": listing_id})
+    assert created.status_code == 201, created.text
+    approved = await client.post(f"/api/seller/requests/{created.json()['id']}/decide",
+                                 headers=seller_headers, json={"action": "approve"})
+    assert approved.status_code == 200, approved.text
+
+    # (2) The APPROVE direction: the seller has just said yes, and the buyer's cached redacted page
+    # must not stand in front of it. This one withholds rather than leaks, and it is still a
+    # decision the seller was told had taken effect.
+    granted = {row["id"]: row for row in (await listed()).json()["items"]}
+    assert granted[listing_id]["name"] == "Highland Park Veterinary", (
+        "the approval must reach the buyer's own Browse page at once, not within the 60 s TTL")
+    assert granted[listing_id]["street"] == "4200 Preston Rd"
+    assert granted[listing_id]["rev"] == 900000
+
+    revoked = await client.post(f"/api/seller/requests/{created.json()['id']}/revoke",
+                                headers=seller_headers)
+    assert revoked.status_code == 200 and revoked.json()["status"] == "REVOKED"
+
+    # (3) The WITHDRAW direction, which is the leak: the seller has been told the buyer no longer
+    # sees this, and the buyer must not.
+    after = {row["id"]: row for row in (await listed()).json()["items"]}
+    assert after[listing_id]["name"] != "Highland Park Veterinary", (
+        "a withdrawn grant went on reaching the buyer's cached Browse page for up to 60 seconds")
+    assert after[listing_id]["street"] is None
+    assert after[listing_id]["rev"] is None
+    assert (after[listing_id]["lat"], after[listing_id]["lng"]) == (None, None)
+
+    # ...and the two routes agree, which is the property the detail-only cases above could not see.
+    detail = (await client.get(f"/api/listings/{listing_id}", headers=a_headers)).json()
+    assert (detail["name"], detail["street"], detail["rev"]) == (
+        after[listing_id]["name"], after[listing_id]["street"], after[listing_id]["rev"])

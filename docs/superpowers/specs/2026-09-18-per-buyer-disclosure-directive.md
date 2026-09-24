@@ -160,7 +160,10 @@ authorization + authorized disclosure level.
 
 ## 11. EXACT LOCATION
 Exact location is confidential unless explicitly authorized. The public listing may use generalized
-location, market area, city/region, approximate map representation.
+location, market area, city/region, approximate map representation. After seller approval for Buyer
+A: Buyer A may receive the authorized exact location; Buyer B must continue seeing only the
+public/generalized location. Do not expose exact coordinates through an unauthenticated API response
+even if the frontend hides them.
 
 > **SUPERSEDED IN PART by D-C66 (2026-09-24), and NARROWLY — this section keeps more than the
 > other three.** What changes is the ADDRESS: a seller who leaves the `anon` ceiling open is
@@ -174,18 +177,16 @@ location, market area, city/region, approximate map representation.
 >
 > That split was got WRONG once and the record is kept rather than tidied: the first pass of
 > D-C66's own task collapsed the two into one expression, deleting this tier, and the controller
-> overruled it the same day (fix round 1). The argument for collapsing — an open ceiling publishes
-> the street, so a coarse pin beside it answers one question twice — holds only for a listing that
-> HAS a street, and `street` is NULL on every wizard listing predating amendment A58.5, which is
-> what first collected the column. On those the pin is the only location signal the payload
-> carries and this rounding is the whole of §11's protection for it. D-C66 asked that a ceiling
-> become releasable per buyer; it did not ask that an ungranted buyer be shown a finer point than
-> before. `app/api/listings.py::_point` and `tests/api/test_geo_wire.py` both carry the same note.
-> The second half of this section — Buyer A approved, Buyer B still public — is unchanged. After seller approval for Buyer
-
-A: Buyer A may receive the authorized exact location; Buyer B must continue seeing only the
-public/generalized location. Do not expose exact coordinates through an unauthenticated API response
-even if the frontend hides them.
+> overruled it the same day (fix round 1). **The reason the tier stands is the ruling's own scope**
+> — D-C66 asked that a ceiling become releasable per buyer, it did not ask that an ungranted buyer
+> be shown a finer point than before, and a change that widens disclosure past what its ruling
+> asked for is out of scope by construction. A second reason was offered at the time and is WRONG:
+> that the tier matters most for a listing whose `street` is NULL, the pin being its only location
+> signal. Measured, such a listing is not pinless — `app/census/geocode.py` falls back to the ZCTA
+> centroid, and then to the place or county centroid, for exactly the city-and-ZIP listing a real
+> seller creates. That argument is recorded here, and in `app/api/listings.py::_point`, so nobody
+> reinstates it. `tests/api/test_geo_wire.py` carries the same note.
+> The second half of this section — Buyer A approved, Buyer B still public — is unchanged.
 
 ## 12. API SECURITY
 This must be enforced server-side. Do NOT rely on hidden frontend fields, CSS, disabled buttons,
@@ -232,17 +233,21 @@ it."
 
 ## 18. DATA MODEL INTEGRITY
 Do not create a global field such as `listing.confidentiality_approved = true` and use that as the
-sole authorization mechanism.
-
-> **SUPERSEDED IN PART by D-C66 (2026-09-24).** No such field was created; the pre-existing
-> per-field ceilings are what this sentence was implemented against. Under D-C66 an OPEN ceiling is
-> a sufficient authorization for the three fields it names, because it is a publication decision
-> rather than an authorization record. What the sentence forbids — a global flag standing in for a
-> buyer's own grant, so that ONE switch discloses to everyone something the seller meant to release
-> to one person — is still forbidden, and is exactly why the document bytes route keeps its grant
-> and drops its ceiling instead. Authorization must include the buyer identity. Conceptually:
-
+sole authorization mechanism. Authorization must include the buyer identity. Conceptually:
 `listing_id + buyer_user_id + disclosure_level + status` must determine authorization.
+
+> **SUPERSEDED IN PART by D-C66 (2026-09-24), for this section's FIRST sentence alone.** No such
+> field was created; the pre-existing per-field ceilings are what that sentence was implemented
+> against. Under D-C66 an OPEN ceiling is a sufficient authorization for the three fields it names,
+> because it is a publication decision rather than an authorization record. What the sentence
+> forbids — a global flag standing in for a buyer's own grant, so that ONE switch discloses to
+> everyone something the seller meant to release to one person — is still forbidden, and is exactly
+> why the document bytes route keeps its grant and drops its ceiling instead.
+>
+> The rest of this section is UNTOUCHED and remains binding: "Authorization must include the buyer
+> identity. Conceptually: `listing_id + buyer_user_id + disclosure_level + status` must determine
+> authorization." D-C66 widens what the LISTING publishes; it takes nothing out of what an
+> authorization record has to be.
 
 ## 19. FAIL CLOSED
 If authorization cannot be determined: DENY ACCESS. Never assume approval, default to public

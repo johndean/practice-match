@@ -44,10 +44,12 @@ MATCH_LNG, MATCH_LAT = -97.820278589313, 30.497509155435
 #: controller overruled it the same day (fix round 1): D-C66 asked that a shut ceiling become
 #: RELEASABLE per buyer, never that an ungranted buyer be shown a finer point than before. The
 #: split it settled on is the honest one — the ADDRESS is released by the ceiling OR the grant, the
-#: PRECISION by the grant alone — and it matters most for the case the deletion argument missed:
-#: a listing with `location_disclosed = true` and a NULL `street` (every wizard listing predating
-#: Task 6, which is what first collected that column) has no address to publish, so the pin is its
-#: only location signal and this rounding is the whole of §11's protection for it.
+#: PRECISION by the grant alone. The reason is the ruling's own scope and nothing subtler: widening
+#: disclosure past what a ruling asked for is out of scope by construction. (A second argument was
+#: offered at the time — that a street-less listing would otherwise have no location signal at all
+#: — and it is WRONG: `app.census.geocode` falls back to the ZCTA centroid for exactly those
+#: listings, so they do have a point. `app/api/listings.py::_point` records that too, so nobody
+#: reinstates it.)
 APPROX_LNG, APPROX_LAT = round(MATCH_LNG, 2), round(MATCH_LAT, 2)
 CONTACT = "tech@vinfoundation.example.org"
 _REAL_GEOCODER = geocode.Geocoder

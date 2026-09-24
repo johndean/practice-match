@@ -56,7 +56,7 @@ from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import require
 from app.auth.limits import ACCESS_REQUEST_DECIDE, hit
-from app.cache import sync_redis
+from app.cache import drop_list_cache_quietly, sync_redis
 from app.db import sync_conn
 from app.disclosure import requests as req
 from app.disclosure.notify import notify_decision
@@ -145,6 +145,17 @@ async def decide_request(request_id: str, request: Request, principal: Answerer)
             notify_decision(conn, row=row)
     except Refusal as exc:
         return _refused(exc)
+    # Spec D16, and ruling D-C66 (2026-09-24) is what made it load-bearing on THIS route (fix round
+    # 2, review Important-2). `GET /api/listings` caches its first page for 60 s under a key that
+    # carries the buyer's own account id, and `serialise` applies that buyer's own capabilities to
+    # the name, the address, the pin and the revenue -- so a decision that changes what this buyer
+    # may see and does NOT drop the cache leaves their Browse page a minute out of date. Every
+    # writer in `seller_listings.py` and `admin_listings.py` has dropped it since D16; no request
+    # route ever did, because before the per-buyer plan a grant changed no field in this payload.
+    # AFTER the commit, never inside the transaction: `drop_list_cache`'s own docstring gives the
+    # reason (a drop against an uncommitted write lets a concurrent read re-cache the old payload
+    # for the full TTL), and this line sits after the `except` so a refusal drops nothing.
+    drop_list_cache_quietly()
     return JSONResponse(_serialisable(row))
 
 
@@ -166,4 +177,10 @@ async def revoke_request(request_id: str, request: Request, principal: Answerer)
             notify_decision(conn, row=row)
     except Refusal as exc:
         return _refused(exc)
+    # Spec D16, same placement and same reasoning as `decide_request` above — and this is the arm
+    # that LEAKS rather than merely lags. A53/A57 put a Withdraw button on the seller's inbox and
+    # tell them "You withdrew this buyer's access. The buyer no longer sees the financial packet or
+    # floor plan."; without this line the buyer went on reading the released name, address and
+    # revenue on their own cached Browse page for up to 60 seconds after being told otherwise.
+    drop_list_cache_quietly()
     return JSONResponse(_serialisable(row))
