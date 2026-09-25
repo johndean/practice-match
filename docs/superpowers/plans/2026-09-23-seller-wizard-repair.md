@@ -502,3 +502,17 @@ Family A58, next free sub-id.
 - [ ] **Step 3:** the design half, composed from V3's own elements.
 - [ ] **Step 4:** measured re-basing; the states that render the detail WILL move and `detail` is a
       frozen hash — report it, do not re-pin without saying so.
+
+**CORRECTION, 2026-09-25, MEASURED rather than argued (Task 11's own build).** Step 4's prediction
+is wrong and is left above as written so the correction is legible. **ZERO of the 120 artefacts
+move** — 60 PNG baselines and 60 DOM snapshots, regenerated cold before and after and hashed — and
+**no frozen hash moves**, `detail` included (re-hashed from the regenerated PNGs, not inferred from
+a passing test). The reason is the treatment rather than luck: the two new rows are conditional
+members under absent-beats-faked, and the design's twenty-one fixtures carry no `street` and no
+`phone` key AT ALL (counted over `P`) while the D6 stub sends `street: null, phone: null` for every
+one of them — so both conditions are falsey on both targets and the absent path is byte for byte
+what it was. The prediction would have held only if the rows were drawn unconditionally or the
+general-location line were rewritten; the first is a perturbation this task proves red, and the
+second is rejected in A58.12's own docstring (the street LINE alone states no city and no state, so
+replacing that row would remove two facts to add one). The released path therefore has **no pixel
+oracle**, and its gate is `frontend/tests/smoke.spec.ts` — A27.7's own position.

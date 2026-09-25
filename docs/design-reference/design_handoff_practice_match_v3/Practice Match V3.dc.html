@@ -3705,9 +3705,10 @@ class Component extends DCLogic {
           title: "Overview", hasProse: true, prose: p.note, hasNote: false, note: "",
           rows: [
             { k: "Practice type", v: p.type },
-            { k: "General location", v: p.area + ", " + this.stateOf(p.market) },
+            { k: "General location", v: p.area + ", " + this.stateOf(p.market) }
+          ].concat(p.street ? [{ k: "Street address", v: p.street }] : []).concat(p.phone ? [{ k: "Practice telephone", v: p.phone }] : []).concat([
             { k: "Established", v: String(p.est) }
-          ].concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])
+          ]).concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])
         },
         {
           title: "Financial Snapshot", hasProse: false, prose: "",

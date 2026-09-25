@@ -577,6 +577,11 @@ describe('local design amendments (spec D15)', () => {
     // Fix round 1: `ownership`, the sixth filter and the Overview row. A58.11a consumes
     // A58.8; A58.11b takes pristine text.
     'A58.11a', 'A58.11b',
+    // Task 11, the plan's last build: finding S9's SECOND half — Task 6 collected the street and
+    // the telephone, Task 8 released them to an approved buyer, and no screen drew either.
+    // CHAINED on A58.11b, whose whole five-line `replace` this entry's `find` is, AND on A12.9,
+    // which INTRODUCED the general-location line A58.11b had carried forward byte for byte.
+    'A58.12',
   ];
 
   it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
@@ -789,7 +794,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(470);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(471);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

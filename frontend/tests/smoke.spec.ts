@@ -3268,3 +3268,95 @@ test.describe('A51 — the recenter control centres what is selected, and the ci
     expect(errors).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A58.12 (Task 11 of the 2026-09-23 seller-wizard repair plan) — finding S9's SECOND half: the
+// street and the telephone `EXACT_LOCATION` exists to release reach the buyer's own screen.
+//
+// THIS IS THE ONLY ORACLE THE RELEASED PATH HAS, and it is here rather than in `screens.ts` by
+// the same measurement A27.7's and D-C48's sub-lines were: the design's own twenty-one fixtures
+// carry no `street` and no `phone` key at all, `design-listings.mjs` sends `street: null,
+// phone: null` for every one of them, and the REFERENCE has no way to be handed either — its
+// listings ARE `logic.js`'s own `P`, so reaching it would mean editing approved fixture data or
+// declaring a twelfth prototype prop, neither of which this ruling authorises.
+//
+// AND IT IS WHAT A vitest ON `detail()` CANNOT SAY. `src/logic.test.ts` reads the rows off the
+// render values; this reads them off the rendered DOM, through the real `/api/listings` shape,
+// `load.ts::toPractice` and `App.vue`'s own `sec?.rows` loop — the whole chain the capability
+// travels. Two gates on this plan have masked themselves in consecutive rounds, so the released
+// half and the withheld half are SEPARATE tests here too.
+// ---------------------------------------------------------------------------------------
+test.describe('A58.12 — the buyer\'s detail screen draws the address the seller released (S9)', () => {
+  const STREET = '1204 Cypress Creek Rd';
+  const PHONE = '(512) 555-0100';
+
+  /** The design catalogue as `GET /api/listings` serves it, with `over` applied to every row —
+   *  the Task B10 block's own helper, re-declared here because these are different describes. */
+  async function serveListings(page: Page, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    for (const item of body.items) Object.assign(item, over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  /** The Overview block of the detail screen, as a buyer reading it sees it. */
+  function overview(page: Page): Locator {
+    return page.getByRole('heading', { name: 'Overview', exact: true }).locator('xpath=..');
+  }
+
+  test('the released street and telephone are ON the screen, under the design\'s own labels', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // What `serialise` answers a buyer the seller has released them to: `released` is the
+    // seller's own ceiling OR that buyer's `EXACT_LOCATION` grant (ruling D-C66).
+    await serveListings(page, { street: STREET, phone: PHONE });
+    await signInAs(page, 'buyer', '/practices/p1');
+
+    const block = overview(page);
+    await expect(block.getByText('Street address', { exact: true })).toBeVisible();
+    await expect(block.getByText(STREET, { exact: true })).toBeVisible();
+    await expect(block.getByText('Practice telephone', { exact: true })).toBeVisible();
+    await expect(block.getByText(PHONE, { exact: true })).toBeVisible();
+    // The general location is not replaced by the street: the city and the state are on that row
+    // and nowhere else on this block, and `street` is the street LINE alone.
+    await expect(block.getByText('General location', { exact: true })).toBeVisible();
+    await expect(block.getByText('Cedar Park, TX', { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('...and a buyer the seller has released nothing to sees neither, and no placeholder', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // The no-grant answer: `serialise` nulls both columns together.
+    await serveListings(page, { street: null, phone: null });
+    await signInAs(page, 'buyer', '/practices/p1');
+
+    const block = overview(page);
+    await expect(block.getByText('General location', { exact: true })).toBeVisible();
+    await expect(block.getByText('Cedar Park, TX', { exact: true })).toBeVisible();
+    // ABSENT BEATS FAKED: no row, no em dash, no "withheld" wording — nothing at all.
+    await expect(block.getByText('Street address', { exact: true })).toHaveCount(0);
+    await expect(block.getByText('Practice telephone', { exact: true })).toHaveCount(0);
+    // …and the block is exactly the four rows the design has always drawn.
+    expect(await block.locator('div[style*="border-bottom"]').count()).toBe(4);
+    expect(errors).toEqual([]);
+  });
+
+  test('one column without the other draws one row without the other', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // `_complete_enough` refuses a SUBMIT that lacks either (Task 6), but a listing published
+    // before that rule existed can carry one and not the other.
+    await serveListings(page, { street: STREET, phone: null });
+    await signInAs(page, 'buyer', '/practices/p1');
+
+    const block = overview(page);
+    await expect(block.getByText(STREET, { exact: true })).toBeVisible();
+    await expect(block.getByText('Practice telephone', { exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});

@@ -192,6 +192,17 @@ export interface Practice {
   // Property block, so an absent key draws no row and the design's fixtures, which carry none,
   // keep every approved state on its pixels.
   facilityType?: string;
+  // S9's second half (Task 11): the street address and the telephone number `EXACT_LOCATION`
+  // exists to release. `app/api/listings.py` has served both to an authorised buyer since Task 8
+  // — `released` is the seller's own ceiling OR that buyer's grant (ruling D-C66) — and nothing
+  // carried them past this module, so the buyer whose request had just been approved read the
+  // same city as everybody else. The same absence rule once more: the design tests
+  // `p.street ? [{ k: "Street address", v: p.street }] : []` in its own Overview block (A58.12),
+  // so a listing the API withheld them from draws no row rather than a label beside nothing, and
+  // the design's twenty-one fixtures, which carry neither key, keep every approved state on its
+  // pixels.
+  street?: string;
+  phone?: string;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -270,6 +281,20 @@ export function toPractice(row: ApiListing): Practice {
   // draws no "Facility type" row for either, which is the whole point of the amendment: the row
   // states the seller's own answer or it is not there at all.
   if (row.facilityType != null) p.facilityType = row.facilityType;
+  // S9's second half (Task 11): `!= null` again, and here it covers the two ways the payload can
+  // say "not yours" as well as the two ways it can say "not answered" — `serialise` nulls BOTH
+  // columns together for a buyer with neither the seller's ceiling nor an `EXACT_LOCATION` grant,
+  // while `_complete_enough` refuses a blank one only at SUBMIT, so a listing published before
+  // Task 6 can carry one column and not the other. TWO tests and never one: they are two columns,
+  // and the design draws whichever of them the listing has.
+  //
+  // `!= null` HERE and truthiness in the DESIGN is a division of labour and not a disagreement,
+  // and it is `facilityType`'s exactly: this function answers "did the payload state it?", where
+  // an empty string IS a stated value and a missing key is not, and A58.12 answers "is there
+  // anything to draw?", where an empty street is an absence spelled differently. The seller route
+  // cannot produce one either way — `_text` returns `raw.strip() or None`.
+  if (row.street != null) p.street = row.street;
+  if (row.phone != null) p.phone = row.phone;
   return p;
 }
 

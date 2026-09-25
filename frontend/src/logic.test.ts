@@ -8331,3 +8331,109 @@ describe('A58.11 — an unstated ownership is never announced as a partnership',
     expect(rows[3].v).toBe('Sole proprietor (S-corp)');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// Task 11 of the 2026-09-23 seller-wizard repair plan — finding S9's SECOND HALF.
+//
+// Task 6 gave step 2 a street and a telephone field; Task 8 made approving a buyer actually
+// release them (ruling D-C66: the seller's ceiling OR that buyer's `EXACT_LOCATION` grant); and
+// the buyer who had just been approved opened the listing and read THE SAME CITY as everybody
+// else. `p.street` and `p.phone` occurred ZERO times in `logic.js` and `toPractice` copied
+// neither: the capability was honest on the wire and invisible on the screen.
+//
+// TWO DIRECTIONS, IN SEPARATE CASES, deliberately. Two gates on this plan have masked themselves
+// in consecutive rounds because the half that happened to pass came first in one test, so the
+// absent half and the present half can each go red here without the other.
+// ---------------------------------------------------------------------------------------
+
+describe('A58.12 — the buyer\'s detail screen draws the address the seller released', () => {
+  const overview = (id: string): any => {
+    c.setState({ auth: true, detailId: id });
+    return c.detail().sections.filter((s: any) => s.title === 'Overview')[0];
+  };
+  const keys = (id: string): string[] => overview(id).rows.map((r: any) => r.k);
+  const valueOf = (id: string, k: string): unknown => overview(id).rows.filter((r: any) => r.k === k).map((r: any) => r.v)[0];
+
+  /** `overlay`'s job for keys the design's fixtures do not have at all. It DELETES what it
+   *  added rather than restoring `undefined`, because a present-but-undefined `street` on a
+   *  design fixture is exactly the state `load.ts` omits the key to avoid — and a later case in
+   *  this file would then be running against a `P` the design never ships. */
+  const withAddress = (id: string, patch: Record<string, unknown>, body: () => void): void => {
+    const p = (P as unknown as Record<string, unknown>[]).filter((x) => x.id === id)[0];
+    const had = Object.keys(patch).filter((f) => f in p).map((f) => [f, p[f]] as const);
+    Object.assign(p, patch);
+    try { body(); } finally {
+      for (const f of Object.keys(patch)) delete p[f];
+      for (const [f, v] of had) p[f] = v;
+    }
+  };
+
+  // THE ABSENT HALF ------------------------------------------------------------------------
+
+  it('draws NEITHER row for a listing that carries no address — every practice in the design', () => {
+    // The design's own twenty-one fixtures carry no `street` and no `phone` key at all, which is
+    // also every listing the API serves to a buyer who holds neither the ceiling nor the grant.
+    for (const p of P as unknown as { id: string }[]) {
+      expect(keys(p.id), `listing ${p.id}`).not.toContain('Street address');
+      expect(keys(p.id), `listing ${p.id}`).not.toContain('Practice telephone');
+    }
+  });
+
+  it('...and the Overview block is the design\'s own four rows, in the design\'s own order', () => {
+    // Absent beats faked: no placeholder row, no "address withheld" wording, and nothing else in
+    // the block moves. This is the case that goes red if the rows are drawn unconditionally.
+    expect(keys('p1')).toEqual(['Practice type', 'General location', 'Established', 'Ownership structure']);
+    expect(valueOf('p1', 'General location')).toBe('Cedar Park, TX');
+  });
+
+  // THE PRESENT HALF -----------------------------------------------------------------------
+
+  it('draws the street the API released, under the design\'s own label, beside the general location', () => {
+    withAddress('p1', { street: '1204 Cypress Creek Rd' }, () => {
+      expect(keys('p1')).toEqual(['Practice type', 'General location', 'Street address', 'Established', 'Ownership structure']);
+      expect(valueOf('p1', 'Street address')).toBe('1204 Cypress Creek Rd');
+      // The general location is not replaced by it: the street alone is not an address, and the
+      // city and the state are on that row and nowhere else on this block.
+      expect(valueOf('p1', 'General location')).toBe('Cedar Park, TX');
+    });
+  });
+
+  it('draws the telephone the API released, in its own row', () => {
+    withAddress('p1', { phone: '(512) 555-0100' }, () => {
+      expect(keys('p1')).toEqual(['Practice type', 'General location', 'Practice telephone', 'Established', 'Ownership structure']);
+      expect(valueOf('p1', 'Practice telephone')).toBe('(512) 555-0100');
+    });
+  });
+
+  it('draws both, in the order step 2 asks them, when the buyer holds the whole grant', () => {
+    withAddress('p1', { street: '1204 Cypress Creek Rd', phone: '(512) 555-0100' }, () => {
+      expect(keys('p1')).toEqual(['Practice type', 'General location', 'Street address', 'Practice telephone', 'Established', 'Ownership structure']);
+    });
+  });
+
+  it('draws the value EXACTLY as the seller wrote it — no reformatting of either', () => {
+    // `app/api/seller_listings.py::_phone` stores the punctuation the seller typed, deliberately:
+    // an approved buyer is going to read it and dial it.
+    withAddress('p1', { street: '4140 FM 1431 Ste 200', phone: '512-555-0100' }, () => {
+      expect(valueOf('p1', 'Street address')).toBe('4140 FM 1431 Ste 200');
+      expect(valueOf('p1', 'Practice telephone')).toBe('512-555-0100');
+    });
+  });
+
+  it('draws neither for an empty string, which is an absence spelled differently', () => {
+    // `_text` returns `raw.strip() or None`, so the seller route cannot store one — but
+    // `App.vue` mounts the value span inside `v-if="__s(r?.v) !== null"`, so `""` would draw the
+    // LABEL beside nothing, which is the very defect A58.11b removed from the row below.
+    withAddress('p1', { street: '', phone: '' }, () => {
+      expect(keys('p1')).toEqual(['Practice type', 'General location', 'Established', 'Ownership structure']);
+    });
+  });
+
+  it('is a property of the listing and not of the screen — a second practice keeps its own answer', () => {
+    withAddress('p1', { street: '1204 Cypress Creek Rd', phone: '(512) 555-0100' }, () => {
+      expect(keys('p1')).toContain('Street address');
+      expect(keys('p2'), 'p2 released nothing and must show nothing').not.toContain('Street address');
+      expect(keys('p2')).not.toContain('Practice telephone');
+    });
+  });
+});

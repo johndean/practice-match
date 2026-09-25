@@ -79,7 +79,12 @@ describe('toPractice', () => {
       services: 'Wellness',
       facility: 'Freestanding building',
       ownership: 'Sole proprietor',
-      market: 'Austin, TX'
+      market: 'Austin, TX',
+      // S9's second half (Task 11): `row()` carries both, because a released listing does — the
+      // fixture has said `location_disclosed: true` since it was written. They are conditional
+      // keys like `name` below, so a row that carries neither reaches the design without them.
+      street: '1 Main St',
+      phone: '(512) 555-0100'
     });
   });
 
@@ -339,6 +344,34 @@ describe('applyListings', () => {
     const older = { ...row() } as Record<string, unknown>;
     delete older['facilityType'];
     expect('facilityType' in toPractice(older as unknown as ApiListing)).toBe(false);
+  });
+
+  // S9's SECOND HALF (Task 11 of the 2026-09-23 seller-wizard repair; ruling D-C65). Task 6 gave
+  // step 2 a street and a telephone field, and `app/api/listings.py` has served both to a buyer
+  // the seller released them to since Task 8 — `released` is the seller's own ceiling OR that
+  // buyer's `EXACT_LOCATION` grant (ruling D-C66). Nothing on the client carried them past this
+  // function, so `p.street` and `p.phone` occurred ZERO times in `logic.js` and the buyer whose
+  // request had just been approved read the same city as every other buyer. Amendment A58.12 is
+  // what draws them; these are the two fields reaching it.
+  //
+  // `!= null` and the key OMITTED rather than set, which is `facilityType`'s own rule one field
+  // up and `name`'s at the top: the design tests `p.street ? ... : []`, a present-but-undefined
+  // key is a difference the D6 round trip at the foot of this file sees, and a column the API
+  // WITHHELD must reach the design as a listing that has no street — not as one whose street is
+  // undefined.
+  it('carries street and phone through, and omits each key when the payload withholds it', () => {
+    expect(toPractice(row()).street).toBe('1 Main St');
+    expect(toPractice(row()).phone).toBe('(512) 555-0100');
+    // The answer `serialise` gives a buyer with neither the ceiling nor the grant: both nulled.
+    expect('street' in toPractice(row({ street: null, phone: null }))).toBe(false);
+    expect('phone' in toPractice(row({ street: null, phone: null }))).toBe(false);
+    // …and each on its own, because they are two columns and not one. `_complete_enough` refuses
+    // a SUBMIT that lacks either (Task 6), but a listing published before that rule existed can
+    // carry one and not the other, and the design draws whichever it has.
+    expect('phone' in toPractice(row({ phone: null }))).toBe(false);
+    expect(toPractice(row({ phone: null })).street).toBe('1 Main St');
+    expect('street' in toPractice(row({ street: null }))).toBe(false);
+    expect(toPractice(row({ street: null })).phone).toBe('(512) 555-0100');
   });
 
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the

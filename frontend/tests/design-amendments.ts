@@ -10426,6 +10426,89 @@ const A58_11b: Amendment = {
     + '          ].concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])\n'
 };
 
+const RULING_S9_DRAWN = 'John, 2026-09-23: "implement full seller wizard audit" (ruling D-C65), on the SECOND HALF of finding S9 — the half Task 6 could not close. Task 6 gave step 2 a street and a telephone field and made both required to submit; Task 8 made approving a buyer actually release them (ruling D-C66, 2026-09-24: `released` is the seller\'s own ceiling OR that buyer\'s `EXACT_LOCATION` grant); and NO SCREEN DREW EITHER. MEASURED rather than reasoned: `p.street` and `p.phone` occurred ZERO times in `frontend/src/logic.js`, and `frontend/src/listings/load.ts::toPractice` copied neither column onto the design\'s `Practice`, so the buyer whose request the seller had just approved opened the listing and read THE SAME CITY they had read before. `EXACT_LOCATION` is a live, requestable, approvable capability whose entire payload is those two columns, and it was honest on the wire and invisible on the screen. The detail screen draws each of them when the payload carries it, under the design\'s OWN label for that field, and draws no row at all when it does not: ABSENT BEATS FAKED, no placeholder and no "address withheld" wording, which would be new copy nobody has ruled on.';
+
+/** A58.12 — THE RELEASED ADDRESS REACHES THE BUYER'S SCREEN (finding S9, second half).
+ *
+ *  COMPOSED FROM V3'S OWN DECLARATIONS AND NOTHING ELSE, which is what a new element on the
+ *  approved design costs:
+ *
+ *    - THE SHAPE is the Overview block's own `{ k, v }` row, in the block that already carries
+ *      the listing's location, rendered by the one template that already renders every row of it
+ *      (`App.vue`'s `sec?.rows` loop). No new class, colour, grid or element.
+ *    - THE IDIOM is `.concat(COND ? [ … ] : [])`, this bundle's own conditional member — and the
+ *      exact shape `keyFacts` carries in this same method, which is likewise `[ … ]` then two
+ *      conditional concats then a literal concat then a conditional one. The spread this design
+ *      never uses is not introduced here. (A line count is deliberately not given: the `.dc.html`
+ *      is generated and every amendment moves its lines, which is this task's own brief's rule.)
+ *    - THE LABELS are the design's OWN words for these two fields, taken from the step that
+ *      collects them: `text("street", "Street address", …)` and `text("phone", "Practice
+ *      telephone", …)` (A58.5c, step 2). Not one new string enters the design.
+ *
+ *  THE GENERAL-LOCATION ROW IS KEPT AND NOT REPLACED, which is the one judgement in this entry.
+ *  `street` is the street LINE alone — `app/api/listings.py` serves `street`, `city`, `state` and
+ *  `zip` as four columns and the wizard collects them as four fields — so a row reading
+ *  "1204 Cypress Creek Rd" states no city and no state, and overwriting the general location with
+ *  it would REMOVE two facts from the screen to add one. It would also put a precise address
+ *  under a label that says "General location", which is the wrong-answer-under-the-right-label
+ *  defect A58.3 removed from the Property block. One string per fact (A31.12b, A34): the general
+ *  location goes on stating the community, and the street states the street.
+ *
+ *  PLACED IMMEDIATELY AFTER IT for the same reason: step 2 is the design's own grouping of these
+ *  four facts ("Buyers search by location. You choose how precisely yours is shown." — street,
+ *  city, ZIP, telephone), and the two new rows read as an address beside the line they complete
+ *  rather than as strays after the ownership structure.
+ *
+ *  TRUTHINESS AND NOT `!= null`, which is the family's other rule and is the right one here.
+ *  A58.4's `!= null` exists wherever zero or empty is a REAL ANSWER — nought doctors, nought exam
+ *  rooms — and an empty street is not an address any more than an empty string is a telephone
+ *  number: `App.vue` mounts the value span inside `v-if="__s(r?.v) !== null"`, so `""` would draw
+ *  the LABEL beside nothing, which is the very defect A58.11b removed from the row below. This is
+ *  A58.3's own test (`p.facilityType ? … : []`) on the same screen, and MEASURED to be equivalent
+ *  on every row this product can write: `app/api/seller_listings.py::_text` returns
+ *  `raw.strip() or None`, so the seller route stores a blank as NULL and never as `""`.
+ *
+ *  Consumes A58.11b, whose whole five-line `replace` this `find` is, AND consumes A12.9, which is
+ *  the entry that introduced the general-location line itself — A58.11b carried that line forward
+ *  byte for byte, so nothing of A12.9's had left the design until now, and AMEND-GUARD named it in
+ *  as many words. Two of the five lines change (the general-location row loses its trailing comma,
+ *  the closing `].concat(` gains a paren) and the other three are carried forward byte for byte;
+ *  A12.9's own ruled VALUE, `stateOf(p.market)`, is untouched, which is the point of keeping it.
+ *
+ *  IT PAINTS NOTHING ON EITHER TARGET AND THAT IS MEASURED, not assumed: the design's twenty-one
+ *  fixtures carry no `street` and no `phone` key at all (counted over `P`), and the D6 stub sends
+ *  `street: null, phone: null` for every one of them, so both conditions are falsey on the
+ *  reference and on the app and every approved state keeps its pixels.
+ *
+ *  ONE SENTENCE ON THIS SCREEN BECOMES VISIBLY FALSE BY THIS ENTRY'S OWN ACT, and it is ESCALATED
+ *  rather than absorbed — the A27.5 rule, stopped at rather than acted on. MEASURED on `detail()`
+ *  with a street released and no request sent: the Overview block reads "Street address: 1204
+ *  Cypress Creek Rd" while the Seller disclosure card six elements away reads "This seller is
+ *  still operating the practice. Street address, practice name and staff names stay hidden until
+ *  they approve your request." Under ruling D-C66 `released` is the seller's ceiling OR the
+ *  buyer's grant, and all 29 QA seeds carry every ceiling open, so that is the state a buyer who
+ *  has asked for nothing is in. IT IS NOT FIXED HERE, for three reasons, each of them a rule this
+ *  ledger already keeps: the sentence is PRISTINE design prose and is not this entry's to remove
+ *  — AMEND-GUARD's sentence tier requires `supersedes <id>` and there is no id, only John's own
+ *  approved bundle; it bundles THREE facts and only the first is affected, so conditioning it
+ *  drops two true clauses and splitting it writes new copy; and this task's own brief says no
+ *  "address withheld" copy without a ruling, which cuts the same way in reverse. Recorded in the
+ *  task's deferred findings for the whole-branch review and for John. */
+const A58_12: Amendment = {
+  id: 'A58.12', ...A58, date: '2026-09-25', ruling: RULING_S9_DRAWN, count: 1,
+  find: '          rows: [\n'
+    + '            { k: "Practice type", v: p.type },\n'
+    + '            { k: "General location", v: p.area + ", " + this.stateOf(p.market) },\n'
+    + '            { k: "Established", v: String(p.est) }\n'
+    + '          ].concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])\n',
+  replace: '          rows: [\n'
+    + '            { k: "Practice type", v: p.type },\n'
+    + '            { k: "General location", v: p.area + ", " + this.stateOf(p.market) }\n'
+    + '          ].concat(p.street ? [{ k: "Street address", v: p.street }] : []).concat(p.phone ? [{ k: "Practice telephone", v: p.phone }] : []).concat([\n'
+    + '            { k: "Established", v: String(p.est) }\n'
+    + '          ]).concat(p.ownership != null ? [{ k: "Ownership structure", v: p.ownership }] : [])\n'
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -10785,5 +10868,10 @@ export function amendments(): Amendment[] {
     // Fix round 1 (controller, 2026-09-25): `ownership` is A58.8's own disease in a
     // non-numeric shape and the brief was one member too tight. A58.11a is CHAINED on A58.8,
     // whose two introduced lines it rewrites; A58.11b takes pristine text.
-    A58_11a, A58_11b];
+    A58_11a, A58_11b,
+    // Task 11 (the plan's last build, 2026-09-25): finding S9's SECOND half — the street and the
+    // telephone `EXACT_LOCATION` releases reach the buyer's own screen. CHAINED on A58.11b, whose
+    // whole five-line `replace` this entry's `find` is, and on A12.9, which INTRODUCED the
+    // general-location line A58.11b had carried forward byte for byte.
+    A58_12];
 }
